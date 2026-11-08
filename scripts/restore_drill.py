@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prove a coordinated stopped-copy restore using disposable Docker storage only."""
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from datetime import datetime, timezone
 import json
 import os
@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 
 from integration_storage import MINIO_IMAGE, start_minio, clickhouse_s3_docker_args, minio_objects
+from online_backup import pause_restored_pipelines
 
 ROOT = Path(__file__).resolve().parents[1]
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.8.36.3"
@@ -98,12 +99,15 @@ def fixture(phase, directory, db, manifest, endpoint, environment):
 
 def sqlite_copy(source, destination):
     """Copy through SQLite's backup API after the fixture process has exited."""
-    with sqlite3.connect(source) as original, sqlite3.connect(destination) as restored:
+    with closing(sqlite3.connect(source)) as original, closing(sqlite3.connect(destination)) as restored:
         original.backup(restored)
+        if restored.execute("PRAGMA journal_mode=DELETE").fetchone()[0].lower() != "delete":
+            raise RuntimeError("cannot make restored SQLite self-contained")
         if restored.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise RuntimeError("restored SQLite integrity check failed")
         if restored.execute("PRAGMA foreign_key_check").fetchall():
             raise RuntimeError("restored SQLite foreign-key check failed")
+        restored.commit()
     destination.chmod(0o600)
 
 
@@ -161,6 +165,9 @@ def run():
         docker("start", restored_ch)
         restored_endpoint = wait_clickhouse(restored_ch, environment)
         sqlite_copy(checkpoint_db, restored_db)
+        with closing(sqlite3.connect(restored_db)) as restored:
+            pause_restored_pipelines(restored)
+            restored.commit()
         fixture("verify", directory, restored_db, manifest, restored_endpoint, environment)
         print(json.dumps({"status": "passed", "completed_at": datetime.now(timezone.utc).isoformat(),
                           "clickhouse_image": CLICKHOUSE_IMAGE, "minio_image": MINIO_IMAGE,

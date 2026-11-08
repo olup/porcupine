@@ -93,7 +93,7 @@ python3 scripts/online_backup.py restore \
 
 These values bind the restored receipt source to the daemon's configuration. They do not select a different restore destination. A wrong binding fails closed when the daemon checks its source. Project views and restricted ClickHouse reader accounts regenerate from the restored SQLite grants and derivation secret. Server-level ClickHouse credentials and configuration remain operator-managed.
 
-## Reconcile credentials and exports
+## Reconcile credentials, exports, and pipeline destinations
 
 Restoring the checkpoint also restores its authorization state. A client revoked after that point can otherwise become active again. Review an independent revocation record before opening the recovered service. Replay known revocations during restore with repeatable `--revoke-principal ID` options. The command refuses to leave no active instance administrator.
 
@@ -102,6 +102,14 @@ By default, restore deletes every saved OAuth access token. Clients must exchang
 SQLite stores hashes rather than recoverable client secrets. Keep the operator's recovery credentials separately. Changing the bootstrap environment value does not reset the restored bootstrap credential.
 
 External result-export objects are outside this checkpoint. Restore cancels export jobs, clears stored request SQL and file references, and requires fresh export requests. It does not mint links to checkpoint-time exports, resume their uploads, or delete objects in the source deployment. Apply the source export prefix's independent retention and multipart-cleanup rules. Native cold event data is included through ClickHouse's backup and follows a different recovery path.
+
+Restore also pauses every configured pipeline destination before publishing SQLite. This update commits with the credential and export changes. Existing pending delivery records remain, but restoring the checkpoint does not authorize sending them. Review destination ownership, credentials, filters, pending deliveries, and any external effects since the checkpoint before explicitly resuming a destination. A restore can otherwise repeat a webhook or an S3 write that the receiver accepted after the recovery point.
+
+Older backups without pipeline tables still restore. The tool does not create pipeline tables or invent destinations for those snapshots. An unknown pipeline schema fails closed rather than silently restoring active egress.
+
+Preserve the pipeline encryption key separately from the recovery set. Supply the original base64-encoded 32-byte value through `PORCUPINE_PIPELINE_KEY`, or preserve the secure file referenced by `PORCUPINE_PIPELINE_KEY_FILE`. The SQLite backup retains encrypted destination credentials and their key fingerprint, not the key needed to decrypt them. The restore tool pauses destinations without decrypting or rotating those credentials. A missing or mismatched key must be resolved before starting an instance that contains configured destinations.
+
+Manual SQLite or volume copies bypass the operator tool's pause transaction. They can restore active destinations and immediately resume external delivery when the application starts. Follow [the manual-copy egress precaution](restore.md#pause-egress-before-starting-a-manual-copy) before admitting a physically restored instance.
 
 ## Recover from an interrupted operation
 

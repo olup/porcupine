@@ -37,6 +37,13 @@ func exportConfiguration() (*porcupine.ExportConfig, error) {
 		}
 		c.S3.UsePathStyle = value
 	}
+	if err := readExportLimits(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func readExportLimits(c *porcupine.ExportConfig) error {
 	var seconds, queued, hours int64
 	fields := []struct {
 		name  string
@@ -58,7 +65,7 @@ func exportConfiguration() (*porcupine.ExportConfig, error) {
 		if raw := os.Getenv(field.name); raw != "" {
 			value, err := strconv.ParseInt(raw, 10, 64)
 			if err != nil || value < 1 {
-				return nil, errors.New("invalid " + field.name)
+				return errors.New("invalid " + field.name)
 			}
 			*field.value = value
 		}
@@ -66,5 +73,5 @@ func exportConfiguration() (*porcupine.ExportConfig, error) {
 	c.MaxExecutionSeconds = int(seconds)
 	c.MaxQueuedJobs = int(queued)
 	c.RetentionHours = int(hours)
-	return c, nil
+	return nil
 }

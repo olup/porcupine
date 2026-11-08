@@ -154,6 +154,20 @@ replacement corrections, deletion tombstones, revision checks, idempotency, and
 mutation status. A `202` confirms durable acceptance, not analytical visibility.
 Storage tiering is deployment-only and has no management endpoint.
 
+## Delivery pipeline management
+
+Project routes under `/api/v1/projects/{id}/pipelines` configure webhooks and
+scheduled S3 delivery. Reads require `pipelines:read` plus `events:read`; all
+writes and retries require `pipelines:write` plus `events:read`. These are explicit
+egress grants, separate from management permissions and event-reading authority.
+
+The [pipeline reference](pipelines.md#permissions-and-api) lists all ten operation
+IDs and routes. Lists contain bounded metadata; a detail read includes the
+nonsecret rule. Destination endpoint URLs, credentials, event payloads, and
+remote response bodies are never returned. The operator must configure the
+encryption key before creation is available. Restore pauses destinations until
+an authorized caller explicitly resumes them after review.
+
 ## Errors and limits
 
 Error responses use `{"error":"message"}`. Domain and authentication errors

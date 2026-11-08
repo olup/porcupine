@@ -85,6 +85,19 @@ OAuth token for the `/mcp` resource; an `/api/v1` token cannot authenticate MCP.
 Clients must support machine credentials or accept a token from their host.
 There is no interactive OAuth login flow. See [MCP setup](docs/mcp.md).
 
+## Delivery pipelines
+
+[Project pipelines](docs/pipelines.md) send accepted original events to webhooks
+in event or closed-window batch mode, or run scheduled receipt-window S3 queries. They are separate from native ClickHouse cold storage and one-off
+SQL downloads. API and MCP reads require `pipelines:read` plus `events:read`;
+configuration and retries require `pipelines:write` plus `events:read`.
+
+The operator enables the runtime with a private 32-byte encryption key and
+controls custom S3 endpoint origins. Destination credentials are write-only,
+encrypted inputs. Delivery is at least once, and supported restores always
+pause destinations for review before any resume. No external integration or
+production destination is implied by the local test coverage.
+
 ## Storage and operations
 
 - **Durable acceptance:** a successful capture follows the SQLite transaction

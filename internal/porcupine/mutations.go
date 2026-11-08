@@ -372,7 +372,10 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES(?,?,?,?)`, seq, projection.ProjectID, projection.UUID, string(payload))
 	}
 	if err == nil && operation == "delete" {
-		err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "")
+		err = s.cancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID)
+		if err == nil {
+			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "")
+		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=? AND uuid=?`, projection.ProjectID, projection.UUID)
 		}

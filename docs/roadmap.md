@@ -36,7 +36,8 @@ using a ClickHouse S3 disk and MOVE TTL. The default enabled hot period is 30 da
 Cold history remains queryable through the same API. No project or agent can edit
 storage configuration. There is no DELETE TTL or automatic age-based history
 expiration. Private asynchronous SQL result exports are implemented separately
-from native cold storage. Scheduled pipelines remain future work.
+from native cold storage. [Webhook and scheduled S3 pipelines](pipelines.md)
+provide repeated project delivery.
 
 Revisions replace logical event state, and tombstones prevent resurrection.
 Permanent SQLite receipts, mutation audit metadata, and tombstones currently
@@ -52,16 +53,28 @@ cancellation, gzip CSV or JSONL files, and short-lived S3 download links. A
 separate restricted reader has operator-controlled budgets; a delivery barrier
 waits for accepted work without promising a snapshot. Publication waits for
 complete query validation. Retries rerun the whole query and clean prior
-attempts. Export-specific checks are being validated; no passing test run or
-production-readiness claim is recorded here yet.
+attempts. See [export verification](exports.md#verification-status) for the
+recorded local checks and limitations.
 
-Scheduled exports and webhook delivery remain future work. Add continuous processing after durable checkpoints, stable delivery identifiers, retries, secret handling, and SSRF protection pass failure-injection tests. Delivery across independent systems remains at least once.
+[Project pipelines](pipelines.md) support original-event webhooks in event or
+closed-window batch mode and scheduled receipt-window SQL delivery to S3. Reads
+require `pipelines:read` plus `events:read`; configuration and retries require
+`pipelines:write` plus `events:read`. Credentials are encrypted, metadata omits
+secrets, and supported restores pause every destination. Receivers deduplicate
+stable webhook IDs; S3 consumers use committed window manifests. External
+delivery is at least once.
+
+Arbitrary cron schedules, consumer-specific adapters, change-data-capture
+streams for corrections, and automatic reopening of completed windows are
+outside this implementation. No external integration or production destination
+is established by synthetic local checks.
 
 ## Documentation index
 
 - [Architecture](architecture.md) explains deployment, data flow, and decision status.
 - [Analytics API](analytics.md) documents schema, discovery, SQL, examples, and quotas.
 - [SQL result exports](exports.md) documents jobs, formats, links, budgets, and lifecycle requirements.
+- [Project pipelines](pipelines.md) documents webhooks, scheduled windows, egress grants, and restore safety.
 - [Event mutations](events.md) documents revisions, corrections, deletions, and idempotency.
 - [Storage](storage.md) explains operator-only S3 tiering, schema migration, and recovery limits.
 - [Events, identity, and sessions](data-and-identity.md) describes implemented cookieless behavior and unresolved identity rules.

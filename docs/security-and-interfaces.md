@@ -45,6 +45,8 @@ The accepted permission names are:
 | `management:read` | Inspect permitted project or instance configuration. |
 | `management:write` | Change permitted configuration and manage access without escalation. |
 | `identity:write` | Reserved for future identity mutation endpoints. |
+| `pipelines:read` | Inspect project pipeline and run metadata, also requiring `events:read`. |
+| `pipelines:write` | Configure project destinations and retries, also requiring `events:read`. |
 
 [Event editing and deletion](events.md) are implemented through native mutation
 operations. They require their explicit permissions; ingestion authority alone
@@ -131,9 +133,26 @@ storage preserves query access; it is separate from export pipelines.
 
 ## Pipeline boundaries
 
-Planned pipelines export to S3-compatible destinations or webhooks. Scheduled runs come first. Continuous delivery follows with persisted checkpoints and retry behavior.
+[Project pipelines](pipelines.md) deliver webhook events and scheduled S3
+results. `pipelines:read` or `pipelines:write` alone is insufficient; the caller
+also needs `events:read` for the same project. Native storage policy remains
+operator-only. One-off export configuration remains separate.
 
-Pipeline configuration is project-scoped and permission-bound. Destination secrets must not appear in ordinary configuration reads or logs. Webhooks require SSRF controls, including address validation, redirect handling, and restrictions on internal network destinations. Operators need an explicit way to allow a private destination when their deployment requires one.
+Destination credentials are encrypted with an operator key and are never
+returned by metadata APIs or MCP. Webhook URLs and headers are encrypted too.
+Workers check the creating principal's current authority. Permission to read
+events alone does not authorize configuring a new outbound destination.
+
+Webhook transport permits public HTTPS destinations, checks all DNS answers
+at connection time, dials validated addresses, and rejects redirects and
+private-network targets. Custom S3 endpoints require an exact origin in the
+operator allowlist. These are distinct destination controls; allowing an S3
+origin does not permit private webhook traffic.
+
+Supported restores pause every destination. A restore cannot reverse a request
+or object write already accepted elsewhere. Stable delivery identifiers and
+receiver deduplication remain part of the contract. See the pipeline reference
+for limits, credential replacement, and retry behavior.
 
 ## Ingestion under load
 
