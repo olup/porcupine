@@ -2,6 +2,8 @@
 
 Porcupine is a headless product analytics service. Read README.md for what runs
 and docs/ for the target architecture. Do not describe planned APIs as shipped.
+Agents connecting to a running instance should start with the
+[agent guide](https://olup.github.io/porcupine/llms.txt).
 
 - Use Go and Git. Keep the server build CGO-free and its dependencies small.
 - Keep instance administration separate from project-scoped event permissions.

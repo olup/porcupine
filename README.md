@@ -10,7 +10,8 @@ events to webhooks and scheduled query results to S3.
 One Go process, embedded SQLite, and ClickHouse. Optional S3; no Redis or message
 broker to operate. See the [architecture](docs/architecture.md) for the deployment.
 
-[Project site](https://olup.github.io/porcupine/) ·
+[Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting guide](docs/hosting.md) ·
+[Releases](https://github.com/olup/porcupine/releases) · [Project site](https://olup.github.io/porcupine/) ·
 [Connect an agent](docs/mcp.md) · [Delivery pipelines](docs/pipelines.md) ·
 [API reference](docs/management-api.md) · [MIT license](LICENSE)
 
@@ -37,6 +38,20 @@ private `.env` to a stable base64-encoded 32-byte random key. Preserve that key
 across restarts. The operator also controls allowed custom S3 origins;
 destination credentials are encrypted. Delivery is at least once. Supported restores pause
 destinations for review before resumption.
+
+## Install a release
+
+The `v0.1.0` release includes Linux amd64 and arm64 images. Use the matching
+tag for configuration files and pin the image version when you deploy.
+
+```sh
+docker pull ghcr.io/olup/porcupine:0.1.0
+docker run --rm ghcr.io/olup/porcupine:0.1.0 --version
+```
+
+Each release also has checksummed image archives for `docker load`.
+Follow the [hosting guide](docs/hosting.md) for Compose, a single server,
+or an existing ClickHouse deployment. Give agents the [agent guide](https://olup.github.io/porcupine/llms.txt).
 
 ## Quickstart
 
