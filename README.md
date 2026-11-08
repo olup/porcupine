@@ -1,4 +1,4 @@
-<img src="site/assets/porcupine.svg" width="88" height="88" alt="Porcupine logo">
+<img src="site/assets/favicon.svg" width="72" height="72" alt="Porcupine logo">
 
 # Porcupine
 
