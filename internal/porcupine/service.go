@@ -35,6 +35,7 @@ type Config struct {
 	TrustedProxies  []string
 	Clock           func() time.Time
 	ClickHouse      *ClickHouseConfig
+	Pipelines       *PipelineConfig
 	Exports         *ExportConfig
 	OAuth           *OAuthConfig
 }
@@ -58,6 +59,8 @@ type Service struct {
 	tokenSlots      chan struct{}
 	querySecret     []byte
 	mutationMu      sync.Mutex
+	pipelines       *pipelineRuntime
+	batchSlot       chan struct{}
 	exports         *exportRuntime
 	oauth           *oauthRuntime
 	projectionGuard *projectionGuard
@@ -94,6 +97,10 @@ func Open(c Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	pipelines, err := newPipelineRuntime(c.Pipelines)
+	if err != nil {
+		return nil, err
 	}
 	var exports *exportRuntime
 	if c.Exports != nil {
@@ -147,7 +154,7 @@ func Open(c Config) (*Service, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
-		ch: ch, exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2)}
+		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2)}
 	s.captureSlots = make(chan struct{}, 32)
 	s.tokenSlots = make(chan struct{}, 8)
 	fail := func(err error) (*Service, error) {
@@ -262,6 +269,10 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeBackupGuard(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializePipelines(context.Background()); err != nil {
+		return fail(err)
+	}
+	s.startPipelines()
 	if ch != nil {
 		s.startDelivery()
 	}
@@ -272,6 +283,7 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 }
 
 func (s *Service) Close() error {
+	s.stopPipelines()
 	if s.exports != nil {
 		s.stopExports()
 		if s.exports.store != nil {
@@ -555,7 +567,8 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "batch must contain 1 to 1000 events")
 		return
 	}
-	receiptTime := s.clock().UTC()
+	receiptTime, releaseReceiptTime := s.beginCaptureReceipt(projectID)
+	defer releaseReceiptTime()
 	received := receiptTime.Format(time.RFC3339Nano)
 	events := make([]Event, 0, len(batch))
 	cookieless := false
@@ -664,6 +677,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 	}
 	accepted, duplicates := 0, 0
 	var acceptedBytes int64
+	var webhookEvents []Event
 	for _, e := range events {
 		exists, lookupErr := localReceipt(r.Context(), tx, projectID, e.UUID)
 		if lookupErr != nil {
@@ -694,17 +708,31 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			problem(w, 503, "queue is full")
 			return
 		}
-		_, err = tx.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol) VALUES(?,?,?,?,?,?,?,1)`, e.ProjectID, e.UUID, e.Event, e.DistinctID, string(e.Properties), e.Timestamp, e.ReceivedAt)
+		inserted, err := tx.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol) VALUES(?,?,?,?,?,?,?,1)`, e.ProjectID, e.UUID, e.Event, e.DistinctID, string(e.Properties), e.Timestamp, e.ReceivedAt)
 		if err != nil {
 			problem(w, 503, "storage unavailable")
 			return
 		}
+		e.ID, err = inserted.LastInsertId()
+		if err != nil {
+			problem(w, 503, "storage unavailable")
+			return
+		}
+		if s.pipelines != nil {
+			webhookEvents = append(webhookEvents, e)
+		}
 		accepted++
 		acceptedBytes += size
+	}
+	if err = s.enqueueWebhooks(r.Context(), tx, webhookEvents); err != nil {
+		w.Header().Set("Retry-After", "1")
+		problem(w, 503, "webhook queue unavailable")
+		return
 	}
 	if err = tx.Commit(); err != nil {
 		problem(w, 503, "storage unavailable")
 		return
 	}
+	s.wakeWebhook()
 	write(w, 200, map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates})
 }

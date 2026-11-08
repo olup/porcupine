@@ -234,7 +234,8 @@ def backup(arguments):
                     "sqlite": {"file": "sqlite.db", "sha256": file_hash(output / "sqlite.db")},
                     "table_identity": identity, "logical_summary": summary, "clickhouse_version": ch.query("SELECT version() AS version")[0]["version"],
                     "checkpoint_validation_seconds": validation_seconds, "native_backup_seconds": native_seconds,
-                    "exports": "metadata only; external export objects are not part of this checkpoint"}
+                    "exports": "metadata only; external export objects are not part of this checkpoint",
+                    "pipelines": "destinations are paused on restore; encryption key is managed separately"}
         write_json(output / "manifest.json", manifest)
         (output / "INCOMPLETE.json").unlink()
         sync_directory(output)
@@ -305,6 +306,7 @@ def restore(arguments):
                 raise RuntimeError("restore would leave no active instance administrator")
             snapshot.execute("DELETE FROM export_files")
             snapshot.execute("UPDATE export_jobs SET state='canceled',cancel_requested=1,cleanup_pending=0,sql='',parameters='{}',completed_at=?,error='operator_restore_reissue_required' WHERE state!='expired'", (restored_at,))
+            pipelines_paused = pause_restored_pipelines(snapshot)
             snapshot.execute("DELETE FROM metadata WHERE key='online_restore_incomplete'")
             snapshot.execute("INSERT INTO metadata(key,value) VALUES('online_backup_lock_path',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(target) + ".projection.lock",))
             snapshot.execute("INSERT INTO metadata(key,value) VALUES('online_backup_source_uuid',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (restored_identity["events_v2"]["uuid"],))
@@ -319,9 +321,21 @@ def restore(arguments):
             validate_sqlite(published)
             if published.execute("SELECT value FROM metadata WHERE key='online_restore_incomplete'").fetchone():
                 raise RuntimeError("published SQLite still has an incomplete restore marker")
+            if published.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pipelines'").fetchone() and published.execute("SELECT count(*) FROM pipelines WHERE state IS NULL OR state!='paused'").fetchone()[0]:
+                raise RuntimeError("published SQLite contains an unpaused pipeline destination")
         marker.unlink()
         sync_directory(target.parent)
-    progress("restore_complete", database=database, sqlite=str(target), access_tokens="preserved" if arguments.preserve_access_tokens else "revoked", exports="reissue_required")
+    progress("restore_complete", database=database, sqlite=str(target), access_tokens="preserved" if arguments.preserve_access_tokens else "revoked", exports="reissue_required", pipelines_paused=pipelines_paused)
+
+
+def pause_restored_pipelines(snapshot):
+    """Disable restored egress within the caller's offline publication transaction."""
+    found = snapshot.execute("SELECT type FROM sqlite_master WHERE name='pipelines'").fetchone()
+    if found is None:
+        return 0  # Pre-pipeline snapshots require no schema migration here.
+    if found[0] != "table" or "state" not in {column[1] for column in snapshot.execute("PRAGMA table_info(pipelines)")}:
+        raise RuntimeError("unsupported pipeline schema; cannot guarantee restored egress is paused")
+    return snapshot.execute("UPDATE pipelines SET state='paused'").rowcount
 
 
 def rebind_receipt_source(snapshot, manifest, restored_identity, service_endpoint, service_user):

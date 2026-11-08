@@ -18,9 +18,20 @@ import (
 )
 
 func (s *Service) exportReader(ctx context.Context, projectID string) (namespace, reader, password string, err error) {
-	if s.ch == nil || s.exports == nil {
+	if s.exports == nil {
 		err = errors.New("export reader unavailable")
 		return
+	}
+	return s.configureExportReader(ctx, projectID, s.exports.config, "_export")
+}
+
+func (s *Service) exportReaderWithConfig(ctx context.Context, projectID string, config ExportConfig) (namespace, reader, password string, err error) {
+	return s.configureExportReader(ctx, projectID, config, "_pipeline_export")
+}
+
+func (s *Service) configureExportReader(ctx context.Context, projectID string, config ExportConfig, suffix string) (namespace, reader, password string, err error) {
+	if s.ch == nil {
+		return "", "", "", errors.New("export reader unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -28,11 +39,10 @@ func (s *Service) exportReader(ctx context.Context, projectID string) (namespace
 	if err != nil {
 		return
 	}
-	reader = namespace + "_export"
+	reader = namespace + suffix
 	mac := hmac.New(sha256.New, s.querySecret)
 	mac.Write([]byte("export:" + projectID + "\x00" + s.ch.config.Database))
 	password = hex.EncodeToString(mac.Sum(nil))
-	config := s.exports.config
 	if config.MemoryBytes <= 0 || config.MaxExecutionSeconds <= 0 || config.MaxReadBytes <= 0 || config.TemporaryBytes <= 0 || config.BandwidthBytesPerSecond <= 0 {
 		err = errors.New("invalid export reader budgets")
 		return
@@ -68,7 +78,7 @@ func (s *Service) exportReader(ctx context.Context, projectID string) (namespace
 		"CREATE USER IF NOT EXISTS " + reader + authentication,
 		"ALTER USER " + reader + authentication + " DEFAULT ROLE NONE SETTINGS " + strings.Join(settings, ", "),
 		"REVOKE ALL ON *.* FROM " + reader,
-		"CREATE ROW POLICY OR REPLACE " + namespace + "_export_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + reader,
+		"CREATE ROW POLICY OR REPLACE " + namespace + suffix + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + reader,
 		"GRANT SELECT(event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision) ON " + database + "." + eventTable + " TO " + reader,
 		"GRANT SELECT ON " + namespace + ".events TO " + reader,
 	}

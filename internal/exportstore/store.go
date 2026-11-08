@@ -75,7 +75,7 @@ func New(ctx context.Context, c Config) (*Store, error) {
 	if (c.AccessKeyID == "") != (c.SecretAccessKey == "") || c.SessionToken != "" && c.AccessKeyID == "" {
 		return nil, ErrConfig
 	}
-	if c.Endpoint != "" && !validEndpoint(c.Endpoint) {
+	if c.Endpoint != "" && !ValidEndpoint(c.Endpoint) {
 		return nil, ErrConfig
 	}
 	transport := &http.Transport{
@@ -131,7 +131,8 @@ func safePath(value string) bool {
 	return true
 }
 
-func validEndpoint(raw string) bool {
+// ValidEndpoint accepts HTTPS and explicitly local HTTP stores.
+func ValidEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
 		return false
@@ -311,7 +312,11 @@ type boundedResponses struct{ next http.RoundTripper }
 func (b boundedResponses) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := b.next.RoundTrip(request)
 	if err == nil && response.Body != nil {
-		response.Body = &limitedBody{Reader: io.LimitReader(response.Body, 1<<20), Closer: response.Body}
+		limit := int64(1 << 20)
+		if request.Method == http.MethodGet && response.StatusCode >= 200 && response.StatusCode < 300 {
+			limit = MaxManifestBytes + 1
+		}
+		response.Body = &limitedBody{Reader: io.LimitReader(response.Body, limit), Closer: response.Body}
 	}
 	return response, err
 }

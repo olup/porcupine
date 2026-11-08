@@ -280,7 +280,7 @@ func TestConfigurationAndKeyValidation(t *testing.T) {
 		}
 	}
 	for _, endpoint := range []string{"http://minio:9000", "http://127.0.0.1:9000", "http://[::1]:9000", "https://s3.example.com"} {
-		if !validEndpoint(endpoint) {
+		if !ValidEndpoint(endpoint) {
 			t.Fatal("valid operator endpoint rejected")
 		}
 	}

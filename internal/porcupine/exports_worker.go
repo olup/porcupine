@@ -86,15 +86,14 @@ func (s *Service) exportsLoop(ctx context.Context) {
 			continue
 		}
 		ready, err := s.exportAdmission(ctx, job)
-		if err != nil || !ready || len(s.querySlots) != 0 {
+		if err != nil || !ready {
 			if !s.waitExports(ctx, time.Second) {
 				return
 			}
 			continue
 		}
-		select {
-		case s.querySlots <- struct{}{}:
-		default:
+		release, available := s.acquirePipelineExport(ctx)
+		if !available {
 			if !s.waitExports(ctx, time.Second) {
 				return
 			}
@@ -102,11 +101,11 @@ func (s *Service) exportsLoop(ctx context.Context) {
 		}
 		claimed, err := s.claimExport(ctx, job)
 		if err != nil {
-			<-s.querySlots
+			release()
 			continue
 		}
 		s.runExport(ctx, claimed)
-		<-s.querySlots
+		release()
 		// A transient SQLite failure while recording the outcome must not strand
 		// a running row after its in-process attempt has stopped.
 		recovered = false

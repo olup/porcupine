@@ -54,7 +54,7 @@ type AccessKeyListOutput struct{ Body AccessKeyList }
 type AccessKeyCreateInput struct {
 	Body struct {
 		Name        string   `json:"name" minLength:"1" maxLength:"200"`
-		Permissions []string `json:"permissions" minItems:"1" doc:"Permissions: instance:admin, management:read, management:write, events:read, events:write, events:edit, events:delete, identity:write"`
+		Permissions []string `json:"permissions" minItems:"1" doc:"Permissions: instance:admin, management:read, management:write, events:read, events:write, events:edit, events:delete, identity:write, pipelines:read, pipelines:write"`
 		Projects    []string `json:"projects" minItems:"1" doc:"Project IDs, or * for instance-wide scope"`
 	}
 }
@@ -166,7 +166,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		security := []map[string][]string{{"bearerAuth": {}}}
 		if s.oauth != nil {
 			scopes := []string{access.Permission}
-			for _, permission := range access.InstancePermissions {
+			for _, permission := range append(append([]string{}, access.InstancePermissions...), access.AdditionalPermissions...) {
 				if !slices.Contains(scopes, permission) {
 					scopes = append(scopes, permission)
 				}
@@ -205,6 +205,7 @@ Queries see only this project's delivered logical events. event_time uses UTC mi
 	s.registerQuarantine(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
+	s.registerPipelines(api, op)
 	return api
 }
 

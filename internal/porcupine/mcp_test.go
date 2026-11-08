@@ -100,7 +100,7 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				t.Fatal("catalog must contain a bounded first page of summaries")
 			}
 			tail := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20, Offset: 20}, false)
-			if len(tail["operations"].([]any)) != 3 || tail["next_offset"] != nil {
+			if len(tail["operations"].([]any)) != 13 || tail["next_offset"] != nil {
 				t.Fatal("full catalog pagination failed")
 			}
 			allOperations := append(catalog["operations"].([]any), tail["operations"].([]any)...)

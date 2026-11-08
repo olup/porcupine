@@ -8,7 +8,7 @@ type actor struct {
 	Projects    []string
 }
 
-var validPermissions = []string{"instance:admin", "management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "identity:write"}
+var validPermissions = []string{"instance:admin", "management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "identity:write", "pipelines:read", "pipelines:write"}
 
 func (a actor) admin() bool                { return slices.Contains(a.Permissions, "instance:admin") }
 func (a actor) can(permission string) bool { return authorize(a, permission, "") }
@@ -36,14 +36,20 @@ func (a actor) containsProjects(projects []string) bool {
 
 // operationAccess is shared by HTTP enforcement and MCP discovery.
 type operationAccess struct {
-	Permission          string
-	ProjectParameter    string
-	InstancePermissions []string
+	Permission            string
+	AdditionalPermissions []string
+	ProjectParameter      string
+	InstancePermissions   []string
 }
 
 func (access operationAccess) visible(a actor) bool {
 	if access.Permission == "" || !authorize(a, access.Permission, "") {
 		return false
+	}
+	for _, permission := range access.AdditionalPermissions {
+		if !authorize(a, permission, "") {
+			return false
+		}
 	}
 	for _, permission := range access.InstancePermissions {
 		if !authorize(a, permission, "*") {

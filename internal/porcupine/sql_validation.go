@@ -44,14 +44,20 @@ var sqlFunctions = func() map[string]bool {
 	return functions
 }()
 
+type sqlReferences struct {
+	eventSources map[*chsql.TableIdentifier]bool // true for a source with a table alias
+	parameters   map[string]string               // parameter name to its declared ClickHouse type
+}
+
 type sqlScope struct {
 	tables     map[string]bool
 	qualifiers map[string]bool
 	names      map[string]bool
+	refs       sqlReferences
 }
 
 func (s sqlScope) clone() sqlScope {
-	copyScope := sqlScope{tables: make(map[string]bool), qualifiers: make(map[string]bool), names: make(map[string]bool)}
+	copyScope := sqlScope{refs: s.refs, tables: make(map[string]bool), qualifiers: make(map[string]bool), names: make(map[string]bool)}
 	for name := range s.tables {
 		copyScope.tables[name] = true
 	}
@@ -65,6 +71,10 @@ func (s sqlScope) clone() sqlScope {
 }
 
 func validateSQL(raw string) (string, error) {
+	return validateSQLWithReferences(raw, sqlReferences{})
+}
+
+func validateSQLWithReferences(raw string, refs sqlReferences) (string, error) {
 	if len(raw) == 0 || len(raw) > maxSQLBytes {
 		return "", errors.New("SQL must contain 1 to 16384 bytes")
 	}
@@ -79,7 +89,7 @@ func validateSQL(raw string) (string, error) {
 	if !ok {
 		return "", errors.New("only SELECT queries are allowed")
 	}
-	scope := sqlScope{tables: map[string]bool{"events": true}, qualifiers: map[string]bool{}, names: map[string]bool{}}
+	scope := sqlScope{refs: refs, tables: map[string]bool{"events": true}, qualifiers: map[string]bool{}, names: map[string]bool{}}
 	for _, name := range strings.Fields("id project_id uuid event distinct_id properties timestamp timestamp_ms event_time received_at received_at_ms revision") {
 		scope.names[name] = true
 	}
@@ -241,16 +251,12 @@ func checkSQLExpr(expr chsql.Expr, scope sqlScope, depth int) error {
 		if n == nil {
 			return nil
 		}
-		if !sqlName(n.Name) || !sqlParameterType(n.Type) {
-			return errors.New("query parameters require safe scalar types")
-		}
+		return scope.checkParameter(n.Name, n.Type)
 	case *chsql.TypedPlaceholder:
 		if n == nil {
 			return nil
 		}
-		if !sqlName(n.Name) || !sqlParameterType(n.Type) {
-			return errors.New("query parameters require safe scalar types")
-		}
+		return scope.checkParameter(n.Name, n.Type)
 	case *chsql.ParamExprList:
 		if n == nil {
 			return nil
@@ -491,11 +497,17 @@ func checkSQLSource(expr chsql.Expr, scope sqlScope, depth int) error {
 		if err := checkSQLSource(n.Expr, scope, depth+1); err != nil {
 			return err
 		}
+		if source, ok := n.Expr.(*chsql.TableIdentifier); ok && source.Table.Name == "events" && scope.refs.eventSources != nil {
+			scope.refs.eventSources[source] = true
+		}
 		scope.qualifiers[alias.Name] = true
 		return nil
 	case *chsql.TableIdentifier:
 		if n.Database != nil || !sqlName(n.Table) || !scope.tables[n.Table.Name] {
 			return errors.New("only events and local CTEs may be queried")
+		}
+		if scope.refs.eventSources != nil && n.Table.Name == "events" {
+			scope.refs.eventSources[n] = false
 		}
 		scope.qualifiers[n.Table.Name] = true
 		return nil
@@ -652,37 +664,28 @@ func sqlParameterType(columnType chsql.ColumnType) bool {
 // Check all supplied names before constructing HTTP param_* bindings. Values
 // remain separate from SQL and are parsed by ClickHouse as their declared types.
 func validateSQLParameters(raw string, parameters map[string]string) error {
-	canonical, err := validateSQL(raw)
-	if err != nil {
+	bindings := map[string]string{}
+	if _, err := validateSQLWithReferences(raw, sqlReferences{parameters: bindings}); err != nil {
 		return err
 	}
-	statements, err := chsql.NewParser(canonical).ParseStmts()
-	if err != nil {
-		return errors.New("invalid canonical SQL")
+	return matchSQLParameters(bindings, parameters)
+}
+
+func (s sqlScope) checkParameter(name *chsql.Ident, typ chsql.ColumnType) error {
+	if !sqlName(name) || !sqlParameterType(typ) {
+		return errors.New("query parameters require safe scalar types")
 	}
-	bindings := map[string]string{}
-	var bindingError error
-	chsql.Walk(statements[0], func(expr chsql.Expr) bool {
-		var name *chsql.Ident
-		var columnType chsql.ColumnType
-		switch n := expr.(type) {
-		case *chsql.QueryParam:
-			name, columnType = n.Name, n.Type
-		case *chsql.TypedPlaceholder:
-			name, columnType = n.Name, n.Type
-		default:
-			return true
+	if s.refs.parameters != nil {
+		declared := chsql.Format(typ)
+		if previous, exists := s.refs.parameters[name.Name]; exists && previous != declared {
+			return errors.New("parameter name has conflicting types")
 		}
-		declared := chsql.Format(columnType)
-		if previous, exists := bindings[name.Name]; exists && previous != declared {
-			bindingError = errors.New("parameter name has conflicting types")
-		}
-		bindings[name.Name] = declared
-		return true
-	})
-	if bindingError != nil {
-		return bindingError
+		s.refs.parameters[name.Name] = declared
 	}
+	return nil
+}
+
+func matchSQLParameters(bindings, parameters map[string]string) error {
 	for name := range bindings {
 		if _, exists := parameters[name]; !exists {
 			return fmt.Errorf("missing SQL parameter %q", name)

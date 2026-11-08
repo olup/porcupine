@@ -157,7 +157,7 @@ SQLite contains authoritative credentials, projects, daily cookieless keys, the 
 
 ClickHouse needs its own backup and restore plan for delivered history. Restore must preserve a consistent recovery point across both stores: restoring old queue state can retry deliveries, while losing ClickHouse facts after their SQLite payloads were deleted requires a ClickHouse backup. The [restore drill](restore.md) exercises a coordinated stopped copy of SQLite, ClickHouse and native cold objects on disposable storage. For a running instance use the [online checkpoint and restore tool](online-backup.md). The operator schedules checkpoints and manages off-host copies.
 
-Native S3 cold storage, future pipeline exports, and instance backups have
+Native S3 cold storage, project delivery pipelines, and instance backups have
 different purposes. Cold parts still depend on persistent ClickHouse disk
 metadata and configuration. S3 objects alone do not establish a restore
 procedure, and neither cold storage nor an export is a SQLite backup.
@@ -177,11 +177,28 @@ A test forces SQLite to return SQLITE_FULL and checks batch rollback, preservati
 Further release work includes operating-system ENOSPC injection, additional safely classified
 row failures, mutation isolation, large historical backup validation, and arbitrary partial delivery
 failures. Future identity projections need race and out-of-order replay tests.
-Future pipelines need checkpoint and receiver-idempotence tests. Benchmarks require
+Pipeline failure and receiver-idempotence checks are described in
+[the delivery contract](pipelines.md). Benchmarks require
 recorded hardware, workload, event sizes, and durability settings before publication.
 
-## Planned pipelines and identity
+## Pipelines and planned identity
 
-Future scheduled exports and webhooks must persist progress in SQLite and advance checkpoints only after destination acknowledgment. A crash between destination success and checkpoint commit can cause redelivery. Stable delivery identifiers and receiver deduplication are required; continuous processing retains the same at-least-once boundary.
+[Webhook and scheduled S3 pipelines](pipelines.md) persist queued work and
+checkpoints in SQLite. Webhook capture and enqueueing commit together. A lost
+receiver acknowledgment can redeliver the same stable ID. Batch mode retries
+the whole HTTP chunk; receivers must deduplicate before their own side effects.
 
-Future identity changes must commit the authoritative SQLite mutation and its projection outbox entry in one transaction. Projection retries must preserve mapping versions. Neither pipeline checkpoints nor the identity outbox exist in the current event worker.
+Scheduled S3 runs publish a conditional manifest after validating every output
+file and the full query result. SQLite advances its window cursor only after
+reading that manifest back. An interrupted attempt can retry a whole query; an
+unexpected or conflicting commit marker fails closed. This remains an
+at-least-once external-delivery contract rather than a distributed transaction.
+
+Supported restores pause every destination. Review the receiver or bucket,
+creator grants, restored checkpoints, and effects that may already exist before
+resuming. Preserve the original pipeline encryption key outside the backup.
+Follow [online recovery](online-backup.md) for the outbound-delivery fence.
+
+Future identity changes must commit the authoritative SQLite mutation and its
+projection outbox entry in one transaction. Projection retries must preserve
+mapping versions. That identified-person outbox remains future work.

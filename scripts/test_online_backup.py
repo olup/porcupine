@@ -116,6 +116,12 @@ class OnlineBackupTests(unittest.TestCase):
             self.assertIn("online_backup_source_config", metadata)
 
     def test_wal_restore_publishes_all_security_changes_for_another_process(self):
+        self.assert_restore_security_state(with_pipelines=False)
+
+    def test_restore_pauses_all_pipeline_destinations_before_publication(self):
+        self.assert_restore_security_state(with_pipelines=True)
+
+    def assert_restore_security_state(self, with_pipelines):
         class RestoreStorage(NativeFailure):
             def query(self, sql, query_id=None):
                 if "FROM system.databases" in sql:
@@ -140,6 +146,12 @@ CREATE TABLE receipt_lookup_leases(lease_id TEXT); INSERT INTO receipt_lookup_le
 CREATE TABLE export_files(id TEXT); INSERT INTO export_files VALUES('external-object-reference');
 CREATE TABLE export_jobs(state TEXT,cancel_requested INTEGER,cleanup_pending INTEGER,sql TEXT,parameters TEXT,completed_at TEXT,error TEXT);
 INSERT INTO export_jobs VALUES('succeeded',0,0,'private query','{}','','');""")
+            if with_pipelines:
+                original.executescript("""CREATE TABLE pipelines(id TEXT PRIMARY KEY,state TEXT NOT NULL,secret BLOB NOT NULL);
+INSERT INTO pipelines VALUES('webhook','active',x'010203'),('s3','active',x'040506'),('already-paused','paused',x'070809');
+CREATE TABLE pipeline_runs(id TEXT,pipeline_id TEXT,state TEXT);
+INSERT INTO pipeline_runs VALUES('running-run','webhook','running'),('pending-run','s3','pending');
+INSERT INTO metadata VALUES('pipeline_key_fingerprint','externally-managed-key');""")
             original.executemany("INSERT INTO metadata VALUES(?,?)", [("initialized", "1"), ("receipt_source_uuid", "old"), ("receipt_source_config", "old-config"), ("receipt_fallback_required", "1"), ("receipt_generation", "5")])
             original.commit()
             backup.sqlite_snapshot(root / "live.db", bundle / "sqlite.db")
@@ -165,11 +177,23 @@ assert c.execute('SELECT count(*) FROM oauth_tokens').fetchone()[0]==0
 assert c.execute(\"SELECT revoked_at FROM access_keys WHERE id='victim'\").fetchone()[0]
 assert c.execute('SELECT count(*) FROM export_files').fetchone()[0]==0
 assert c.execute('SELECT state,sql,parameters FROM export_jobs').fetchone()==('canceled','','{}')
+if sys.argv[2]=='pipelines':
+ assert c.execute('SELECT id,state,hex(secret) FROM pipelines ORDER BY id').fetchall()==[('already-paused','paused','070809'),('s3','paused','040506'),('webhook','paused','010203')]
+ assert c.execute('SELECT state FROM pipeline_runs ORDER BY id').fetchall()==[('pending',),('running',)]
+ assert m['pipeline_key_fingerprint']=='externally-managed-key'
+else:
+ assert not c.execute(\"SELECT 1 FROM sqlite_master WHERE name='pipelines'\").fetchone()
 c.close()
 assert not pathlib.Path(str(p)+'.restore-incomplete').exists()
 assert not pathlib.Path(str(p)+'-wal').exists()
 """
-            subprocess.run([sys.executable, "-c", code, str(target)], check=True)
+            subprocess.run([sys.executable, "-c", code, str(target), "pipelines" if with_pipelines else "legacy"], check=True)
+
+    def test_unknown_pipeline_schema_fails_closed(self):
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute("CREATE TABLE pipelines(id TEXT)")
+            with self.assertRaisesRegex(RuntimeError, "unsupported pipeline schema"):
+                backup.pause_restored_pipelines(connection)
 
     def test_restore_rechecks_target_after_waiting_for_exclusive_locks(self):
         with tempfile.TemporaryDirectory() as directory:

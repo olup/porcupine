@@ -141,8 +141,8 @@ The available operations include project and key management, queue inspection,
 SQL schema discovery, observed event and property discovery, read-only
 ClickHouse SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
-operations to the same discovery catalog; the tool count remains two. Scheduled
-export pipelines and identity mutation are not implemented.
+operations to the same discovery catalog; the tool count remains two. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
+operations through the same tools. Identity mutation remains unimplemented.
 
 For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,
 and `query-events`. Schema discovery lists supported functions and quotas. The
@@ -158,8 +158,9 @@ because delivery is eventual. `get-event` reflects pending accepted corrections;
 SQL and catalog results show projected state. Read the [mutation contract](events.md)
 before calling `edit-event` or `delete-event`.
 
-S3 tiering, bucket endpoints, AWS credentials, and hot duration have no MCP
-operations. They are global operator deployment configuration. Administrator
+Native ClickHouse S3 tiering, its bucket endpoint and AWS credentials, and hot
+duration have no MCP operations. They are operator deployment configuration.
+Project delivery pipelines use separate scoped destination inputs. Administrator
 access tokens still execute read-only SQL and cannot change storage through it.
 
 ## SQL result exports
@@ -181,6 +182,20 @@ as interactive analytics. The delivery barrier is not a point-in-time snapshot.
 The [export reference](exports.md#mcp-examples) includes create, poll, and cancel
 arguments. Export-specific validation is in progress; this reference does not
 claim that its real-storage integration suite has passed yet.
+
+## Delivery pipelines
+
+Use `porcupine_docs` to discover pipeline operations, then call them through
+`porcupine_call`. Reads require `pipelines:read` and `events:read`; writes and
+retries require `pipelines:write` and `events:read`, all for the selected project.
+An event reader alone cannot configure egress. Destination credentials are
+write-only inputs; stored credential values never appear in returned metadata.
+
+The [pipeline reference](pipelines.md) describes creation, pause, resume,
+credential replacement, run inspection, and retry. Pausing is not a recall of
+requests already in flight. Supported restores pause destinations before any
+resumption. These calls cannot change the operator's encryption key, custom S3
+origin allowlist, native ClickHouse policy, or export resource budgets.
 
 ## Verification
 

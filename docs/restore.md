@@ -27,7 +27,7 @@ Keep all three copies at the same recovery point. ClickHouse's native S3 disk ne
 
 ## Restore into separate storage
 
-The script restores the copies into a different SQLite file and fresh ClickHouse and MinIO containers. The source containers remain stopped. A separate Docker network preserves the original MinIO endpoint name as a network alias, without connecting the restored storage to the source network.
+The script restores the copies into a different SQLite file and fresh ClickHouse and MinIO containers. The source containers remain stopped. A separate Docker network preserves the original MinIO endpoint name as a network alias, without connecting the restored storage to the source network. Before opening restored SQLite, the script pauses every pipeline destination in one transaction. Backups without pipeline tables need no pause update.
 
 The restored ClickHouse container uses the same image, disk configuration, credentials, database identity, and S3 endpoint as the checkpoint. Its copied data includes access-control metadata and project reader objects. The restored MinIO container contains the copied bucket and cold objects. The drill does not start two writers against one native S3 disk prefix.
 
@@ -44,6 +44,36 @@ The verification phase checks the following results:
 - The applied correction survives, and deleted events stay hidden. Retrying every original event UUID is a duplicate, including UUIDs with deletion tombstones.
 
 The fixture gates ClickHouse requests while stopping the background delivery worker. It then invokes the production flush functions explicitly. This lets the test inspect the restored pending state before replay begins.
+
+## Pause egress before starting a manual copy
+
+A manual database or full-volume restore does not run the native operator tool's safety transformations. A copied active destination can resume sending webhook or S3 requests as soon as the recovered application starts. Keep the recovered application stopped and external network access restricted until you have paused every destination and reviewed pending delivery records.
+
+From the repository root, pause the copied destinations before startup:
+
+```sh
+python3 - /recovery/porcupine.db <<'PY'
+from contextlib import closing
+from pathlib import Path
+import sqlite3
+import sys
+sys.path.insert(0, "scripts")
+from online_backup import lock, pause_restored_pipelines
+
+path = Path(sys.argv[1]).resolve(strict=True)
+with lock(str(path) + ".writer.lock", True, 0):
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("PRAGMA synchronous=FULL")
+        database.execute("BEGIN IMMEDIATE")
+        count = pause_restored_pipelines(database)
+        database.commit()
+print("Paused pipeline destinations:", count)
+PY
+```
+
+The lifetime lock refuses this change while a guarded application is running. The command changes only destination state. It preserves encrypted credentials and pending delivery records. Older snapshots without a `pipelines` table need no update. Do not run an older writer that ignores the lock protocol.
+
+Preserve the original pipeline encryption key outside SQLite and ClickHouse backups. Restore the same `PORCUPINE_PIPELINE_KEY` value or the secure file configured by `PORCUPINE_PIPELINE_KEY_FILE`. Review destination ownership, pending deliveries, post-checkpoint credential revocations, and possible receiver-side effects before resuming any destination. Keeping the key available does not itself authorize restored egress.
 
 ## Preserve the recovery boundary
 
