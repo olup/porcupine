@@ -17,12 +17,14 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 	for _, scenario := range []string{"matching_commit", "absent_commit", "unavailable_commit", "conflicting_commit", "running"} {
 		t.Run(scenario, func(t *testing.T) {
 			var deletes, gets atomic.Int32
+			checkResume := make(chan func(), 1)
 			checkpoint := `{"version":1,"files":[{"key":"pipeline/part.jsonl.gz"}]}`
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == "GET" {
 					gets.Add(1)
 					switch scenario {
 					case "matching_commit":
+						(<-checkResume)()
 						fmt.Fprint(w, checkpoint)
 					case "conflicting_commit":
 						fmt.Fprint(w, `{"files":["other"]}`)
@@ -85,6 +87,11 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 			status := 204
 			if scenario == "unavailable_commit" || scenario == "conflicting_commit" || scenario == "running" {
 				status = 503
+			}
+			if scenario == "matching_commit" {
+				checkResume <- func() {
+					request(t, s, "POST", base+"/"+id+"/resume", adminToken, "", 409)
+				}
 			}
 			request(t, s, "DELETE", base+"/"+id, adminToken, "", status)
 			var count int

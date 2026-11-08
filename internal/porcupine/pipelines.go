@@ -34,6 +34,7 @@ type PipelineConfig struct {
 }
 
 type pipelineRuntime struct {
+	s3Lifecycle  sync.Map // per-pipeline exclusion between resume and remote deletion cleanup
 	admissionsMu sync.Mutex
 	admissions   map[*pipelineAdmission]struct{}
 
@@ -318,4 +319,13 @@ func (s *Service) pipelineWindowHasAdmissions(projectID string, startMS, endMS i
 		}
 	}
 	return false
+}
+
+// Both operations touch the same destination's work. A resume must not restart
+// its worker while deletion is checking the remote commit marker.
+func (s *Service) lockS3Lifecycle(id string) (func(), error) {
+	if _, busy := s.pipelines.s3Lifecycle.LoadOrStore(id, struct{}{}); busy {
+		return nil, apiError(409, "pipeline lifecycle change in progress")
+	}
+	return func() { s.pipelines.s3Lifecycle.Delete(id) }, nil
 }

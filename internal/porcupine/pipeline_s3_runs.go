@@ -97,6 +97,11 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 	if s.pipelines == nil {
 		return apiError(503, "pipelines are not configured")
 	}
+	release, err := s.lockS3Lifecycle(id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Pausing and claiming both serialize in SQLite, so a new attempt cannot start
 	// after this point. A running attempt observes the pause and is cleaned next.
 	if _, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state='paused' WHERE project_id=? AND id=?`, project, id); err != nil {
@@ -110,15 +115,6 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 	if s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=? AND state='running')`, id).Scan(&running) != nil || running {
 		return apiError(503, "pipeline attempt is stopping; retry deletion")
 	}
-	var spec S3PipelineSpec
-	if json.Unmarshal(p.Config, &spec) != nil {
-		return apiError(503, "pipeline configuration unavailable")
-	}
-	store, err := s.pipelineS3Store(ctx, p, spec)
-	if err != nil {
-		return apiError(503, "pipeline destination unavailable")
-	}
-	defer store.Close()
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT f.run_id,r.window_start_ms,r.manifest FROM pipeline_s3_files f JOIN pipeline_s3_runs r ON r.id=f.run_id WHERE r.pipeline_id=? AND r.state!='succeeded'`, id)
 	if err != nil {
 		return apiError(503, "pipeline storage unavailable")
@@ -142,19 +138,30 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 	if err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
-	for _, run := range ids {
-		remote, readErr := store.ReadManifest(ctx, fmt.Sprintf("%s/%d/manifest.json", id, run.start))
-		if readErr == nil {
-			if run.manifest == "" || !bytes.Equal(remote, []byte(run.manifest)) {
-				return apiError(503, "pipeline manifest requires review")
+	if len(ids) > 0 {
+		var spec S3PipelineSpec
+		if json.Unmarshal(p.Config, &spec) != nil {
+			return apiError(503, "pipeline configuration unavailable")
+		}
+		store, err := s.pipelineS3Store(ctx, p, spec)
+		if err != nil {
+			return apiError(503, "pipeline destination unavailable")
+		}
+		defer store.Close()
+		for _, run := range ids {
+			remote, readErr := store.ReadManifest(ctx, fmt.Sprintf("%s/%d/manifest.json", id, run.start))
+			if readErr == nil {
+				if run.manifest == "" || !bytes.Equal(remote, []byte(run.manifest)) {
+					return apiError(503, "pipeline manifest requires review")
+				}
+				continue
 			}
-			continue
-		}
-		if !errors.Is(readErr, exportstore.ErrNotFound) {
-			return apiError(503, "pipeline commit status unavailable")
-		}
-		if s.cleanupPipelineS3Run(ctx, store, run.id) != nil {
-			return apiError(503, "pipeline cleanup incomplete")
+			if !errors.Is(readErr, exportstore.ErrNotFound) {
+				return apiError(503, "pipeline commit status unavailable")
+			}
+			if s.cleanupPipelineS3Run(ctx, store, run.id) != nil {
+				return apiError(503, "pipeline cleanup incomplete")
+			}
 		}
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=? AND id=? AND NOT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=? AND state='running')`, project, id, id)

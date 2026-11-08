@@ -316,6 +316,16 @@ func (s *Service) setPipelineState(ctx context.Context, input *PipelineGetInput,
 	if err != nil {
 		return nil, pipelineLookupError(err)
 	}
+	if p.Kind == "s3" && state == "active" {
+		if s.ch == nil {
+			return nil, apiError(503, "S3 pipelines require ClickHouse")
+		}
+		release, err := s.lockS3Lifecycle(p.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state=? WHERE project_id=? AND id=?`, state, input.ID, input.PipelineID)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
