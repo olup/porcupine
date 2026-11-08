@@ -119,7 +119,7 @@ for integration tests; the pinned SDK suite also needs Node.js and Chromium.
 ```sh
 make check              # vet, Go tests, formatting
 make integration        # real local ClickHouse
-make integration-s3     # ClickHouse and local MinIO
+make integration-s3     # ClickHouse and local S3-compatible storage
 make compat-install
 make compat             # pinned official PostHog SDK profile
 ```

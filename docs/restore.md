@@ -8,7 +8,7 @@ Run this synthetic drill to check a stopped-copy recovery point across SQLite, C
 python3 scripts/restore_drill.py
 ```
 
-Use Docker, Python 3, and the repository's Go toolchain. The drill uses the pinned ClickHouse and MinIO images from the integration harness. It creates randomized containers, private Docker networks, and temporary files. Published ports bind to `127.0.0.1`. It does not connect to an existing Porcupine instance, use AWS, or deploy an application.
+Use Docker, Python 3, and the repository's Go toolchain. The drill uses the pinned ClickHouse and S3-compatible [Silo](https://github.com/pgsty/silo) images from the integration harness. It creates randomized containers, private Docker networks, and temporary files. Published ports bind to `127.0.0.1`. It does not connect to an existing Porcupine instance, use AWS, or deploy an application.
 
 Expect two passing `TestRestoreDrillFixture` runs followed by a JSON report with `"status": "passed"`. The script removes its containers, volumes, networks, private credentials, and temporary backup files on exit. The report contains no credentials or event payloads. Run the command again to repeat the complete drill with fresh state.
 

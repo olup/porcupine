@@ -13,7 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-MINIO_IMAGE = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+# Silo is a MinIO-compatible test fixture. Pin the multi-arch release manifest.
+MINIO_IMAGE = "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
 ROOT = Path(__file__).resolve().parents[1]
 
 
