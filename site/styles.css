@@ -39,6 +39,11 @@ h1 { margin: 0; font: 700 clamp(34px, 4.6vw, 54px)/1.12 var(--display); letter-s
 .lede { max-width: 570px; margin: 25px 0 26px; font-size: 17px; line-height: 1.75; color: var(--muted); }
 .primary-link { display: inline-flex; gap: 16px; align-items: center; font: 13px/1.5 var(--mono); text-decoration: none; padding: 12px 16px; color: var(--paper); background: var(--green); border: 1px solid var(--green); }
 .primary-link:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.start-section { margin-top: 40px; scroll-margin-top: 20px; }
+.start-section p, .start-section li { font-size: 14px; line-height: 1.7; }
+.start-section p { max-width: 70ch; color: var(--muted); }
+.start-section pre { padding: 12px 16px; border: 1px solid var(--line); background: var(--wash); }
+.start-section ul { padding-inline-start: 20px; }
 .example-section { margin-top: 52px; }
 .section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; column-gap: 24px; row-gap: 8px; margin-bottom: 17px; }
 h2 { font: 600 15px/1.5 var(--mono); margin: 0; letter-spacing: -.3px; }

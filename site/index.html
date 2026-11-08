@@ -28,7 +28,8 @@
         <h1 id="intro-title">Agent-only<br>analytics.</h1>
         <p class="lede">Collect with PostHog-compatible ingestion. Agents query through MCP or HTTP. Deliver events to webhooks and scheduled SQL results to S3.</p>
         <div class="intro-links">
-        <a class="primary-link" href="https://github.com/olup/porcupine/blob/main/docs/mcp.md" data-repo-path="/blob/main/docs/mcp.md">Connect an agent <span aria-hidden="true">↗</span></a>
+          <a class="primary-link" href="#get-started">Get started <span aria-hidden="true">↓</span></a>
+          <a class="secondary-link" href="./llms.txt">Connect an agent <span aria-hidden="true">↗</span></a>
           <a class="secondary-link" href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md" data-repo-path="/blob/main/docs/pipelines.md">Set up a destination <span aria-hidden="true">↗</span></a>
         </div>
         <dl class="destinations" aria-label="Destination pipelines">
@@ -41,6 +42,18 @@
             <dd>Scheduled SQL, gzip files, committed manifests.</dd>
           </div>
         </dl>
+      </section>
+
+      <section id="get-started" class="start-section" aria-labelledby="start-title">
+        <h2 id="start-title">Get started</h2>
+        <p>Install <a href="https://github.com/olup/porcupine/releases/tag/v0.1.0">Porcupine v0.1.0</a> on Linux amd64 or arm64. The local quickstart starts the service and ClickHouse, then captures an event and queries it with SQL.</p>
+        <pre tabindex="0" aria-label="Pull the release image"><code>docker pull ghcr.io/olup/porcupine:0.1.0</code></pre>
+        <ul>
+          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#laptop-with-docker-compose">Run the local quickstart</a></li>
+          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#single-linux-vm-with-https">Host on a VM with HTTPS</a></li>
+          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#application-container-with-a-separate-clickhouse-service">Use a separate ClickHouse server</a></li>
+        </ul>
+        <p>Already have an instance? Give your agent <a href="./llms.txt">llms.txt</a> for authentication, event discovery, queries, and pipelines.</p>
       </section>
 
       <section class="example-section" aria-labelledby="example-title">

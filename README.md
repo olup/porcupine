@@ -10,7 +10,7 @@ events to webhooks and scheduled query results to S3.
 One Go process, embedded SQLite, and ClickHouse. Optional S3; no Redis or message
 broker to operate. See the [architecture](docs/architecture.md) for the deployment.
 
-[Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting guide](docs/hosting.md) ·
+[Get started](#quickstart) · [Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting guide](docs/hosting.md) ·
 [Releases](https://github.com/olup/porcupine/releases) · [Project site](https://olup.github.io/porcupine/) ·
 [Connect an agent](docs/mcp.md) · [Delivery pipelines](docs/pipelines.md) ·
 [API reference](docs/management-api.md) · [MIT license](LICENSE)
@@ -55,12 +55,12 @@ or an existing ClickHouse deployment. Give agents the [agent guide](https://olup
 
 ## Quickstart
 
-Requires Git, Docker with Compose, and Python 3. This starts a local instance with
+Requires Git, Docker Compose 2.24.4 or newer, and Python 3. This starts the released image with
 OAuth enabled, fresh private credentials, and persistent Docker volumes.
 ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
 
 ```sh
-git clone https://github.com/olup/porcupine.git
+git clone --branch v0.1.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'
@@ -70,7 +70,8 @@ with open(".env", "x") as env:
     env.write("PORCUPINE_CLICKHOUSE_PASSWORD=" + secrets.token_hex(32) + "\n")
     env.write("PORCUPINE_OAUTH_ISSUER=http://localhost:8080\n")
 PY
-docker compose -f compose.yaml -f compose.oauth.yaml up -d --build
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
+curl --fail --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8080/readyz
 ```
 
 The configuration step refuses to overwrite an existing `.env`. Keep this file
@@ -99,7 +100,7 @@ GROUP BY event
 
 The result contains `hello` with a total of `"1"`. ClickHouse 64-bit integers use
 JSON strings to preserve precision. Running the example again creates another
-project. `docker compose -f compose.yaml -f compose.oauth.yaml down` stops the
+project. `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml down` stops the
 services and keeps their volumes. Adding `--volumes` destroys the local data.
 
 Use the bootstrap administrator only for setup. Register separate
