@@ -1,16 +1,15 @@
 # Porcupine
 
-Self-hosted, headless product analytics for applications and agents. One Go
-service accepts a tested subset of PostHog ingestion, commits events to a bounded
-SQLite queue, and delivers them to ClickHouse. Query each project's events with
-read-only SQL through HTTP or MCP.
+Agent-first, self-hosted product analytics with no built-in UI. Agents discover
+events and properties, write SQL, and query their project's data through MCP or
+the HTTP API. Applications send events through a PostHog-compatible endpoint.
 
 [Project site](https://olup.github.io/porcupine/) ·
-[API reference](docs/management-api.md) · [MIT license](LICENSE)
+[Connect an agent](docs/mcp.md) · [API reference](docs/management-api.md) · [MIT license](LICENSE)
 
 Porcupine is an early project. It does not implement the full PostHog product or
-its default SDK configuration. There is no analytics dashboard, human login,
-identity merging, feature flags, or session replay. See the
+its default SDK configuration. Human login, identity
+merging, feature flags, and session replay are outside the current scope. See the
 [compatibility profile](docs/compatibility.md) before pointing an SDK at it.
 
 ## Quickstart

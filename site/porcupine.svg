@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 132" fill="none">
-  <title>Porcupine</title>
-  <path d="M21 95 33 80 23 65 44 72 36 43 59 62 57 23 79 55 87 17 98 54 117 27 115 67 142 49 131 82" stroke="#253b2d" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M131 82c13 0 23 6 30 17l-12 7c-7 4-15 4-23 2l-3 10h-13l1-10H63l-4 10H46v-13c-10 1-19-2-25-10" stroke="#253b2d" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="m48 83 15 10m8-21 11 19m13-23 3 21m16-10-5 12" stroke="#8b9b90" stroke-width="2.5" stroke-linecap="round"/>
-  <circle cx="138" cy="92" r="2.8" fill="#253b2d"/>
-  <path d="m157 97 7 3-6 4" fill="#253b2d"/>
-</svg>

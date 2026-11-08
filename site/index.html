@@ -3,11 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Porcupine is an early, self-hosted product analytics service. Capture events, query them with SQL, and give agents project-scoped access through MCP.">
+  <meta name="description" content="Agent-first, self-hosted product analytics with no built-in UI. Agents discover events and properties and query them with SQL through MCP or the HTTP API.">
   <meta name="theme-color" content="#ffffff">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <title>Porcupine · headless product analytics</title>
-  <link rel="icon" href="./porcupine.svg" type="image/svg+xml">
+  <title>Porcupine · Agent-first product analytics</title>
   <link rel="stylesheet" href="./styles.css">
   <script src="./site.js" defer></script>
 </head>
@@ -24,14 +23,9 @@
 
     <main id="main">
       <section class="intro" aria-labelledby="intro-title">
-        <div class="intro-copy">
-          <h1 id="intro-title">Product analytics<br>on your own server.</h1>
-          <p class="lede">Capture events through a PostHog-compatible endpoint. Read delivered data with SQL. Give your agents the same access through MCP.</p>
-          <a class="primary-link" href="https://github.com/olup/porcupine" data-repo-path="">Get started on GitHub <span aria-hidden="true">↗</span></a>
-        </div>
-        <div class="mascot" aria-hidden="true">
-          <img src="./porcupine.svg" alt="" width="180" height="132">
-        </div>
+        <h1 id="intro-title">Agent-first<br>product analytics.</h1>
+        <p class="lede">Porcupine is self-hosted and has no built-in UI. Agents discover events and their properties, write SQL, and run queries through MCP or the HTTP API.</p>
+        <a class="primary-link" href="https://github.com/olup/porcupine/blob/main/docs/mcp.md" data-repo-path="/blob/main/docs/mcp.md">Connect an agent <span aria-hidden="true">↗</span></a>
       </section>
 
       <p class="project-note"><span class="note-label">Early project</span> APIs and operating limits are documented. Test it with your workload before relying on it.</p>

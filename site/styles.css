@@ -28,14 +28,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .wordmark span { color: var(--green); }
 nav { display: flex; gap: 28px; font: 13px/1.5 var(--mono); }
 nav a { display: inline-flex; align-items: center; min-height: 32px; text-decoration: none; }
-.intro { display: flex; align-items: center; gap: 48px; padding: 70px 0 46px; }
-.intro-copy { flex: 1; }
+.intro { padding: 70px 0 46px; }
 h1 { margin: 0; font: 700 clamp(34px, 4.6vw, 54px)/1.12 var(--display); letter-spacing: -2.6px; }
 .lede { max-width: 570px; margin: 25px 0 26px; font-size: 17px; line-height: 1.75; color: var(--muted); }
 .primary-link { display: inline-flex; gap: 16px; align-items: center; font: 13px/1.5 var(--mono); text-decoration: none; padding: 12px 16px; color: var(--paper); background: var(--green); border: 1px solid var(--green); }
 .primary-link:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.mascot { width: 190px; flex: none; text-align: center; padding-top: 26px; }
-.mascot img { display: block; width: 180px; height: auto; margin-inline: auto; }
 .project-note { margin: 0; padding: 14px 0 14px 17px; border-left: 2px solid var(--line); color: var(--muted); font-size: 13px; }
 .note-label { margin-right: 12px; color: var(--ink); font: 12px/1.5 var(--mono); }
 .example-section { margin-top: 60px; }
@@ -77,12 +74,9 @@ footer a { white-space: nowrap; }
   .page { width: calc(100% - 36px); }
   .masthead { padding-top: 23px; padding-bottom: 19px; }
   nav { gap: 18px; font-size: 12px; }
-  .intro { position: relative; gap: 0; padding-top: 62px; padding-bottom: 33px; }
-  .intro-copy { width: 100%; }
+  .intro { padding-top: 42px; padding-bottom: 33px; }
   h1 { font-size: clamp(29px, 6.9vw, 43px); letter-spacing: -1.7px; }
   .lede { max-width: 490px; font-size: 15px; line-height: 1.8; margin-top: 21px; }
-  .mascot { position: absolute; right: 0; top: 10px; width: 67px; padding: 0; }
-  .mascot img { width: 67px; }
   .primary-link { font-size: 12px; padding: 11px 13px; }
   .project-note { padding: 11px 0 11px 13px; font-size: 12px; }
   .note-label { display: block; margin-bottom: 5px; }
