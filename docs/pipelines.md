@@ -128,7 +128,8 @@ event timestamp.
 A window can contain multiple HTTP chunks. Each chunk targets at most 100
 events and about 1 MiB; one previously accepted large event can occupy a chunk
 alone. Requests begin only after the window closes. A batch body has the same
-identifiers as event mode and an `events` array in place of `event`. Its delivery
+identifiers as event mode, the UTC boundaries `window_start_ms` and
+`window_end_ms`, and an `events` array. Its delivery
 ID and final payload remain stable across retries.
 
 For a five-minute window ending at 12:05 UTC, two chunks might use IDs
@@ -145,7 +146,11 @@ Success requires a 2xx response with a complete response body no larger than
 408, 425, 429, and 5xx responses retry with exponential backoff, up to eight
 attempts. Other rejections become failed runs. An uncertain response or restart
 can redeliver a request already accepted by the receiver. Delivery is at least
-once, not exactly once.
+once. The receiver should record its delivery ID before applying side effects.
+
+One worker sends webhook requests sequentially. A transient failure delays
+further attempts to that destination, starting at one second and increasing
+up to one hour. The worker can deliver to other destinations during that delay.
 
 Pending and failed payloads remain durable and count against queue limits.
 Defaults are 10,000 queued events and 64 MiB instance-wide, with 1,000 events

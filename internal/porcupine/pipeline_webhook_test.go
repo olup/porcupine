@@ -48,11 +48,12 @@ func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+	events := make([]Event, 0, 201)
 	for i := range 201 {
-		event := Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err = s.enqueueWebhook(context.Background(), tx, event); err != nil {
-			t.Fatalf("event %d: %v", i, err)
-		}
+		events = append(events, Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)})
+	}
+	if err = s.enqueueWebhooks(context.Background(), tx, events); err != nil {
+		t.Fatal(err)
 	}
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
