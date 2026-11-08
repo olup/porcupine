@@ -1,16 +1,42 @@
 # Porcupine
 
-Agent-first, self-hosted product analytics with no built-in UI. Agents discover
-events and properties, write SQL, and query their project's data through MCP or
-the HTTP API. Applications send events through a PostHog-compatible endpoint.
+Lightweight, self-hosted, agent-only product analytics. No built-in UI.
+
+Agents discover events and properties, write SQL, and work through MCP or the
+HTTP API. Applications collect through PostHog-compatible ingestion with the
+documented `posthog-js` and `posthog-node` profiles. Destination pipelines send
+events to webhooks and scheduled query results to S3.
+
+One Go process, embedded SQLite, and ClickHouse. Optional S3; no Redis or message
+broker to operate. See the [architecture](docs/architecture.md) for the deployment.
 
 [Project site](https://olup.github.io/porcupine/) ·
-[Connect an agent](docs/mcp.md) · [API reference](docs/management-api.md) · [MIT license](LICENSE)
+[Connect an agent](docs/mcp.md) · [Delivery pipelines](docs/pipelines.md) ·
+[API reference](docs/management-api.md) · [MIT license](LICENSE)
 
 Porcupine is an early project. It does not implement the full PostHog product or
 its default SDK configuration. Human login, identity
 merging, feature flags, and session replay are outside the current scope. See the
 [compatibility profile](docs/compatibility.md) before pointing an SDK at it.
+
+## Send data to your destinations
+
+[Project pipelines](docs/pipelines.md) send data repeatedly. Choose a destination
+for each pipeline:
+
+- Webhooks send accepted original events individually or in closed-window
+  batches. Retries keep stable delivery identities; receivers deduplicate.
+- Scheduled S3 queries process closed receipt-time windows and publish gzip
+  CSV or JSONL with a committed manifest for each completed run.
+
+These destinations are separate from native ClickHouse cold storage and
+[one-off SQL downloads](docs/exports.md). Configure them through HTTP or MCP with
+`pipelines:write` plus `events:read`; inspect them with `pipelines:read` plus
+`events:read`. Enable the runtime by setting `PORCUPINE_PIPELINE_KEY` in the
+private `.env` to a stable base64-encoded 32-byte random key. Preserve that key
+across restarts. The operator also controls allowed custom S3 origins;
+destination credentials are encrypted. Delivery is at least once. Supported restores pause
+destinations for review before resumption.
 
 ## Quickstart
 
@@ -70,8 +96,8 @@ require authenticated backend collection with `ingestion_mode: "server_only"`.
 ## SQL and agents
 
 The native API exposes project creation, credentials, event/schema discovery,
-read-only SQL, revision-checked corrections and deletions, and optional private
-SQL exports. [OpenAPI](docs/management-api.md) is served at `/openapi.json`.
+read-only SQL, revision-checked corrections and deletions, private SQL exports,
+and project delivery pipelines. [OpenAPI](docs/management-api.md) is served at `/openapi.json`.
 
 SQL addresses the project-local `events` table. The service validates the SQL
 subset and executes it with a restricted ClickHouse reader and row policies.
@@ -84,19 +110,6 @@ permission-filtered contracts and `porcupine_call` for API operations. Obtain an
 OAuth token for the `/mcp` resource; an `/api/v1` token cannot authenticate MCP.
 Clients must support machine credentials or accept a token from their host.
 There is no interactive OAuth login flow. See [MCP setup](docs/mcp.md).
-
-## Delivery pipelines
-
-[Project pipelines](docs/pipelines.md) send accepted original events to webhooks
-in event or closed-window batch mode, or run scheduled receipt-window S3 queries. They are separate from native ClickHouse cold storage and one-off
-SQL downloads. API and MCP reads require `pipelines:read` plus `events:read`;
-configuration and retries require `pipelines:write` plus `events:read`.
-
-The operator enables the runtime with a private 32-byte encryption key and
-controls custom S3 endpoint origins. Destination credentials are write-only,
-encrypted inputs. Delivery is at least once, and supported restores always
-pause destinations for review before any resume. No external integration or
-production destination is implied by the local test coverage.
 
 ## Storage and operations
 

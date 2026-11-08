@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Agent-first, self-hosted product analytics with no built-in UI. Agents discover events and properties and query them with SQL through MCP or the HTTP API.">
+  <meta name="description" content="Lightweight, agent-only product analytics. Self-hosted MCP and HTTP queries, PostHog-compatible ingestion, webhook delivery and scheduled S3 pipelines. No built-in UI.">
   <meta name="theme-color" content="#ffffff">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <title>Porcupine · Agent-first product analytics</title>
+  <title>Porcupine · Lightweight analytics for agents</title>
   <link rel="stylesheet" href="./styles.css">
   <script src="./site.js" defer></script>
 </head>
@@ -23,24 +23,36 @@
 
     <main id="main">
       <section class="intro" aria-labelledby="intro-title">
-        <h1 id="intro-title">Agent-first<br>product analytics.</h1>
-        <p class="lede">Porcupine is self-hosted and has no built-in UI. Agents discover events and their properties, write SQL, and run queries through MCP or the HTTP API.</p>
+        <p class="eyebrow">Lightweight / self-hosted / no UI</p>
+        <h1 id="intro-title">Agent-only<br>analytics.</h1>
+        <p class="lede">Collect with PostHog-compatible ingestion. Agents query through MCP or HTTP. Deliver events to webhooks and scheduled SQL results to S3.</p>
+        <div class="intro-links">
         <a class="primary-link" href="https://github.com/olup/porcupine/blob/main/docs/mcp.md" data-repo-path="/blob/main/docs/mcp.md">Connect an agent <span aria-hidden="true">↗</span></a>
+          <a class="secondary-link" href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md" data-repo-path="/blob/main/docs/pipelines.md">Set up a destination <span aria-hidden="true">↗</span></a>
+        </div>
+        <dl class="destinations" aria-label="Destination pipelines">
+          <div>
+            <dt>webhook</dt>
+            <dd>One event at a time, or closed-window batches.</dd>
+          </div>
+          <div>
+            <dt>s3</dt>
+            <dd>Scheduled SQL, gzip files, committed manifests.</dd>
+          </div>
+        </dl>
       </section>
-
-      <p class="project-note"><span class="note-label">Early project</span> APIs and operating limits are documented. Test it with your workload before relying on it.</p>
 
       <section class="example-section" aria-labelledby="example-title">
         <div class="section-heading">
-          <h2 id="example-title">Capture and query</h2>
+          <h2 id="example-title">Capture, query, deliver</h2>
           <p>How many conversations did each client start?</p>
         </div>
         <div class="console" data-examples>
           <div class="console-toolbar">
-            <div class="tabs" role="tablist" aria-label="Capture and query example" hidden>
+            <div class="tabs" role="tablist" aria-label="Capture, query and delivery examples" hidden>
               <button id="tab-capture" role="tab" aria-controls="panel-capture" aria-selected="true" tabindex="0">Capture</button>
               <button id="tab-query" role="tab" aria-controls="panel-query" aria-selected="false" tabindex="-1">SQL</button>
-              <button id="tab-result" role="tab" aria-controls="panel-result" aria-selected="false" tabindex="-1">Result</button>
+              <button id="tab-deliver" role="tab" aria-controls="panel-deliver" aria-selected="false" tabindex="-1">Deliver</button>
             </div>
             <div class="copy-controls" hidden>
               <span class="copy-status" role="status" aria-live="polite"></span>
@@ -78,24 +90,22 @@ ORDER BY conversations DESC
 LIMIT 20</code></pre>
             <p class="panel-note">Send this SQL to <code>POST /api/v1/projects/{id}/query</code> with <code>parameters: {"event": "conversation_started"}</code> and an <code>events:read</code> API token. <a href="https://github.com/olup/porcupine/blob/main/docs/analytics.md#sql-request-and-result" data-repo-path="/blob/main/docs/analytics.md#sql-request-and-result">Request format ↗</a></p>
           </section>
-          <section id="panel-result" class="example-panel" role="tabpanel" aria-labelledby="tab-result">
-            <div class="file-label"><span aria-hidden="true">&lt;</span> response.json <span class="sample-label">illustrative</span></div>
-            <pre tabindex="0" aria-label="Illustrative query response"><code>{
-  "result": {
-    "meta": [
-      {"name": "client", "type": "String"},
-      {"name": "conversations", "type": "UInt64"}
-    ],
-    "data": [{"client": "acme", "conversations": "1"}],
-    "rows": 1
+          <section id="panel-deliver" class="example-panel" role="tabpanel" aria-labelledby="tab-deliver">
+            <div class="file-label"><span aria-hidden="true">&gt;</span> pipeline.json</div>
+            <pre tabindex="0" aria-label="Batch webhook pipeline request"><code>{
+  "name": "Conversation events",
+  "kind": "webhook",
+  "webhook": {
+    "endpoint": "https://receiver.example.com/events",
+    "delivery_mode": "batch",
+    "interval_seconds": 300,
+    "include_events": ["conversation_started"]
   },
-  "delivery": {
-    "enabled": true,
-    "pending": 0,
-    "pending_mutations": 0
+  "credentials": {
+    "bearer_token": "DESTINATION_TOKEN"
   }
 }</code></pre>
-            <p class="panel-note">Queries read delivered ClickHouse data. Capture success means durable queue acceptance; delivery is eventual.</p>
+            <p class="panel-note">Create with <code>POST /api/v1/projects/{id}/pipelines</code> and <code>pipelines:write</code> plus <code>events:read</code>. This example sends five-minute batches to your HTTPS receiver. Keep the real destination token in a private request file. <a href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md#scheduled-s3-query-windows" data-repo-path="/blob/main/docs/pipelines.md#scheduled-s3-query-windows">Scheduled S3 example ↗</a></p>
           </section>
         </div>
         <p class="example-caption"><a href="https://github.com/olup/porcupine/blob/main/docs/oauth.md" data-repo-path="/blob/main/docs/oauth.md">Token setup ↗</a></p>
@@ -104,14 +114,13 @@ LIMIT 20</code></pre>
       <section class="details" aria-label="How Porcupine fits together">
         <div>
           <h2>A small deployment</h2>
-          <p>One Go service, SQLite for the durable queue, and ClickHouse for analytical history. Optional native S3 tiering.</p>
+          <p>One Go process, embedded SQLite, and ClickHouse. Optional native S3 tiering. No Redis or message broker.</p>
           <a href="https://github.com/olup/porcupine/blob/main/docs/architecture.md" data-repo-path="/blob/main/docs/architecture.md">Architecture ↗</a>
         </div>
         <div>
-          <h2>Explicit contracts</h2>
-          <p>Project-scoped credentials, bounded SQL, and stable UUID retries. Explicit pipeline permissions control webhook and scheduled S3 delivery.</p>
+          <h2>PostHog-compatible ingestion</h2>
+          <p>Use the documented posthog-js and posthog-node profiles for capture. Cookieless browser IDs rotate daily; project grants and query limits stay explicit.</p>
           <a href="https://github.com/olup/porcupine/blob/main/docs/compatibility.md" data-repo-path="/blob/main/docs/compatibility.md">Compatibility &amp; limits ↗</a>
-          <a href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md" data-repo-path="/blob/main/docs/pipelines.md">Delivery pipelines ↗</a>
         </div>
       </section>
     </main>

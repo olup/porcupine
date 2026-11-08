@@ -22,7 +22,7 @@ function selectTab(index, focus = false) {
   status.textContent = '';
   clearTimeout(statusTimer);
   copyButton.textContent = 'Copy';
-  copyButton.setAttribute('aria-label', `Copy ${['capture request', 'SQL query', 'illustrative response'][index]}`);
+  copyButton.setAttribute('aria-label', `Copy ${['capture request', 'SQL query', 'webhook pipeline request'][index]}`);
   if (focus) tabs[index].focus();
 }
 
