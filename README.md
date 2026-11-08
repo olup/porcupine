@@ -1,3 +1,5 @@
+<img src="site/assets/porcupine.svg" width="88" height="88" alt="Porcupine logo">
+
 # Porcupine
 
 Lightweight, self-hosted, agent-only product analytics. No built-in UI.

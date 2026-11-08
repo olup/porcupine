@@ -3,147 +3,52 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Lightweight, agent-only product analytics. Self-hosted MCP and HTTP queries, PostHog-compatible ingestion, webhook delivery and scheduled S3 pipelines. No built-in UI.">
+  <meta name="description" content="Self-hosted product analytics for agents. Capture events with PostHog SDKs, query ClickHouse through MCP or HTTP, and deliver data to webhooks and S3.">
   <meta name="theme-color" content="#ffffff">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <title>Porcupine · Lightweight analytics for agents</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Porcupine · Product analytics for agents</title>
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="./assets/ibm-plex-mono-400.woff2">
   <link rel="stylesheet" href="./styles.css">
   <script src="./site.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <div class="page">
-    <header class="masthead">
-      <a class="wordmark" href="./" aria-label="Porcupine home">porcupine<span aria-hidden="true">_</span></a>
-      <nav aria-label="Main navigation">
-        <a href="./llms.txt">Agent guide</a>
-        <a href="https://github.com/olup/porcupine" data-repo-path="">GitHub <span aria-hidden="true">↗</span></a>
-        <a href="https://github.com/olup/porcupine/tree/main/docs" data-repo-path="/tree/main/docs">Docs <span aria-hidden="true">↗</span></a>
-      </nav>
-    </header>
+  <main>
+    <section class="intro" aria-labelledby="name">
+      <div class="signature">
+        <img class="mark" src="./assets/porcupine.svg" width="128" height="128" alt="">
+        <h1 id="name">porcupine</h1>
+      </div>
+      <p class="lead">Self-hosted product analytics for agents.</p>
+      <p class="description">We built Porcupine because we used PostHog to collect events and never opened its dashboard. Self-hosting the whole stack was more than we wanted to maintain. With Porcupine, our agents query those events directly. We run one Go service, SQLite, and ClickHouse.</p>
+    </section>
 
-    <main id="main">
-      <section class="intro" aria-labelledby="intro-title">
-        <p class="eyebrow">Lightweight / self-hosted / no UI</p>
-        <h1 id="intro-title">Agent-only<br>analytics.</h1>
-        <p class="lede">Collect with PostHog-compatible ingestion. Agents query through MCP or HTTP. Deliver events to webhooks and scheduled SQL results to S3.</p>
-        <div class="intro-links">
-          <a class="primary-link" href="#get-started">Get started <span aria-hidden="true">↓</span></a>
-          <a class="secondary-link" href="./llms.txt">Connect an agent <span aria-hidden="true">↗</span></a>
-          <a class="secondary-link" href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md" data-repo-path="/blob/main/docs/pipelines.md">Set up a destination <span aria-hidden="true">↗</span></a>
-        </div>
-        <dl class="destinations" aria-label="Destination pipelines">
-          <div>
-            <dt>webhook</dt>
-            <dd>One event at a time, or closed-window batches.</dd>
-          </div>
-          <div>
-            <dt>s3</dt>
-            <dd>Scheduled SQL, gzip files, committed manifests.</dd>
-          </div>
-        </dl>
-      </section>
+    <section id="get-started" aria-labelledby="start">
+      <h2 id="start">Get started</h2>
+      <p>Paste this into your coding agent.</p>
+      <div class="prompt-box">
+        <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Help me connect to an existing instance or start one locally. Then capture a test event and query it with SQL.</p>
+        <button type="button" id="copy" hidden>Copy prompt</button>
+      </div>
+      <span id="copy-status" role="status"></span>
+      <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md">Hosting guide</a></div>
+    </section>
 
-      <section id="get-started" class="start-section" aria-labelledby="start-title">
-        <h2 id="start-title">Get started</h2>
-        <p>Install <a href="https://github.com/olup/porcupine/releases/tag/v0.1.0">Porcupine v0.1.0</a> on Linux amd64 or arm64. The local quickstart starts the service and ClickHouse, then captures an event and queries it with SQL.</p>
-        <pre tabindex="0" aria-label="Pull the release image"><code>docker pull ghcr.io/olup/porcupine:0.1.0</code></pre>
-        <ul>
-          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#laptop-with-docker-compose">Run the local quickstart</a></li>
-          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#single-linux-vm-with-https">Host on a VM with HTTPS</a></li>
-          <li><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/hosting.md#application-container-with-a-separate-clickhouse-service">Use a separate ClickHouse server</a></li>
-        </ul>
-        <p>Already have an instance? Give your agent <a href="./llms.txt">llms.txt</a> for authentication, event discovery, queries, and pipelines.</p>
-      </section>
-
-      <section class="example-section" aria-labelledby="example-title">
-        <div class="section-heading">
-          <h2 id="example-title">Capture, query, deliver</h2>
-          <p>How many conversations did each client start?</p>
-        </div>
-        <div class="console" data-examples>
-          <div class="console-toolbar">
-            <div class="tabs" role="tablist" aria-label="Capture, query and delivery examples" hidden>
-              <button id="tab-capture" role="tab" aria-controls="panel-capture" aria-selected="true" tabindex="0">Capture</button>
-              <button id="tab-query" role="tab" aria-controls="panel-query" aria-selected="false" tabindex="-1">SQL</button>
-              <button id="tab-deliver" role="tab" aria-controls="panel-deliver" aria-selected="false" tabindex="-1">Deliver</button>
-            </div>
-            <div class="copy-controls" hidden>
-              <span class="copy-status" role="status" aria-live="polite"></span>
-              <button class="copy-button" type="button">Copy</button>
-            </div>
-          </div>
-          <section id="panel-capture" class="example-panel" role="tabpanel" aria-labelledby="tab-capture">
-            <div class="file-label"><span aria-hidden="true">$</span> capture.sh</div>
-            <pre tabindex="0" aria-label="Capture request"><code>curl --fail-with-body "$PORCUPINE_URL/capture/" \
-  -H "Authorization: Bearer $WRITE_TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data '{
-    "uuid": "0192b530-8600-7000-8000-000000000001",
-    "event": "conversation_started",
-    "distinct_id": "visitor-17",
-    "properties": {
-      "client": "acme",
-      "conversation_id": "conv-001"
-    }
-  }'</code></pre>
-            <p class="panel-note">Use a single-project API token with <code>events:write</code>. Keep the same UUID when retrying.</p>
-          </section>
-          <section id="panel-query" class="example-panel" role="tabpanel" aria-labelledby="tab-query">
-            <div class="file-label"><span aria-hidden="true">&gt;</span> analysis.sql</div>
-            <pre tabindex="0" aria-label="Conversation count SQL"><code>SELECT
-  JSONExtractString(properties, 'client') AS client,
-  uniqExact(JSONExtractString(
-    properties, 'conversation_id'
-  )) AS conversations
-FROM events
-WHERE event = {event:String}
-  AND JSONHas(properties, 'conversation_id')
-GROUP BY client
-ORDER BY conversations DESC
-LIMIT 20</code></pre>
-            <p class="panel-note">Send this SQL to <code>POST /api/v1/projects/{id}/query</code> with <code>parameters: {"event": "conversation_started"}</code> and an <code>events:read</code> API token. <a href="https://github.com/olup/porcupine/blob/main/docs/analytics.md#sql-request-and-result" data-repo-path="/blob/main/docs/analytics.md#sql-request-and-result">Request format ↗</a></p>
-          </section>
-          <section id="panel-deliver" class="example-panel" role="tabpanel" aria-labelledby="tab-deliver">
-            <div class="file-label"><span aria-hidden="true">&gt;</span> pipeline.json</div>
-            <pre tabindex="0" aria-label="Batch webhook pipeline request"><code>{
-  "name": "Conversation events",
-  "kind": "webhook",
-  "webhook": {
-    "endpoint": "https://receiver.example.com/events",
-    "delivery_mode": "batch",
-    "interval_seconds": 300,
-    "include_events": ["conversation_started"]
-  },
-  "credentials": {
-    "bearer_token": "DESTINATION_TOKEN"
-  }
-}</code></pre>
-            <p class="panel-note">Create with <code>POST /api/v1/projects/{id}/pipelines</code> and <code>pipelines:write</code> plus <code>events:read</code>. This example sends five-minute batches to your HTTPS receiver. Keep the real destination token in a private request file. <a href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md#scheduled-s3-query-windows" data-repo-path="/blob/main/docs/pipelines.md#scheduled-s3-query-windows">Scheduled S3 example ↗</a></p>
-          </section>
-        </div>
-        <p class="example-caption"><a href="https://github.com/olup/porcupine/blob/main/docs/oauth.md" data-repo-path="/blob/main/docs/oauth.md">Token setup ↗</a></p>
-      </section>
-
-      <section class="details" aria-label="How Porcupine fits together">
-        <div>
-          <h2>A small deployment</h2>
-          <p>One Go process, embedded SQLite, and ClickHouse. Optional native S3 tiering. No Redis or message broker.</p>
-          <a href="https://github.com/olup/porcupine/blob/main/docs/architecture.md" data-repo-path="/blob/main/docs/architecture.md">Architecture ↗</a>
-          <a href="https://github.com/olup/porcupine/blob/main/docs/hosting.md" data-repo-path="/blob/main/docs/hosting.md">Hosting guide ↗</a>
-        </div>
-        <div>
-          <h2>PostHog-compatible ingestion</h2>
-          <p>Use the documented posthog-js and posthog-node profiles for capture. Cookieless browser IDs rotate daily; project grants and query limits stay explicit.</p>
-          <a href="https://github.com/olup/porcupine/blob/main/docs/compatibility.md" data-repo-path="/blob/main/docs/compatibility.md">Compatibility &amp; limits ↗</a>
-        </div>
-      </section>
-    </main>
-
-    <footer>
-      <p>porcupine <span aria-hidden="true">/</span> headless product analytics</p>
-      <a href="https://github.com/olup/porcupine" data-repo-path="">Read the source <span aria-hidden="true">↗</span></a>
-    </footer>
-  </div>
+    <section class="features" aria-label="Features">
+      <article>
+        <h2><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/compatibility.md">Capture</a></h2>
+        <p>Send events with the supported PostHog JS and Node SDK profiles. Browser capture can run without cookies.</p>
+      </article>
+      <article>
+        <h2><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/analytics.md">Query</a></h2>
+        <p>Let an agent discover your events and run project-scoped SQL through MCP or HTTP.</p>
+      </article>
+      <article>
+        <h2><a href="https://github.com/olup/porcupine/blob/v0.1.0/docs/pipelines.md">Deliver</a></h2>
+        <p>Forward events to webhooks individually or in batches. Send the results of a scheduled SQL query to S3.</p>
+      </article>
+    </section>
+  </main>
+  <footer><a href="https://github.com/olup/porcupine">GitHub</a><a href="https://github.com/olup/porcupine/tree/main/docs">Documentation</a><a href="https://github.com/olup/porcupine/releases/tag/v0.1.0">Release v0.1.0</a></footer>
 </body>
 </html>

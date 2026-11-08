@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" role="img" aria-labelledby="title">
+  <title id="title">Porcupine</title>
+  <style>:root{color:#000}@media(prefers-color-scheme:dark){:root{color:#fff}}</style>
+  <path d="M540 938.799 159.506 279.764H920.494Z" fill="none" stroke="currentColor" stroke-width="42" stroke-linejoin="round"/>
+  <g fill="currentColor">
+    <circle cx="431.649" cy="506.35" r="33.65"/>
+    <circle cx="646.351" cy="506.35" r="33.65"/>
+  </g>
+  <path fill="none" stroke="currentColor" stroke-width="34.1" stroke-linecap="round"
+        d="M200.567 141.201V279.764 M274.091 141.201V279.764 M347.616 141.201V279.543
+           M421.141 141.201V279.543 M494.665 141.201V279.543 M568.19 141.201V279.764
+           M641.714 141.201V279.764 M715.239 141.201V279.543 M788.764 141.201V279.543
+           M862.288 141.201V279.543"/>
+</svg>
