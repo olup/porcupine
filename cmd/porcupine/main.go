@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(porcupine.Version)
+		return
+	}
 	addr := os.Getenv("PORCUPINE_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:8080"
