@@ -1,0 +1,8 @@
+# Enabling OAuth rejects legacy API/MCP Bearer keys unless migration is explicit.
+# Browser PostHog ingestion keys remain separate and do not become OAuth clients.
+services:
+  porcupine:
+    environment:
+      PORCUPINE_OAUTH_ISSUER: ${PORCUPINE_OAUTH_ISSUER:?Set the public HTTPS Porcupine origin}
+      PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS: ${PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS:-900}
+      PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS: ${PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS:-false}

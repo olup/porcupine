@@ -1,0 +1,1 @@
+{"api_key":"{{KEY}}","project_id":"untrusted-project","event":"purchase","distinct_id":"root-user","uuid":"capture-fixture","properties":{"distinct_id":"property-user","token":"{{KEY}}","business_token":"keep-me","amount":42},"timestamp":"2026-11-06T10:00:00Z"}

@@ -1,0 +1,36 @@
+services:
+  porcupine:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PORCUPINE_BOOTSTRAP_TOKEN: ${PORCUPINE_BOOTSTRAP_TOKEN:?Set a private bootstrap token}
+      PORCUPINE_TRUSTED_PROXIES: ${PORCUPINE_TRUSTED_PROXIES:-}
+      PORCUPINE_ALLOWED_ORIGINS: ${PORCUPINE_ALLOWED_ORIGINS:-}
+      PORCUPINE_HOT_RECEIPT_LIMIT: ${PORCUPINE_HOT_RECEIPT_LIMIT:-0}
+      PORCUPINE_QUEUE_MAX_EVENTS: ${PORCUPINE_QUEUE_MAX_EVENTS:-100000}
+      PORCUPINE_QUEUE_MAX_BYTES: ${PORCUPINE_QUEUE_MAX_BYTES:-268435456}
+      PORCUPINE_CLICKHOUSE_URL: http://clickhouse:8123
+      PORCUPINE_CLICKHOUSE_DATABASE: porcupine
+      PORCUPINE_CLICKHOUSE_USER: porcupine_admin
+      PORCUPINE_CLICKHOUSE_PASSWORD: ${PORCUPINE_CLICKHOUSE_PASSWORD:?Set a private ClickHouse provisioning password}
+    depends_on:
+      - clickhouse
+    volumes:
+      - porcupine-data:/data
+    stop_grace_period: 30s
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.36.3
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: porcupine_admin
+      CLICKHOUSE_PASSWORD: ${PORCUPINE_CLICKHOUSE_PASSWORD:?Set a private ClickHouse provisioning password}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    mem_limit: 2g
+    stop_grace_period: 30s
+volumes:
+  porcupine-data:
+  clickhouse-data:

@@ -1,0 +1,40 @@
+{
+  "provenance": {
+    "sdk": "posthog-node",
+    "version": "5.63.1",
+    "profile": "analytics-only",
+    "source": "Observed real SDK HTTP request to temporary Go server",
+    "normalization": "Credentials, UUIDs, timestamps, local addresses replaced; remaining SDK properties retained",
+    "path": "/batch/",
+    "content_type": "application/json",
+    "content_encoding": "gzip",
+    "body_format": "gzip"
+  },
+  "payload": {
+    "api_key": "FIXTURE_INGEST_TOKEN",
+    "batch": [
+      {
+        "event": "node custom",
+        "properties": {
+          "nested": {
+            "unicode": "東京 🦔",
+            "list": [
+              1,
+              true,
+              null
+            ]
+          },
+          "number": 42,
+          "$lib": "posthog-node",
+          "$lib_version": "5.63.1",
+          "$is_server": true,
+          "$geoip_disable": true
+        },
+        "timestamp": "2025-02-03T04:05:06.789Z",
+        "uuid": "01900000-0000-7000-8000-000000000001",
+        "distinct_id": "node-user-é"
+      }
+    ],
+    "sent_at": "2025-02-03T04:05:06.789Z"
+  }
+}

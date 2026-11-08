@@ -1,0 +1,1 @@
+[{"event":"$pageview","uuid":"browser-fixture","properties":{"token":"{{KEY}}","distinct_id":"browser-user","$lib":"web","$current_url":"https://app.example.test/"},"timestamp":"2026-11-06T10:00:00.000Z"}]

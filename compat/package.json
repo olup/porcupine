@@ -1,0 +1,14 @@
+{
+  "name": "porcupine-sdk-compat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 contracts.test.mjs",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0",
+    "posthog-js": "1.447.3",
+    "posthog-node": "5.63.1"
+  }
+}

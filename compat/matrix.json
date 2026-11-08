@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "profile": "cookieless-product-and-identified-diagnostics",
+  "supported_versions": {
+    "posthog-js": "1.447.3",
+    "posthog-node": "5.63.1",
+    "playwright": "1.65.0"
+  },
+  "configuration_module": "profiles.mjs",
+  "cases": [
+    {
+      "id": "node.capture-flush",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real official SDK custom capture, Unicode, nested properties, timestamp, SDK metadata and flush persistence",
+      "configuration": "nodeProfile"
+    },
+    {
+      "id": "node.shutdown-batch",
+      "required": true,
+      "status": "implemented",
+      "scope": "Two queued events are persisted by SDK shutdown in one batch",
+      "configuration": "nodeProfile"
+    },
+    {
+      "id": "node.retry-stable-uuid",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real SDK retries after proxy replaces committed response with HTTP 503; UUID remains stable and SQLite stores one event",
+      "configuration": "nodeProfile"
+    },
+    {
+      "id": "browser.capture-cors",
+      "required": true,
+      "status": "implemented",
+      "scope": "Headless Chromium real cross-origin capture, local session/distinct IDs, Unicode, nested properties, timestamp, UUID and SDK metadata",
+      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+    },
+    {
+      "id": "browser.batch-compression",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real SDK browser batch and CompressionStream gzip transport persisted by Go",
+      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+    },
+    {
+      "id": "browser.persistence-reset",
+      "required": true,
+      "status": "implemented",
+      "scope": "SDK local IDs persist after reload, reset changes IDs, next event contains new local IDs; no identity projection claim",
+      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+    },
+    {
+      "id": "isolation-and-network",
+      "required": true,
+      "status": "implemented",
+      "scope": "Other project remains empty, no credential persisted, no external network requests or unknown SDK routes",
+      "configuration": "all tested profiles"
+    },
+    {
+      "id": "browser.cookieless-no-storage",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real always-cookieless SDK CORS ingestion with no cookies/local/session storage; server daily project-scoped pseudonyms persist across reload and fresh same-UA contexts, differ by UA/project, and exclude raw IP and browser correlation properties",
+      "configuration": "cookielessProfile"
+    }
+  ],
+  "unsupported": [
+    "identified-user identity resolution and merging",
+    "identify/alias/group control events",
+    "remote configuration and feature flags",
+    "session replay",
+    "autocapture",
+    "surveys",
+    "SDK default configuration"
+  ],
+  "gaps": [
+    "Additional SDK versions",
+    "Browser SDK retry behavior",
+    "Independent new-tab session behavior",
+    "Browser beacon/XHR transports"
+  ],
+  "go_contracts": [
+    {
+      "test": "TestRecordedSDKFixtures",
+      "scope": "Sanitized observed real Node/browser JSON/gzip payload replay"
+    },
+    {
+      "test": "TestTransportFixturesAndStableRetries",
+      "scope": "Transport fixtures and stable UUID deduplication"
+    },
+    {
+      "test": "TestIngestionGzipAndBodyLimits",
+      "scope": "Gzip header, legacy query marker and bounded decoding"
+    },
+    {
+      "test": "TestTokenLocationsAndAtomicCredentials",
+      "scope": "Credential agreement and atomic validation"
+    },
+    {
+      "test": "TestIngestionCORS",
+      "scope": "Allowed and denied origins and preflight"
+    },
+    {
+      "test": "TestAllowedOriginValidation",
+      "scope": "Exact origin configuration validation"
+    },
+    {
+      "test": "TestReplacementConnectionRetainsSQLitePragmas",
+      "scope": "SQLite connection replacement preserves durable configuration"
+    },
+    {
+      "test": "TestCookielessSentinelIsNotAVisitor",
+      "scope": "Resolve shared cookieless sentinel to a daily project-scoped pseudonym before persistence"
+    }
+  ],
+  "fixtures": [
+    "fixtures/node-batch.json",
+    "fixtures/browser-capture.json",
+    "fixtures/browser-batch-gzip.json"
+  ]
+}

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Porcupine is an early, self-hosted product analytics service. Capture events, query them with SQL, and give agents project-scoped access through MCP.">
+  <meta name="theme-color" content="#ffffff">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <title>Porcupine · headless product analytics</title>
+  <link rel="icon" href="./porcupine.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="page">
+    <header class="masthead">
+      <a class="wordmark" href="./" aria-label="Porcupine home">porcupine<span aria-hidden="true">_</span></a>
+      <nav aria-label="Main navigation">
+        <a href="https://github.com/olup/porcupine" data-repo-path="">GitHub <span aria-hidden="true">↗</span></a>
+        <a href="https://github.com/olup/porcupine/tree/main/docs" data-repo-path="/tree/main/docs">Docs <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="intro" aria-labelledby="intro-title">
+        <div class="intro-copy">
+          <h1 id="intro-title">Product analytics<br>on your own server.</h1>
+          <p class="lede">Capture events through a PostHog-compatible endpoint. Read delivered data with SQL. Give your agents the same access through MCP.</p>
+          <a class="primary-link" href="https://github.com/olup/porcupine" data-repo-path="">Get started on GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="mascot" aria-hidden="true">
+          <img src="./porcupine.svg" alt="" width="180" height="132">
+        </div>
+      </section>
+
+      <p class="project-note"><span class="note-label">Early project</span> APIs and operating limits are documented. Test it with your workload before relying on it.</p>
+
+      <section class="example-section" aria-labelledby="example-title">
+        <div class="section-heading">
+          <h2 id="example-title">Capture and query</h2>
+          <p>How many conversations did each client start?</p>
+        </div>
+        <div class="console" data-examples>
+          <div class="console-toolbar">
+            <div class="tabs" role="tablist" aria-label="Capture and query example" hidden>
+              <button id="tab-capture" role="tab" aria-controls="panel-capture" aria-selected="true" tabindex="0">Capture</button>
+              <button id="tab-query" role="tab" aria-controls="panel-query" aria-selected="false" tabindex="-1">SQL</button>
+              <button id="tab-result" role="tab" aria-controls="panel-result" aria-selected="false" tabindex="-1">Result</button>
+            </div>
+            <div class="copy-controls" hidden>
+              <span class="copy-status" role="status" aria-live="polite"></span>
+              <button class="copy-button" type="button">Copy</button>
+            </div>
+          </div>
+          <section id="panel-capture" class="example-panel" role="tabpanel" aria-labelledby="tab-capture">
+            <div class="file-label"><span aria-hidden="true">$</span> capture.sh</div>
+            <pre tabindex="0" aria-label="Capture request"><code>curl --fail-with-body "$PORCUPINE_URL/capture/" \
+  -H "Authorization: Bearer $WRITE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "uuid": "0192b530-8600-7000-8000-000000000001",
+    "event": "conversation_started",
+    "distinct_id": "visitor-17",
+    "properties": {
+      "client": "acme",
+      "conversation_id": "conv-001"
+    }
+  }'</code></pre>
+            <p class="panel-note">Use a single-project API token with <code>events:write</code>. Keep the same UUID when retrying.</p>
+          </section>
+          <section id="panel-query" class="example-panel" role="tabpanel" aria-labelledby="tab-query">
+            <div class="file-label"><span aria-hidden="true">&gt;</span> analysis.sql</div>
+            <pre tabindex="0" aria-label="Conversation count SQL"><code>SELECT
+  JSONExtractString(properties, 'client') AS client,
+  uniqExact(JSONExtractString(
+    properties, 'conversation_id'
+  )) AS conversations
+FROM events
+WHERE event = {event:String}
+  AND JSONHas(properties, 'conversation_id')
+GROUP BY client
+ORDER BY conversations DESC
+LIMIT 20</code></pre>
+            <p class="panel-note">Send this SQL to <code>POST /api/v1/projects/{id}/query</code> with <code>parameters: {"event": "conversation_started"}</code> and an <code>events:read</code> API token. <a href="https://github.com/olup/porcupine/blob/main/docs/analytics.md#sql-request-and-result" data-repo-path="/blob/main/docs/analytics.md#sql-request-and-result">Request format ↗</a></p>
+          </section>
+          <section id="panel-result" class="example-panel" role="tabpanel" aria-labelledby="tab-result">
+            <div class="file-label"><span aria-hidden="true">&lt;</span> response.json <span class="sample-label">illustrative</span></div>
+            <pre tabindex="0" aria-label="Illustrative query response"><code>{
+  "result": {
+    "meta": [
+      {"name": "client", "type": "String"},
+      {"name": "conversations", "type": "UInt64"}
+    ],
+    "data": [{"client": "acme", "conversations": "1"}],
+    "rows": 1
+  },
+  "delivery": {
+    "enabled": true,
+    "pending": 0,
+    "pending_mutations": 0
+  }
+}</code></pre>
+            <p class="panel-note">Queries read delivered ClickHouse data. Capture success means durable queue acceptance; delivery is eventual.</p>
+          </section>
+        </div>
+        <p class="example-caption"><a href="https://github.com/olup/porcupine/blob/main/docs/oauth.md" data-repo-path="/blob/main/docs/oauth.md">Token setup ↗</a></p>
+      </section>
+
+      <section class="details" aria-label="How Porcupine fits together">
+        <div>
+          <h2>A small deployment</h2>
+          <p>One Go service, SQLite for the durable queue, and ClickHouse for analytical history. Optional native S3 tiering.</p>
+          <a href="https://github.com/olup/porcupine/blob/main/docs/architecture.md" data-repo-path="/blob/main/docs/architecture.md">Architecture ↗</a>
+        </div>
+        <div>
+          <h2>Explicit contracts</h2>
+          <p>Project-scoped credentials, bounded SQL, and stable UUID retries. Cookieless browser IDs rotate daily.</p>
+          <a href="https://github.com/olup/porcupine/blob/main/docs/compatibility.md" data-repo-path="/blob/main/docs/compatibility.md">Compatibility &amp; limits ↗</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>porcupine <span aria-hidden="true">/</span> headless product analytics</p>
+      <a href="https://github.com/olup/porcupine" data-repo-path="">Read the source <span aria-hidden="true">↗</span></a>
+    </footer>
+  </div>
+</body>
+</html>

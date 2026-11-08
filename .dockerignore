@@ -1,0 +1,12 @@
+.git
+data
+bin
+.env
+.env.*
+coverage.out
+*.db*
+*.sqlite*
+**/node_modules
+compat/artifacts
+
+benchmark-results

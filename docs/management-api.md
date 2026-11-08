@@ -1,0 +1,182 @@
+# Management API reference
+
+The Go server uses Huma to validate management requests and generate its
+OpenAPI contract at `GET /openapi.json`. The contract is public. There is no
+documentation UI. The project analytics schema has its own endpoint.
+
+## Authentication and scope
+
+Management requests use `Authorization: Bearer ACCESS_TOKEN`. In OAuth mode,
+exchange a registered client's ID and secret at `/oauth/token` for a token
+bound to `ISSUER/api/v1`. [The OAuth reference](oauth.md) describes bootstrap,
+private credential files, scopes, expiry, metadata, and migration. Client secrets
+are not Bearer tokens. SQLite stores client-secret and access-token hashes.
+
+On first startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
+principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
+original secret. Subsequent startups preserve state; changing the environment
+does not reset credentials. The alias stays pinned to that first administrator.
+
+Each principal has permissions and project IDs. `*` includes all projects.
+`instance:admin` grants all operations and requires `*` scope. An access token's
+issued scope and project snapshot intersect current parent grants on every
+request. There are no human accounts, roles, or role inheritance. Authentication
+runs before request validation. HTTP and [MCP](mcp.md) share operation policies
+and project checks, with separate API and MCP token resources.
+
+With an issuer configured, legacy API and MCP Bearer keys are rejected by
+default. Explicit legacy-key allowance is a migration setting. Without any OAuth
+configuration, the server retains legacy authentication for offline use. Public
+PostHog ingestion keys are separate and remain valid for capture.
+
+## Operations
+
+| Operation | Required authority | Success |
+| --- | --- | --- |
+| `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |
+| `POST /api/v1/projects` | `management:write` and `events:write`, both with `*` scope | `201` |
+| `GET /api/v1/access-keys` | `management:read`; results restricted to keys whose entire project scope the caller holds | `200` |
+| `POST /api/v1/access-keys` | `management:write`; every requested permission and project must be held by the caller | `201` |
+| `DELETE /api/v1/access-keys/{id}` | `instance:admin` | `204` |
+| `POST /api/v1/oauth-clients` | `management:write`; requested grants cannot exceed the caller | `201` |
+| `GET /api/v1/oauth-clients` | `management:read`; complete project scope required for each returned client | `200` |
+| `DELETE /api/v1/oauth-clients/{id}` | `instance:admin`; last administrator protected | `204` |
+| `GET /api/v1/projects/{id}/events?limit=100` | `events:read` and access to the project | `200` |
+| `GET /api/v1/projects/{id}/quarantined-events` | `events:read` and access to the project | `200` |
+| `POST /api/v1/projects/{id}/quarantined-events/{event_id}/retry` | `events:edit` and access to the project | `202` |
+| `GET /api/v1/projects/{id}/schema` | `events:read` and access to the project | `200` |
+| `GET /api/v1/projects/{id}/catalog` | `events:read` and access to the project | `200` |
+| `POST /api/v1/projects/{id}/query` | `events:read` and access to the project | `200` |
+| `GET /api/v1/projects/{id}/events/{uuid}` | `events:read` and access to the project | `200` |
+| `PATCH /api/v1/projects/{id}/events/{uuid}` | `events:edit` and access to the project | `202` |
+| `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
+| `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
+
+Project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
+a one-time public `ingest_token` with `events:write` for that project. With OAuth
+enabled, send `{"name":"Trusted service","ingestion_mode":"server_only"}` to
+require authenticated backend writes. The response omits the public key. The
+creation operation requires the same permissions for both modes. See the
+[ingestion policy](oauth.md#project-ingestion-policy).
+
+OAuth client creation accepts this body:
+
+```json
+{
+	"name": "Analytics reader",
+	"permissions": ["events:read", "management:read"],
+	"projects": ["PROJECT_ID"]
+}
+```
+
+The response contains `client_id`, one-time `client_secret`, `name`,
+`permissions`, `projects`, and `created_at`. The secret is for token exchange,
+not direct API authorization. Names contain 1 to 200 UTF-8 bytes and cannot be whitespace only.
+Permissions and projects must each contain at least one entry. Project IDs
+must exist unless the scope is `*`.
+
+OAuth client listing returns `{"enabled":true,"oauth_clients":[...]}` without
+secrets or hashes. Items contain `client_id`, name, grants, creation time, and
+nullable revocation time. The bootstrap alias is not listed as a registered
+client. See [OAuth client management](oauth.md#bootstrap-and-registered-clients).
+
+In OAuth mode with legacy keys disabled, access-key creation is restricted to
+`permissions: ["events:write"]` and exactly one project. It returns the one-time
+`token` used by public PostHog ingestion. Use OAuth client registration for
+service and agent access. Legacy mode retains the older scoped-key behavior.
+
+Key listing returns `{"access_keys":[...]}`. Each item contains `id`, `name`,
+`permissions`, `projects`, `created_at`, and `revoked_at`. Active keys have
+`revoked_at: null`. Revoked keys remain visible within scope. A key spanning
+projects A and B is omitted entirely from a caller restricted to A.
+
+Client or principal revocation disables future authentication, including all
+access tokens issued to it. Ordinary already-authenticated requests are not
+automatically canceled. Exports also recheck creator authority while running. Revoking the last active instance administrator
+returns `409`. The check and update share a SQLite write transaction.
+Access tokens expire; public ingestion keys and client secrets have no expiry
+or dedicated rotation endpoint. Rotate a client by creating a replacement and
+revoking the old principal.
+
+The event-read operation returns `{"events":[...]}` from the pending SQLite
+queue, newest first. `limit` defaults to 100 and accepts 1 through 1,000.
+Acknowledged delivery removes payloads from that queue, so this endpoint is
+queue inspection rather than historical event access.
+
+## Quarantined delivery repair
+
+`list-quarantined-events` lists accepted originals retained after confirmed
+row-specific ClickHouse rejection. It returns metadata only. Event payloads,
+properties, visitor IDs, and raw ClickHouse errors are absent.
+
+`GET /api/v1/projects/{id}/quarantined-events?limit=100&after_event_id=0`
+returns `events`, `limit`, `after_event_id`, and an optional
+`next_after_event_id`. Each event contains `event_id`, `uuid`, `error_code`,
+`quarantined_at`, and `received_at`. Event IDs and cursors are decimal strings
+to preserve 64-bit precision. Confirmed rejection codes are `321` and `469`.
+
+Pages sort by increasing event ID. `limit` defaults to 100 and accepts 1 through
+1,000. Pass `next_after_event_id` as the next request's `after_event_id`.
+Pagination uses an event-ID cursor, without offsets. The listing reflects current
+quarantine state rather than a snapshot. Restart from cursor `0` to include older
+originals that entered quarantine after an earlier page.
+
+After repairing the downstream constraint or deployment configuration,
+`retry-quarantined-event` restores the original's delivery eligibility:
+
+```text
+POST /api/v1/projects/PROJECT_ID/quarantined-events/EVENT_ID/retry
+```
+
+The request has no body. A `202` response contains
+`{"event_id":"EVENT_ID","requeued":true}`. Retrying an original already eligible
+for delivery returns `requeued:false`. A missing or already acknowledged original
+returns `404`, including an event ID belonging to a different project.
+
+Retry preserves the original event ID, UUID, payload, revision, and receipt time.
+It does not acknowledge ClickHouse delivery, remove the accepted payload, or free
+queue capacity. The normal delivery worker processes the event after retry. No
+service restart or pause is needed. A remaining row-specific rejection can
+quarantine the event again. Inspect project delivery status and quarantine
+metadata after repair. Corrections and deletions retain their existing mutation
+acknowledgement requirements.
+
+Both operations are available through `porcupine_call` with the same operation
+IDs, project checks, and permissions as HTTP. `porcupine_docs` exposes listing to
+readers and retry to callers with `events:edit`.
+
+The [analytics API reference](analytics.md) describes `get-event-schema`,
+`get-event-catalog`, and `query-events`, including SQL examples, fixed quotas,
+and eventual consistency. All three require one permitted project per request.
+
+The [event mutation reference](events.md) describes current-event reads, full
+replacement corrections, deletion tombstones, revision checks, idempotency, and
+mutation status. A `202` confirms durable acceptance, not analytical visibility.
+Storage tiering is deployment-only and has no management endpoint.
+
+## Errors and limits
+
+Error responses use `{"error":"message"}`. Domain and authentication errors
+use `application/json`. Huma validation errors use `application/problem+json`
+with the same envelope.
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Malformed JSON, invalid permission or project, or a domain validation failure |
+| `401` | Missing, invalid, expired, revoked, or wrong-resource access token |
+| `403` | Missing permission, project outside scope, or attempted privilege escalation |
+| `404` | Revocation target or retained event does not exist, or the target is already revoked |
+| `409` | Last administrator protection, stale revision, pending mutation, or idempotency conflict |
+| `410` | Requested event has been deleted |
+| `413` | Request body exceeds 1 MiB |
+| `415` | Unsupported body encoding or content type |
+| `422` | Request schema validation failed, including wrong types, required fields, or invalid limits |
+| `429` | Analytics concurrency or ClickHouse resource limit exceeded |
+| `500` | Storage or internal error |
+| `503` | Analytics storage, reader provisioning, or delivery-status storage unavailable |
+
+Management bodies use JSON without compression. Browser CORS configuration
+applies to ingestion endpoints only. `events:edit` and `events:delete` authorize
+implemented mutation endpoints. `identity:write` remains a reserved permission.
+The [access design](security-and-interfaces.md) describes analytics, SQL, and
+MCP boundaries.

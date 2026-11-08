@@ -1,0 +1,26 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <s3>
+                <type>s3</type>
+                <endpoint from_env="PORCUPINE_S3_ENDPOINT" />
+                <region from_env="AWS_REGION" />
+                <use_environment_credentials>1</use_environment_credentials>
+                <metadata_path>/var/lib/clickhouse/disks/s3/</metadata_path>
+            </s3>
+        </disks>
+        <policies>
+            <hot_cold>
+                <volumes>
+                    <default>
+                        <disk>default</disk>
+                    </default>
+                    <cold>
+                        <disk>s3</disk>
+                    </cold>
+                </volumes>
+                <move_factor>0</move_factor>
+            </hot_cold>
+        </policies>
+    </storage_configuration>
+</clickhouse>

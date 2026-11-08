@@ -1,0 +1,31 @@
+# Use with compose.yaml. The backup operator runs only when invoked explicitly.
+services:
+  clickhouse:
+    volumes:
+      - ./deployment/clickhouse/backup.xml:/etc/clickhouse-server/config.d/porcupine-backup.xml:ro
+      - type: bind
+        source: ${PORCUPINE_NATIVE_BACKUP_DIR:?Set the private absolute directory for native ClickHouse backups}
+        target: /backups
+        bind:
+          create_host_path: false
+  backup:
+    profiles: ["tools"]
+    image: python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PORCUPINE_CLICKHOUSE_USER: porcupine_admin
+      PORCUPINE_CLICKHOUSE_PASSWORD: ${PORCUPINE_CLICKHOUSE_PASSWORD:?Set the private ClickHouse provisioning password}
+    entrypoint: ["python3", "/tools/online_backup.py"]
+    volumes:
+      - porcupine-data:/data
+      - ./scripts/online_backup.py:/tools/online_backup.py:ro
+      - type: bind
+        source: ${PORCUPINE_CHECKPOINT_DIR:?Set the private absolute directory for SQLite checkpoints}
+        target: /checkpoints
+        bind:
+          create_host_path: false
+    tmpfs: ["/tmp"]

@@ -1,0 +1,18 @@
+# Operator-only override: docker compose -f compose.yaml -f compose.s3.yaml up -d
+services:
+  porcupine:
+    environment:
+      PORCUPINE_CLICKHOUSE_STORAGE_POLICY: ${PORCUPINE_CLICKHOUSE_STORAGE_POLICY:-hot_cold}
+      PORCUPINE_HOT_STORAGE_DAYS: ${PORCUPINE_HOT_STORAGE_DAYS:-30}
+      PORCUPINE_CLICKHOUSE_COLD_VOLUME: ${PORCUPINE_CLICKHOUSE_COLD_VOLUME:-cold}
+  clickhouse:
+    environment:
+      # Full bucket/prefix endpoint; use a distinct prefix per ClickHouse deployment.
+      PORCUPINE_S3_ENDPOINT: ${PORCUPINE_S3_ENDPOINT:?Set the operator S3 bucket/prefix endpoint}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # Leave credentials empty for the deployment's IAM environment/provider chain.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    volumes:
+      - ./deployment/clickhouse/storage.xml:/etc/clickhouse-server/config.d/porcupine-storage.xml:ro
