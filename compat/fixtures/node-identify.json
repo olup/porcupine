@@ -7,8 +7,8 @@
     "normalization": "Synthetic credentials, UUIDs, timestamps and loopback addresses replaced; SDK properties retained",
     "path": "/batch/",
     "content_type": "application/json",
-    "content_encoding": "identity",
-    "body_format": "json"
+    "content_encoding": "gzip",
+    "body_format": "gzip"
   },
   "payload": {
     "api_key": "FIXTURE_INGEST_TOKEN",
