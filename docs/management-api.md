@@ -31,6 +31,11 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
 
+`query-events` accepts an optional `use_cache` Boolean. Omitted or `true` allows
+a 60-second ClickHouse result cache. `false` bypasses both cache directions and
+reads currently projected data. See [the analytics reference](analytics.md#cached-and-fresh-queries)
+for mutation invalidation and delivery consistency.
+
 | Operation | Required authority | Success |
 | --- | --- | --- |
 | `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |

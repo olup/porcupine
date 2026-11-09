@@ -58,6 +58,7 @@ type Service struct {
 	captureSlots    chan struct{}
 	tokenSlots      chan struct{}
 	querySecret     []byte
+	queryCacheEpoch string
 	mutationMu      sync.Mutex
 	pipelines       *pipelineRuntime
 	batchSlot       chan struct{}
@@ -154,7 +155,7 @@ func Open(c Config) (*Service, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
-		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2)}
+		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
 	s.captureSlots = make(chan struct{}, 32)
 	s.tokenSlots = make(chan struct{}, 8)
 	fail := func(err error) (*Service, error) {

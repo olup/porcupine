@@ -24,7 +24,7 @@ barrier=threading.Barrier(a.concurrency)
 query="SELECT event, count() AS total FROM events GROUP BY event"
 
 def call(_):
-    req=urllib.request.Request(a.url.rstrip('/')+'/api/v1/projects/'+keys['project_id']+'/query',data=json.dumps({'sql':query}).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+(keys.get('read_token') or keys['admin_token'])})
+    req=urllib.request.Request(a.url.rstrip('/')+'/api/v1/projects/'+keys['project_id']+'/query',data=json.dumps({'sql':query,'use_cache':False}).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+(keys.get('read_token') or keys['admin_token'])})
     barrier.wait(timeout=30)
     start=time.monotonic()
     try:

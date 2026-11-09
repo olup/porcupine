@@ -53,7 +53,7 @@ def main():
     check('ingestion', request('POST', '/capture/', ev)[0] == 200)
     check('duplicate accepted idempotently', request('POST', '/capture/', ev)[0] == 200)
     check('invalid ingestion token denied', request('POST', '/capture/', {**ev, 'api_key': 'invalid'})[0] in (401, 403))
-    query = {'sql': 'SELECT count() AS total FROM events WHERE uuid={uuid:String}', 'parameters': {'uuid': run}}
+    query = {'sql': 'SELECT count() AS total FROM events WHERE uuid={uuid:String}', 'parameters': {'uuid': run}, 'use_cache': False}
     for _ in range(60):
         status, response = request('POST', path + '/query', query, read_token())
         if status == 200 and response['result']['data'][0]['total'] == '1' and response['delivery']['pending'] == 0:

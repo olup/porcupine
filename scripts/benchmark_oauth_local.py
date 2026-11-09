@@ -92,7 +92,7 @@ def check_cold_storage(storage, app, ch, opener, origin, project_id, credentials
         read_delta = after.get("fact_read_bytes", 0) - before.get("fact_read_bytes", 0)
         phase = "post_retry_oauth_sql_reconciliation"
         response = request(opener, origin, "/api/v1/projects/" + project_id + "/query", {
-            "sql": "SELECT count() AS total FROM events WHERE event={event:String} AND JSONExtractString(properties,'run_id')={run_id:String}",
+            "sql": "SELECT count() AS total FROM events WHERE event={event:String} AND JSONExtractString(properties,'run_id')={run_id:String}", "use_cache": False,
             "parameters": {"event": "porcupine_load", "run_id": report["run_id"]}}, token=credentials["read_token"])
         count = int(response["result"]["data"][0]["total"])
         previous_samples = len(sampler.samples)

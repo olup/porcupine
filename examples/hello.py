@@ -62,6 +62,7 @@ request("/capture/", {
 result = wait_for(lambda: request("/api/v1/projects/" + project_id + "/query", {
     "sql": "SELECT event, count() AS total FROM events WHERE event = {name:String} GROUP BY event",
     "parameters": {"name": "hello"},
+    "use_cache": False,
 }, auth), lambda value: bool(value["result"]["data"]))
 print("Project:", project_id)
 print(json.dumps(result["result"]["data"], indent=2))

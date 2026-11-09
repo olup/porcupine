@@ -87,6 +87,7 @@ actor_id TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key_hash TEXT NOT N
 request_hash TEXT NOT NULL, expected_revision INTEGER NOT NULL,
 state TEXT NOT NULL, created_at TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT '',
 UNIQUE(project_id,idempotency_key_hash));
+CREATE INDEX IF NOT EXISTS mutation_audit_project_sequence ON mutation_audit(project_id,seq);
 CREATE TABLE IF NOT EXISTS mutation_outbox (
 seq INTEGER PRIMARY KEY REFERENCES mutation_audit(seq),
 project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL,

@@ -68,7 +68,7 @@ The examples use `PORCUPINE_URL=http://127.0.0.1:8080`, an existing `PROJECT_ID`
 
 ## SQL request and result
 
-A query body contains `sql` and an optional `parameters` string map:
+A query body contains `sql`, an optional `parameters` string map, and an optional `use_cache` Boolean:
 
 ```json
 {
@@ -92,6 +92,26 @@ The response has this shape:
 ```
 
 Values in `data` retain ClickHouse JSON types. In particular, 64-bit integers are strings to preserve precision. `result.rows_before_limit_at_least` may also appear. Public statistics expose elapsed time only; physical scan counts and bytes are omitted.
+
+### Cached and fresh queries
+
+Omitting `use_cache` or setting it to `true` allows ClickHouse's native result cache with a 60-second TTL. The cache separates projects, typed parameter values, and mutation generations. Newly projected original events can take up to 60 seconds to appear in an existing cached result. Caching is best effort: server capacity, entry size, and nondeterministic functions such as `now()` can prevent a result from being cached.
+
+Set `use_cache` to `false` to bypass both cache reads and cache writes:
+
+```json
+{
+	"sql": "SELECT uuid, event, revision FROM events WHERE uuid={uuid:String}",
+	"parameters": {"uuid": "EVENT_UUID"},
+	"use_cache": false
+}
+```
+
+A fresh query reads currently projected ClickHouse data. It does not wait for queued originals or mutations. Delivery status is read separately and remains current even when the SQL result comes from cache.
+
+Accepted edits and deletions immediately change the project's durable cache generation. While any mutation is pending, all interactive queries for that project bypass caching. After projection is acknowledged, caching resumes under the new generation, so pre-edit entries cannot reappear. A cached read that races mutation acceptance is retried through the fresh reader. Process restarts use a new cache namespace, including after restore. Authorization is checked for every HTTP or MCP request before any cached result is read.
+
+Each project's cached reader has a maximum of 64 entries and 8 MiB of cache storage, subject to the server's global limits. Cached entries are never shared between ClickHouse users. Reader permissions, execution limits, and output limits remain fixed. Schema and catalog discovery, current-event reads, exports, and scheduled pipeline queries do not use this result cache.
 
 ### Conversations by custom client and day
 
@@ -140,7 +160,8 @@ The same query through MCP uses:
 	"path": {"id": "PROJECT_ID"},
 	"body": {
 		"sql": "SELECT uuid, event, properties FROM events WHERE uuid={uuid:String} LIMIT 1",
-		"parameters": {"uuid": "UUID_FROM_CATALOG"}
+		"parameters": {"uuid": "UUID_FROM_CATALOG"},
+		"use_cache": false
 	}
 }
 ```
@@ -187,7 +208,7 @@ Catalog requests share the same concurrency pool and analytical limits. Readers 
 
 Every successful schema, catalog, or query response includes project-scoped delivery status. `pending` counts queued original events and `pending_mutations` counts queued corrections and deletions; `last_success` is optional. `oldest_pending_received_at` gives the server receipt time of the earliest pending original in acceptance order, including quarantined originals, and is absent when that project has none. A generic `error` appears only while that project has either kind of pending work. It does not disclose other projects' queue state.
 
-Results are eventually consistent. They show the latest projected event revision and exclude projected deletion tombstones. A pending event or correction can already be visible after a lost ClickHouse acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than SQL. Private original snapshots and tombstone internals are excluded from SQL schema and reader grants. Native [S3 tiering](storage.md) keeps the same table and queries across hot and cold parts. SQL results and delivery status have no cross-database snapshot. Catalog event and property queries also run separately. An empty catalog therefore does not prove that no events were accepted.
+Results are eventually consistent. Fresh queries show the latest projected event revision and exclude projected deletion tombstones. Cached queries can also lag new original events by up to 60 seconds, as described above. A pending event or correction can already be visible after a lost ClickHouse acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than SQL. Private original snapshots and tombstone internals are excluded from SQL schema and reader grants. Native [S3 tiering](storage.md) keeps the same table and queries across hot and cold parts. SQL results and delivery status have no cross-database snapshot. Catalog event and property queries also run separately. An empty catalog therefore does not prove that no events were accepted.
 
 Invalid or unsupported SQL and invalid parameter bindings return `400`. Missing or invalid credentials return `401`; missing authority returns `403`. Concurrency and database resource limits return `429`. Unconfigured or unavailable storage, reader provisioning failures, and invalid storage responses return `503`. Request schema validation uses the generated OpenAPI error contract. ClickHouse server messages, SQL text, and credentials are not exposed in storage errors.
 

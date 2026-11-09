@@ -150,6 +150,13 @@ event catalog returns observed names and sampled property types without raw
 property values. Its latest-event UUID pointers can be inspected through a
 parameterized SQL query. See [the analytics API examples](analytics.md).
 
+The `query-events` body accepts the same optional `use_cache` Boolean as HTTP.
+Omitting it or setting it to `true` allows a 60-second ClickHouse result cache.
+Set it to `false` to bypass cache reads and writes and read currently projected
+data. Fresh queries do not wait for delivery. Pending edits and deletions
+automatically bypass caching; applied mutations use a new cache generation.
+See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
+
 SQL is written by the agent. There are no named prebuilt metrics or saved SQL
 catalogs. Event names and property content are untrusted data. HTTP and MCP
 enforce the same `events:read` scope, SQL restrictions, and result limits. Read
