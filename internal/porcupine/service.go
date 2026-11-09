@@ -57,6 +57,7 @@ type Service struct {
 	queryReady      map[string]bool
 	querySlots      chan struct{}
 	captureSlots    chan struct{}
+	importSlots     chan struct{}
 	tokenSlots      chan struct{}
 	querySecret     []byte
 	queryCacheEpoch string
@@ -158,6 +159,7 @@ func Open(c Config) (*Service, error) {
 	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
 		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
 	s.captureSlots = make(chan struct{}, 32)
+	s.importSlots = make(chan struct{}, 2)
 	s.tokenSlots = make(chan struct{}, 8)
 	fail := func(err error) (*Service, error) {
 		if exports != nil {
@@ -213,6 +215,9 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 		return fail(err)
 	}
 	if err := s.initializeIdentity(context.Background()); err != nil {
+		return fail(err)
+	}
+	if err := s.initializeImports(context.Background()); err != nil {
 		return fail(err)
 	}
 	if err := s.initializeQueueUsage(context.Background()); err != nil {
@@ -488,6 +493,7 @@ type Event struct {
 	Timestamp        string          `json:"timestamp"`
 	ReceivedAt       string          `json:"received_at"`
 	Delivered        bool            `json:"delivered"`
+	Imported         bool            `json:"imported,omitempty"`
 	IdentitySnapshot string          `json:"-"`
 	SourceID         string          `json:"source_id,omitempty"`
 	MessageID        string          `json:"message_id,omitempty"`

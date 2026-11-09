@@ -188,7 +188,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 	if revision == 0 {
 		var event Event
 		var properties, ingestion string
-		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion)
+		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata,is_imported FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion, &event.Imported)
 		if err == nil {
 			if err := decodeIngestionMetadata(&event, ingestion); err != nil {
 				return eventProjection{}, false, apiError(503, "event storage unavailable")

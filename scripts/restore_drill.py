@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 from integration_storage import MINIO_IMAGE, start_minio, clickhouse_s3_docker_args, minio_objects
-from online_backup import pause_restored_pipelines
+from online_backup import invalidate_interactive_sessions, pause_restored_pipelines
 
 ROOT = Path(__file__).resolve().parents[1]
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.8.36.3"
@@ -166,6 +166,7 @@ def run():
         restored_endpoint = wait_clickhouse(restored_ch, environment)
         sqlite_copy(checkpoint_db, restored_db)
         with closing(sqlite3.connect(restored_db)) as restored:
+            invalidate_interactive_sessions(restored, datetime.now(timezone.utc).isoformat())
             pause_restored_pipelines(restored)
             restored.commit()
         fixture("verify", directory, restored_db, manifest, restored_endpoint, environment)

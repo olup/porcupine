@@ -28,7 +28,7 @@ func TestPipelineS3WindowSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Count(sql, "FROM pq_scope.events WHERE received_at_ms >= {window_start:Int64} AND received_at_ms < {window_end:Int64}") != q.sources {
+			if strings.Count(sql, "FROM pq_scope.events AS _porcupine_window WHERE _porcupine_window.received_at_ms >= {window_start:Int64} AND _porcupine_window.received_at_ms < {window_end:Int64} AND _porcupine_window.is_imported=0") != q.sources {
 				t.Fatalf("window sources: %s", sql)
 			}
 			if strings.Contains(sql, "AS events AS") {

@@ -5,7 +5,7 @@ This document describes current access rules and planned interfaces. The
 
 ## Technical access
 
-An operator bootstraps the deployment and creates its first technical access. Porcupine has no human account system. Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
+An operator bootstraps the deployment and creates its first technical access. Operators can configure an upstream OIDC provider and explicit human-to-project bindings for [interactive MCP](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
 
 [OAuth client credentials](oauth.md) authorize machine API and MCP access when
 the operator configures an issuer. Clients exchange an ID and secret through
@@ -17,8 +17,7 @@ HTTP and MCP share operation policies, with resource-bound tokens for each.
 Each request checks token expiry, parent revocation, and current grants. Effective
 authority intersects token scope and issued projects with current permissions
 and projects. A later expansion of parent grants cannot expand an old token.
-Client revocation invalidates subsequent uses of all its access tokens. There is
-no JWT, refresh token, human account, or authorization-code login flow.
+Client revocation invalidates subsequent uses of its opaque access tokens. Interactive MCP uses rotating refresh tokens and per-consent grants when OIDC is configured.
 
 A configured issuer rejects legacy API and MCP Bearer keys by default. Explicit
 legacy allowance supports migration. Without OAuth configuration, legacy mode
@@ -39,6 +38,7 @@ The accepted permission names are:
 | --- | --- |
 | `instance:admin` | All instance and project operations, including access revocation. Requires `*` project scope. |
 | `events:read` | Read events and analytics within scope. |
+| `imports:write` | Create and resume historical uploads within a project, together with `events:write`. |
 | `events:write` | Ingest events within scope. |
 | `events:edit` | Queue a revision-checked full event correction within scope. |
 | `events:delete` | Queue a revision-checked deletion tombstone within scope. |

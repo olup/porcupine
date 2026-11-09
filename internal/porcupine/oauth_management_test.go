@@ -119,7 +119,7 @@ func TestOAuthClientSecretIsIndependentAndListingScoped(t *testing.T) {
 		t.Fatal("OAuth metadata project scope incorrect")
 	}
 	encoded, _ := json.Marshal(listed)
-	for _, private := range []string{secret, secretHash, tokenHash, hidden.Body.ClientID, b, "client_secret", "secret_hash", "token_hash"} {
+	for _, private := range []string{secret, secretHash, tokenHash, hidden.Body.ClientID, b, `"client_secret":`, `"secret_hash":`, `"token_hash":`} {
 		if strings.Contains(string(encoded), private) {
 			t.Fatal("client secret or another project's credential metadata leaked")
 		}
@@ -261,7 +261,7 @@ func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
 	hidden := request(t, s, "POST", "/api/v1/oauth-clients", adminToken, string(hiddenBody), 201)
 	listed := request(t, s, "GET", "/api/v1/oauth-clients", metadataReader, "", 200)
 	encoded, _ := json.Marshal(listed)
-	if len(listed["oauth_clients"].([]any)) != 1 || strings.Contains(string(encoded), created.ClientSecret) || strings.Contains(string(encoded), hidden["client_id"].(string)) || strings.Contains(string(encoded), "client_secret") {
+	if len(listed["oauth_clients"].([]any)) != 1 || strings.Contains(string(encoded), created.ClientSecret) || strings.Contains(string(encoded), hidden["client_id"].(string)) || strings.Contains(string(encoded), `"client_secret":`) {
 		t.Fatal("OAuth HTTP list leaked secrets or cross-project metadata")
 	}
 	form := url.Values{"grant_type": {"client_credentials"}, "resource": {"http://localhost/api/v1"}}

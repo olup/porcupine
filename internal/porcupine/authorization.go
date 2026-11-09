@@ -12,7 +12,7 @@ type actor struct {
 	Projects    []string
 }
 
-var validPermissions = []string{"instance:admin", "management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "identity:write", "pipelines:read", "pipelines:write"}
+var validPermissions = []string{"instance:admin", "management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "imports:write", "identity:write", "pipelines:read", "pipelines:write"}
 
 func (a actor) admin() bool                { return slices.Contains(a.Permissions, "instance:admin") }
 func (a actor) can(permission string) bool { return authorize(a, permission, "") }

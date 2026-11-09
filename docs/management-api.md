@@ -20,7 +20,7 @@ does not reset credentials. The alias stays pinned to that first administrator.
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
 issued scope and project snapshot intersect current parent grants on every
-request. There are no human accounts, roles, or role inheritance. Authentication
+request. Operators can configure OIDC human bindings and consent grants for read-only MCP access. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
 and project checks, with separate API and MCP token resources.
 
@@ -158,6 +158,10 @@ The [event mutation reference](events.md) describes current-event reads, full
 replacement corrections, deletion tombstones, revision checks, idempotency, and
 mutation status. A `202` confirms durable acceptance, not analytical visibility.
 Storage tiering is deployment-only and has no management endpoint.
+
+## Historical PostHog imports
+
+The [import reference](posthog-import.md) covers HTTP manifest creation, binary chunk upload, status, resume, cancellation, and privileges. These operations use the API audience. The management API also exposes operator [consent grant inspection and revocation](mcp-interactive-oauth.md).
 
 ## Delivery pipeline management
 

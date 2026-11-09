@@ -60,6 +60,7 @@ type clickHouseEvent struct {
 	MessageID        string `json:"message_id"`
 	EventType        string `json:"event_type"`
 	Context          string `json:"context"`
+	IsImported       uint8  `json:"is_imported"`
 }
 
 func (c *clickHouse) insert(ctx context.Context, events []Event) error {
@@ -103,6 +104,9 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 			return errors.New("invalid event projection identity")
 		}
 		row := clickHouseEvent{EventID: uint64(event.ID), ProjectID: event.ProjectID, UUID: event.UUID, ReceivedAt: received.UTC().Format(time.RFC3339Nano), ReceivedAtMS: received.UnixMilli(), Revision: projection.Revision, SourceID: event.SourceID, MessageID: event.MessageID, EventType: event.EventType, Context: string(event.Context)}
+		if event.Imported {
+			row.IsImported = 1
+		}
 		if projection.IsDeleted {
 			if projection.Revision == 0 {
 				return errors.New("invalid event deletion revision")
@@ -138,7 +142,7 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 }
 
 func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
-	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot,source_id,message_id,event_type,context FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
+	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot,source_id,message_id,event_type,context,is_imported FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
 	data, err := c.request(ctx, c.config.User, c.config.Password, "", nil, strings.NewReader(sql), 64<<20)
 	if err != nil {
 		return eventProjection{}, err
@@ -163,6 +167,7 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 		MessageID        string      `json:"message_id"`
 		EventType        string      `json:"event_type"`
 		Context          string      `json:"context"`
+		IsImported       uint8       `json:"is_imported"`
 	}
 	if json.Unmarshal(data, &row) != nil {
 		return eventProjection{}, errors.New("invalid stored event projection")
@@ -172,7 +177,7 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 		return eventProjection{}, errors.New("invalid stored event identity")
 	}
 	revision, err := strconv.ParseUint(string(row.Revision), 10, 64)
-	if err != nil || row.IsDeleted > 1 || row.ProjectID != project || row.UUID != uuid {
+	if err != nil || row.IsDeleted > 1 || row.IsImported > 1 || row.ProjectID != project || row.UUID != uuid {
 		return eventProjection{}, errors.New("invalid stored event projection")
 	}
 	if _, err = time.Parse(time.RFC3339Nano, row.ReceivedAt); err != nil {
@@ -186,7 +191,7 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 			return eventProjection{}, errors.New("invalid stored event payload")
 		}
 	}
-	event := Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true, IdentitySnapshot: row.IdentitySnapshot, SourceID: row.SourceID, MessageID: row.MessageID, EventType: row.EventType, Context: json.RawMessage(row.Context)}
+	event := Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true, IdentitySnapshot: row.IdentitySnapshot, SourceID: row.SourceID, MessageID: row.MessageID, EventType: row.EventType, Context: json.RawMessage(row.Context), Imported: row.IsImported == 1}
 	if row.IsDeleted == 0 {
 		event = eventWithMetadata(event)
 	}

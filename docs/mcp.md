@@ -10,9 +10,11 @@ v1.8.0 in the existing Go process. It requires no additional service.
 | --- | --- |
 | Local endpoint | `http://127.0.0.1:8080/mcp` |
 | Transport | Streamable HTTP, stateless, JSON responses |
-| Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` from the client-credentials exchange |
+| Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` for the MCP resource |
 | Permissions | Same project and operation permissions as the native API |
-| Supported client setup | Client-credentials token acquisition or a host-supplied access token header |
+| Supported client setup | Client credentials, a host-supplied token, or opt-in interactive OAuth in source builds |
+
+For ChatGPT or Claude, see the [interactive OAuth setup](mcp-interactive-oauth.md). The administrator pre-registers the client and maps authenticated people to projects.
 
 Agents and applications use separate registered [OAuth clients](oauth.md).
 A reader client typically has `management:read` and `events:read` for selected
@@ -34,10 +36,7 @@ Unauthorized MCP responses point to
 operator issuer, not the request Host. [The OAuth reference](oauth.md) describes
 the client-credentials exchange, Basic authentication, scopes, and challenges.
 
-This supports machine client credentials, not interactive authorization-code
-login. A generic MCP client that requires a human browser login flow cannot use
-this grant without a compatible host or extension. Stdio transport, legacy
-HTTP+SSE transport, and long-lived SSE listeners remain unsupported.
+Without an OIDC configuration the issuer provides machine client credentials. With OIDC enabled, pre-registered clients can use the browser authorization flow. The MCP transport is streamable HTTP.
 
 Configured OAuth rejects legacy MCP Bearer keys by default. Explicit legacy-key
 allowance is a migration option. Entirely unconfigured OAuth retains the older

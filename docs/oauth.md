@@ -4,10 +4,10 @@ Porcupine provides machine-to-machine OAuth for the native API and MCP. A servic
 
 The authorization server runs in the existing Go process and stores state in
 SQLite. It requires no separate identity application, external authorization
-server, or human account system. Operator configuration pins the issuer and
+server, or human account system. Interactive browser login requires a canonical HTTPS origin (lowercase scheme and host, default port omitted). Operator configuration pins the issuer and
 resources; project grants remain Porcupine's own authority.
 
-Only the `client_credentials` grant with `client_secret_basic` authentication is supported. There is no human login, authorization-code flow, refresh token, JWT, RFC 7591 dynamic client registration, or interactive authorization page. MCP clients must support client credentials or accept a token obtained by their host application. This is not a claim of generic interactive MCP OAuth compatibility.
+This page covers machine credentials. Source builds also support [interactive MCP authorization](mcp-interactive-oauth.md) when an upstream OpenID Connect provider is configured. That optional flow uses pre-registered clients, an exact redirect URI, explicit user/project grants, and authorization codes with PKCE S256. The v0.3.0 release supports machine credentials only.
 
 ## Operator configuration
 
@@ -147,7 +147,7 @@ OAuth mode exposes these public endpoints:
 - `GET /.well-known/oauth-protected-resource/api/v1` describes the API resource.
 - `GET /.well-known/oauth-protected-resource/mcp` describes the MCP resource.
 
-Protected-resource metadata follows RFC 9728. API and MCP `401` challenges include the corresponding `resource_metadata` URL; an invalid token also adds `error="invalid_token"`. Resource metadata advertises Bearer headers only. It does not advertise an authorization-code login flow.
+Protected-resource metadata follows RFC 9728. API and MCP `401` challenges include the corresponding `resource_metadata` URL; an invalid token also adds `error="invalid_token"`. Resource metadata advertises Bearer headers only. The authorization server advertises the code flow and S256 challenge method when interactive login is enabled.
 
 Token errors use OAuth JSON error names. Invalid client authentication returns `401 invalid_client`; unsupported grants return `400 unsupported_grant_type`; disallowed permissions return `400 invalid_scope`; an unrecognized resource returns `400 invalid_target`. Malformed requests return `400`, oversized token bodies return `413`, and storage failure returns `503 temporarily_unavailable`. API authorization still distinguishes `401` authentication from `403` insufficient scope or project access.
 
@@ -155,5 +155,4 @@ Token errors use OAuth JSON error names. Invalid client authentication returns `
 
 Local Go and race tests cover HTTP and MCP client-credentials flows, project
 isolation, separate API/MCP audiences, backend ingestion, and immediate client
-revocation. Client-credentials support does not establish compatibility with
-every MCP client's OAuth login model.
+revocation. See the [interactive MCP setup and verification](mcp-interactive-oauth.md) for the separate browser flow.

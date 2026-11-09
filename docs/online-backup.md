@@ -139,3 +139,5 @@ python3 scripts/default_restore_drill.py
 ```
 
 The first drill exercises concurrent live ingestion, a finite receipt cache, pending work, native cold data, and native restore. The second proves that a restored permanent-ledger instance still starts and durably accepts a new event while ClickHouse is stopped. The [stopped-copy drill](restore.md) exercises a different recovery method. None of these commands deploys an instance or connects to production storage.
+
+Restoring a checkpoint with interactive OAuth invalidates browser authorization requests, codes, refresh tokens and consent principals, including when machine access tokens are explicitly preserved. Users must approve a new grant. Import offsets, manifests and pending import rows come from the same SQLite checkpoint. Resume using that checkpoint’s reported offset.

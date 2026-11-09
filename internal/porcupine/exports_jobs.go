@@ -65,16 +65,20 @@ func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (stor
 }
 
 func (s *Service) exportActor(ctx context.Context, keyID string) (actor, error) {
+	return s.exportActorFrom(ctx, s.db, keyID)
+}
+
+func (s *Service) exportActorFrom(ctx context.Context, query oauthQueryer, keyID string) (actor, error) {
 	var result actor
 	var permissions, projects string
-	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&result.ID, &permissions, &projects, &result.SourceID)
+	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&result.ID, &permissions, &projects, &result.SourceID)
 	if err != nil {
 		return result, err
 	}
 	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
 		return actor{}, errors.New("invalid export creator grants")
 	}
-	return result, nil
+	return s.validateInteractivePrincipal(ctx, query, result)
 }
 
 func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {

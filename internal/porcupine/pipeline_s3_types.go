@@ -131,7 +131,7 @@ func pipelineWindowSQL(raw, namespace string) (string, error) {
 		text       string
 	}
 	var edits []replacement
-	source := "(SELECT * FROM " + namespace + "." + identitySourceName(canonical) + " WHERE received_at_ms >= {window_start:Int64} AND received_at_ms < {window_end:Int64})"
+	source := "(SELECT * FROM " + namespace + "." + identitySourceName(canonical) + " AS _porcupine_window WHERE _porcupine_window.received_at_ms >= {window_start:Int64} AND _porcupine_window.received_at_ms < {window_end:Int64} AND _porcupine_window.is_imported=0)"
 	for table, aliased := range sources {
 		text := source
 		if !aliased {

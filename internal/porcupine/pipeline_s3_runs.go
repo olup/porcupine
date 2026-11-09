@@ -226,7 +226,7 @@ func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 			}
 			w.id = newID()
 			w.state = "queued"
-			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE project_id=?`, w.pipeline.ProjectID).Scan(&w.eventWatermark); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE project_id=? AND is_imported=0`, w.pipeline.ProjectID).Scan(&w.eventWatermark); err != nil {
 				return nil, err
 			}
 			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM mutation_audit WHERE project_id=?`, w.pipeline.ProjectID).Scan(&w.mutationWatermark); err != nil {

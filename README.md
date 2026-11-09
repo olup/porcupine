@@ -41,6 +41,8 @@ destinations for review before resumption.
 
 The v0.3.0 release adds [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
 
+Source builds also include [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
+
 ## Install a release
 
 The `v0.3.0` release includes Linux amd64 and arm64 images. Use the matching

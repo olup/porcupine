@@ -65,8 +65,14 @@ with ExitStack() as stack:
         if storage:
             subprocess.run(["go", "test", "-race", "./internal/exportstore", "-run", "TestMinIOIntegration",
                             "-count=1", "-timeout=60s", "-v"], env=environment, cwd=ROOT, check=True)
-        subprocess.run(["go", "test", "-race", "./internal/porcupine", "-run", "TestClickHouseIntegration",
-                        "-count=1", "-timeout=120s", "-v"], env=environment, cwd=ROOT, check=True)
+        # The S3 export fixture can spend 90 seconds within its own deadline.
+        # Give it a separate invocation so it cannot exhaust the other fixtures' budget.
+        package_tests = ["go", "test", "-race", "./internal/porcupine", "-count=1", "-timeout=120s", "-v"]
+        if storage:
+            subprocess.run(package_tests + ["-run", "^TestClickHouseIntegrationExports$"],
+                           env=environment, cwd=ROOT, check=True)
+        subprocess.run(package_tests + ["-run", "^TestClickHouseIntegration", "-skip", "^TestClickHouseIntegrationExports$"],
+                       env=environment, cwd=ROOT, check=True)
         if storage and b"<Contents>" not in minio_objects(storage):
             raise RuntimeError("Cold storage tests created no S3 objects")
     finally:

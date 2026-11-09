@@ -148,7 +148,7 @@ before(async () => {
   page.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
   await page.goto(origin);
   await page.evaluate(({ host, token, profile }) => window.posthog.init(token, { ...profile, api_host: host }), { host: api, token: project.ingest_token, profile: browserProfile });
-}, { timeout: 60000 });
+}, { timeout: 240000 }); // Includes compiling both the Go tests and the CGO-free binary in a fresh checkout.
 
 after(async () => {
   await context?.close(); await browser?.close();

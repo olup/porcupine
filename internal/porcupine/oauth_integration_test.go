@@ -235,7 +235,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	var listed map[string]any
 	f.call(t, "GET", "/api/v1/oauth-clients", admin.AccessToken, nil, 200, &listed)
 	encoded, _ := json.Marshal(listed)
-	if bytes.Contains(encoded, []byte(created.ClientSecret)) || bytes.Contains(encoded, []byte("client_secret")) || bytes.Contains(encoded, []byte("secret_hash")) {
+	if bytes.Contains(encoded, []byte(created.ClientSecret)) || bytes.Contains(encoded, []byte(`"client_secret":`)) || bytes.Contains(encoded, []byte(`"secret_hash":`)) {
 		t.Fatal("OAuth client metadata exposed secret material")
 	}
 

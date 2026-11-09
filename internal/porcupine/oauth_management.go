@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -34,6 +35,17 @@ secret_hash TEXT NOT NULL
 )`); err != nil {
 		return err
 	}
+	for name, definition := range map[string]string{"grant_types": `TEXT NOT NULL DEFAULT '["client_credentials"]'`, "redirect_uris": "TEXT NOT NULL DEFAULT '[]'", "token_endpoint_auth_method": "TEXT NOT NULL DEFAULT 'client_secret_basic'"} {
+		var exists bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('oauth_clients') WHERE name=?)`, name).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE oauth_clients ADD COLUMN `+name+` `+definition); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO metadata(key,value)
 SELECT 'oauth_bootstrap_id',id FROM access_keys
 WHERE name='bootstrap admin'
@@ -45,32 +57,41 @@ ORDER BY created_at,id LIMIT 1`); err != nil {
 }
 
 type OAuthClient struct {
-	ClientID    string   `json:"client_id" doc:"OAuth client and access-key principal identifier"`
-	Name        string   `json:"name"`
-	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
-	Permissions []string `json:"permissions"`
-	Projects    []string `json:"projects"`
-	CreatedAt   string   `json:"created_at"`
-	RevokedAt   *string  `json:"revoked_at" nullable:"true"`
+	ClientID                string   `json:"client_id" doc:"OAuth client and access-key principal identifier"`
+	Name                    string   `json:"name"`
+	SourceID                string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
+	Permissions             []string `json:"permissions"`
+	Projects                []string `json:"projects"`
+	CreatedAt               string   `json:"created_at"`
+	RevokedAt               *string  `json:"revoked_at" nullable:"true"`
+	GrantTypes              []string `json:"grant_types"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 }
 
 type OAuthClientCreateInput struct {
 	Body struct {
-		Name        string   `json:"name" minLength:"1" maxLength:"200"`
-		SourceID    string   `json:"source_id,omitempty" maxLength:"128" pattern:"^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$" doc:"Optional logical producer, requiring events:write and exactly one project. Immutable after creation; posthog is reserved for unbound ingestion."`
-		Permissions []string `json:"permissions" minItems:"1" doc:"Permissions cannot exceed the caller's current grants"`
-		Projects    []string `json:"projects" minItems:"1" doc:"Existing project IDs, or * for instance-wide scope; cannot exceed caller scope"`
+		Name                    string   `json:"name" minLength:"1" maxLength:"200"`
+		SourceID                string   `json:"source_id,omitempty" maxLength:"128" pattern:"^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$" doc:"Optional logical producer, requiring events:write and exactly one project. Immutable after creation; posthog is reserved for unbound ingestion."`
+		Permissions             []string `json:"permissions" minItems:"1" doc:"Permissions cannot exceed the caller's current grants"`
+		Projects                []string `json:"projects" minItems:"1" doc:"Existing project IDs, or * for instance-wide scope; cannot exceed caller scope"`
+		GrantTypes              []string `json:"grant_types,omitempty" maxItems:"3" doc:"Defaults to client_credentials. authorization_code enables PKCE and rotating refresh tokens."`
+		RedirectURIs            []string `json:"redirect_uris,omitempty" maxItems:"16" doc:"Exact pre-registered HTTPS redirects, or HTTP loopback redirects."`
+		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty" enum:"client_secret_basic,client_secret_post,none" doc:"none is allowed only for public interactive clients."`
 	}
 }
 
 type OAuthClientCreated struct {
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret" doc:"One-time OAuth token-exchange secret. It is never a bearer token or ingestion key."`
-	Name         string   `json:"name"`
-	SourceID     string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
-	Permissions  []string `json:"permissions"`
-	Projects     []string `json:"projects"`
-	CreatedAt    string   `json:"created_at"`
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret,omitempty" doc:"One-time OAuth token-exchange secret. It is never a bearer token or ingestion key."`
+	Name                    string   `json:"name"`
+	SourceID                string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
+	Permissions             []string `json:"permissions"`
+	Projects                []string `json:"projects"`
+	CreatedAt               string   `json:"created_at"`
+	GrantTypes              []string `json:"grant_types"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 }
 
 type OAuthClientCreateOutput struct {
@@ -90,6 +111,7 @@ type OAuthClientDeleteInput struct {
 }
 
 func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+	s.registerInteractiveOAuthManagement(api, op)
 	base := "/api/v1/oauth-clients"
 	huma.Register(api, op("create-oauth-client", "POST", base, "Create a scoped machine OAuth client and return its secret once", operationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
 	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
@@ -109,6 +131,13 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, err
 	}
 	body.SourceID = sourceID
+	grants, redirects, authMethod, err := normalizeOAuthClientRegistration(body.GrantTypes, body.RedirectURIs, body.TokenEndpointAuthMethod)
+	if err != nil {
+		return nil, apiError(400, "invalid OAuth client registration")
+	}
+	if slices.Contains(grants, "authorization_code") && !s.interactiveOAuthEnabled() {
+		return nil, apiError(503, "interactive OAuth is not configured")
+	}
 	var clientSecret, unknownBearer [32]byte
 	if _, err := rand.Read(clientSecret[:]); err != nil {
 		return nil, apiError(500, "cannot create OAuth client")
@@ -117,6 +146,9 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(500, "cannot create OAuth client")
 	}
 	secret := base64.RawURLEncoding.EncodeToString(clientSecret[:])
+	if authMethod == "none" {
+		secret = ""
+	}
 	id, created := newID(), now()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
@@ -128,18 +160,20 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,?,?,?,?)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash) VALUES(?,?)`, id, hash(secret)); err != nil {
+	grantJSON, _ := json.Marshal(grants)
+	redirectJSON, _ := json.Marshal(redirects)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash,grant_types,redirect_uris,token_endpoint_auth_method) VALUES(?,?,?,?,?)`, id, hash(secret), string(grantJSON), string(redirectJSON), authMethod); err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, apiError(500, "storage error")
 	}
-	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created}}, nil
+	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created, GrantTypes: grants, RedirectURIs: redirects, TokenEndpointAuthMethod: authMethod}}, nil
 }
 
 func (s *Service) managementListOAuthClients(ctx context.Context, _ *struct{}) (*OAuthClientListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id
+	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method
 FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
@@ -148,11 +182,14 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_a
 	items := []OAuthClient{}
 	for rows.Next() {
 		var item OAuthClient
-		var permissions, projects string
-		if err := rows.Scan(&item.ClientID, &item.Name, &permissions, &projects, &item.CreatedAt, &item.RevokedAt, &item.SourceID); err != nil {
+		var permissions, projects, grants, redirects string
+		if err := rows.Scan(&item.ClientID, &item.Name, &permissions, &projects, &item.CreatedAt, &item.RevokedAt, &item.SourceID, &grants, &redirects, &item.TokenEndpointAuthMethod); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &item.Permissions) != nil || json.Unmarshal([]byte(projects), &item.Projects) != nil {
+			return nil, apiError(500, "storage error")
+		}
+		if json.Unmarshal([]byte(grants), &item.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &item.RedirectURIs) != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if a.containsProjects(item.Projects) {
