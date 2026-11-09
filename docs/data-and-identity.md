@@ -1,6 +1,6 @@
 # Events, identity, and sessions
 
-The default browser profile uses a daily cookieless pseudonym. The opt-in identified profile supports anonymous-to-user linking through `posthog.identify()`. Use a build containing this change for identified capture; the v0.1.0 image rejects `$identify`.
+The default browser profile uses a daily cookieless pseudonym. The opt-in identified profile supports anonymous-to-user linking through `posthog.identify()`. Identified capture is available starting in v0.2.0.
 
 ## Event identity and immutability
 
