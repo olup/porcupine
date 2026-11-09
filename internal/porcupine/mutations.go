@@ -112,7 +112,11 @@ func parseExpectedRevision(raw string) (uint64, error) {
 }
 
 func validateEventSnapshot(snapshot EventSnapshot) (EventSnapshot, error) {
-	if strings.TrimSpace(snapshot.Event) == "" || len(snapshot.Event) > 500 || strings.TrimSpace(snapshot.DistinctID) == "" || len(snapshot.DistinctID) > 1000 {
+	return validateEventSnapshotActor(snapshot, false)
+}
+
+func validateEventSnapshotActor(snapshot EventSnapshot, allowEmpty bool) (EventSnapshot, error) {
+	if strings.TrimSpace(snapshot.Event) == "" || len(snapshot.Event) > 500 || !allowEmpty && strings.TrimSpace(snapshot.DistinctID) == "" || len(snapshot.DistinctID) > 1000 {
 		return snapshot, apiError(400, "event and distinct_id are required and must fit limits")
 	}
 	if snapshot.DistinctID == cookielessSentinel {
@@ -138,7 +142,7 @@ func validateEventSnapshot(snapshot EventSnapshot) (EventSnapshot, error) {
 	}
 	// Detach request maps before removing identity properties or server-owned markers.
 	var detached EventSnapshot
-	if err := json.Unmarshal(encoded, &detached); err != nil {
+	if err := decodeIngestionJSON(encoded, &detached); err != nil {
 		return snapshot, apiError(400, "invalid event snapshot")
 	}
 	return detached, nil
@@ -183,9 +187,12 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 	}
 	if revision == 0 {
 		var event Event
-		var properties string
-		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot)
+		var properties, ingestion string
+		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion)
 		if err == nil {
+			if err := decodeIngestionMetadata(&event, ingestion); err != nil {
+				return eventProjection{}, false, apiError(503, "event storage unavailable")
+			}
 			event.Properties = json.RawMessage(properties)
 			snapshot, err := originalSnapshot(event)
 			if err != nil {
@@ -214,7 +221,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 }
 
 func (s *Service) editEvent(ctx context.Context, input *EventEditInput) (*MutationOutput, error) {
-	snapshot, err := validateEventSnapshot(input.Body.Snapshot)
+	snapshot, err := validateEventSnapshotActor(input.Body.Snapshot, true)
 	if err != nil {
 		return nil, err
 	}
@@ -276,19 +283,31 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	if current.Revision != revision {
 		return nil, apiError(409, "expected_revision does not match the current event")
 	}
+	current.Event = eventWithMetadata(current.Event)
+	if snapshot != nil && strings.TrimSpace(snapshot.DistinctID) == "" && !(current.DistinctID == "" && current.SourceID != "posthog" && (current.EventType == "track" || current.EventType == "pageview")) {
+		return nil, apiError(400, "distinct_id is required for this event")
+	}
+
 	projection := current
 	if operation == "delete" {
 		projection.IsDeleted = true
 		projection.Event.Event, projection.DistinctID, projection.Timestamp = "", "", ""
 		projection.Properties, projection.OriginalSnapshot = json.RawMessage(`{}`), ""
+		projection.SourceID, projection.MessageID, projection.EventType = "", "", ""
+		projection.Context = json.RawMessage(`{}`)
 	} else {
 		var originalProperties map[string]any
 		if json.Unmarshal(current.Properties, &originalProperties) != nil {
 			return nil, apiError(503, "event storage unavailable")
 		}
-		delete(snapshot.Properties, "token")
+		if current.SourceID != "posthog" && snapshot.Event != current.Event.Event && eventWithMetadata(Event{Event: snapshot.Event}).EventType != current.EventType {
+			return nil, apiError(400, "event category cannot be changed")
+		}
+		if current.SourceID == "posthog" {
+			delete(snapshot.Properties, "token")
+		}
 		properties, _ := json.Marshal(snapshot.Properties)
-		if originalProperties["cookieless"] == true {
+		if originalProperties["cookieless"] == true && (current.SourceID == "posthog" || strings.HasPrefix(current.DistinctID, "cookieless_")) {
 			if snapshot.DistinctID != current.DistinctID {
 				return nil, apiError(400, "cookieless distinct_id cannot be changed")
 			}
@@ -298,8 +317,10 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 			}
 			properties = cookielessProperties(properties, current.DistinctID, day)
 		} else {
-			delete(snapshot.Properties, "cookieless")
-			delete(snapshot.Properties, "identity_day")
+			if current.SourceID == "posthog" {
+				delete(snapshot.Properties, "cookieless")
+				delete(snapshot.Properties, "identity_day")
+			}
 			properties, _ = json.Marshal(snapshot.Properties)
 		}
 		projection.Event.Event, projection.DistinctID = snapshot.Event, snapshot.DistinctID
@@ -374,14 +395,14 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	if bytes+int64(len(payload)) > mutationMaxBytes {
 		return nil, apiError(503, "mutation queue is full")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO event_heads(project_id,uuid,revision,is_deleted,pending) VALUES(?,?,?,?,1) ON CONFLICT(project_id,uuid) DO UPDATE SET revision=excluded.revision,is_deleted=excluded.is_deleted,pending=1`, projection.ProjectID, projection.UUID, seq, projection.IsDeleted)
+	_, err = tx.ExecContext(ctx, `INSERT INTO event_heads(project_id,uuid,revision,is_deleted,pending,event_id) VALUES(?,?,?,?,1,?) ON CONFLICT(project_id,uuid) DO UPDATE SET revision=excluded.revision,is_deleted=excluded.is_deleted,pending=1,event_id=CASE WHEN event_heads.event_id=0 THEN excluded.event_id ELSE event_heads.event_id END`, projection.ProjectID, projection.UUID, seq, projection.IsDeleted, projection.ID)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES(?,?,?,?)`, seq, projection.ProjectID, projection.UUID, string(payload))
 	}
 	if err == nil && operation == "delete" {
 		err = s.cancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID)
 		if err == nil {
-			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "")
+			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "", projection.ID)
 		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=? AND uuid=?`, projection.ProjectID, projection.UUID)

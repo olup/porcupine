@@ -124,7 +124,7 @@ def sqlite_state(path):
 
 
 def fingerprint(endpoint, environment):
-    sql = "SELECT event_id,project_id,uuid,event,distinct_id,hex(SHA256(properties)) AS properties_sha,timestamp,received_at,revision,is_deleted,hex(SHA256(original_snapshot)) AS evidence_sha,hex(SHA256(identity_snapshot)) AS identity_sha FROM (SELECT * FROM " + TABLE + " ORDER BY revision DESC LIMIT 1 BY project_id,uuid) ORDER BY project_id,uuid FORMAT JSONEachRow"
+    sql = "SELECT event_id,project_id,uuid,event,distinct_id,hex(SHA256(properties)) AS properties_sha,timestamp,received_at,revision,is_deleted,hex(SHA256(original_snapshot)) AS evidence_sha,hex(SHA256(identity_snapshot)) AS identity_sha,source_id,message_id,event_type,hex(SHA256(context)) AS context_sha FROM (SELECT * FROM " + TABLE + " ORDER BY revision DESC LIMIT 1 BY project_id,uuid) ORDER BY project_id,uuid FORMAT JSONEachRow"
     return hashlib.sha256(ch(endpoint, environment, sql)).hexdigest()
 
 
@@ -293,6 +293,9 @@ def run():
             created_client=api(origin,"/api/v1/oauth-clients",{"name":role,"permissions":["events:read","events:edit","events:delete"],"projects":[pid]},admin,201)
             clients[role]=(created_client["client_id"],created_client["client_secret"])
         reader = token(origin,clients["active"])
+        native_client = api(origin,"/api/v1/oauth-clients",{"name":"restore native source","source_id":"restore-native","permissions":["events:write"],"projects":[pid]},admin,201)
+        clients["native"] = (native_client["client_id"], native_client["client_secret"])
+        native_writer = token(origin, clients["native"])
         wait_until(lambda:http(origin,base+"/query",body={"sql":"SELECT count() AS total FROM events","use_cache":False},token=reader)[0]==200,"source analytics initialization",45)
         revoked_token = token(origin,clients["revoked"])
         api(origin,"/api/v1/oauth-clients/"+clients["revoked"][0],token=admin,expected=204,method="DELETE")
@@ -306,6 +309,11 @@ def run():
         for name in baseline:
             capture(name,distinct="$posthog_cookieless" if name=="cookieless" else "synthetic-person")
         capture("before-login", distinct="browser-before-login")
+        native_original = {"type":"pageview","message_id":"restore-native-message","actor_id":"browser-before-login",
+                           "context":{"page":{"url":"https://synthetic.example/restore"},"locale":"fr-FR","additional":{"preserved":True}}}
+        native_receipt = api(origin,"/ingest/v1/events",native_original,native_writer)
+        check(native_receipt["accepted"] == 1, "accepted native original before checkpoint")
+        native_event_id = native_receipt["receipts"][0]["event_id"]
         link = {"api_key": ingest, "uuid": "restore-link", "event": "$identify", "distinct_id": "account-42",
                 "properties": {"$anon_distinct_id": "browser-before-login", "$set": {"plan": "free"}}}
         check(api(origin, "/capture/", link)["accepted"] == 1, "accepted identity link before checkpoint")
@@ -319,6 +327,9 @@ def run():
                 last_diagnostic[0] = time.monotonic()
             return sum(counts[:2]) == 0
         wait_until(drain,"seed delivery did not drain",60)
+        native_projection = api(origin,base+"/query",{"sql":"SELECT uuid,event_id,source_id,message_id,event_type,context FROM events WHERE source_id='restore-native' AND message_id='restore-native-message'"},reader)["result"]["data"]
+        check(len(native_projection) == 1 and native_projection[0]["event_id"] == native_event_id, "native original projected with acknowledged numeric ID")
+        native_uuid = native_projection[0]["uuid"]
         def edit(name,event,key):
             return api(origin,base+"/events/"+name,{"idempotency_key":key,"expected_revision":"0","snapshot":{"event":event,"distinct_id":"synthetic-person","properties":{"corrected":True},"timestamp":"2026-01-01T00:00:00Z"}},reader,202,method="PATCH")["mutation_id"]
         def remove(name,key):
@@ -328,6 +339,7 @@ def run():
         for index in range(8):
             capture("receipt-filler-%d"%index)
         wait_until(drain,"receipt fixtures did not drain",45)
+        check(not sqlite_rows(source_db,"SELECT 1 FROM event_receipts WHERE project_id=? AND uuid=?",(pid,native_uuid)), "native original receipt evicted before backup")
         check(sqlite_rows(source_db,"SELECT count(*) FROM event_receipts")[0][0]<=4,"bounded hot receipt cache")
         check(sqlite_rows(source_db,"SELECT count(*) FROM event_receipts WHERE uuid IN ('cold-evicted','deleted-evicted')")[0][0]==0,"cold and deleted receipt eviction occurred")
         checks.append("cold and deleted exact-duplicate receipts evicted before checkpoint")
@@ -443,6 +455,7 @@ def run():
         rows=[json.loads(raw) for raw in ch(target_ch,destination_environment,"SELECT uuid,event FROM "+TABLE+" FINAL WHERE project_id=unhex('"+pid.encode().hex()+"') AND is_deleted=0 AND identity_snapshot='' ORDER BY uuid FORMAT JSONEachRow").splitlines()]
         expected=set(payloads)-{"deleted-evicted","pending-deletion","after-sqlite-snapshot"}-{name for name,_ in accepted}
         expected.update(cut)
+        expected.add(native_uuid)
         check({row["uuid"] for row in rows}==expected and len(rows)==len(expected),"restored history includes exact checkpoint cut and excludes later source acknowledgements")
         event_names={row["uuid"]:row["event"] for row in rows}
         check(event_names["corrected"]=="corrected-v2" and event_names["pending-correction"]=="pending-correction-v2","corrections survive native restore and resumed replay")
@@ -453,6 +466,12 @@ def run():
         resolved = api(origin, base+"/query", {"sql": "SELECT distinct_id,person_id,JSONExtractString(person_properties,'plan') AS plan FROM events WHERE uuid='before-login'"}, restored_reader)
         check(resolved["result"]["data"] == [{"distinct_id": "browser-before-login", "person_id": "account-42", "plan": "pro"}], "restored profile resolves cold pre-login event after pending trait replay")
         checks.append("restored anonymous link and pending trait update resolve through public SQL")
+        restored_native = api(origin,base+"/query",{"sql":"SELECT uuid,event_id,source_id,message_id,event_type,context FROM events WHERE source_id='restore-native' AND message_id='restore-native-message'"},restored_reader)["result"]["data"]
+        check(restored_native == native_projection, "restored native source/message/type/context and numeric ID are byte-exact")
+        restored_native_writer = token(origin, clients["native"])
+        native_retry = api(origin,"/ingest/v1/events",native_original,restored_native_writer)
+        check(native_retry["duplicates"] == 1 and native_retry["receipts"][0]["event_id"] == native_event_id, "restored evicted native receipt preserves original numeric ID")
+        checks.append("native original canonical metadata and evicted numeric receipt survive coordinated restore and independent cold storage")
         mcp_token=token(origin,clients["active"],origin+"/mcp")
         def mcp(method,params):
             request=urllib.request.Request(origin+"/mcp",data=json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params}).encode(),headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":"2025-11-25","Authorization":"Bearer "+mcp_token})
@@ -462,7 +481,7 @@ def run():
         check(not result.get("isError") and int(result["structuredContent"]["body"]["result"]["data"][0]["total"])==len(expected),"restored MCP query matches HTTP")
         check(restored_process.poll() is None,"restored service remains live")
         checks.append("restored live API/MCP, active/revoked credentials, pending replay, tombstones and evicted cold receipt deduplication verified")
-        report={"passed":True,"started_at":started_at,"completed_at":datetime.now(timezone.utc).isoformat(),"method":"online SQLite snapshot plus native ClickHouse backup under live projection guard","clickhouse_image":IMAGE,"porcupine_binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"restored_native_cold_parts":cold_parts,"acknowledged_during_native_backup":during_native,"native_backup_seconds":round(native_end-native_start,3),"concurrent_acknowledged_total":len(accepted),"concurrent_checkpoint_cut":len(cut),"restored_visible_events":len(expected),"checkpoint_tables":checkpoint_state,"checks":checks,"production_connected":False}
+        report={"passed":True,"started_at":started_at,"completed_at":datetime.now(timezone.utc).isoformat(),"method":"online SQLite snapshot plus native ClickHouse backup under live projection guard","clickhouse_image":IMAGE,"porcupine_binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"restored_native_cold_parts":cold_parts,"acknowledged_during_native_backup":during_native,"native_backup_seconds":round(native_end-native_start,3),"concurrent_acknowledged_total":len(accepted),"concurrent_checkpoint_cut":len(cut),"restored_visible_events":len(expected),"native_original_event_id":native_event_id,"metadata_fingerprint_columns":["source_id","message_id","event_type","context"],"checkpoint_tables":checkpoint_state,"checks":checks,"production_connected":False}
     report["disposable_resources_cleaned"]=True
     return report
 

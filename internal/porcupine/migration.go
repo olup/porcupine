@@ -67,7 +67,11 @@ received_at_ms Int64,
 revision UInt64,
 is_deleted UInt8,
 original_snapshot String,
-identity_snapshot String DEFAULT ''
+identity_snapshot String DEFAULT '',
+source_id String DEFAULT '',
+message_id String DEFAULT '',
+event_type String DEFAULT '',
+context String DEFAULT ''
 ) ENGINE = ReplacingMergeTree(revision,is_deleted)
 PARTITION BY toYYYYMM(fromUnixTimestamp64Milli(received_at_ms,'UTC'))
 ORDER BY (project_id,uuid)
@@ -211,6 +215,6 @@ func (c *clickHouse) verifyLegacy(ctx context.Context) error {
 }
 
 func (c *clickHouse) ensureIdentityColumn(ctx context.Context, table string) error {
-	_, err := c.admin(ctx, migrationPrefix+"ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS identity_snapshot String DEFAULT ''")
+	_, err := c.admin(ctx, migrationPrefix+"ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS identity_snapshot String DEFAULT '', ADD COLUMN IF NOT EXISTS source_id String DEFAULT '', ADD COLUMN IF NOT EXISTS message_id String DEFAULT '', ADD COLUMN IF NOT EXISTS event_type String DEFAULT '', ADD COLUMN IF NOT EXISTS context String DEFAULT ''")
 	return err
 }

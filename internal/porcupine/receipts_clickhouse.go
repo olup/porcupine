@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -38,6 +39,15 @@ func receiptSortingKeySafe(key string) bool {
 // tombstones. It never initializes or alters the source (online backup can hold
 // the projection lock while captures continue). Unknown history fails closed.
 func (c *clickHouse) receiptFacts(ctx context.Context, keys []receiptKey) (string, map[receiptKey]bool, error) {
+	source, ids, err := c.receiptFactsWithIDs(ctx, keys)
+	seen := map[receiptKey]bool{}
+	for key := range ids {
+		seen[key] = true
+	}
+	return source, seen, err
+}
+
+func (c *clickHouse) receiptFactsWithIDs(ctx context.Context, keys []receiptKey) (string, map[receiptKey]int64, error) {
 	if c == nil || len(keys) > maxCaptureEvents {
 		return "", nil, errReceiptHistory
 	}
@@ -61,9 +71,9 @@ func (c *clickHouse) receiptFacts(ctx context.Context, keys []receiptKey) (strin
 	}
 	tableFilter := `database=` + literal(c.config.Database) + ` AND name='events_v2'`
 	policyFilter := `database=` + literal(c.config.Database) + ` AND table='events_v2'`
-	facts := `CAST([], 'Array(Tuple(String,String))')`
+	facts := `CAST([], 'Array(Tuple(String,String,String))')`
 	if len(predicates) > 0 {
-		facts = `(SELECT groupArray(tuple(project_id,uuid)) FROM (SELECT project_id,uuid FROM ` + c.config.Database + `.` + eventTable + ` PREWHERE ` + strings.Join(predicates, " OR ") + ` GROUP BY project_id,uuid))`
+		facts = `(SELECT groupArray(tuple(project_id,uuid,toString(event_id))) FROM (SELECT project_id,uuid,min(event_id) AS event_id FROM ` + c.config.Database + `.` + eventTable + ` PREWHERE ` + strings.Join(predicates, " OR ") + ` GROUP BY project_id,uuid))`
 	}
 	// A complete JSON envelope, not streaming JSONEachRow, is essential: a source
 	// header followed by a truncated/broken facts stream must never prove absence.
@@ -98,16 +108,25 @@ func (c *clickHouse) receiptFacts(ctx context.Context, keys []receiptKey) (strin
 	if row.Source == "" || row.Source == "00000000-0000-0000-0000-000000000000" || row.Engine != "ReplacingMergeTree" || !receiptSortingKeySafe(row.SortingKey) || !receiptDefinitionSafe(row.Definition) || row.Policies == nil || row.Restrictive == nil || row.Allow == nil || *row.Restrictive != 0 || (*row.Policies > 0 && *row.Allow == 0) || row.Facts == nil || len(*row.Facts) > len(requested) {
 		return "", nil, errReceiptHistory
 	}
-	seen := map[receiptKey]bool{}
+	seen := map[receiptKey]int64{}
 	for _, tuple := range *row.Facts {
-		if len(tuple) != 2 {
+		if len(tuple) != 2 && len(tuple) != 3 {
 			return "", nil, errReceiptHistory
 		}
 		key := receiptKey{tuple[0], tuple[1]}
-		if !requested[key] || seen[key] {
+		_, duplicate := seen[key]
+		if !requested[key] || duplicate {
 			return "", nil, errReceiptHistory
 		}
-		seen[key] = true
+		id := int64(0)
+		if len(tuple) == 3 {
+			var parseErr error
+			id, parseErr = strconv.ParseInt(tuple[2], 10, 64)
+			if parseErr != nil || id < 0 {
+				return "", nil, errReceiptHistory
+			}
+		}
+		seen[key] = id
 	}
 	return row.Source, seen, nil
 }

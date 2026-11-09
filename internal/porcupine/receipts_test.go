@@ -19,6 +19,7 @@ type receiptHistoryFixture struct {
 	mu                           sync.Mutex
 	c                            *clickHouse
 	facts                        map[receiptKey]bool
+	ids                          map[receiptKey]int64
 	probes                       int
 	unavailable                  bool
 	response                     string
@@ -27,7 +28,7 @@ type receiptHistoryFixture struct {
 }
 
 func receiptHistory(t *testing.T) *receiptHistoryFixture {
-	f := &receiptHistoryFixture{facts: map[receiptKey]bool{}, definition: "CREATE TABLE events_v2 ENGINE = ReplacingMergeTree(revision,is_deleted) SETTINGS allow_experimental_replacing_merge_with_cleanup = 0"}
+	f := &receiptHistoryFixture{facts: map[receiptKey]bool{}, ids: map[receiptKey]int64{}, definition: "CREATE TABLE events_v2 ENGINE = ReplacingMergeTree(revision,is_deleted) SETTINGS allow_experimental_replacing_merge_with_cleanup = 0"}
 	f.c = testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		sql := string(body)
@@ -51,7 +52,7 @@ func receiptHistory(t *testing.T) *receiptHistoryFixture {
 				projectLiteral := "project_id=unhex('" + hex.EncodeToString([]byte(k.ProjectID)) + "')"
 				uuidLiteral := "unhex('" + hex.EncodeToString([]byte(k.UUID)) + "')"
 				if strings.Contains(sql, projectLiteral) && strings.Contains(sql, uuidLiteral) {
-					facts = append(facts, []string{k.ProjectID, k.UUID})
+					facts = append(facts, []string{k.ProjectID, k.UUID, fmt.Sprint(f.ids[k])})
 				}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"meta": []any{}, "data": []any{map[string]any{"source_uuid": "receipt-source", "source_engine": "ReplacingMergeTree", "sorting_key": "project_id, uuid", "definition": f.definition, "policy_count": fmt.Sprint(f.policies), "restrictive_count": fmt.Sprint(f.restrictive), "allow_count": fmt.Sprint(f.allow), "facts": facts}}, "rows": 1, "statistics": map[string]any{}})
@@ -65,6 +66,7 @@ func receiptHistory(t *testing.T) *receiptHistoryFixture {
 					break
 				}
 				f.facts[receiptKey{e.ProjectID, e.UUID}] = true
+				f.ids[receiptKey{e.ProjectID, e.UUID}] = int64(e.EventID)
 			}
 		}
 	})

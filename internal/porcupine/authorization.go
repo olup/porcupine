@@ -1,9 +1,13 @@
 package porcupine
 
-import "slices"
+import (
+	"regexp"
+	"slices"
+)
 
 type actor struct {
 	ID          string
+	SourceID    string
 	Permissions []string
 	Projects    []string
 }
@@ -61,4 +65,36 @@ func (access operationAccess) visible(a actor) bool {
 
 func (access operationAccess) allows(a actor, project string) bool {
 	return access.visible(a) && (access.ProjectParameter == "" || project != "" && authorize(a, "", project))
+}
+
+var sourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
+func validSourceID(value string) bool { return value == "" || sourceIDPattern.MatchString(value) }
+
+func validateCredentialSource(sourceID string, permissions, projects []string) error {
+	if sourceID == "posthog" {
+		return apiError(400, "source_id posthog is reserved for legacy ingestion")
+	}
+	if !validSourceID(sourceID) {
+		return apiError(400, "invalid source_id")
+	}
+	if sourceID != "" && (len(projects) != 1 || projects[0] == "*" || !slices.Contains(permissions, "events:write")) {
+		return apiError(400, "source_id requires events:write and exactly one project")
+	}
+	return nil
+}
+
+func delegatedSourceID(a actor, sourceID string, permissions, projects []string) (string, error) {
+	if a.SourceID != "" {
+		if sourceID != "" && sourceID != a.SourceID {
+			return "", apiError(403, "cannot delegate a different source_id")
+		}
+		if slices.Contains(permissions, "events:write") {
+			sourceID = a.SourceID
+		}
+	}
+	if err := validateCredentialSource(sourceID, permissions, projects); err != nil {
+		return "", err
+	}
+	return sourceID, nil
 }

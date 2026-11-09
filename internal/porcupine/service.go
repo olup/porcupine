@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,6 +209,9 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeMutations(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializeIngestionMetadata(context.Background()); err != nil {
+		return fail(err)
+	}
 	if err := s.initializeIdentity(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -328,7 +332,7 @@ func (s *Service) authenticate(ctx context.Context, raw string) (actor, error) {
 	if raw == "" {
 		return a, errors.New("missing access key")
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE token_hash=? AND revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects)
+	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE token_hash=? AND revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
 		return a, err
 	}
@@ -392,7 +396,8 @@ func readBody(w http.ResponseWriter, r *http.Request, ingestion bool) ([]byte, b
 
 func (s *Service) ingestionCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/capture/" && r.URL.Path != "/batch/" && r.URL.Path != "/i/v0/e/" && r.URL.Path != "/e/" {
+		nativeRoute := r.URL.Path == "/ingest/v1/events" || r.URL.Path == "/v1/track" || r.URL.Path == "/v1/page" || r.URL.Path == "/v1/identify" || r.URL.Path == "/v1/batch"
+		if !nativeRoute && r.URL.Path != "/capture/" && r.URL.Path != "/batch/" && r.URL.Path != "/i/v0/e/" && r.URL.Path != "/e/" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -414,13 +419,17 @@ func (s *Service) ingestionCORS(next http.Handler) http.Handler {
 			}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				header = strings.ToLower(strings.TrimSpace(header))
-				if header != "" && header != "content-type" && header != "content-encoding" {
+				if header != "" && header != "content-type" && header != "content-encoding" && !(nativeRoute && (header == "authorization" || header == "x-porcupine-key")) {
 					problem(w, 403, "preflight header is not allowed")
 					return
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "POST")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Encoding")
+			allowedHeaders := "Content-Type, Content-Encoding"
+			if nativeRoute {
+				allowedHeaders += ", Authorization, X-Porcupine-Key"
+			}
+			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -446,6 +455,10 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /batch/", capture)
 	m.HandleFunc("POST /i/v0/e/", capture)
 	m.HandleFunc("POST /e/", capture)
+	m.HandleFunc("POST /ingest/v1/events", limitConcurrent(s.captureSlots, s.captureNative))
+	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
+		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
+	}
 	return s.ingestionCORS(m)
 }
 
@@ -459,6 +472,7 @@ type eventInput struct {
 	Timestamp  string          `json:"timestamp"`
 	Set        json.RawMessage `json:"$set,omitempty"`
 	SetOnce    json.RawMessage `json:"$set_once,omitempty"`
+	ingestion  *ingestionMetadata
 }
 type ingestInput struct {
 	eventInput
@@ -475,6 +489,10 @@ type Event struct {
 	ReceivedAt       string          `json:"received_at"`
 	Delivered        bool            `json:"delivered"`
 	IdentitySnapshot string          `json:"-"`
+	SourceID         string          `json:"source_id,omitempty"`
+	MessageID        string          `json:"message_id,omitempty"`
+	EventType        string          `json:"event_type,omitempty"`
+	Context          json.RawMessage `json:"context,omitempty"`
 }
 
 func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
@@ -504,11 +522,27 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			batch = []eventInput{input.eventInput}
 		}
 	}
+	s.captureNormalized(w, r, input.eventInput, batch)
+}
+
+// captureNormalized accepts only server-translated event inputs. Its private
+// ingestion metadata cannot be populated by the public JSON decoder.
+func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root eventInput, batch eventBatch) {
+	nativeResponse := len(batch) > 0 && batch[0].ingestion != nil
+	for _, e := range batch {
+		if (e.ingestion != nil) != nativeResponse {
+			problem(w, 400, "mixed ingestion protocols")
+			return
+		}
+	}
 	// Every supplied credential must agree, including event-level SDK tokens.
 	rawKey := ""
-	credentials := append([]eventInput{input.eventInput}, batch...)
+	credentials := append([]eventInput{root}, batch...)
 	for _, e := range credentials {
 		propertyToken, exists := e.Properties["token"]
+		if e.ingestion != nil {
+			propertyToken, exists = nil, false
+		}
 		if exists {
 			if _, ok := propertyToken.(string); !ok {
 				problem(w, 400, "token must be a string")
@@ -543,8 +577,11 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		if err == nil && rawKey != "" {
 			var selector actor
 			selector, err = s.authenticate(r.Context(), rawKey)
-			if err == nil && selector.can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && authorize(a, "events:write", selector.Projects[0]) {
+			if err == nil && selector.can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
 				a.Projects = []string{selector.Projects[0]}
+				if selector.SourceID != "" {
+					a.SourceID = selector.SourceID
+				}
 			} else {
 				err = errors.New("project key outside token scope")
 			}
@@ -580,7 +617,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 	events := make([]Event, 0, len(batch))
 	cookieless := false
 	for _, e := range batch {
-		if e.DistinctID == "" {
+		if e.DistinctID == "" && e.ingestion == nil {
 			if value, ok := e.Properties["distinct_id"].(string); ok {
 				e.DistinctID = value
 			}
@@ -588,7 +625,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
 			cookieless = true
 		}
-		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
+		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
 			problem(w, 400, "event and distinct_id are required and must fit limits")
 			return
 		}
@@ -596,10 +633,10 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			problem(w, 400, "unsupported reserved control event")
 			return
 		}
-		if e.UUID == "" {
+		if e.UUID == "" && e.ingestion == nil {
 			e.UUID = newID()
 		}
-		if len(e.UUID) > 128 {
+		if e.ingestion == nil && len(e.UUID) > 128 {
 			problem(w, 400, "uuid exceeds 128 characters")
 			return
 		}
@@ -628,15 +665,29 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		delete(e.Properties, "token")
-		delete(e.Properties, "cookieless")
-		delete(e.Properties, "identity_day")
+		if e.ingestion == nil {
+			delete(e.Properties, "token")
+			delete(e.Properties, "cookieless")
+			delete(e.Properties, "identity_day")
+		}
 		props, err := json.Marshal(e.Properties)
 		if err != nil {
 			problem(w, 400, "invalid properties")
 			return
 		}
-		events = append(events, Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received})
+		prepared := Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
+		metadata := e.ingestion
+		if metadata == nil && a.SourceID != "" {
+			enriched := eventWithMetadata(prepared)
+			metadata = &ingestionMetadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
+		}
+		if metadata != nil {
+			if err := prepareIngestionMetadata(&prepared, metadata, a.SourceID); err != nil {
+				problem(w, 400, err.Error())
+				return
+			}
+		}
+		events = append(events, prepared)
 	}
 	var clientIP netip.Addr
 	if cookieless {
@@ -695,6 +746,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		cookielessID = cookielessDistinctID(secret, projectID, clientIP, r.UserAgent())
 	}
 	accepted, duplicates, identityIgnored := 0, 0, 0
+	var receipts []ingestionReceipt
 	var acceptedBytes int64
 	var webhookEvents []Event
 	for _, e := range events {
@@ -704,6 +756,21 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if exists || lookup.known[e.UUID] {
+			if nativeResponse {
+				id, idErr := localReceiptEventID(r.Context(), tx, projectID, e.UUID)
+				if idErr != nil {
+					problem(w, 503, "receipt event ID unavailable")
+					return
+				}
+				if id == 0 {
+					id = lookup.ids[e.UUID]
+				}
+				if id <= 0 {
+					problem(w, 503, "receipt event ID unavailable")
+					return
+				}
+				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(id, 10), UUID: e.UUID, Duplicate: true})
+			}
 			duplicates++
 			continue
 		}
@@ -720,6 +787,9 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
 			e.DistinctID = cookielessID
 			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
+			if e.SourceID != "" {
+				e.Context = scrubIngestionContext(e.Context)
+			}
 		}
 		identityInput := e
 		if isIdentityControl(e.Event) {
@@ -733,7 +803,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			problem(w, 503, "queue is full")
 			return
 		}
-		inserted, err := tx.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol) VALUES(?,?,?,?,?,?,?,1)`, e.ProjectID, e.UUID, e.Event, e.DistinctID, string(e.Properties), e.Timestamp, e.ReceivedAt)
+		inserted, err := tx.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol,ingestion_metadata) VALUES(?,?,?,?,?,?,?,1,?)`, e.ProjectID, e.UUID, e.Event, e.DistinctID, string(e.Properties), e.Timestamp, e.ReceivedAt, encodeIngestionMetadata(e))
 		if err != nil {
 			problem(w, 503, "storage unavailable")
 			return
@@ -764,6 +834,9 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		if s.pipelines != nil && !isIdentityControl(e.Event) {
 			webhookEvents = append(webhookEvents, e)
 		}
+		if nativeResponse {
+			receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(e.ID, 10), UUID: e.UUID})
+		}
 		accepted++
 		acceptedBytes += size
 	}
@@ -777,5 +850,9 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.wakeWebhook()
-	write(w, 200, map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates, "identity_ignored": identityIgnored})
+	response := map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates, "identity_ignored": identityIgnored}
+	if nativeResponse {
+		response["receipts"] = receipts
+	}
+	write(w, 200, response)
 }

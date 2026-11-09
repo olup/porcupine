@@ -56,6 +56,10 @@ type clickHouseEvent struct {
 	IsDeleted        uint8  `json:"is_deleted"`
 	OriginalSnapshot string `json:"original_snapshot"`
 	IdentitySnapshot string `json:"identity_snapshot"`
+	SourceID         string `json:"source_id"`
+	MessageID        string `json:"message_id"`
+	EventType        string `json:"event_type"`
+	Context          string `json:"context"`
 }
 
 func (c *clickHouse) insert(ctx context.Context, events []Event) error {
@@ -89,11 +93,16 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 	encoder.SetEscapeHTML(false)
 	for _, projection := range projections {
 		event := projection.Event
+		if !projection.IsDeleted {
+			event = eventWithMetadata(event)
+		} else {
+			event.SourceID, event.MessageID, event.EventType, event.Context = "", "", "", nil
+		}
 		received, err := time.Parse(time.RFC3339Nano, event.ReceivedAt)
 		if err != nil || event.ID <= 0 || event.ProjectID == "" || event.UUID == "" {
 			return errors.New("invalid event projection identity")
 		}
-		row := clickHouseEvent{EventID: uint64(event.ID), ProjectID: event.ProjectID, UUID: event.UUID, ReceivedAt: received.UTC().Format(time.RFC3339Nano), ReceivedAtMS: received.UnixMilli(), Revision: projection.Revision}
+		row := clickHouseEvent{EventID: uint64(event.ID), ProjectID: event.ProjectID, UUID: event.UUID, ReceivedAt: received.UTC().Format(time.RFC3339Nano), ReceivedAtMS: received.UnixMilli(), Revision: projection.Revision, SourceID: event.SourceID, MessageID: event.MessageID, EventType: event.EventType, Context: string(event.Context)}
 		if projection.IsDeleted {
 			if projection.Revision == 0 {
 				return errors.New("invalid event deletion revision")
@@ -111,6 +120,9 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 			row.Timestamp = timestamp.UTC().Format(time.RFC3339Nano)
 			row.TimestampMS = timestamp.UnixMilli()
 			row.OriginalSnapshot = projection.OriginalSnapshot
+			if !validEventContext(event.Context) {
+				return errors.New("invalid event context")
+			}
 			if event.IdentitySnapshot != "" && !json.Valid([]byte(event.IdentitySnapshot)) {
 				return errors.New("invalid identity snapshot")
 			}
@@ -126,7 +138,7 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 }
 
 func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
-	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
+	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot,source_id,message_id,event_type,context FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
 	data, err := c.request(ctx, c.config.User, c.config.Password, "", nil, strings.NewReader(sql), 64<<20)
 	if err != nil {
 		return eventProjection{}, err
@@ -147,6 +159,10 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 		IsDeleted        uint8       `json:"is_deleted"`
 		OriginalSnapshot string      `json:"original_snapshot"`
 		IdentitySnapshot string      `json:"identity_snapshot"`
+		SourceID         string      `json:"source_id"`
+		MessageID        string      `json:"message_id"`
+		EventType        string      `json:"event_type"`
+		Context          string      `json:"context"`
 	}
 	if json.Unmarshal(data, &row) != nil {
 		return eventProjection{}, errors.New("invalid stored event projection")
@@ -170,5 +186,12 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 			return eventProjection{}, errors.New("invalid stored event payload")
 		}
 	}
-	return eventProjection{Event: Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true, IdentitySnapshot: row.IdentitySnapshot}, Revision: revision, IsDeleted: row.IsDeleted == 1, OriginalSnapshot: row.OriginalSnapshot}, nil
+	event := Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true, IdentitySnapshot: row.IdentitySnapshot, SourceID: row.SourceID, MessageID: row.MessageID, EventType: row.EventType, Context: json.RawMessage(row.Context)}
+	if row.IsDeleted == 0 {
+		event = eventWithMetadata(event)
+	}
+	if row.IsDeleted == 0 && !validEventContext(event.Context) {
+		return eventProjection{}, errors.New("invalid stored context")
+	}
+	return eventProjection{Event: event, Revision: revision, IsDeleted: row.IsDeleted == 1, OriginalSnapshot: row.OriginalSnapshot}, nil
 }

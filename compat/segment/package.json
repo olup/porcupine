@@ -1,0 +1,7 @@
+{
+  "name": "porcupine-segment-contract",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node contracts.mjs" },
+  "devDependencies": { "@segment/analytics-node": "3.1.0" }
+}

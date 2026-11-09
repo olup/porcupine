@@ -21,6 +21,11 @@ Schema discovery returns `tables`, `sql`, `limits`, and `delivery`. `sql.functio
 | Column | ClickHouse type | Meaning |
 | --- | --- | --- |
 | `id` | `UInt64` | Durable SQLite event ID |
+| `event_id` | `UInt64` | Same durable ID as `id`, stable across producer retries |
+| `source_id` | `String` | Credential-bound logical producer or the adapter default |
+| `message_id` | `String` | Original producer message ID, or the generated ID when absent |
+| `event_type` | `String` | Normalized category of the visible row, `pageview` or `track` |
+| `context` | `String` | Capture context encoded as a JSON object, with absent fields omitted |
 | `revision` | `UInt64` | Latest projected revision, returned as a decimal string |
 | `project_id` | `String` | Project enforced by the reader and row policy |
 | `uuid` | `String` | Event UUID, unique within the project |

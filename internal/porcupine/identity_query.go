@@ -83,7 +83,7 @@ func identityViewSQL(database, namespace, projectID string) string {
  GROUP BY identified_id`
 	person := `if(links.anonymous_id!='',links.identified_id,e.distinct_id)`
 	return "CREATE OR REPLACE VIEW " + namespace + `.events_with_persons SQL SECURITY INVOKER AS
- SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,` + person + ` AS person_id,
+ SELECT e.id,e.event_id,e.source_id,e.message_id,e.event_type,e.context,e.project_id,e.uuid,e.event,e.distinct_id,` + person + ` AS person_id,
  if(profiles.identified_id!='',profiles.traits,'{}') AS person_properties,
  e.properties,e.timestamp,e.timestamp_ms,e.revision,e.event_time,e.received_at,e.received_at_ms
  FROM ` + namespace + `.events AS e
@@ -94,7 +94,7 @@ func identityViewSQL(database, namespace, projectID string) string {
 // The physical allowlist intentionally excludes original_snapshot and the
 // deletion marker. The new snapshot contains canonical, project-local identity
 // state only; its raw field is never projected into either public view.
-const analyticsPhysicalColumns = "event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,identity_snapshot"
+const analyticsPhysicalColumns = "event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,identity_snapshot," + eventMetadataColumns
 
 func identityViewNeeded(raw string) bool {
 	identity := false
