@@ -211,3 +211,15 @@ func TestImportPersonVersionsCannotCrossSourceNamespaces(t *testing.T) {
 		t.Fatal("unrelated PostHog source versions overwrote imported person")
 	}
 }
+
+func TestImportExplicitTargetOnlyIdentifyDoesNotInventLink(t *testing.T) {
+	s := service(t, 100)
+	p, _ := project(t, s)
+	result := importRowsForTest(t, s, p, "events", `{"uuid":"node-identify-history","event":"$identify","distinct_id":"explicit-user","timestamp":"2020-01-01T00:00:00Z","properties":{}}`)[0]
+	traits, identified, _ := storedIdentityProfile(t, s, p, "explicit-user")
+	var links int
+	s.db.QueryRow(`SELECT count(*) FROM identity_links`).Scan(&links)
+	if result.Accepted != 1 || result.Unresolved != 0 || !identified || len(traits) != 0 || links != 0 {
+		t.Fatal("target-only evidence must not create anonymous links or traits")
+	}
+}

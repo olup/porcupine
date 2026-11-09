@@ -4,7 +4,7 @@ Porcupine provides machine-to-machine OAuth for the native API and MCP. A servic
 
 The authorization server runs in the existing Go process and stores state in
 SQLite. It requires no separate identity application, external authorization
-server, or human account system. Use the canonical HTTPS origin (lowercase scheme and host, default port omitted) for the issuer. Operator configuration pins the issuer and
+server, or human account system. Interactive browser login requires a canonical HTTPS origin (lowercase scheme and host, default port omitted). Operator configuration pins the issuer and
 resources; project grants remain Porcupine's own authority.
 
 This page covers machine credentials. Source builds also support [interactive MCP authorization](mcp-interactive-oauth.md) when an upstream OpenID Connect provider is configured. That optional flow uses pre-registered clients, an exact redirect URI, explicit user/project grants, and authorization codes with PKCE S256. The v0.3.0 release supports machine credentials only.

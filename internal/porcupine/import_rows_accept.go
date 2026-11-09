@@ -216,22 +216,27 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 				result.Unresolved = 1
 			} // The internal person UUID does not prove an app-user target.
 		} else if row.Event.Event == "$identify" {
-			// Only an actual exported anonymous->identified assertion is evidence.
+			// The stated target is evidence; an anonymous link needs its explicit ID.
 			var properties map[string]any
 			decodeIngestionJSON(row.Event.Properties, &properties)
-			anonymous, _ := properties["$anon_distinct_id"].(string)
-			if validIdentityID(row.Event.DistinctID) && validIdentityID(anonymous) && anonymous != row.Event.DistinctID {
+			anonymousValue, hasAnonymous := properties["$anon_distinct_id"]
+			anonymous, anonymousString := anonymousValue.(string)
+			if validIdentityID(row.Event.DistinctID) && (!hasAnonymous || anonymousString && validIdentityID(anonymous)) {
 				targetOwned, e := importIdentityEvidenceOwned(ctx, tx, project, row.Event.DistinctID, source)
 				if e != nil {
 					return result, e
 				}
-				sourceOwned, e := importIdentityEvidenceOwned(ctx, tx, project, anonymous, source)
-				if e != nil {
-					return result, e
-				}
-				existing, _, e := identityLink(ctx, tx, project, anonymous)
-				if e != nil {
-					return result, e
+				sourceOwned := true
+				existing := ""
+				if hasAnonymous && anonymous != row.Event.DistinctID {
+					sourceOwned, e = importIdentityEvidenceOwned(ctx, tx, project, anonymous, source)
+					if e != nil {
+						return result, e
+					}
+					existing, _, e = identityLink(ctx, tx, project, anonymous)
+					if e != nil {
+						return result, e
+					}
 				}
 				targetLink, _, e := identityLink(ctx, tx, project, row.Event.DistinctID)
 				if e != nil {
@@ -241,7 +246,11 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 					safe := row.Event
 					safe.ID = event.ID
 					safe.ProjectID = project
-					safe.Properties, _ = json.Marshal(map[string]any{"$anon_distinct_id": anonymous})
+					safeProperties := map[string]any{}
+					if hasAnonymous {
+						safeProperties["$anon_distinct_id"] = anonymous
+					}
+					safe.Properties, _ = json.Marshal(safeProperties)
 					ignored, e := applyIdentityState(ctx, tx, safe, &snapshot)
 					if e != nil {
 						return result, e

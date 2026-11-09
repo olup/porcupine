@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"golang.org/x/time/rate"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -291,6 +292,7 @@ func TestOAuthInteractiveMissingAuxiliaryMappingCannotBroadenAuthority(t *testin
 
 func TestOAuthAuthorizationStartAdmissionIsIndependentAndBounded(t *testing.T) {
 	f := newOIDCFixture(t)
+	f.s.oauth.limiter = rate.NewLimiter(0, 1)
 	accepted, rejected := 0, 0
 	for range 30 {
 		r := httptest.NewRequest("GET", f.authorizeURL(f.callback), nil)
@@ -315,5 +317,48 @@ func TestOAuthAuthorizationStartAdmissionIsIndependentAndBounded(t *testing.T) {
 	var peerHash string
 	if f.s.db.QueryRow(`SELECT peer_hash FROM oauth_authorization_requests LIMIT 1`).Scan(&peerHash) != nil || len(peerHash) != 64 || strings.Contains(peerHash, "192.0.2") {
 		t.Fatal("raw IP stored in pending authorization")
+	}
+}
+
+func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
+	f := newOIDCFixture(t)
+	code := interactiveCode(t, f)
+	other, _ := oauthProtocolClient(t, f.s, []string{"events:read"}, []string{"*"})
+	redirects, _ := json.Marshal([]string{f.callback})
+	if _, err := f.s.db.Exec(`UPDATE oauth_clients SET grant_types='["authorization_code","refresh_token"]',redirect_uris=?,token_endpoint_auth_method='none' WHERE client_id=?`, string(redirects), other); err != nil {
+		t.Fatal(err)
+	}
+	wrong := interactiveTokenForm(f, code)
+	wrong.Set("client_id", other)
+	interactiveEndpoint(t, f.s, "/oauth/token", wrong, "", "", 400)
+	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, code), "", "", 200)
+	refresh := tokens["refresh_token"].(string)
+	access := tokens["access_token"].(string)
+	interactiveEndpoint(t, f.s, "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "client_id": {other}, "refresh_token": {refresh}}, "", "", 400)
+	interactiveEndpoint(t, f.s, "/oauth/revoke", url.Values{"client_id": {other}, "token": {refresh}}, "", "", 200)
+	principal, err := f.s.authenticateOAuthToken(context.Background(), access, f.host.URL+"/mcp")
+	if err != nil {
+		t.Fatal("cross-client invalid proof revoked victim", err)
+	}
+	if _, err = f.s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), f.clientID); err != nil {
+		t.Fatal(err)
+	}
+	var revoked *string
+	if f.s.db.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, principal.ID).Scan(&revoked) != nil || revoked == nil {
+		t.Fatal("client revocation did not durably revoke consent principal")
+	}
+	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
+		t.Fatal("client revoked but background actor active")
+	}
+}
+
+func TestOAuthInteractiveUnusedCodeExpires(t *testing.T) {
+	f := newOIDCFixture(t)
+	code := interactiveCode(t, f)
+	later := f.s.clock().Add(oauthCodeTTL + time.Second)
+	f.s.clock = func() time.Time { return later }
+	response := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, code), "", "", 400)
+	if response["error"] != "invalid_grant" {
+		t.Fatal("expired code accepted")
 	}
 }

@@ -40,6 +40,28 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 			return nil, errors.New("OAuth issuer requires HTTPS except on loopback")
 		}
 	}
+	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
+	if c.OIDC != nil {
+		if err := validateBrowserIssuer(u, c.Issuer); err != nil {
+			return nil, err
+		}
+	}
+	if c.AccessTokenLifetimeSeconds == 0 {
+		c.AccessTokenLifetimeSeconds = 900
+	}
+	if c.AccessTokenLifetimeSeconds < 60 || c.AccessTokenLifetimeSeconds > 3600 {
+		return nil, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
+	}
+	interactive, err := newInteractiveOIDC(c.OIDC, c.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	return &oauthRuntime{config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
+}
+
+// A consent form compares the browser Origin byte for byte. Machine clients
+// retain their configured issuer and resource strings across upgrades.
+func validateBrowserIssuer(u *url.URL, issuer string) error {
 	host := strings.ToLower(u.Hostname())
 	if ip := net.ParseIP(host); ip != nil {
 		host = ip.String()
@@ -48,7 +70,7 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	if port != "" {
 		number, err := strconv.Atoi(port)
 		if err != nil || number < 1 || number > 65535 {
-			return nil, errors.New("invalid OAuth issuer port")
+			return errors.New("invalid OAuth issuer port")
 		}
 		port = strconv.Itoa(number)
 		if u.Scheme == "https" && port == "443" || u.Scheme == "http" && port == "80" {
@@ -61,19 +83,8 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 		host = "[" + host + "]"
 	}
 	canonical := u.Scheme + "://" + host
-	if strings.TrimSuffix(c.Issuer, "/") != canonical {
-		return nil, errors.New("OAuth issuer must use a canonical origin: lowercase scheme and host, canonical IP and port, no default port")
+	if issuer != canonical {
+		return errors.New("OAuth issuer must use a canonical origin: lowercase scheme and host, canonical IP and port, no default port")
 	}
-	if c.AccessTokenLifetimeSeconds == 0 {
-		c.AccessTokenLifetimeSeconds = 900
-	}
-	if c.AccessTokenLifetimeSeconds < 60 || c.AccessTokenLifetimeSeconds > 3600 {
-		return nil, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
-	}
-	c.Issuer = canonical
-	interactive, err := newInteractiveOIDC(c.OIDC, c.Issuer)
-	if err != nil {
-		return nil, err
-	}
-	return &oauthRuntime{config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
+	return nil
 }

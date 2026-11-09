@@ -69,6 +69,11 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 	if json.Unmarshal([]byte(grants), &client.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &client.RedirectURIs) != nil {
 		return nil, errors.New("invalid OAuth registration")
 	}
+	normalizedGrants, normalizedRedirects, method, err := normalizeOAuthClientRegistration(client.GrantTypes, client.RedirectURIs, client.AuthMethod)
+	if err != nil {
+		return nil, errors.New("invalid OAuth registration")
+	}
+	client.GrantTypes, client.RedirectURIs, client.AuthMethod = normalizedGrants, normalizedRedirects, method
 	return client, nil
 }
 

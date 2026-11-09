@@ -418,7 +418,7 @@ func TestInteractiveOIDCRejectsAmbientGrants(t *testing.T) {
 func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
 	for _, issuer := range []string{"HTTPS://analytics.example.test", "https://ANALYTICS.example.test", "https://analytics.example.test:443", "http://localhost:80", "http://localhost:080", "https://analytics.example.test:0443", "https://analytics.example.test:65536"} {
 		t.Run(issuer, func(t *testing.T) {
-			if _, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer}); err == nil {
+			if _, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer, OIDC: &OIDCConfig{}}); err == nil {
 				t.Fatal("accepted issuer differing from browser canonical Origin")
 			}
 		})
@@ -440,5 +440,13 @@ func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
 		if cookie.Secure != wantSecure || wantSecure && cookie.Name != "__Host-porcupine_oidc" {
 			t.Fatal("canonical HTTPS issuer lost Secure host cookie")
 		}
+	}
+}
+
+func TestLegacyOAuthPreservesIssuerSpelling(t *testing.T) {
+	const issuer = "https://analytics.example.test:443"
+	runtime, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer})
+	if err != nil || runtime.issuer != issuer || runtime.mcpResource != issuer+"/mcp" {
+		t.Fatal("machine client audience changed on upgrade", err)
 	}
 }

@@ -448,3 +448,19 @@ func TestImportUploadFreezesBoundSourceAcrossAdminResumeAndLiveReplay(t *testing
 		t.Fatal("bound source provenance was lost", bySource)
 	}
 }
+
+func TestImportUploadInvalidBoundMetadataDoesNotPoisonFile(t *testing.T) {
+	s := service(t, 100)
+	project, _ := project(t, s)
+	payload, _ := json.Marshal(map[string]any{"name": "bound", "permissions": []string{"imports:write", "events:write"}, "projects": []string{project}, "source_id": "warehouse"})
+	created := request(t, s, "POST", "/api/v1/access-keys", adminToken, string(payload), 201)
+	token := created["token"].(string)
+	bad, _ := json.Marshal(map[string]any{"uuid": "bad-context", "event": "page", "distinct_id": "customer", "timestamp": "2020-01-02T03:04:05Z", "properties": map[string]any{"$current_url": "https://example.test/" + strings.Repeat("x", 70000)}})
+	data := append(append(bad, '\n'), importTestRow("valid-after-context")...)
+	job := importTestCreate(t, s, project, token, "invalid-context", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	imported := importTestJob(t, importTestPut(t, s, project, job, job.Files[0], token, 0, data, 200))
+	if imported.Counts.Rows != 2 || imported.Counts.Invalid != 1 || imported.Counts.Accepted != 1 || len(imported.Samples) != 1 || imported.Samples[0].Reason != "invalid_metadata" || eventCount(t, s) != 1 {
+		t.Fatal("bad bound row metadata poisoned unrelated valid archive row", imported)
+	}
+	importTestRequest(t, s, "POST", importTestBase(project, job.ID)+"/files/"+job.Files[0].ID+"/complete", token, nil, nil, 200)
+}

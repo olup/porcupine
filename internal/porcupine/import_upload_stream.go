@@ -256,3 +256,29 @@ func prepareImportUploadSource(project, source string, rows []ImportRow) error {
 	}
 	return nil
 }
+
+// Invalid source-bound row metadata is a row-level rejection, just like a
+// malformed JSONL record, rather than a permanently unresumable file chunk.
+func prepareImportUploadWork(project, source string, work *importChunkWork) error {
+	if source == "posthog" {
+		return nil
+	}
+	if source == "" || !validSourceID(source) {
+		return errors.New("invalid configured import source")
+	}
+	rows, positions := work.rows, work.positions
+	work.rows = work.rows[:0]
+	work.positions = work.positions[:0]
+	for i := range rows {
+		if err := prepareImportUploadSource(project, source, rows[i:i+1]); err != nil {
+			work.file.Counts.Invalid++
+			if len(work.samples) < importMaxSamples {
+				work.samples = append(work.samples, ImportRowSample{FileID: work.file.ID, RowNumber: positions[i], Reason: "invalid_metadata"})
+			}
+			continue
+		}
+		work.rows = append(work.rows, rows[i])
+		work.positions = append(work.positions, positions[i])
+	}
+	return nil
+}

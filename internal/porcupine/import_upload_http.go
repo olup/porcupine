@@ -312,7 +312,7 @@ func (s *Service) uploadImportChunk(ctx context.Context, input *ImportUploadChun
 	work.file.LastOffset = int64(offset)
 	work.file.LastSize = int64(len(input.RawBody))
 	work.file.LastSHA256 = digest
-	if err := prepareImportUploadSource(input.ID, file.SourceID, work.rows); err != nil {
+	if err := prepareImportUploadWork(input.ID, file.SourceID, &work); err != nil {
 		return nil, apiError(400, "invalid configured import source metadata")
 	}
 	lookup, err := s.prepareImportRows(ctx, input.ID, work.rows)
@@ -356,7 +356,7 @@ func (s *Service) completeImportFile(ctx context.Context, input *ImportUploadFil
 	if err != nil {
 		return nil, err
 	}
-	if err := prepareImportUploadSource(input.ID, file.SourceID, work.rows); err != nil {
+	if err := prepareImportUploadWork(input.ID, file.SourceID, &work); err != nil {
 		return nil, apiError(400, "invalid configured import source metadata")
 	}
 	lookup, err := s.prepareImportRows(ctx, input.ID, work.rows)

@@ -279,6 +279,8 @@ func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRowContext(r.Context(), `SELECT grant_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=? UNION ALL SELECT t.interactive_grant_id FROM oauth_tokens t WHERE t.token_hash=? AND t.client_id=? AND t.interactive_grant_id<>''  LIMIT 1`, hash(raw), client.ID, hash(raw), client.ID).Scan(&grantID)
 	if err == nil {
 		err = revokeInteractiveGrant(r.Context(), tx, grantID)
+	} else if errors.Is(err, sql.ErrNoRows) && client.AuthMethod == "none" {
+		err = nil
 	} else if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_tokens WHERE token_hash=? AND client_id=?`, hash(raw), client.ID)
 	}

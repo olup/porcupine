@@ -54,10 +54,13 @@ live person state.
 
 An archived `$identify` can establish its explicit `$anon_distinct_id` link only
 when both sides are absent or still import-owned and no existing link conflicts.
+A target-only `$identify` can identify its stated ID without creating a link.
 Incremental `$set` and `$set_once` arguments are not replayed. Stored PostHog
 exports can omit those arguments; treating their absence as current traits would
 be incorrect. Such controls are retained as hidden, marked no-ops and reported
-as unresolved. Persons snapshots provide the supported trait hydration path.
+as unresolved. Unsupported alias and group controls are hidden no-ops; this
+import does not reconstruct group identity. Persons snapshots provide the
+supported trait hydration path.
 
 ## Delivery, progress, and storage
 
