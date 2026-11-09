@@ -82,6 +82,11 @@ func TestProjectionLoadUsesBoundIdentityAndReturnsTombstone(t *testing.T) {
 		if strings.Contains(sql, project) || strings.Contains(sql, uuid) || strings.Contains(sql, " FINAL") || !strings.Contains(sql, "ORDER BY revision DESC LIMIT 1") || !strings.Contains(sql, "SETTINGS final=0") {
 			t.Error("projection lookup interpolated identity or finalized away tombstones")
 		}
+		for _, setting := range []string{"use_query_cache=0", "enable_reads_from_query_cache=0", "enable_writes_to_query_cache=0"} {
+			if !strings.Contains(sql, setting) {
+				t.Error("mandatory projection lookup did not disable cache reads and writes")
+			}
+		}
 		for _, value := range []string{project, uuid} {
 			if !strings.Contains(sql, "unhex('"+hex.EncodeToString([]byte(value))+"')") {
 				t.Error("lookup did not bind exact identity")

@@ -293,7 +293,7 @@ def run():
             created_client=api(origin,"/api/v1/oauth-clients",{"name":role,"permissions":["events:read","events:edit","events:delete"],"projects":[pid]},admin,201)
             clients[role]=(created_client["client_id"],created_client["client_secret"])
         reader = token(origin,clients["active"])
-        wait_until(lambda:http(origin,base+"/query",body={"sql":"SELECT count() AS total FROM events"},token=reader)[0]==200,"source analytics initialization",45)
+        wait_until(lambda:http(origin,base+"/query",body={"sql":"SELECT count() AS total FROM events","use_cache":False},token=reader)[0]==200,"source analytics initialization",45)
         revoked_token = token(origin,clients["revoked"])
         api(origin,"/api/v1/oauth-clients/"+clients["revoked"][0],token=admin,expected=204,method="DELETE")
         payloads = {}
@@ -441,14 +441,14 @@ def run():
         check(event_names["corrected"]=="corrected-v2" and event_names["pending-correction"]=="pending-correction-v2","corrections survive native restore and resumed replay")
         for name in ("cold-evicted","deleted-evicted"):
             result=api(origin,"/capture/",payloads[name]); check(result["accepted"]==0 and result["duplicates"]==1,"evicted cold/deleted receipt remains exact duplicate after restore")
-        status=api(origin,base+"/query",{"sql":"SELECT count() AS total FROM events"},restored_reader)
+        status=api(origin,base+"/query",{"sql":"SELECT count() AS total FROM events","use_cache":False},restored_reader)
         check(int(status["result"]["data"][0]["total"])==len(expected),"restored reader sees exact checkpoint cardinality")
         mcp_token=token(origin,clients["active"],origin+"/mcp")
         def mcp(method,params):
             request=urllib.request.Request(origin+"/mcp",data=json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params}).encode(),headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":"2025-11-25","Authorization":"Bearer "+mcp_token})
             with OPENER.open(request,timeout=10) as response:return json.load(response)
         check("result" in mcp("initialize",{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"online-restore-drill","version":"1"}}),"restored MCP session")
-        result=mcp("tools/call",{"name":"porcupine_call","arguments":{"operation_id":"query-events","path":{"id":pid},"body":{"sql":"SELECT count() AS total FROM events"}}})["result"]
+        result=mcp("tools/call",{"name":"porcupine_call","arguments":{"operation_id":"query-events","path":{"id":pid},"body":{"sql":"SELECT count() AS total FROM events","use_cache":False}}})["result"]
         check(not result.get("isError") and int(result["structuredContent"]["body"]["result"]["data"][0]["total"])==len(expected),"restored MCP query matches HTTP")
         check(restored_process.poll() is None,"restored service remains live")
         checks.append("restored live API/MCP, active/revoked credentials, pending replay, tombstones and evicted cold receipt deduplication verified")

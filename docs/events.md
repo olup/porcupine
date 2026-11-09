@@ -23,6 +23,8 @@ API Bearer keys apply only to legacy mode. HTTP and [MCP](mcp.md) expose the sam
 
 SQL and catalog discovery read the latest projected ClickHouse state. They can therefore return an older revision until mutation delivery completes. Delivery status adds `pending_mutations` alongside `pending` original events. No cross-database snapshot joins these states.
 
+Interactive SQL bypasses its result cache while any project mutation is pending. After projection is acknowledged, caching resumes with a new generation, so earlier cached revisions are not reused. `get-event` always reads accepted state without this cache. For explicit fresh reads of projected data, pass `"use_cache": false` to `query-events`. See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
+
 ## Full event replacement
 
 `edit-event` accepts this JSON body:
