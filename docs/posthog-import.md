@@ -1,21 +1,8 @@
 # Import a PostHog file or directory
 
-The import API and CLI in v0.4.0 accept PostHog event and person exports in JSON Lines format. They run on the existing Porcupine server. No public file URL, shared filesystem, or bucket is required. See [PostHog export fields and identity behavior](posthog-import-format.md).
+The HTTP API accepts PostHog events and persons in JSON Lines format. An agent with local file access can upload a file or enumerate a directory. It needs an API token with `imports:write` and `events:write` for the destination project. [Import format](posthog-import-format.md)
 
-## Upload from your computer
-
-1. Export events as JSON Lines from PostHog. Include the persons model if you need profile data. Download the files to your computer. Keep the original event UUIDs and timestamps. [PostHog S3 export models](https://posthog.com/docs/data-pipelines/batch-exports/s3)
-2. Give a technical client `imports:write` and `events:write` for the destination project. Set `PORCUPINE_URL`, `PORCUPINE_CLIENT_ID` and `PORCUPINE_CLIENT_SECRET` in the CLI environment. The CLI exchanges the credentials for API access tokens and renews them as needed. Alternatively, set `PORCUPINE_ACCESS_TOKEN` to an API-resource token, or a suitably authorized management key in a legacy deployment. Keep secrets out of command arguments.
-3. Build the CLI from the same source as the server and run it on the local path:
-
-```sh
-go build -o ./porcupine ./cmd/porcupine
-./porcupine import posthog ./export --project "$PROJECT_ID"
-```
-
-A single file such as `events.jsonl.gz` works in place of the directory. The CLI recognizes `.jsonl`, `.ndjson`, `.jsonlines` and line-oriented `.json`, optionally compressed with gzip. A directory is traversed recursively; hidden entries are skipped and symbolic links are rejected. The CLI infers persons versus events from PostHog fields or a `persons` path component. Use `--kind persons` or `--kind events` to force the model for a homogeneous input. For CSV, Parquet or zstd exports, convert to JSON Lines or request a JSON Lines export first.
-
-The CLI prints the import ID to stderr. Rerun the same command with the same files after an interruption, or provide `--resume IMPORT_ID`. The CLI verifies the manifest, reads the server's confirmed offsets, and continues. Gzip offsets and checksums refer to the **decompressed** bytes. Resuming a gzip file can reread its local prefix. Keep source files unchanged for the whole import.
+For each file, record its relative path and model (events or persons), decompress gzip locally, and calculate the SHA-256 digest and byte length of the uncompressed content. Keep the files unchanged until completion. Create the import with a stable idempotency key, then follow the HTTP protocol below. After interruption, fetch the job and seek to each file’s confirmed offset in its uncompressed bytes. The server never receives a local filesystem path to open.
 
 The final JSON includes file offsets, counts, and bounded samples of row numbers with error reasons. A completed import can contain invalid or unresolved rows. Compare event totals by day and name with PostHog, and use a fresh query (`"use_cache": false`) after delivery catches up. Historical data stays queryable. Importing alone does not enqueue webhooks or send the rows to scheduled S3 query pipelines.
 

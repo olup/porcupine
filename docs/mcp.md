@@ -36,7 +36,7 @@ Unauthorized MCP responses point to
 operator issuer, not the request Host. [The OAuth reference](oauth.md) describes
 the client-credentials exchange, Basic authentication, scopes, and challenges.
 
-Without an OIDC configuration the issuer provides machine client credentials. With OIDC enabled, pre-registered clients can use the browser authorization flow. The MCP transport is streamable HTTP.
+Machine clients use client credentials. For pre-registered interactive clients, enable [local invitations](local-invitations.md) or configure an upstream OIDC provider. The MCP transport is streamable HTTP.
 
 Configured OAuth rejects legacy MCP Bearer keys by default. Explicit legacy-key
 allowance is a migration option. Entirely unconfigured OAuth retains the older

@@ -38,6 +38,14 @@ type interactiveOIDC struct {
 	oauth    oauth2.Config
 	issuer   string
 	bindings map[string]actor
+	*oauthBrowser
+}
+
+func newOAuthBrowser(secure bool) *oauthBrowser {
+	return &oauthBrowser{secure: secure, sessions: map[string]*oidcBrowserSession{}}
+}
+
+type oauthBrowser struct {
 	mu       sync.Mutex
 	sessions map[string]*oidcBrowserSession
 	secure   bool
@@ -80,7 +88,7 @@ func newInteractiveOIDC(config *OIDCConfig, issuer string) (*interactiveOIDC, er
 	if err != nil || issuerURL.Scheme != "https" && issuerURL.Scheme != "http" {
 		return nil, errors.New("invalid OIDC callback issuer")
 	}
-	runtime := &interactiveOIDC{issuer: config.Issuer, bindings: map[string]actor{}, sessions: map[string]*oidcBrowserSession{}, secure: issuerURL.Scheme == "https"}
+	runtime := &interactiveOIDC{issuer: config.Issuer, bindings: map[string]actor{}, oauthBrowser: newOAuthBrowser(issuerURL.Scheme == "https")}
 	for _, binding := range config.Bindings {
 		if binding.Subject == "" || len(binding.Subject) > 512 || len(binding.Permissions) == 0 || len(binding.Projects) == 0 || len(binding.Projects) > 1000 {
 			return nil, errors.New("invalid OIDC binding")

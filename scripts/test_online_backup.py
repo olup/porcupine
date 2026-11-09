@@ -64,7 +64,14 @@ class OnlineBackupTests(unittest.TestCase):
                 CREATE TABLE oauth_authorization_requests(request_hash TEXT);
                 INSERT INTO oauth_authorization_requests VALUES ('request');
             """)
+            snap.executescript("""
+                CREATE TABLE local_invitations(principal_id TEXT, code_hash TEXT);
+                INSERT INTO access_keys VALUES ('invite', NULL);
+                INSERT INTO local_invitations VALUES ('invite', 'pending-hash');
+            """)
             backup.invalidate_interactive_sessions(snap, "restored")
+            self.assertIsNone(snap.execute("SELECT code_hash FROM local_invitations").fetchone()[0])
+            self.assertEqual(snap.execute("SELECT revoked_at FROM access_keys WHERE id='invite'").fetchone()[0], "restored")
             self.assertEqual(snap.execute("SELECT token_hash FROM oauth_tokens").fetchall(), [("machine-token",)])
             self.assertEqual(snap.execute("SELECT id FROM access_keys WHERE revoked_at IS NULL").fetchall(), [("machine",)])
             for table in ("oauth_authorization_requests", "oauth_authorization_codes", "oauth_interactive_access", "oauth_refresh_tokens"):

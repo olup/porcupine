@@ -17,18 +17,13 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "import" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		if err := runImport(ctx, os.Args[2:], os.Stdout, os.Stderr); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(porcupine.Version)
 		return
+	}
+	if len(os.Args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: porcupine [--version]")
+		os.Exit(2)
 	}
 	addr := os.Getenv("PORCUPINE_ADDR")
 	if addr == "" {

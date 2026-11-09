@@ -19,7 +19,9 @@ const oauthCodeTTL = 5 * time.Minute
 const oauthRefreshTTL = 7 * 24 * time.Hour
 
 func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_authorization_requests(
+	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS local_invitations(
+ principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),code_hash TEXT UNIQUE,expires_at_ms INTEGER NOT NULL,used_at_ms INTEGER);
+ CREATE TABLE IF NOT EXISTS oauth_authorization_requests(
  request_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES access_keys(id),redirect_uri TEXT NOT NULL,
  scope TEXT NOT NULL,resource TEXT NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,peer_hash TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS oauth_interactive_grants(
@@ -242,6 +244,16 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	var count, perHuman int
 	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=?) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>?`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
 		return "", errOAuthCapacity
+	}
+	if s.oauth.config.LocalInvitations {
+		result, err := tx.ExecContext(ctx, `UPDATE local_invitations SET code_hash=NULL,used_at_ms=? WHERE principal_id=? AND used_at_ms IS NULL AND expires_at_ms>?`, s.clock().UnixMilli(), humanID, s.clock().UnixMilli())
+		if err != nil {
+			return "", err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n != 1 {
+			return "", errors.New("invitation expired or used")
+		}
 	}
 	grantID := newID()
 	code, err := oauthRandom("pc_ac_")

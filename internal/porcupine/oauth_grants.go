@@ -16,7 +16,7 @@ type OAuthGrant struct {
 	HumanID     string   `json:"human_id" doc:"Human principal ID; revoking it through revoke-access-key revokes every consent grant."`
 	ClientID    string   `json:"client_id"`
 	Issuer      string   `json:"issuer"`
-	Subject     string   `json:"subject" doc:"Verified OIDC issuer-subject identity; never inferred from email."`
+	Subject     string   `json:"subject" doc:"Verified OIDC subject or the local invitation ID."`
 	CreatedAtMS int64    `json:"created_at_ms"`
 	ExpiresAtMS int64    `json:"expires_at_ms"`
 	RevokedAt   *string  `json:"revoked_at" nullable:"true"`
@@ -37,6 +37,7 @@ type OAuthGrantRevokeInput struct {
 }
 
 func (s *Service) registerInteractiveOAuthManagement(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+	s.registerLocalInvitations(api, op)
 	access := operationAccess{Permission: "instance:admin"}
 	huma.Register(api, op("list-oauth-grants", "GET", "/api/v1/oauth-grants", "Inspect interactive human consent grants and their revocation identities", access, 200), s.managementListOAuthGrants)
 	huma.Register(api, op("revoke-oauth-grant", "DELETE", "/api/v1/oauth-grants/{id}", "Revoke a human consent grant, its tokens and background creator authority", access, 204), s.managementRevokeOAuthGrant)
@@ -45,8 +46,8 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
 		return nil, apiError(400, "invalid OAuth grant pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id,g.human_id,g.client_id,h.issuer,h.subject,g.created_at_ms,g.expires_at_ms,k.revoked_at,k.permissions,k.projects
- FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id JOIN oidc_humans h ON h.principal_id=g.human_id
+	rows, err := s.db.QueryContext(ctx, `SELECT g.id,g.human_id,g.client_id,coalesce(h.issuer,'local-invitation'),coalesce(h.subject,g.human_id),g.created_at_ms,g.expires_at_ms,k.revoked_at,k.permissions,k.projects
+ FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id LEFT JOIN oidc_humans h ON h.principal_id=g.human_id
  ORDER BY g.created_at_ms DESC,g.id LIMIT ? OFFSET ?`, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "OAuth grant storage unavailable")
