@@ -123,7 +123,7 @@ try {
   const sql = "SELECT event,distinct_id,person_id,JSONExtractString(person_properties,'plan') AS plan,JSONExtractString(person_properties,'first_source') AS first_source FROM events ORDER BY event LIMIT 100";
   let result;
   for (let attempt = 0; ; attempt++) {
-    result = await request('/api/v1/projects/' + project.project.id + '/query', { sql });
+    result = await request('/api/v1/projects/' + project.project.id + '/query', { sql, use_cache: false });
     report.last_query = { rows: result.result.data, delivery: result.delivery };
     if (result.result.data.length === 7 && result.delivery.pending === 0 && result.result.data.every(row => row.plan)) break;
     if (attempt === 149) throw new Error('projection deadline');

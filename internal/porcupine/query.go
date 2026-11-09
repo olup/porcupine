@@ -9,6 +9,7 @@ import (
 	"errors"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -67,6 +68,7 @@ type AnalyticsQueryInput struct {
 	Body struct {
 		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden."`
 		Parameters map[string]string `json:"parameters,omitempty" doc:"Typed ClickHouse placeholders such as {event:String}. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
+		UseCache   *bool             `json:"use_cache,omitempty" doc:"Omitted or true allows a 60-second ClickHouse result cache. False bypasses cache reads and writes and reads currently projected data. Caching is bypassed while edits or deletions await projection."`
 	}
 }
 
@@ -127,9 +129,9 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 		{"project_id", "String", "Owning project, enforced by ClickHouse row policies and the project view."},
 		{"uuid", "String", "SDK event identifier, unique within this project."},
 		{"event", "String", "Event name."},
-		{"distinct_id", "String", "Original event distinct ID, preserved after identification; cookieless IDs rotate each UTC day."},
-		{"person_id", "String", "Current project-local identified person for this event distinct ID; falls back to the original distinct_id."},
-		{"person_properties", "String", "Current identified person traits as JSON, including accepted $set/$set_once updates; {} when no profile exists."},
+		{"distinct_id", "String", "Event distinct ID; cookieless IDs rotate each UTC day."},
+		{"person_id", "String", "Current project-local person for this event, falling back to distinct_id."},
+		{"person_properties", "String", "Current person traits encoded as JSON, or {} if unknown."},
 		{"properties", "String", "JSON object encoded as a string. Use JSONExtractString and related functions."},
 		{"timestamp", "String", "Event timestamp in UTC RFC3339 format."},
 		{"timestamp_ms", "Int64", "Event timestamp in Unix milliseconds."},
@@ -173,7 +175,17 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	}
 	ctx, cancel := context.WithTimeout(ctx, analyticsTimeout)
 	defer cancel()
-	namespace, reader, password, err := s.analyticsReader(ctx, input.ID)
+	useCache := input.Body.UseCache == nil || *input.Body.UseCache
+	var generation int64
+	if useCache {
+		var pending bool
+		generation, pending, err = s.analyticsCacheState(ctx, input.ID)
+		if err != nil {
+			return nil, err
+		}
+		useCache = !pending
+	}
+	namespace, reader, password, err := s.analyticsReaderForCache(ctx, input.ID, useCache)
 	if err != nil {
 		return nil, apiError(503, "analytics reader unavailable")
 	}
@@ -181,7 +193,26 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	if err != nil {
 		return nil, apiError(400, "unsupported analytics SQL")
 	}
-	data, err := s.ch.query(ctx, reader, password, namespace, canonical, input.Body.Parameters)
+	var data []byte
+	if useCache {
+		data, err = s.ch.cachedQuery(ctx, reader, password, namespace, canonical, input.Body.Parameters, s.queryCacheEpoch+":"+strconv.FormatInt(generation, 10))
+	} else {
+		data, err = s.ch.query(ctx, reader, password, namespace, canonical, input.Body.Parameters)
+	}
+	if err == nil && useCache {
+		// A mutation may have been accepted while ClickHouse returned a cached
+		// result. Retry fresh if the durable generation or projection changed.
+		current, pending, checkErr := s.analyticsCacheState(ctx, input.ID)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if current != generation || pending {
+			namespace, reader, password, err = s.analyticsReader(ctx, input.ID)
+			if err == nil {
+				data, err = s.ch.query(ctx, reader, password, namespace, canonical, input.Body.Parameters)
+			}
+		}
+	}
 	if err != nil {
 		return nil, s.analyticsStorageError(ctx, input.ID, err)
 	}
@@ -194,6 +225,23 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 		return nil, apiError(503, "delivery status unavailable")
 	}
 	return &AnalyticsQueryOutput{Body: AnalyticsQuery{Result: result, Delivery: delivery}}, nil
+}
+
+func (s *Service) analyticsCacheState(ctx context.Context, projectID string) (generation int64, pending bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM mutation_audit WHERE project_id=? ORDER BY seq DESC LIMIT 1),0),EXISTS(SELECT 1 FROM mutation_outbox WHERE project_id=?)`, projectID, projectID).Scan(&generation, &pending)
+	if err != nil {
+		return 0, false, apiError(503, "analytics cache state unavailable")
+	}
+	return
+}
+
+func (c *clickHouse) cachedQuery(ctx context.Context, user, password, database, sql string, parameters map[string]string, tag string) ([]byte, error) {
+	values, err := clickHouseQueryValues(database, parameters)
+	if err != nil {
+		return nil, err
+	}
+	values.Set("query_cache_tag", tag)
+	return c.request(ctx, user, password, database, values, strings.NewReader(sql), 2<<20)
 }
 
 var analyticsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
@@ -240,6 +288,10 @@ func (s *Service) analyticsStorageError(ctx context.Context, projectID string, e
 }
 
 func (s *Service) analyticsReader(ctx context.Context, projectID string) (namespace, reader, password string, err error) {
+	return s.analyticsReaderForCache(ctx, projectID, false)
+}
+
+func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string, useCache bool) (namespace, reader, password string, err error) {
 	database := s.ch.config.Database
 	digest := sha256.Sum256([]byte(database + "\x00" + projectID))
 	namespace = "pc_" + hex.EncodeToString(digest[:16])
@@ -247,6 +299,14 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 	mac := hmac.New(sha256.New, s.querySecret)
 	mac.Write([]byte(projectID + "\x00" + database))
 	password = hex.EncodeToString(mac.Sum(nil))
+	freshReader, freshPassword := reader, password
+	cachedReader := namespace + "_cached_reader"
+	mac = hmac.New(sha256.New, s.querySecret)
+	mac.Write([]byte("cached:" + projectID + "\x00" + database))
+	cachedPassword := hex.EncodeToString(mac.Sum(nil))
+	if useCache {
+		reader, password = cachedReader, cachedPassword
+	}
 	if err = s.queryMu.Lock(ctx); err != nil {
 		return
 	}
@@ -260,8 +320,6 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 	if err = s.ch.initialize(ctx); err != nil {
 		return
 	}
-	passwordHash := sha256.Sum256([]byte(password))
-	authentication := " IDENTIFIED WITH sha256_hash BY '" + hex.EncodeToString(passwordHash[:]) + "'"
 	settings := []string{
 		"readonly=1 READONLY", "allow_ddl=0 READONLY", "allow_introspection_functions=0 READONLY", "final=1 READONLY", "optimize_move_to_prewhere_if_final=0 READONLY",
 		"max_execution_time=5 READONLY", "timeout_overflow_mode='throw' READONLY",
@@ -269,28 +327,50 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 		"read_overflow_mode='throw' READONLY", "max_result_rows=1000 READONLY", "max_result_bytes=1048576 READONLY",
 		"result_overflow_mode='throw' READONLY", "max_threads=2 READONLY",
 		"output_format_json_quote_64bit_integers=1 READONLY",
-		"session_timezone='UTC' READONLY", "use_query_cache=0 READONLY", "join_use_nulls=0 READONLY",
+		"session_timezone='UTC' READONLY", "join_use_nulls=0 READONLY", "query_cache_share_between_users=0 READONLY",
+		"query_cache_ttl=60 READONLY", "query_cache_max_entries=64 READONLY", "query_cache_max_size_in_bytes=8388608 READONLY",
+		"query_cache_min_query_runs=0 READONLY", "query_cache_min_query_duration=0 READONLY",
+		"query_cache_nondeterministic_function_handling='ignore' READONLY", "query_cache_system_table_handling='ignore' READONLY",
 	}
 	// The project literal is hex encoded so no supplied identifier becomes SQL syntax.
 	statements := []string{
 		"CREATE DATABASE IF NOT EXISTS " + namespace,
-		"CREATE USER IF NOT EXISTS " + reader + authentication,
-		"ALTER USER " + reader + authentication + " DEFAULT ROLE NONE SETTINGS " + strings.Join(settings, ", "),
-		"REVOKE ALL ON *.* FROM " + reader,
 		"CREATE ROW POLICY OR REPLACE " + namespace + "_admin ON " + database + "." + eventTable + " USING 1 TO " + quoteAnalyticsIdentifier(s.ch.config.User),
-		"CREATE ROW POLICY OR REPLACE " + namespace + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + reader,
-		"GRANT SELECT(" + analyticsPhysicalColumns + ") ON " + database + "." + eventTable + " TO " + reader,
 		"CREATE OR REPLACE VIEW " + namespace + ".events SQL SECURITY INVOKER AS " +
 			"SELECT event_id AS id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,revision," +
 			"fromUnixTimestamp64Milli(timestamp_ms,'UTC') AS event_time,received_at,received_at_ms FROM " + database +
 			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') AND identity_snapshot=''",
 		identityViewSQL(database, namespace, projectID),
-		"GRANT SELECT ON " + namespace + ".events TO " + reader,
-		"GRANT SELECT ON " + namespace + ".events_with_persons TO " + reader,
 	}
 	for _, statement := range statements {
 		if _, err = s.ch.admin(ctx, statement); err != nil {
 			return
+		}
+	}
+	for _, account := range []struct {
+		name, password, cache string
+	}{{freshReader, freshPassword, "0"}, {cachedReader, cachedPassword, "1"}} {
+		passwordHash := sha256.Sum256([]byte(account.password))
+		authentication := " IDENTIFIED WITH sha256_hash BY '" + hex.EncodeToString(passwordHash[:]) + "'"
+		accountSettings := append(append([]string(nil), settings...), "use_query_cache="+account.cache+" READONLY", "enable_reads_from_query_cache="+account.cache+" READONLY", "enable_writes_to_query_cache="+account.cache+" READONLY")
+		if account.cache == "1" {
+			accountSettings = append(accountSettings, "query_cache_tag='' CHANGEABLE_IN_READONLY")
+		} else {
+			accountSettings = append(accountSettings, "query_cache_tag='' READONLY")
+		}
+		statements := []string{
+			"CREATE USER IF NOT EXISTS " + account.name + authentication,
+			"ALTER USER " + account.name + authentication + " DEFAULT ROLE NONE SETTINGS " + strings.Join(accountSettings, ", "),
+			"REVOKE ALL ON *.* FROM " + account.name,
+			"CREATE ROW POLICY OR REPLACE " + account.name + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + account.name,
+			"GRANT SELECT(" + analyticsPhysicalColumns + ") ON " + database + "." + eventTable + " TO " + account.name,
+			"GRANT SELECT ON " + namespace + ".events TO " + account.name,
+			"GRANT SELECT ON " + namespace + ".events_with_persons TO " + account.name,
+		}
+		for _, statement := range statements {
+			if _, err = s.ch.admin(ctx, statement); err != nil {
+				return
+			}
 		}
 	}
 	s.queryReady[projectID] = true

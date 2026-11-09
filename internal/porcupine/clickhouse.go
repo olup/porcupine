@@ -85,6 +85,14 @@ func (c *clickHouse) admin(ctx context.Context, sql string) ([]byte, error) {
 }
 
 func (c *clickHouse) query(ctx context.Context, user, password, database, sql string, parameters map[string]string) ([]byte, error) {
+	values, err := clickHouseQueryValues(database, parameters)
+	if err != nil {
+		return nil, err
+	}
+	return c.request(ctx, user, password, database, values, strings.NewReader(sql), 2<<20)
+}
+
+func clickHouseQueryValues(database string, parameters map[string]string) (url.Values, error) {
 	if database != "" && !clickHouseIdentifier.MatchString(database) {
 		return nil, errors.New("invalid ClickHouse database")
 	}
@@ -96,7 +104,7 @@ func (c *clickHouse) query(ctx context.Context, user, password, database, sql st
 		}
 		values.Set("param_"+name, value)
 	}
-	return c.request(ctx, user, password, database, values, strings.NewReader(sql), 2<<20)
+	return values, nil
 }
 
 func (c *clickHouse) request(ctx context.Context, user, password, database string, parameters url.Values, body io.Reader, limit int64) ([]byte, error) {

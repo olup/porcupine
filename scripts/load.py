@@ -172,7 +172,7 @@ class Client:
         return status, result, error, time.monotonic() - started
 
     def count(self, run_id, measurements, group="query", timeout=None):
-        body = json.dumps({"sql": COUNT_SQL, "parameters": {
+        body = json.dumps({"sql": COUNT_SQL, "use_cache": False, "parameters": {
             "event": EVENT_NAME, "run_id": run_id}}).encode()
         started = time.monotonic()
         try:

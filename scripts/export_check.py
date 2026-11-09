@@ -55,7 +55,7 @@ def job_wait(job_id,terminal=True):
 
 status,listing=request('GET',project+'/exports')
 assert status==200 and listing['enabled'] and listing['limits']['max_concurrent_jobs']==1
-status,source=request('POST',project+'/query',{'sql':'SELECT max(received_at_ms) AS cutoff,count() AS total FROM events WHERE event={event:String}','parameters':{'event':'porcupine_load'}})
+status,source=request('POST',project+'/query',{'sql':'SELECT max(received_at_ms) AS cutoff,count() AS total FROM events WHERE event={event:String}','parameters':{'event':'porcupine_load'},'use_cache':False})
 assert status==200
 cutoff=source['result']['data'][0]['cutoff'];expected=int(source['result']['data'][0]['total'])
 assert expected>1000,'Seed the dedicated synthetic project before this test'

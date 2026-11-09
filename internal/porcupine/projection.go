@@ -126,7 +126,7 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 }
 
 func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
-	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
+	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
 	data, err := c.request(ctx, c.config.User, c.config.Password, "", nil, strings.NewReader(sql), 64<<20)
 	if err != nil {
 		return eventProjection{}, err

@@ -68,7 +68,7 @@ func TestAnalyticsProjectReaderIsolation(t *testing.T) {
 		if !strings.HasPrefix(user, "pc_") || !strings.HasSuffix(user, "_reader") || user == password || password == "" {
 			t.Error("query lacks isolated reader")
 		}
-		if r.URL.Query().Get("database")+"_reader" != user {
+		if r.URL.Query().Get("database")+"_cached_reader" != user {
 			t.Error("reader is not bound to its own namespace")
 		}
 		readers = append(readers, user)
@@ -86,7 +86,7 @@ func TestAnalyticsProjectReaderIsolation(t *testing.T) {
 			t.Fatal("UInt64 precision lost")
 		}
 	}
-	if len(ddl) != 22 {
+	if len(ddl) != 36 {
 		t.Fatalf("expected cached provisioning per project, got %d DDL calls", len(ddl))
 	}
 	if readers[0] != readers[1] || passwords[0] != passwords[1] || readers[0] == readers[2] || databases[0] == databases[2] || passwords[0] == passwords[2] {
