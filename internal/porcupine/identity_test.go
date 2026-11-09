@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -409,5 +410,65 @@ func TestIdentityServerOnlyStillRequiresActualProjectOAuth(t *testing.T) {
 	traits, identified, _ := storedIdentityProfile(t, f.s, projectID, "application-user")
 	if !identified || traits["plan"] != "server" {
 		t.Fatal("server-only OAuth identify did not apply canonical profile")
+	}
+}
+
+func TestIdentityControlsDiscardRawInputsBeforeSQLitePersistence(t *testing.T) {
+	s := service(t, 100)
+	projectID, token := project(t, s)
+	accepted := identifyEvent("accepted-control", "account", "bound-anon", map[string]any{"plan": "approved"}, map[string]any{})
+	accepted["properties"].(map[string]any)["raw-metadata"] = "not-part-of-canonical-profile"
+	identityCapture(t, s, token, []map[string]any{accepted}, 200)
+	for _, uuid := range []string{"accepted-control"} {
+		event := storedCookieless(t, s, uuid)
+		if event.DistinctID != "" || string(event.Properties) != `{}` {
+			t.Fatal("accepted control retained redundant raw input")
+		}
+	}
+	// A large discarded SDK metadata value must not consume durable queue bytes.
+	s.queueMaxBytes = 3000
+	rejected := identifyEvent("rejected-control", "rejected-target-id", "bound-anon", map[string]any{"email": "rejected-pii-marker@example.test"}, map[string]any{})
+	rejected["properties"].(map[string]any)["raw-metadata"] = strings.Repeat("discarded-input-marker", 3000)
+	result := identityCapture(t, s, token, []map[string]any{rejected, identifyEvent("cookieless-control", cookielessSentinel, "rejected-cookieless-anon", map[string]any{"secret": "rejected-cookieless-pii-marker"}, map[string]any{})}, 200)
+	if result["identity_ignored"] != float64(2) {
+		t.Fatal("conflicting and cookieless controls were not ignored")
+	}
+	for _, uuid := range []string{"rejected-control", "cookieless-control"} {
+		event := storedCookieless(t, s, uuid)
+		snapshot := storedIdentitySnapshot(t, s, uuid)
+		if event.DistinctID != "" || string(event.Properties) != `{}` || snapshot.IdentifiedID != "" || len(snapshot.Traits) != 0 || len(snapshot.Links) != 0 {
+			t.Fatal("ignored control retained rejected input or canonical data")
+		}
+	}
+	traits, identified, _ := storedIdentityProfile(t, s, projectID, "account")
+	if !identified || len(traits) != 1 || traits["plan"] != "approved" {
+		t.Fatal("discarded control changed approved profile")
+	}
+	var actual int64
+	if err := s.db.QueryRow(`SELECT sum(` + queueByteExpression("") + `) FROM events`).Scan(&actual); err != nil {
+		t.Fatal(err)
+	}
+	if count, stored := queueUsage(t, s); count != 3 || stored != actual || stored > s.queueMaxBytes {
+		t.Fatal("sanitized control queue accounting is inaccurate")
+	}
+	var keys int
+	s.db.QueryRow(`SELECT count(*) FROM cookieless_keys`).Scan(&keys)
+	if keys != 0 {
+		t.Fatal("ignored cookieless control unnecessarily persisted an identity key")
+	}
+	files, err := filepath.Glob(s.dbPathForReceiptTest(t) + "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, discarded := range []string{"not-part-of-canonical-profile", "rejected-target-id", "rejected-pii-marker@example.test", "discarded-input-marker", "rejected-cookieless-anon", "rejected-cookieless-pii-marker", cookielessSentinel} {
+			if strings.Contains(string(data), discarded) {
+				t.Fatalf("discarded input %q reached SQLite/WAL %s", discarded, filepath.Base(path))
+			}
+		}
 	}
 }

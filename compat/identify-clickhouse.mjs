@@ -22,7 +22,7 @@ const docker = args => execFileSync('docker', args, { cwd: root, env: environmen
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return 'http://127.0.0.1:' + server.address().port; };
 const close = server => server ? new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) : Promise.resolve();
-let directory, app, browser, site, api, origin, created = false, phase = 'local setup';
+let directory, app, browser, site, api, origin, project, created = false, phase = 'local setup';
 const failures = [], external = [], transport = [];
 const report = { passed: false, production_connected: false, profile: identifiedBrowserProfile, clickhouse_image: image };
 async function request(path, body, token = bootstrap) {
@@ -63,7 +63,7 @@ try {
     if (attempt === 149) throw new Error('readiness');
     await delay(100);
   }
-  const project = await request('/api/v1/projects', { name: 'Real SDK identity demonstration' });
+  project = await request('/api/v1/projects', { name: 'Real SDK identity demonstration' });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ serviceWorkers: 'block' });
   context.on('requestfailed', req => failures.push(new URL(req.url()).pathname));
@@ -75,19 +75,26 @@ try {
   });
   const page = await context.newPage(); await page.goto(origin);
   await page.evaluate(({ host, token, profile }) => posthog.init(token, { ...profile, api_host: host }), { host: api, token: project.ingest_token, profile: identifiedBrowserProfile });
+  const send = async (name, action) => {
+    const response = page.waitForResponse(response => new URL(response.url()).origin === api && response.request().method() === 'POST' && JSON.parse(response.request().postData()).batch.some(item => item.event === name));
+    await page.evaluate(action);
+    const completed = await response;
+    assert.equal(completed.status(), 200);
+    assert.equal(await completed.headerValue('access-control-allow-origin'), origin);
+    assert.equal(await completed.finished(), null);
+    const body = await completed.json();
+    assert.equal(body.identity_ignored, 0);
+  };
   phase = 'browser identify';
-  const ids = await page.evaluate(() => {
-    const a = posthog.get_distinct_id();
-    posthog.capture('sdk before A', {}, { send_instantly: true });
-    posthog.identify('sdk-account-a', { plan: 'starter' }, { first_source: 'first' });
-    posthog.capture('sdk after A', {}, { send_instantly: true });
-    posthog.identify('sdk-account-a', { plan: 'team' }, { first_source: 'ignored' });
-    posthog.reset(); const b = posthog.get_distinct_id();
-    posthog.capture('sdk before B', {}, { send_instantly: true });
-    posthog.identify('sdk-account-b', { plan: 'second' });
-    posthog.capture('sdk after B', {}, { send_instantly: true });
-    return { a, b };
-  });
+  const ids = { a: await page.evaluate(() => posthog.get_distinct_id()) };
+  await send('sdk before A', () => posthog.capture('sdk before A', {}, { send_instantly: true }));
+  await send('$identify', () => posthog.identify('sdk-account-a', { plan: 'starter' }, { first_source: 'first' }));
+  await send('sdk after A', () => posthog.capture('sdk after A', {}, { send_instantly: true }));
+  await send('$set', () => posthog.identify('sdk-account-a', { plan: 'team' }, { first_source: 'ignored' }));
+  ids.b = await page.evaluate(() => { posthog.reset(); return posthog.get_distinct_id(); });
+  await send('sdk before B', () => posthog.capture('sdk before B', {}, { send_instantly: true }));
+  await send('$identify', () => posthog.identify('sdk-account-b', { plan: 'second' }));
+  await send('sdk after B', () => posthog.capture('sdk after B', {}, { send_instantly: true }));
   // A fresh context provides a genuinely anonymous cookie for mixed batching.
   const batched = await browser.newContext({ serviceWorkers: 'block' });
   batched.on('requestfailed', req => failures.push(new URL(req.url()).pathname));
@@ -117,6 +124,7 @@ try {
   let result;
   for (let attempt = 0; ; attempt++) {
     result = await request('/api/v1/projects/' + project.project.id + '/query', { sql });
+    report.last_query = { rows: result.result.data, delivery: result.delivery };
     if (result.result.data.length === 7 && result.delivery.pending === 0 && result.result.data.every(row => row.plan)) break;
     if (attempt === 149) throw new Error('projection deadline');
     await delay(100);
@@ -131,12 +139,16 @@ try {
   assert.ok(transport.some(payload => payload.batch.map(event => event.event).join(',') === 'sdk batch before,$set,sdk batch after'));
   assert.deepEqual(external, []); assert.deepEqual(failures, []);
   report.passed = true; report.sql = sql; report.rows = result.result.data; report.delivery = result.delivery;
+  delete report.last_query;
   report.versions = { 'posthog-js': JSON.parse(await readFile(join(here, 'node_modules/posthog-js/package.json'))).version, 'posthog-node': JSON.parse(await readFile(join(here, 'node_modules/posthog-node/package.json'))).version, chromium: browser.version() };
   report.observed_browser_requests = transport.length;
   report.external_requests = external.length;
 } catch (error) {
   report.failed_check = phase;
   if (error.code === 'ERR_ASSERTION' && ['string', 'number', 'boolean'].includes(typeof error.actual)) report.failed_assertion = { actual: error.actual, expected: error.expected };
+  if (directory) {
+    try { report.identity_state = JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), project.project.id], { encoding: 'utf8' })); } catch {}
+  }
 } finally {
   await browser?.close(); await close(site);
   if (app && app.exitCode === null) { app.kill('SIGTERM'); await once(app, 'exit'); }

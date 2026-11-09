@@ -401,7 +401,7 @@ contract('browser.identify-traits-repeat', async () => {
     assert.deepEqual(person.traits.nested, { locale: 'fr' });
     const saved = snapshot.control_events.find(item => item.uuid === update.sent.uuid);
     assert.equal(saved.event, '$set');
-    assert.equal(saved.distinct_id, 'traits-account');
+    assert.equal(person.version, saved.id, 'the profile version points to its durable control receipt');
     const response = await fetch(api + '/e/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(update.payload) });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { status: 1, accepted: 0, duplicates: 1, identity_ignored: 0 });

@@ -1,0 +1,80 @@
+{
+  "provenance": {
+    "sdk": "posthog-js",
+    "version": "1.447.3",
+    "profile": "identifiedBrowserProfile",
+    "source": "Observed real official SDK HTTP request to a local acknowledgement server; durable ingestion is checked by contracts.test.mjs",
+    "normalization": "Synthetic credentials, UUIDs, timestamps and loopback addresses replaced; SDK properties retained",
+    "path": "/e/",
+    "content_type": "application/json",
+    "content_encoding": "identity",
+    "body_format": "json"
+  },
+  "payload": {
+    "api_key": "FIXTURE_INGEST_TOKEN",
+    "batch": [
+      {
+        "uuid": "01900000-0000-7000-8000-000000000001",
+        "event": "$set",
+        "properties": {
+          "$os": "Mac OS X",
+          "$os_version": "10.15.7",
+          "$browser": "Chrome",
+          "$device_type": "Desktop",
+          "$timezone": "Europe/Paris",
+          "$timezone_offset": -60,
+          "$current_url": "http://browser.example/",
+          "$host": "browser.example",
+          "$pathname": "/",
+          "$raw_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.8127.18 Safari/537.36",
+          "$browser_version": 158,
+          "$browser_language": "en-US",
+          "$browser_language_prefix": "en",
+          "$screen_height": 720,
+          "$screen_width": 1280,
+          "$viewport_height": 720,
+          "$viewport_width": 1280,
+          "$lib": "web",
+          "$lib_version": "1.447.3",
+          "$insert_id": "x3vg2t6yrmwbl2pr",
+          "$time": 1794212731.761,
+          "$sdk_dist_channel": "cdn",
+          "$initialization_time": "2025-02-03T04:05:06.789Z",
+          "$configured_session_timeout_ms": 1800000,
+          "distinct_id": "account-a",
+          "$device_id": "01900000-0000-7000-8000-000000000002",
+          "$user_id": "account-a",
+          "$sdk_debug_extensions_init_method": "synchronous",
+          "$sdk_debug_extensions_init_time_ms": 1,
+          "$referrer": "$direct",
+          "$referring_domain": "$direct",
+          "$set": {
+            "plan": "pro",
+            "display_name": "Ada"
+          },
+          "$set_once": {
+            "first_source": "docs"
+          },
+          "token": "FIXTURE_INGEST_TOKEN",
+          "$config_defaults": "unset",
+          "$session_id": "01900000-0000-7000-8000-000000000003",
+          "$window_id": "01900000-0000-7000-8000-000000000004",
+          "$session_entry_referrer": "$direct",
+          "$session_entry_referring_domain": "$direct",
+          "$session_entry_url": "http://browser.example/",
+          "$session_entry_host": "127.0.0.1:62680",
+          "$session_entry_pathname": "/",
+          "$recording_status": "disabled",
+          "$sdk_debug_retry_queue_size": 0,
+          "$lib_custom_api_host": "http://browser.example",
+          "$browser_type": "bot",
+          "$is_identified": true,
+          "$process_person_profile": true,
+          "$lib_rate_limit_remaining_tokens": 99
+        },
+        "timestamp": "2025-02-03T04:05:06.789Z"
+      }
+    ],
+    "sent_at": "2025-02-03T04:05:06.789Z"
+  }
+}

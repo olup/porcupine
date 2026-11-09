@@ -238,16 +238,16 @@ func TestClickHouseIntegrationIdentityCapture(t *testing.T) {
 	original := identifyEvent("identify-real", "person-real", "browser-real", map[string]any{"name": "first"}, map[string]any{"first": "only-once"})
 	identityCapture(t, s, token, []map[string]any{
 		{"uuid": "before-real", "event": "visit", "distinct_id": "browser-real"},
-		setIdentityEvent("anonymous-traits", "browser-real", map[string]any{"anonymous_trait": "preserved"}, nil),
+		setIdentityEvent("anonymous-traits", "browser-real", map[string]any{"anonymous_trait": "preserved"}, map[string]any{}),
 		original,
 		{"uuid": "after-real", "event": "purchase", "distinct_id": "person-real"},
 		setIdentityEvent("final-traits", "person-real", map[string]any{"name": "café東京"}, map[string]any{"first": "must-not-replace"}),
 	}, 200)
 	identityCapture(t, s, otherToken, []map[string]any{
 		{"uuid": "before-real", "event": "visit", "distinct_id": "browser-real"},
-		identifyEvent("identify-real", "other-person", "browser-real", map[string]any{"private_other_project": "secret"}, nil),
+		identifyEvent("identify-real", "other-person", "browser-real", map[string]any{"private_other_project": "secret"}, map[string]any{}),
 	}, 200)
-	retry := identifyEvent("identify-real", "person-real", "browser-real", map[string]any{"name": "retry-must-not-apply"}, nil)
+	retry := identifyEvent("identify-real", "person-real", "browser-real", map[string]any{"name": "retry-must-not-apply"}, map[string]any{})
 	if got := identityCapture(t, s, token, []map[string]any{retry}, 200); got["duplicates"] != float64(1) {
 		t.Fatal("accepted control replay reapplied")
 	}

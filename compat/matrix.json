@@ -152,6 +152,10 @@
   "fixtures": [
     "fixtures/node-batch.json",
     "fixtures/browser-capture.json",
-    "fixtures/browser-batch-gzip.json"
+    "fixtures/browser-batch-gzip.json",
+    "fixtures/browser-identify.json",
+    "fixtures/browser-person-set.json",
+    "fixtures/browser-identity-mixed.json",
+    "fixtures/node-identify.json"
   ]
 }
