@@ -12,7 +12,7 @@ v1.8.0 in the existing Go process. It requires no additional service.
 | Transport | Streamable HTTP, stateless, JSON responses |
 | Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` for the MCP resource |
 | Permissions | Same project and operation permissions as the native API |
-| Supported client setup | Client credentials, a host-supplied token, or opt-in interactive OAuth in source builds |
+| Supported client setup | Client credentials, a host-supplied token, or opt-in interactive OAuth in v0.4.0 |
 
 For ChatGPT or Claude, see the [interactive OAuth setup](mcp-interactive-oauth.md). The administrator pre-registers the client and maps authenticated people to projects.
 

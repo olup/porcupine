@@ -39,18 +39,18 @@ across restarts. The operator also controls allowed custom S3 origins;
 destination credentials are encrypted. Delivery is at least once. Supported restores pause
 destinations for review before resumption.
 
-The v0.3.0 release adds [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
+Porcupine supports [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
 
-Source builds also include [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
+The v0.4.0 release adds [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
 
 ## Install a release
 
-The `v0.3.0` release includes Linux amd64 and arm64 images. Use the matching
+The `v0.4.0` release includes Linux amd64 and arm64 images. Use the matching
 tag for configuration files and pin the image version when you deploy.
 
 ```sh
-docker pull ghcr.io/olup/porcupine:0.3.0
-docker run --rm ghcr.io/olup/porcupine:0.3.0 --version
+docker pull ghcr.io/olup/porcupine:0.4.0
+docker run --rm ghcr.io/olup/porcupine:0.4.0 --version
 ```
 
 Each release also has checksummed image archives for `docker load`.
@@ -64,7 +64,7 @@ OAuth enabled, fresh private credentials, and persistent Docker volumes.
 ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
 
 ```sh
-git clone --branch v0.3.0 https://github.com/olup/porcupine.git
+git clone --branch v0.4.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'

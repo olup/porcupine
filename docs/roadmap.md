@@ -19,7 +19,7 @@ acceptance, idempotent retries, mutation status, and logical deletion tombstones
 
 Clients and agents write SQL for their question. Supported functions include numeric aggregates, percentiles, `windowFunnel`, and `retention`. There are no named prebuilt metrics, saved SQL catalogs, or HogQL compatibility. SQL has a documented subset, typed scalar parameters, fixed quotas, project-specific readers, invoker views, and physical-table row policies.
 
-[MCP](mcp.md) exposes two tools for permission-filtered documentation and API calls. Schema, event catalog, and SQL operations use the same handlers and policies as HTTP. Static custom Bearer headers are supported. Source builds support [interactive MCP authorization](mcp-interactive-oauth.md) with pre-registered clients and an operator-configured OIDC provider.
+[MCP](mcp.md) exposes two tools for permission-filtered documentation and API calls. Schema, event catalog, and SQL operations use the same handlers and policies as HTTP. Static custom Bearer headers are supported. Porcupine v0.4.0 supports [interactive MCP authorization](mcp-interactive-oauth.md) with pre-registered clients and an operator-configured OIDC provider.
 
 `make integration` runs real ClickHouse and real Go SDK MCP clients in an isolated test deployment. It covers discovery, queries, project boundaries, read-only enforcement, quotas, retry deduplication before merges, outages, backpressure, and restart. `make check` does not start ClickHouse. These tests do not establish benchmarks or backup recovery.
 

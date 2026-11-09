@@ -1,6 +1,6 @@
 # Import a PostHog file or directory
 
-The import API and CLI in this source build accept PostHog event and person exports in JSON Lines format. They run on the existing Porcupine server. No public file URL, shared filesystem, or bucket is required. See [PostHog export fields and identity behavior](posthog-import-format.md).
+The import API and CLI in v0.4.0 accept PostHog event and person exports in JSON Lines format. They run on the existing Porcupine server. No public file URL, shared filesystem, or bucket is required. See [PostHog export fields and identity behavior](posthog-import-format.md).
 
 ## Upload from your computer
 
