@@ -44,14 +44,16 @@ The accepted permission names are:
 | `events:delete` | Queue a revision-checked deletion tombstone within scope. |
 | `management:read` | Inspect permitted project or instance configuration. |
 | `management:write` | Change permitted configuration and manage access without escalation. |
-| `identity:write` | Reserved for future identity mutation endpoints. |
+| `identity:write` | Reserved for future identity administration. |
 | `pipelines:read` | Inspect project pipeline and run metadata, also requiring `events:read`. |
 | `pipelines:write` | Configure project destinations and retries, also requiring `events:read`. |
 
 [Event editing and deletion](events.md) are implemented through native mutation
 operations. They require their explicit permissions; ingestion authority alone
-does not grant either capability. `identity:write` remains reserved, with no
-identity mutation operation.
+does not grant either capability. `identity:write` remains reserved, for future administrative operations. Capturing a supported
+`$identify` or `$set` uses the project's `events:write` permission. Public
+capture credentials let callers supply analytics IDs and traits. Application
+authentication and authorization must use a separate source of authority.
 
 ## Ingestion compatibility
 

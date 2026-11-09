@@ -27,6 +27,8 @@ class NativeFailure:
     def query(self, sql, query_id=None):
         if "FROM system.row_policies" in sql:
             return []
+        if "FROM system.columns" in sql:
+            return []
         if "FROM system.tables" in sql:
             return [{"name": "events_v2", "uuid": self.table_uuid, "engine": "ReplacingMergeTree", "create_table_query": "events definition"},
                     {"name": "schema_state", "uuid": "schema-table", "engine": "ReplacingMergeTree", "create_table_query": "schema definition"}]
@@ -44,6 +46,23 @@ class NativeFailure:
 
 
 class OnlineBackupTests(unittest.TestCase):
+    def test_identity_projection_is_included_in_checkpoint_hash_when_present(self):
+        for present in (False, True):
+            with self.subTest(present=present):
+                native = NativeFailure()
+                statements = []
+
+                def query(sql):
+                    statements.append(sql)
+                    if "FROM system.columns" in sql and present:
+                        return [{"name": "identity_snapshot", "type": "String"}]
+                    return NativeFailure.query(native, sql)
+
+                native.query = query
+                backup.logical_summary(native, "example")
+                digest_sql = next(sql for sql in statements if "cityHash64(winner)" in sql)
+                self.assertEqual("original_snapshot,identity_snapshot)" in digest_sql, present)
+
     def fixture(self, directory):
         db = Path(directory).resolve() / "source.db"
         with sqlite3.connect(db) as connection:

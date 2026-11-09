@@ -26,6 +26,8 @@ Schema discovery returns `tables`, `sql`, `limits`, and `delivery`. `sql.functio
 | `uuid` | `String` | Event UUID, unique within the project |
 | `event` | `String` | Event name |
 | `distinct_id` | `String` | Accepted event identity; cookieless IDs rotate daily |
+| `person_id` | `String` | Project-local current person ID, falling back to the event distinct ID |
+| `person_properties` | `String` | Current delivered profile traits encoded as a JSON object; `{}` if unknown |
 | `properties` | `String` | JSON object encoded as a string |
 | `timestamp` | `String` | Client event timestamp, normalized to UTC RFC3339 |
 | `timestamp_ms` | `Int64` | Client event timestamp in Unix milliseconds |

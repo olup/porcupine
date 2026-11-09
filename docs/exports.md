@@ -1,6 +1,6 @@
 # SQL result exports
 
-Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same SQL grammar, parameters, row policies, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets.
+Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same SQL grammar, parameters, row policies, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets. Select `person_id` to include the resolved user and `person_properties` for the latest projected profile.
 
 Native [ClickHouse S3 cold storage](storage.md) and result exports are separate. Export objects use their own private prefix and credentials. Recurring [project pipelines](pipelines.md) configure their own scoped
 destination and schedule. This one-off export API still has no caller-selected

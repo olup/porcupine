@@ -130,6 +130,8 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 		{"uuid", "String", "SDK event identifier, unique within this project."},
 		{"event", "String", "Event name."},
 		{"distinct_id", "String", "Event distinct ID; cookieless IDs rotate each UTC day."},
+		{"person_id", "String", "Current project-local person for this event, falling back to distinct_id."},
+		{"person_properties", "String", "Current person traits encoded as JSON, or {} if unknown."},
 		{"properties", "String", "JSON object encoded as a string. Use JSONExtractString and related functions."},
 		{"timestamp", "String", "Event timestamp in UTC RFC3339 format."},
 		{"timestamp_ms", "Int64", "Event timestamp in Unix milliseconds."},
@@ -186,6 +188,10 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	namespace, reader, password, err := s.analyticsReaderForCache(ctx, input.ID, useCache)
 	if err != nil {
 		return nil, apiError(503, "analytics reader unavailable")
+	}
+	canonical, err = identitySQL(canonical, namespace)
+	if err != nil {
+		return nil, apiError(400, "unsupported analytics SQL")
 	}
 	var data []byte
 	if useCache {
@@ -321,7 +327,7 @@ func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string,
 		"read_overflow_mode='throw' READONLY", "max_result_rows=1000 READONLY", "max_result_bytes=1048576 READONLY",
 		"result_overflow_mode='throw' READONLY", "max_threads=2 READONLY",
 		"output_format_json_quote_64bit_integers=1 READONLY",
-		"session_timezone='UTC' READONLY", "query_cache_share_between_users=0 READONLY",
+		"session_timezone='UTC' READONLY", "join_use_nulls=0 READONLY", "query_cache_share_between_users=0 READONLY",
 		"query_cache_ttl=60 READONLY", "query_cache_max_entries=64 READONLY", "query_cache_max_size_in_bytes=8388608 READONLY",
 		"query_cache_min_query_runs=0 READONLY", "query_cache_min_query_duration=0 READONLY",
 		"query_cache_nondeterministic_function_handling='ignore' READONLY", "query_cache_system_table_handling='ignore' READONLY",
@@ -333,7 +339,8 @@ func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string,
 		"CREATE OR REPLACE VIEW " + namespace + ".events SQL SECURITY INVOKER AS " +
 			"SELECT event_id AS id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,revision," +
 			"fromUnixTimestamp64Milli(timestamp_ms,'UTC') AS event_time,received_at,received_at_ms FROM " + database +
-			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "')",
+			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') AND identity_snapshot=''",
+		identityViewSQL(database, namespace, projectID),
 	}
 	for _, statement := range statements {
 		if _, err = s.ch.admin(ctx, statement); err != nil {
@@ -356,8 +363,9 @@ func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string,
 			"ALTER USER " + account.name + authentication + " DEFAULT ROLE NONE SETTINGS " + strings.Join(accountSettings, ", "),
 			"REVOKE ALL ON *.* FROM " + account.name,
 			"CREATE ROW POLICY OR REPLACE " + account.name + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + account.name,
-			"GRANT SELECT(event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision) ON " + database + "." + eventTable + " TO " + account.name,
+			"GRANT SELECT(" + analyticsPhysicalColumns + ") ON " + database + "." + eventTable + " TO " + account.name,
 			"GRANT SELECT ON " + namespace + ".events TO " + account.name,
+			"GRANT SELECT ON " + namespace + ".events_with_persons TO " + account.name,
 		}
 		for _, statement := range statements {
 			if _, err = s.ch.admin(ctx, statement); err != nil {

@@ -1,0 +1,50 @@
+{
+  "provenance": {
+    "sdk": "posthog-node",
+    "version": "5.63.1",
+    "profile": "nodeProfile",
+    "source": "Observed real official SDK HTTP request to a local acknowledgement server; durable ingestion is checked by contracts.test.mjs",
+    "normalization": "Synthetic credentials, UUIDs, timestamps and loopback addresses replaced; SDK properties retained",
+    "path": "/batch/",
+    "content_type": "application/json",
+    "content_encoding": "gzip",
+    "body_format": "gzip"
+  },
+  "payload": {
+    "api_key": "FIXTURE_INGEST_TOKEN",
+    "batch": [
+      {
+        "event": "$identify",
+        "properties": {
+          "$set": {
+            "plan": "pro",
+            "nested": {
+              "locale": "fr"
+            }
+          },
+          "$set_once": {},
+          "$lib": "posthog-node",
+          "$lib_version": "5.63.1",
+          "$is_server": true,
+          "$geoip_disable": true
+        },
+        "timestamp": "2025-02-03T04:05:06.789Z",
+        "uuid": "01900000-0000-7000-8000-000000000001",
+        "distinct_id": "backend-account"
+      },
+      {
+        "event": "after backend identify",
+        "properties": {
+          "$lib": "posthog-node",
+          "$lib_version": "5.63.1",
+          "$is_server": true,
+          "$geoip_disable": true
+        },
+        "timestamp": "2025-02-03T04:05:06.789Z",
+        "uuid": "01900000-0000-7000-8000-000000000002",
+        "distinct_id": "backend-account"
+      }
+    ],
+    "sent_at": "2025-02-03T04:05:06.789Z"
+  }
+}

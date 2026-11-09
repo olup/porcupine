@@ -55,6 +55,7 @@ type clickHouseEvent struct {
 	Revision         uint64 `json:"revision"`
 	IsDeleted        uint8  `json:"is_deleted"`
 	OriginalSnapshot string `json:"original_snapshot"`
+	IdentitySnapshot string `json:"identity_snapshot"`
 }
 
 func (c *clickHouse) insert(ctx context.Context, events []Event) error {
@@ -110,6 +111,10 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 			row.Timestamp = timestamp.UTC().Format(time.RFC3339Nano)
 			row.TimestampMS = timestamp.UnixMilli()
 			row.OriginalSnapshot = projection.OriginalSnapshot
+			if event.IdentitySnapshot != "" && !json.Valid([]byte(event.IdentitySnapshot)) {
+				return errors.New("invalid identity snapshot")
+			}
+			row.IdentitySnapshot = event.IdentitySnapshot
 		}
 		if err := encoder.Encode(row); err != nil {
 			return errors.New("cannot encode event projection")
@@ -121,7 +126,7 @@ func (c *clickHouse) insertProjections(ctx context.Context, projections []eventP
 }
 
 func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
-	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
+	sql := `SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot FROM ` + c.config.Database + `.` + eventTable + ` WHERE project_id=unhex('` + hex.EncodeToString([]byte(project)) + `') AND uuid=unhex('` + hex.EncodeToString([]byte(uuid)) + `') ORDER BY revision DESC LIMIT 1 SETTINGS final=0,use_query_cache=0,enable_reads_from_query_cache=0,enable_writes_to_query_cache=0,output_format_json_quote_64bit_integers=1 FORMAT JSONEachRow`
 	data, err := c.request(ctx, c.config.User, c.config.Password, "", nil, strings.NewReader(sql), 64<<20)
 	if err != nil {
 		return eventProjection{}, err
@@ -141,6 +146,7 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 		Revision         json.Number `json:"revision"`
 		IsDeleted        uint8       `json:"is_deleted"`
 		OriginalSnapshot string      `json:"original_snapshot"`
+		IdentitySnapshot string      `json:"identity_snapshot"`
 	}
 	if json.Unmarshal(data, &row) != nil {
 		return eventProjection{}, errors.New("invalid stored event projection")
@@ -156,10 +162,13 @@ func (c *clickHouse) loadProjection(ctx context.Context, project, uuid string) (
 	if _, err = time.Parse(time.RFC3339Nano, row.ReceivedAt); err != nil {
 		return eventProjection{}, errors.New("invalid stored event receipt time")
 	}
+	if row.IdentitySnapshot != "" && !json.Valid([]byte(row.IdentitySnapshot)) {
+		return eventProjection{}, errors.New("invalid stored identity snapshot")
+	}
 	if row.IsDeleted == 0 {
 		if _, err = time.Parse(time.RFC3339Nano, row.Timestamp); err != nil || !json.Valid([]byte(row.Properties)) || !json.Valid([]byte(row.OriginalSnapshot)) {
 			return eventProjection{}, errors.New("invalid stored event payload")
 		}
 	}
-	return eventProjection{Event: Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true}, Revision: revision, IsDeleted: row.IsDeleted == 1, OriginalSnapshot: row.OriginalSnapshot}, nil
+	return eventProjection{Event: Event{ID: int64(id), ProjectID: row.ProjectID, UUID: row.UUID, Event: row.Event, DistinctID: row.DistinctID, Properties: json.RawMessage(row.Properties), Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, Delivered: true, IdentitySnapshot: row.IdentitySnapshot}, Revision: revision, IsDeleted: row.IsDeleted == 1, OriginalSnapshot: row.OriginalSnapshot}, nil
 }

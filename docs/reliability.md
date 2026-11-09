@@ -181,7 +181,7 @@ Pipeline failure and receiver-idempotence checks are described in
 [the delivery contract](pipelines.md). Benchmarks require
 recorded hardware, workload, event sizes, and durability settings before publication.
 
-## Pipelines and planned identity
+## Pipelines and identity
 
 [Webhook and scheduled S3 pipelines](pipelines.md) persist queued work and
 checkpoints in SQLite. Webhook capture and enqueueing commit together. A lost
@@ -199,6 +199,4 @@ creator grants, restored checkpoints, and effects that may already exist before
 resuming. Preserve the original pipeline encryption key outside the backup.
 Follow [online recovery](online-backup.md) for the outbound-delivery fence.
 
-Future identity changes must commit the authoritative SQLite mutation and its
-projection outbox entry in one transaction. Projection retries must preserve
-mapping versions. That identified-person outbox remains future work.
+Identity controls commit the authoritative SQLite changes and their queued projections atomically. Stable event UUIDs deduplicate capture retries. ClickHouse uses accepted versions to resolve current profiles despite replay or out-of-order delivery.

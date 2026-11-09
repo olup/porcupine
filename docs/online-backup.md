@@ -4,6 +4,8 @@ Use `scripts/online_backup.py` to create a coordinated recovery point while inge
 
 The tool pauses event projection, not HTTP capture, for the checkpoint operation. Capture continues to commit new events to the bounded SQLite queue. Those accepted after the SQLite snapshot are outside this recovery point. If the queue fills during the pause, capture returns its normal backpressure response.
 
+Restore SQLite and ClickHouse from the same checkpoint. SQLite holds the accepted identity links and profile versions. ClickHouse holds the delivered snapshots used to resolve historical events. Mixing checkpoints can give different answers at capture time and query time.
+
 ## Prepare the operator environment
 
 Use one self-hosted Porcupine writer and one ClickHouse server on a POSIX host. Run the tool in the same kernel and against the same local SQLite files as the application. Python 3 needs only its standard library, including `sqlite3` and `fcntl`. No SQLite command-line client, Docker executable, cloud SDK, or Porcupine bearer token is required by the tool.
@@ -25,7 +27,7 @@ export PORCUPINE_CLICKHOUSE_USER=porcupine_admin
 # Set PORCUPINE_CLICKHOUSE_PASSWORD through your private environment mechanism.
 ```
 
-Do not put passwords in command arguments or commit them with the backup configuration. The SQLite snapshot contains credential hashes, the reader derivation secret, daily keys, queued event payloads, mutation state, and export request metadata. Protect the complete recovery set as private data.
+Do not put passwords in command arguments or commit them with the backup configuration. The SQLite snapshot contains credential hashes, the reader derivation secret, daily keys, anonymous-to-identified links, current person traits, queued event payloads, mutation state, and export request metadata. Protect the complete recovery set as private data.
 
 ## Create a checkpoint
 

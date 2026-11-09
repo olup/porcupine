@@ -11,17 +11,18 @@ import { gunzipSync } from 'node:zlib';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { PostHog } from 'posthog-node';
-import { browserProfile, cookielessProfile, nodeProfile } from './profiles.mjs';
+import { browserProfile, cookielessProfile, identifiedBrowserProfile, nodeProfile } from './profiles.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const matrix = JSON.parse(await readFile(join(here, 'matrix.json'), 'utf8'));
 const installed = async name => JSON.parse(await readFile(join(here, 'node_modules', name, 'package.json'), 'utf8')).version;
 const versions = { 'posthog-js': await installed('posthog-js'), 'posthog-node': await installed('posthog-node'), playwright: await installed('playwright') };
-const report = { schema_version: 1, mode: process.env.PORCUPINE_COMPAT_CANARY ? 'canary' : 'pinned', versions, profile: 'cookieless-product-and-identified-diagnostics', configuration: { browser_cookieless: cookielessProfile, browser_identified_diagnostic: browserProfile, node_identified_diagnostic: nodeProfile, browser_batch_diagnostic: { ...browserProfile, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 50 } } }, results: [], unsupported: matrix.unsupported };
+const report = { schema_version: 1, mode: process.env.PORCUPINE_COMPAT_CANARY ? 'canary' : 'pinned', versions, profile: 'cookieless-default-and-opt-in-identified', configuration: { browser_cookieless: cookielessProfile, browser_identified: identifiedBrowserProfile, browser_local_id_diagnostic: browserProfile, node: nodeProfile, browser_batch_diagnostic: { ...browserProfile, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 250 } } }, results: [], unsupported: matrix.unsupported };
 let directory, child, api, origin, browser, context, page, site, project, otherProject, proxy, proxyURL;
 const admin = randomBytes(32).toString('hex');
 const blocked = [], unexpected = [], wires = [], browserWires = [], browserFailures = [];
+const identifiedProjects = [];
 let failAcknowledgement = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; };
@@ -44,6 +45,45 @@ async function event(name, count = 1, projectID = project.project.id) {
     await delay(50);
   }
   throw new Error(`persisted event missing: ${name}`);
+}
+const identities = id => JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), id], { encoding: 'utf8' }));
+async function sdkSend(tab, name, operation, argument) {
+  const pending = tab.waitForResponse(response => new URL(response.url()).origin === api && response.request().method() === 'POST' && decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() }).batch.some(item => item.event === name));
+  const value = await tab.evaluate(operation, argument);
+  const response = await pending;
+  assert.equal(response.status(), 200);
+  assert.equal(await response.headerValue('access-control-allow-origin'), origin);
+  assert.equal(await response.finished(), null);
+  assert.equal(response.request().failure(), null);
+  const payload = decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() });
+  assert.deepEqual(await response.json(), { status: 1, accepted: payload.batch.length, duplicates: 0, identity_ignored: 0 });
+  return { value, payload, sent: payload.batch.find(item => item.event === name) };
+}
+const sdkCapture = (tab, name) => sdkSend(tab, name, name => ({ distinct: posthog.get_distinct_id(), uuid: posthog.capture(name, { synthetic: true }, { send_instantly: true }).uuid }), name);
+async function identifiedBrowser(run, batched = false) {
+  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Identified SDK contract' } });
+  identifiedProjects.push(scoped);
+  const isolated = await browser.newContext({ serviceWorkers: 'block' });
+  const observed = [];
+  isolated.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
+  await isolated.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (![api, origin].includes(url.origin)) { blocked.push('identified external request'); await route.abort(); return; }
+    if (url.origin === api && !['/i/v0/e/', '/e/', '/capture/'].includes(url.pathname)) { unexpected.push(`identified ${url.pathname}`); await route.abort(); return; }
+    if (url.origin === api && request.method() === 'POST') {
+      const wire = { path: url.pathname, headers: request.headers(), body: request.postDataBuffer(), query: {} };
+      observed.push(wire); browserWires.push(wire);
+    }
+    await route.continue();
+  });
+  const tab = await isolated.newPage();
+  const profile = batched ? { ...identifiedBrowserProfile, request_batching: true, request_queue_config: { flush_interval_ms: 250 } } : identifiedBrowserProfile;
+  const init = async () => {
+    await tab.goto(origin);
+    await tab.evaluate(({ host, token, profile }) => window.posthog.init(token, { ...profile, api_host: host }), { host: api, token: scoped.ingest_token, profile });
+  };
+  try { await init(); await run({ tab, isolated, scoped, observed, init }); }
+  finally { await isolated.close(); }
 }
 function contract(id, run) {
   assert.ok(matrix.cases.some(item => item.id === id), `test ${id} is declared in matrix`);
@@ -193,7 +233,7 @@ contract('browser.capture-cors', async () => {
 contract('browser.batch-compression', async () => {
   const start = browserWires.length;
   await page.evaluate(({ host, token, profile }) => {
-    const batched = window.posthog.init(token, { ...profile, api_host: host, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 50 } }, 'batched');
+    const batched = window.posthog.init(token, { ...profile, api_host: host, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 250 } }, 'batched');
     batched.capture('browser batch a', { order: 1 });
     batched.capture('browser batch b', { order: 2 });
   }, { host: api, token: project.ingest_token, profile: browserProfile });
@@ -250,7 +290,7 @@ contract('browser.cookieless-no-storage', async () => {
     assert.equal(await response.headerValue('access-control-allow-origin'), origin);
     assert.equal(await response.finished(), null, 'Chromium completes the CORS fetch');
     assert.equal(response.request().failure(), null);
-    assert.deepEqual(await response.json(), { status: 1, accepted: 1, duplicates: 0 });
+    assert.deepEqual(await response.json(), { status: 1, accepted: 1, duplicates: 0, identity_ignored: 0 });
     const sent = decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() }).batch;
     assert.equal(sent.length, 1);
     assert.equal(sent[0].properties.distinct_id, '$posthog_cookieless', 'the actual SDK request carries the sentinel');
@@ -296,6 +336,169 @@ contract('browser.cookieless-no-storage', async () => {
     await assertNoStorage(fresh);
   } finally { for (const isolated of contexts) await isolated.close(); }
 });
+contract('browser.identify-before-after', async () => {
+  await identifiedBrowser(async ({ tab, isolated, scoped, observed, init }) => {
+    const id = scoped.project.id;
+    const before = await sdkCapture(tab, 'identified before login');
+    const login = await sdkSend(tab, '$identify', () => posthog.identify('browser-account-a', { plan: 'starter', display_name: 'Ada' }, { first_source: 'docs' }));
+    assert.equal(login.sent.properties.distinct_id, 'browser-account-a');
+    assert.equal(login.sent.properties.$anon_distinct_id, before.value.distinct);
+    assert.equal(login.sent.properties.$is_identified, true);
+    assert.equal(login.sent.properties.$process_person_profile, true);
+    assert.deepEqual(login.sent.$set, { plan: 'starter', display_name: 'Ada' });
+    assert.equal(login.sent.$set_once.first_source, 'docs');
+    assert.equal(login.sent.properties.$set, undefined, 'initial browser traits are root members');
+    const after = await sdkCapture(tab, 'identified after login');
+    const [savedBefore] = await event('identified before login', 1, id);
+    const [savedAfter] = await event('identified after login', 1, id);
+    assert.equal(savedBefore.distinct_id, before.value.distinct, 'capture evidence keeps original anonymous ID');
+    assert.equal(savedAfter.distinct_id, 'browser-account-a');
+    assert.equal(savedBefore.uuid, before.value.uuid); assert.equal(savedAfter.uuid, after.value.uuid);
+    const snapshot = identities(id);
+    assert.ok(snapshot.control_events.some(row => row.uuid === login.sent.uuid));
+    assert.ok((await events(id)).every(row => !['$identify', '$set'].includes(row.event)), 'public event list hides identity controls');
+    const hidden = await fetch(api + `/api/v1/projects/${id}/events/${login.sent.uuid}`, { headers: { authorization: `Bearer ${admin}` } });
+    assert.equal(hidden.status, 404, 'public event lookup hides identity controls');
+    const link = snapshot.identity_links.find(row => row.anonymous_id === before.value.distinct);
+    assert.equal(link.identified_id, 'browser-account-a');
+    const person = snapshot.identity_profiles.find(row => row.identified_id === 'browser-account-a');
+    assert.equal(person.traits.plan, 'starter'); assert.equal(person.traits.first_source, 'docs');
+    const wireCount = observed.length;
+    await tab.evaluate(() => { posthog.identify('browser-account-a'); posthog.identify('browser-account-a', { plan: 'starter', display_name: 'Ada' }, { first_source: 'docs' }); });
+    await sdkCapture(tab, 'identified after repeated login');
+    assert.equal(observed.length, wireCount + 1, 'same ID and identical traits emit no new control');
+    assert.deepEqual(identities(id), snapshot, 'ordinary events and suppressed repeats do not change identity state');
+    const state = await isolated.storageState();
+    const cookie = state.cookies.find(item => item.name.startsWith('ph_') && item.name.endsWith('_posthog'));
+    assert.ok(cookie, 'named identified profile stores identity in a cookie');
+    assert.equal(JSON.parse(decodeURIComponent(cookie.value)).distinct_id, 'browser-account-a');
+    assert.ok(state.origins.every(item => item.localStorage.length === 0), 'cookie profile does not store the persistent ID in localStorage');
+    await init();
+    const reloaded = await sdkCapture(tab, 'identified after reload');
+    assert.equal(reloaded.value.distinct, 'browser-account-a');
+    assert.equal(reloaded.sent.properties.$is_identified, true);
+    assert.deepEqual(identities(id), snapshot);
+  });
+});
+
+contract('browser.identify-traits-repeat', async () => {
+  await identifiedBrowser(async ({ tab, scoped, observed }) => {
+    const id = scoped.project.id;
+    await sdkSend(tab, '$identify', () => posthog.identify('traits-account'));
+    const initial = await sdkSend(tab, '$set', () => posthog.identify('traits-account', { plan: 'pro', nested: { locale: 'fr' } }, { first_source: 'first' }));
+    assert.deepEqual(initial.sent.properties.$set, { plan: 'pro', nested: { locale: 'fr' } });
+    assert.deepEqual(initial.sent.properties.$set_once, { first_source: 'first' });
+    assert.equal(initial.sent.$set, undefined, 'subsequent traits live in properties on a standalone $set');
+    const count = observed.length;
+    await tab.evaluate(() => posthog.identify('traits-account', { plan: 'pro', nested: { locale: 'fr' } }, { first_source: 'first' }));
+    await sdkCapture(tab, 'traits after repeated update');
+    assert.equal(observed.length, count + 1, 'identical trait update is suppressed by the real SDK');
+    const update = await sdkSend(tab, '$set', () => posthog.identify('traits-account', { plan: 'team' }, { first_source: 'later' }));
+    const snapshot = identities(id);
+    const person = snapshot.identity_profiles.find(row => row.identified_id === 'traits-account');
+    assert.equal(person.traits.plan, 'team');
+    assert.equal(person.traits.first_source, 'first', '$set_once keeps the original value');
+    assert.deepEqual(person.traits.nested, { locale: 'fr' });
+    const saved = snapshot.control_events.find(item => item.uuid === update.sent.uuid);
+    assert.equal(saved.event, '$set');
+    assert.equal(person.version, saved.id, 'the profile version points to its durable control receipt');
+    const response = await fetch(api + '/e/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(update.payload) });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: 1, accepted: 0, duplicates: 1, identity_ignored: 0 });
+    assert.deepEqual(identities(id), snapshot, 'stable-UUID retry does not apply traits again or advance version');
+  });
+});
+
+contract('browser.identify-reset-switch', async () => {
+  await identifiedBrowser(async ({ tab, scoped }) => {
+    const id = scoped.project.id;
+    const beforeA = await sdkCapture(tab, 'switch before A');
+    await sdkSend(tab, '$identify', () => posthog.identify('switch-account-a', { account: 'A' }));
+    await sdkCapture(tab, 'switch after A');
+    const reset = await tab.evaluate(() => { posthog.reset(); return { distinct: posthog.get_distinct_id(), device: posthog.get_property('$device_id') }; });
+    assert.notEqual(reset.distinct, beforeA.value.distinct);
+    assert.equal(reset.device, beforeA.sent.properties.$device_id, 'reset keeps device ID while changing anonymous ID');
+    const beforeB = await sdkCapture(tab, 'switch before B');
+    assert.equal(beforeB.value.distinct, reset.distinct);
+    const loginB = await sdkSend(tab, '$identify', () => posthog.identify('switch-account-b', { account: 'B' }));
+    assert.equal(loginB.sent.properties.$anon_distinct_id, reset.distinct);
+    await sdkCapture(tab, 'switch after B');
+    const snapshot = identities(id);
+    assert.equal(snapshot.identity_links.length, 2);
+    assert.equal(snapshot.identity_links.find(row => row.anonymous_id === beforeA.value.distinct).identified_id, 'switch-account-a');
+    assert.equal(snapshot.identity_links.find(row => row.anonymous_id === reset.distinct).identified_id, 'switch-account-b');
+    assert.equal(snapshot.identity_profiles.find(row => row.identified_id === 'switch-account-a').traits.account, 'A');
+    assert.equal(snapshot.identity_profiles.find(row => row.identified_id === 'switch-account-b').traits.account, 'B');
+    for (const [name, expected] of [['switch before A', beforeA.value.distinct], ['switch after A', 'switch-account-a'], ['switch before B', reset.distinct], ['switch after B', 'switch-account-b']]) {
+      assert.equal((await event(name, 1, id))[0].distinct_id, expected);
+    }
+  });
+});
+
+contract('browser.identify-batched-controls', async () => {
+  await identifiedBrowser(async ({ tab, scoped, observed }) => {
+    const id = scoped.project.id;
+    const response = await sdkSend(tab, 'identified batch before', () => {
+      const anonymous = posthog.get_distinct_id();
+      const before = posthog.capture('identified batch before', { order: 1 });
+      posthog.identify('batch-account', { plan: 'starter' }, { first_source: 'batch' });
+      posthog.identify('batch-account', { plan: 'team' }, { first_source: 'ignored' });
+      const after = posthog.capture('identified batch after', { order: 2 });
+      return { anonymous, before: before.uuid, after: after.uuid };
+    });
+    const state = response.value;
+    await event('identified batch before', 1, id); await event('identified batch after', 1, id);
+    const payloads = observed.map(decodeWire);
+    const immediate = payloads.find(payload => payload.batch.some(item => item.event === '$identify'));
+    assert.equal(immediate.batch.length, 1, 'identify bypasses the SDK batching queue');
+    const wire = observed.find(wire => decodeWire(wire).batch.some(item => item.event === 'identified batch before'));
+    const batch = decodeWire(wire).batch;
+    assert.deepEqual(batch.map(item => item.event), ['identified batch before', '$set', 'identified batch after']);
+    assert.equal(batch[0].properties.distinct_id, state.anonymous);
+    assert.equal(batch[2].properties.distinct_id, 'batch-account');
+    assert.equal(batch[1].properties.$set.plan, 'team');
+    const saved = await events(id);
+    const control = identities(id).control_events.find(item => item.event === '$identify');
+    assert.ok(control.id < saved.find(item => item.uuid === state.before).id, 'queued pre-login capture arrives after the immediate identify');
+    assert.equal(saved.find(item => item.uuid === state.before).distinct_id, state.anonymous);
+    const snapshot = identities(id);
+    assert.equal(snapshot.identity_links.find(row => row.anonymous_id === state.anonymous).identified_id, 'batch-account');
+    const person = snapshot.identity_profiles.find(row => row.identified_id === 'batch-account');
+    assert.equal(person.traits.plan, 'team'); assert.equal(person.traits.first_source, 'batch');
+    const replay = await fetch(api + wire.path, { method: 'POST', headers: { 'content-type': wire.headers['content-type'] }, body: wire.body });
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), { status: 1, accepted: 0, duplicates: batch.length, identity_ignored: 0 });
+    assert.deepEqual(identities(id), snapshot, 'mixed-batch retry leaves durable identity and trait version unchanged');
+  }, true);
+});
+
+contract('node.identify-target-only', async () => {
+  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Node identify contract' } });
+  identifiedProjects.push(scoped);
+  const start = wires.length;
+  const client = new PostHog(scoped.ingest_token, { ...nodeProfile, host: proxyURL, fetch: safeFetch });
+  try {
+    client.identify({ distinctId: 'node-identified-account', properties: { plan: 'pro', nested: { locale: 'fr' } } });
+    client.capture({ distinctId: 'node-identified-account', event: 'node after identify' });
+    client.identify({ distinctId: 'node-identified-account', properties: { $set: { plan: 'team' }, $set_once: { first_source: 'node' } } });
+    client.capture({ distinctId: 'node-identified-account', event: 'node after trait update' });
+    await client.flush();
+    const batches = wires.slice(start).map(decodeWire);
+    assert.equal(batches.length, 1);
+    assert.deepEqual(batches[0].batch.map(item => item.event), ['$identify', 'node after identify', '$identify', 'node after trait update']);
+    const control = batches[0].batch[0];
+    assert.equal(control.distinct_id, 'node-identified-account');
+    assert.equal(control.properties.$anon_distinct_id, undefined);
+    assert.deepEqual(control.properties.$set, { plan: 'pro', nested: { locale: 'fr' } });
+    assert.equal(control.$set, undefined, 'Node traits live in event properties');
+    const snapshot = identities(scoped.project.id);
+    assert.deepEqual(snapshot.identity_links, [], 'target-only Node identify creates no anonymous link');
+    const person = snapshot.identity_profiles.find(row => row.identified_id === 'node-identified-account');
+    assert.deepEqual(person.traits, { plan: 'team', nested: { locale: 'fr' }, first_source: 'node' });
+    assert.equal((await event('node after trait update', 1, scoped.project.id))[0].distinct_id, 'node-identified-account');
+  } finally { await client.shutdown(); }
+});
+
 contract('isolation-and-network', async () => {
   const otherEvents = await events(otherProject.project.id);
   assert.equal(otherEvents.length, 1);
@@ -305,6 +508,12 @@ contract('isolation-and-network', async () => {
   for (const saved of await events()) {
     assert.equal(saved.project_id, project.project.id);
     assert.equal(JSON.stringify(saved).includes(project.ingest_token), false, 'credential is absent from persisted event');
+  }
+  for (const scoped of identifiedProjects) {
+    for (const saved of await events(scoped.project.id)) {
+      assert.equal(saved.project_id, scoped.project.id);
+      assert.equal(JSON.stringify(saved).includes(scoped.ingest_token), false);
+    }
   }
   if (!process.env.PORCUPINE_COMPAT_CANARY) assert.deepEqual(versions, matrix.supported_versions, 'pinned run uses declared package versions');
   const ids = matrix.cases.map(item => item.id);

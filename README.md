@@ -18,8 +18,7 @@ broker to operate. See the [architecture](docs/architecture.md) for the deployme
 [API reference](docs/management-api.md) · [MIT license](LICENSE)
 
 Porcupine is an early project. It does not implement the full PostHog product or
-its default SDK configuration. Human login, identity
-merging, feature flags, and session replay are outside the current scope. See the
+its default SDK configuration. This release includes [opt-in identified capture](docs/data-and-identity.md#link-an-anonymous-browser-at-login) for linking pre-login events and updating person traits. Human login, feature flags, and session replay are outside the current scope. See the
 [compatibility profile](docs/compatibility.md) before pointing an SDK at it.
 
 ## Send data to your destinations
@@ -43,12 +42,12 @@ destinations for review before resumption.
 
 ## Install a release
 
-The `v0.1.0` release includes Linux amd64 and arm64 images. Use the matching
+The `v0.2.0` release includes Linux amd64 and arm64 images. Use the matching
 tag for configuration files and pin the image version when you deploy.
 
 ```sh
-docker pull ghcr.io/olup/porcupine:0.1.0
-docker run --rm ghcr.io/olup/porcupine:0.1.0 --version
+docker pull ghcr.io/olup/porcupine:0.2.0
+docker run --rm ghcr.io/olup/porcupine:0.2.0 --version
 ```
 
 Each release also has checksummed image archives for `docker load`.
@@ -62,7 +61,7 @@ OAuth enabled, fresh private credentials, and persistent Docker volumes.
 ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
 
 ```sh
-git clone --branch v0.1.0 https://github.com/olup/porcupine.git
+git clone --branch v0.2.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'

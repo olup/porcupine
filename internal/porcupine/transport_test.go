@@ -139,7 +139,7 @@ func TestTokenLocationsAndAtomicCredentials(t *testing.T) {
 		code int
 	}{
 		{`[{"properties":{"token":"` + ingestA + `"},"event":"ok","distinct_id":"a"},{"properties":{"token":"` + ingestB + `"},"event":"ok","distinct_id":"b"}]`, 400},
-		{`{"api_key":"` + ingestA + `","batch":[{"event":"ok","distinct_id":"a"},{"event":"$identify","distinct_id":"b"}]}`, 400},
+		{`{"api_key":"` + ingestA + `","batch":[{"event":"ok","distinct_id":"a"},{"event":"$create_alias","distinct_id":"b"}]}`, 400},
 		{`{"api_key":"` + ingestA + `","batch":[{"event":"ok","distinct_id":"a"},{"event":"bad"}]}`, 400},
 		{`{"api_key":"` + ingestA + `","batch":[{"token":"` + ingestB + `","event":"ok","distinct_id":"a"}]}`, 400},
 		{`{"api_key":"wrong-key","event":"ok","distinct_id":"a"}`, 401},

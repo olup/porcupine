@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test --test-concurrency=1 contracts.test.mjs",
-    "install-browser": "playwright install chromium"
+    "install-browser": "playwright install chromium",
+    "test:identify-clickhouse": "node identify-clickhouse.mjs"
   },
   "devDependencies": {
     "playwright": "1.65.0",
