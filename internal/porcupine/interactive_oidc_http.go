@@ -35,16 +35,16 @@ func oidcRandom() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
-func (o *interactiveOIDC) cookieName() string {
+func (o *oauthBrowser) cookieName() string {
 	if o.secure {
 		return "__Host-porcupine_oidc"
 	}
 	return "porcupine_oidc"
 }
-func (o *interactiveOIDC) cookie(w http.ResponseWriter, value string, age int) {
+func (o *oauthBrowser) cookie(w http.ResponseWriter, value string, age int) {
 	http.SetCookie(w, &http.Cookie{Name: o.cookieName(), Value: value, Path: "/", HttpOnly: true, Secure: o.secure, SameSite: http.SameSiteLaxMode, MaxAge: age})
 }
-func (o *interactiveOIDC) save(session *oidcBrowserSession) (string, bool) {
+func (o *oauthBrowser) save(session *oidcBrowserSession) (string, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for key, value := range o.sessions {
@@ -59,7 +59,7 @@ func (o *interactiveOIDC) save(session *oidcBrowserSession) (string, bool) {
 	o.sessions[hash(raw)] = session
 	return raw, true
 }
-func (o *interactiveOIDC) session(r *http.Request) (string, *oidcBrowserSession) {
+func (o *oauthBrowser) session(r *http.Request) (string, *oidcBrowserSession) {
 	cookie, err := r.Cookie(o.cookieName())
 	if err != nil || len(cookie.Value) > 128 {
 		return "", nil
@@ -75,7 +75,7 @@ func (o *interactiveOIDC) session(r *http.Request) (string, *oidcBrowserSession)
 	copy := *session
 	return key, &copy
 }
-func (o *interactiveOIDC) consume(key string) bool {
+func (o *oauthBrowser) consume(key string) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.sessions[key] == nil {
@@ -92,17 +92,18 @@ func oidcPageHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 }
 func (s *Service) registerInteractiveOIDC(m *http.ServeMux) {
-	if s.oauth == nil || s.oauth.oidc == nil {
-		return
+	if s.oauth.config.LocalInvitations {
+		m.HandleFunc("POST /oauth/invitation", s.oauthInvitationLogin)
+	} else {
+		m.HandleFunc("GET /oauth/oidc/callback", s.oauthOIDCCallback)
 	}
-	m.HandleFunc("GET /oauth/oidc/callback", s.oauthOIDCCallback)
 	m.HandleFunc("GET /oauth/consent", s.oauthOIDCConsent)
 	m.HandleFunc("POST /oauth/consent", s.oauthOIDCConsent)
 }
 func (s *Service) oauthHumanAuthorize(w http.ResponseWriter, r *http.Request, request oauthAuthorizationRequest) {
 	oidcPageHeaders(w)
-	if s.oauth == nil || s.oauth.oidc == nil {
-		http.Error(w, "Interactive login is not configured", 503)
+	if s.oauth.config.LocalInvitations {
+		s.startInvitationLogin(w, request)
 		return
 	}
 	o := s.oauth.oidc
@@ -179,7 +180,7 @@ var oidcConsentPage = template.Must(template.New("consent").Parse(`<!doctype htm
 
 func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	oidcPageHeaders(w)
-	o := s.oauth.oidc
+	o := s.oauth.browser
 	key, session := o.session(r)
 	if session == nil || session.humanID == "" {
 		http.Error(w, "Login session expired", 401)

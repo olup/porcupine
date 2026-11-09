@@ -17,7 +17,7 @@ broker to operate. See the [architecture](docs/architecture.md) for the deployme
 [API reference](docs/management-api.md) · [MIT license](LICENSE)
 
 Porcupine is an early project. It does not implement the full PostHog product or
-its default SDK configuration. This release includes [opt-in identified capture](docs/data-and-identity.md#link-an-anonymous-browser-at-login) for linking pre-login events and updating person traits. Human login, feature flags, and session replay are outside the current scope. See the
+its default SDK configuration. This release includes [opt-in identified capture](docs/data-and-identity.md#link-an-anonymous-browser-at-login) for linking pre-login events and updating person traits. Feature flags and session replay are outside the current scope. See the
 [compatibility profile](docs/compatibility.md) before pointing an SDK at it.
 
 ## Send data to your destinations
@@ -40,6 +40,8 @@ destination credentials are encrypted. Delivery is at least once. Supported rest
 destinations for review before resumption.
 
 Porcupine supports [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
+
+[Local MCP invitations](docs/local-invitations.md) let an admin connect a read-only client to one project without an identity provider.
 
 The v0.4.0 release adds [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
 

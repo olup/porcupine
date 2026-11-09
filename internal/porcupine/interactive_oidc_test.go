@@ -122,10 +122,20 @@ type oidcFixture struct {
 
 func newOIDCFixture(t *testing.T) *oidcFixture {
 	t.Helper()
-	p := newOIDCMock(t)
+	return newLoginFixture(t, false)
+}
+
+func newLoginFixture(t *testing.T, local bool) *oidcFixture {
+	t.Helper()
 	host := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + host.Listener.Addr().String()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oidc.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: issuer, OIDC: &OIDCConfig{Issuer: p.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret", Bindings: []OIDCBinding{{Subject: "operator-subject", Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}}}}}})
+	var p *oidcMock
+	cfg := &OAuthConfig{Issuer: issuer, LocalInvitations: local}
+	if !local {
+		p = newOIDCMock(t)
+		cfg.OIDC = &OIDCConfig{Issuer: p.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret", Bindings: []OIDCBinding{{Subject: "operator-subject", Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}}}}
+	}
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "auth.db"), BootstrapToken: adminToken, OAuth: cfg})
 	if err != nil {
 		host.Close()
 		t.Fatal(err)
@@ -375,7 +385,7 @@ func TestInteractiveOIDCRegisteredExternalCallbacks(t *testing.T) {
 	}
 }
 func TestInteractiveOIDCSessionBoundAndSecureCookie(t *testing.T) {
-	o := &interactiveOIDC{secure: true, sessions: map[string]*oidcBrowserSession{}}
+	o := newOAuthBrowser(true)
 	recorder := httptest.NewRecorder()
 	o.cookie(recorder, "opaque", 600)
 	cookies := recorder.Result().Cookies()

@@ -24,7 +24,7 @@ type oauthAuthorizationRequest struct {
 	ExpiresAtMS   int64
 }
 
-func (s *Service) interactiveOAuthEnabled() bool { return s.oauth != nil && s.oauth.config.OIDC != nil }
+func (s *Service) interactiveOAuthEnabled() bool { return s.oauth != nil && s.oauth.browser != nil }
 
 func oauthRandom(prefix string) (string, error) {
 	var random [32]byte

@@ -33,8 +33,7 @@ Local setup: https://raw.githubusercontent.com/olup/porcupine/v0.4.0/README.md
 ## OAuth and instance discovery
 
 Machine clients use the client_credentials grant. For interactive MCP, an operator
-can configure an OIDC identity provider and register an exact callback for each
-downstream client. Authorization uses S256 PKCE and explicit read-only project consent.
+registers an exact callback for each client. Discover create-local-invitation to issue a 24-hour single-use project invitation when enabled. Upstream OIDC is an alternative. Authorization uses S256 PKCE and explicit read-only project consent.
 Setup and grant revocation: https://raw.githubusercontent.com/olup/porcupine/v0.4.0/docs/mcp-interactive-oauth.md
 
 From a trusted ISSUER, discover:
@@ -268,5 +267,5 @@ Reliability: https://raw.githubusercontent.com/olup/porcupine/v0.4.0/docs/reliab
 
 PostHog historical imports
 
-Use porcupine import posthog ./export --project PROJECT_ID for local JSON Lines files or directories, optionally gzip-compressed. Rerun the same input to resume at its committed offsets. Uploads require imports:write and events:write for the target project via the API. Review invalid and unresolved counts after completion.
+Upload local JSON Lines files using the project import HTTP API. Enumerate directory contents, decompress gzip locally, submit a manifest, and resume from the confirmed file offsets. Uploads require imports:write and events:write for the target project via the API. Review invalid and unresolved counts after completion.
 Import guide: https://raw.githubusercontent.com/olup/porcupine/v0.4.0/docs/posthog-import.md

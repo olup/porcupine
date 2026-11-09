@@ -16,6 +16,7 @@ type OAuthConfig struct {
 	Issuer                     string
 	AccessTokenLifetimeSeconds int
 	AllowLegacyKeys            bool
+	LocalInvitations           bool
 	OIDC                       *OIDCConfig
 }
 
@@ -26,6 +27,7 @@ type oauthRuntime struct {
 	mcpResource       string
 	limiter           *rate.Limiter
 	oidc              *interactiveOIDC
+	browser           *oauthBrowser
 	authorizationGate oauthAuthorizationGate
 }
 
@@ -41,7 +43,10 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 		}
 	}
 	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
-	if c.OIDC != nil {
+	if c.OIDC != nil && c.LocalInvitations {
+		return nil, errors.New("choose local invitations or OIDC")
+	}
+	if c.OIDC != nil || c.LocalInvitations {
 		if err := validateBrowserIssuer(u, c.Issuer); err != nil {
 			return nil, err
 		}
@@ -56,7 +61,13 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &oauthRuntime{config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
+	var browser *oauthBrowser
+	if interactive != nil {
+		browser = interactive.oauthBrowser
+	} else if c.LocalInvitations {
+		browser = newOAuthBrowser(u.Scheme == "https")
+	}
+	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
 }
 
 // A consent form compares the browser Origin byte for byte. Machine clients

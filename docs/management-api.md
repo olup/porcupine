@@ -20,7 +20,7 @@ does not reset credentials. The alias stays pinned to that first administrator.
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
 issued scope and project snapshot intersect current parent grants on every
-request. Operators can configure OIDC human bindings and consent grants for read-only MCP access. Authentication
+request. Operators can enable [local invitations](local-invitations.md) or configure OIDC human bindings and consent grants for read-only MCP access. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
 and project checks, with separate API and MCP token resources.
 

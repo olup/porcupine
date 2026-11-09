@@ -265,6 +265,9 @@ def invalidate_interactive_sessions(snapshot, restored_at):
     snapshot.execute("DELETE FROM oauth_authorization_codes")
     snapshot.execute("DELETE FROM oauth_refresh_tokens")
     snapshot.execute("DELETE FROM oauth_authorization_requests")
+    if snapshot.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_invitations'").fetchone():
+        snapshot.execute("UPDATE local_invitations SET code_hash=NULL")
+        snapshot.execute("UPDATE access_keys SET revoked_at=coalesce(revoked_at,?) WHERE id IN (SELECT principal_id FROM local_invitations)", (restored_at,))
 
 
 def restore(arguments):
