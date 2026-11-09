@@ -59,6 +59,26 @@ Unbound native and Segment credentials use `native` and `segment` as their respe
 
 Set the SDK's tracking host to the Porcupine origin. A Segment Node SDK configured with the project write key can use its standard HTTP batch transport. The supported routes are `POST /v1/page`, `/v1/track`, `/v1/identify`, and `/v1/batch`. Use HTTP Basic auth with the project write key as username and an empty password, or supply `writeKey` in the JSON envelope. The source requires JSON. Individual messages are limited to 32 KiB and batches to 500 KiB. A batch may mix the three supported call types. Unsupported call types reject the batch before anything is accepted. [Segment HTTP Tracking API](https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/http-api)
 
+The compatibility suite runs the official `@segment/analytics-node` 3.1.0 client. For a backend using a mixed project's write key:
+
+```js
+import { Analytics } from '@segment/analytics-node'
+
+const analytics = new Analytics({
+  host: process.env.PORCUPINE_URL,
+  writeKey: process.env.PORCUPINE_WRITE_KEY
+})
+analytics.track({
+  messageId: 'order-813-completed',
+  userId: 'user-42',
+  event: 'order_completed',
+  properties: { order_id: 'ord-813', amount_minor: 2900, currency: 'EUR' }
+})
+await analytics.flush({ timeout: 10000 })
+```
+
+The adapter accepts Segment destination routing options without storing credentials from those options or dispatching to Segment destinations. Configure outbound delivery through [Porcupine pipelines](pipelines.md).
+
 | Segment input | Porcupine result |
 | --- | --- |
 | `page` | A `pageview`. Page URL, referrer and supplied page metadata are available in `context.page`. |

@@ -3,8 +3,10 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -207,5 +209,57 @@ func TestNormalizedAtomicAdmissionAndActorlessMutation(t *testing.T) {
 	current, _, err := s.currentEvent(context.Background(), projectID, uuid)
 	if err != nil || current.DistinctID != "" || current.SourceID != "native" || current.MessageID != "actorless" || !strings.Contains(string(current.Properties), "still-business") {
 		t.Fatal("correction changed accepted native provenance", err)
+	}
+}
+
+func TestNormalizedControlContextNeverReachesSQLiteWALOrProjection(t *testing.T) {
+	s := service(t, 100)
+	_, token := project(t, s)
+	accepted := eventInput{Event: "$identify", DistinctID: "account", Properties: map[string]any{"$anon_distinct_id": "anon", "$set": map[string]any{"plan": "approved"}}, ingestion: &ingestionMetadata{Protocol: "native", MessageID: "accepted-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.81","private":"accepted-control-context-marker"}`)}}
+	ignored := eventInput{Event: "$identify", DistinctID: cookielessSentinel, Properties: map[string]any{"$set": map[string]any{"email": "discarded-control-email-marker"}}, ingestion: &ingestionMetadata{Protocol: "segment", MessageID: "ignored-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.82","nested":{"session_id":"ignored-control-context-marker"}}`)}}
+	response := normalizedCapture(t, s, token, eventBatch{accepted, ignored}, 200)
+	if response["identity_ignored"] != float64(1) {
+		t.Fatal("cookieless control was not ignored")
+	}
+	batch, err := s.deliveryBatch(context.Background())
+	if err != nil || len(batch) != 2 {
+		t.Fatal(err)
+	}
+	for _, event := range batch {
+		if string(event.Context) != `{}` || event.DistinctID != "" || string(event.Properties) != `{}` || event.SourceID == "" || event.MessageID == "" || event.EventType != "identify" {
+			t.Fatal("control retained unnecessary raw context or lost required provenance")
+		}
+	}
+	markers := []string{"192.0.2.81", "192.0.2.82", "accepted-control-context-marker", "ignored-control-context-marker", "discarded-control-email-marker"}
+	files, err := filepath.Glob(s.dbPathForReceiptTest(t) + "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range markers {
+			if strings.Contains(string(data), marker) {
+				t.Fatalf("discarded control context %q reached SQLite/WAL", marker)
+			}
+		}
+	}
+	var projected bool
+	c := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Query().Get("query"), "INSERT INTO ") {
+			return
+		}
+		projected = true
+		data, _ := io.ReadAll(r.Body)
+		for _, marker := range markers {
+			if strings.Contains(string(data), marker) {
+				t.Errorf("discarded control context %q reached ClickHouse projection", marker)
+			}
+		}
+	})
+	if err := c.insert(context.Background(), batch); err != nil || !projected {
+		t.Fatal("control projection failed", err)
 	}
 }

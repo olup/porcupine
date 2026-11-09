@@ -221,3 +221,34 @@ func TestSegmentSharedContextAmplificationIsAtomic(t *testing.T) {
 		t.Fatal("amplified context partially committed")
 	}
 }
+
+func TestSegmentTargetOnlyIdentifyAndOAuthPolicy(t *testing.T) {
+	f := newOAuthIntegration(t)
+	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+	var created map[string]any
+	f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]string{"name": "Segment confidential", "ingestion_mode": "server_only"}, 201, &created)
+	id := created["project"].(map[string]any)["id"].(string)
+	writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id})
+	access := f.token(t, writer.ClientID, writer.ClientSecret, f.s.oauth.apiResource)
+	headers := segmentHeaders("")
+	headers["Authorization"] = "Bearer " + access.AccessToken
+	transportRequest(t, f.s, "POST", "/v1/identify", []byte(`{"messageId":"target-only","userId":"backend-user","traits":{"plan":"server"}}`), headers, 200)
+	traits, identified, _ := storedIdentityProfile(t, f.s, id, "backend-user")
+	if !identified || traits["plan"] != "server" {
+		t.Fatal("target-only Segment identify lost traits")
+	}
+	var links int
+	f.s.db.QueryRow(`SELECT count(*) FROM identity_links WHERE project_id=?`, id).Scan(&links)
+	if links != 0 {
+		t.Fatal("target-only identify invented an anonymous link")
+	}
+	var public AccessKeyCreated
+	f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "Segment selector", "permissions": []string{"events:write"}, "projects": []string{id}}, 201, &public)
+	body := []byte(`{"messageId":"denied","userId":"backend-user","event":"denied"}`)
+	transportRequest(t, f.s, "POST", "/v1/track", body, segmentHeaders(public.Token), 401)
+	headers["Authorization"] = "Bearer invalid"
+	transportRequest(t, f.s, "POST", "/v1/track", []byte(`{"writeKey":"`+public.Token+`","messageId":"fallback-denied","userId":"backend-user","event":"denied"}`), headers, 401)
+	if eventCount(t, f.s) != 1 {
+		t.Fatal("rejected Segment authorization stored an event")
+	}
+}

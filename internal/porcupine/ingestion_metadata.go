@@ -82,8 +82,8 @@ func prepareIngestionMetadata(event *Event, input *ingestionMetadata, configured
 		return errors.New("context must be an object of at most 64 KiB")
 	}
 	canonical, err := json.Marshal(object)
-	if err != nil {
-		return errors.New("invalid context")
+	if err != nil || len(canonical) > 64<<10 {
+		return errors.New("invalid context or context exceeds 64 KiB")
 	}
 	event.SourceID, event.MessageID, event.EventType, event.Context = source, messageID, input.EventType, canonical
 	digest := sha512.New()
@@ -132,9 +132,16 @@ func scrubIngestionContext(raw json.RawMessage) json.RawMessage {
 		case map[string]any:
 			for key, child := range node {
 				switch strings.ToLower(key) {
-				case "ip", "$ip", "ip_address", "client_ip", "remote_addr", "x-forwarded-for", "session_id", "sessionid", "$session_id", "anonymous_id", "anonymousid", "$anon_distinct_id", "user_id", "userid", "$user_id", "device_id", "deviceid", "$device_id", "window_id", "$window_id":
+				case "ip", "$ip", "ip_address", "ipaddress", "client_ip", "clientip", "remote_addr", "remoteaddr", "x-forwarded-for", "session", "user", "anonymous", "window", "session_id", "sessionid", "$session_id", "$sessionid", "anonymous_id", "anonymousid", "$anon_distinct_id", "user_id", "userid", "$user_id", "device_id", "deviceid", "$device_id", "window_id", "$window_id":
 					delete(node, key)
 				default:
+					if strings.EqualFold(key, "device") {
+						if device, ok := child.(map[string]any); ok {
+							delete(device, "id")
+							delete(device, "Id")
+							delete(device, "ID")
+						}
+					}
 					scrub(child)
 				}
 			}

@@ -793,6 +793,10 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		}
 		identityInput := e
 		if isIdentityControl(e.Event) {
+			if e.SourceID != "" {
+				e.Context = json.RawMessage(`{}`)
+				identityInput.Context = e.Context
+			}
 			// Input IDs and trait operations remain in memory only. The queue stores
 			// the canonical snapshot after validation, without redundant raw inputs.
 			e.DistinctID, e.Properties = "", json.RawMessage(`{}`)
