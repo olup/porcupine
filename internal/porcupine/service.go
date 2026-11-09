@@ -207,6 +207,9 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeMutations(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializeIdentity(context.Background()); err != nil {
+		return fail(err)
+	}
 	if err := s.initializeQueueUsage(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -446,28 +449,31 @@ func (s *Service) Handler() http.Handler {
 }
 
 type eventInput struct {
-	APIKey     string         `json:"api_key"`
-	Token      string         `json:"token"`
-	UUID       string         `json:"uuid"`
-	Event      string         `json:"event"`
-	DistinctID string         `json:"distinct_id"`
-	Properties map[string]any `json:"properties"`
-	Timestamp  string         `json:"timestamp"`
+	APIKey     string          `json:"api_key"`
+	Token      string          `json:"token"`
+	UUID       string          `json:"uuid"`
+	Event      string          `json:"event"`
+	DistinctID string          `json:"distinct_id"`
+	Properties map[string]any  `json:"properties"`
+	Timestamp  string          `json:"timestamp"`
+	Set        json.RawMessage `json:"$set,omitempty"`
+	SetOnce    json.RawMessage `json:"$set_once,omitempty"`
 }
 type ingestInput struct {
 	eventInput
 	Batch eventBatch `json:"batch"`
 }
 type Event struct {
-	ID         int64           `json:"id"`
-	ProjectID  string          `json:"project_id"`
-	UUID       string          `json:"uuid"`
-	Event      string          `json:"event"`
-	DistinctID string          `json:"distinct_id"`
-	Properties json.RawMessage `json:"properties"`
-	Timestamp  string          `json:"timestamp"`
-	ReceivedAt string          `json:"received_at"`
-	Delivered  bool            `json:"delivered"`
+	ID               int64           `json:"id"`
+	ProjectID        string          `json:"project_id"`
+	UUID             string          `json:"uuid"`
+	Event            string          `json:"event"`
+	DistinctID       string          `json:"distinct_id"`
+	Properties       json.RawMessage `json:"properties"`
+	Timestamp        string          `json:"timestamp"`
+	ReceivedAt       string          `json:"received_at"`
+	Delivered        bool            `json:"delivered"`
+	IdentitySnapshot string          `json:"-"`
 }
 
 func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
@@ -578,14 +584,14 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 				e.DistinctID = value
 			}
 		}
-		if e.DistinctID == cookielessSentinel {
+		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
 			cookieless = true
 		}
-		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000 {
+		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
 			problem(w, 400, "event and distinct_id are required and must fit limits")
 			return
 		}
-		if strings.HasPrefix(e.Event, "$") && e.Event != "$pageview" && e.Event != "$pageleave" && e.Event != "$autocapture" && e.Event != "$screen" && e.Event != "$exception" {
+		if strings.HasPrefix(e.Event, "$") && !isIdentityControl(e.Event) && e.Event != "$pageview" && e.Event != "$pageleave" && e.Event != "$autocapture" && e.Event != "$screen" && e.Event != "$exception" {
 			problem(w, 400, "unsupported reserved control event")
 			return
 		}
@@ -608,6 +614,18 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		}
 		if e.Properties == nil {
 			e.Properties = map[string]any{}
+		}
+		if isIdentityControl(e.Event) {
+			for key, raw := range map[string]json.RawMessage{"$set": e.Set, "$set_once": e.SetOnce} {
+				if len(raw) > 0 {
+					var value any
+					if err := json.Unmarshal(raw, &value); err != nil {
+						problem(w, 400, "invalid identity properties")
+						return
+					}
+					e.Properties[key] = value
+				}
+			}
 		}
 		delete(e.Properties, "token")
 		delete(e.Properties, "cookieless")
@@ -675,7 +693,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		}
 		cookielessID = cookielessDistinctID(secret, projectID, clientIP, r.UserAgent())
 	}
-	accepted, duplicates := 0, 0
+	accepted, duplicates, identityIgnored := 0, 0, 0
 	var acceptedBytes int64
 	var webhookEvents []Event
 	for _, e := range events {
@@ -698,9 +716,15 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			problem(w, 503, "queue is full")
 			return
 		}
-		if e.DistinctID == cookielessSentinel {
+		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
 			e.DistinctID = cookielessID
 			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
+		}
+		identityInput := e
+		if isIdentityControl(e.Event) {
+			// Input IDs and trait operations remain in memory only. The queue stores
+			// the canonical snapshot after validation, without redundant raw inputs.
+			e.DistinctID, e.Properties = "", json.RawMessage(`{}`)
 		}
 		size := queueEventBytes(e)
 		if size > s.queueMaxBytes-pendingBytes-acceptedBytes {
@@ -718,7 +742,25 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			problem(w, 503, "storage unavailable")
 			return
 		}
-		if s.pipelines != nil {
+		if isIdentityControl(e.Event) {
+			identityInput.ID = e.ID
+			ignored, identityErr := s.applyIdentityControl(r.Context(), tx, &identityInput)
+			e = identityInput
+			if identityErr != nil {
+				problem(w, 503, "identity storage unavailable")
+				return
+			}
+			if ignored {
+				identityIgnored++
+			}
+			size = queueEventBytes(e)
+			if size > s.queueMaxBytes-pendingBytes-acceptedBytes {
+				w.Header().Set("Retry-After", "1")
+				problem(w, 503, "queue is full")
+				return
+			}
+		}
+		if s.pipelines != nil && !isIdentityControl(e.Event) {
 			webhookEvents = append(webhookEvents, e)
 		}
 		accepted++
@@ -734,5 +776,5 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.wakeWebhook()
-	write(w, 200, map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates})
+	write(w, 200, map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates, "identity_ignored": identityIgnored})
 }

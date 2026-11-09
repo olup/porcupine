@@ -127,7 +127,9 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 		{"project_id", "String", "Owning project, enforced by ClickHouse row policies and the project view."},
 		{"uuid", "String", "SDK event identifier, unique within this project."},
 		{"event", "String", "Event name."},
-		{"distinct_id", "String", "Event distinct ID; cookieless IDs rotate each UTC day."},
+		{"distinct_id", "String", "Original event distinct ID, preserved after identification; cookieless IDs rotate each UTC day."},
+		{"person_id", "String", "Current project-local identified person for this event distinct ID; falls back to the original distinct_id."},
+		{"person_properties", "String", "Current identified person traits as JSON, including accepted $set/$set_once updates; {} when no profile exists."},
 		{"properties", "String", "JSON object encoded as a string. Use JSONExtractString and related functions."},
 		{"timestamp", "String", "Event timestamp in UTC RFC3339 format."},
 		{"timestamp_ms", "Int64", "Event timestamp in Unix milliseconds."},
@@ -174,6 +176,10 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	namespace, reader, password, err := s.analyticsReader(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "analytics reader unavailable")
+	}
+	canonical, err = identitySQL(canonical, namespace)
+	if err != nil {
+		return nil, apiError(400, "unsupported analytics SQL")
 	}
 	data, err := s.ch.query(ctx, reader, password, namespace, canonical, input.Body.Parameters)
 	if err != nil {
@@ -263,7 +269,7 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 		"read_overflow_mode='throw' READONLY", "max_result_rows=1000 READONLY", "max_result_bytes=1048576 READONLY",
 		"result_overflow_mode='throw' READONLY", "max_threads=2 READONLY",
 		"output_format_json_quote_64bit_integers=1 READONLY",
-		"session_timezone='UTC' READONLY", "use_query_cache=0 READONLY",
+		"session_timezone='UTC' READONLY", "use_query_cache=0 READONLY", "join_use_nulls=0 READONLY",
 	}
 	// The project literal is hex encoded so no supplied identifier becomes SQL syntax.
 	statements := []string{
@@ -273,12 +279,14 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 		"REVOKE ALL ON *.* FROM " + reader,
 		"CREATE ROW POLICY OR REPLACE " + namespace + "_admin ON " + database + "." + eventTable + " USING 1 TO " + quoteAnalyticsIdentifier(s.ch.config.User),
 		"CREATE ROW POLICY OR REPLACE " + namespace + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + reader,
-		"GRANT SELECT(event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision) ON " + database + "." + eventTable + " TO " + reader,
+		"GRANT SELECT(" + analyticsPhysicalColumns + ") ON " + database + "." + eventTable + " TO " + reader,
 		"CREATE OR REPLACE VIEW " + namespace + ".events SQL SECURITY INVOKER AS " +
 			"SELECT event_id AS id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,revision," +
 			"fromUnixTimestamp64Milli(timestamp_ms,'UTC') AS event_time,received_at,received_at_ms FROM " + database +
-			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "')",
+			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') AND identity_snapshot=''",
+		identityViewSQL(database, namespace, projectID),
 		"GRANT SELECT ON " + namespace + ".events TO " + reader,
+		"GRANT SELECT ON " + namespace + ".events_with_persons TO " + reader,
 	}
 	for _, statement := range statements {
 		if _, err = s.ch.admin(ctx, statement); err != nil {

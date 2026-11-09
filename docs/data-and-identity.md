@@ -1,22 +1,12 @@
 # Events, identity, and sessions
 
-Cookieless pseudonym resolution, ClickHouse event delivery, and SQL reads are implemented. Identified-person merging and identity mapping projections remain planned work.
+The default browser profile uses a daily cookieless pseudonym. The opt-in identified profile supports anonymous-to-user linking through `posthog.identify()`. Use a build containing this change for identified capture; the v0.1.0 image rejects `$identify`.
 
 ## Event identity and immutability
 
 Every accepted event belongs to one project. Its deduplication identity is the pair of project ID and event UUID. A UUID reused in another project does not refer to the same event. Requests without a client UUID need a server-generated UUID, so a client retry without a stable UUID cannot reliably deduplicate.
 
-The private original snapshot preserves accepted identity and properties until
-deletion. Cookieless resolution transforms the SDK marker before acceptance, as
-described below. ClickHouse
-queries expose the current projected `distinct_id`; they do not expose a resolved
-identified-person ID today. Future identity links must preserve the original
-accepted record and expose current resolution through read views.
-
-A duplicate project and UUID keeps the first accepted event. Pending payloads
-and the configured [receipt storage mode](receipts.md) enforce that rule across delivery and
-restart. ClickHouse views use `FINAL` to deduplicate repeated physical deliveries.
-See [durability and recovery](reliability.md) for limits and storage growth.
+Each ordinary event retains its accepted `distinct_id`. SQL exposes `person_id` to group that event under the currently resolved identity, including events accepted before login. `person_properties` contains the current profile as a JSON object encoded in a string.
 
 [Event corrections and deletions](events.md) are implemented with `events:edit`
 and `events:delete`. A correction creates a higher revision and preserves the
@@ -31,31 +21,40 @@ and remain indefinitely. Old parts, S3 object versions, free pages, WAL, and
 backups have separate cleanup lifecycles. Deletion does not promise immediate
 physical erasure from every copy.
 
-## Identity authority
+## Link an anonymous browser at login
 
-The planned identified-person model uses SQLite as the source of truth for
-identity links. An identity update and its projection outbox record would commit
-in one SQLite transaction. A worker would project the change into ClickHouse
-so SQL can resolve identities. This identity outbox is not the implemented event
-delivery queue.
+Use the identified browser profile from [the SDK compatibility examples](../compat/profiles.mjs). It enables browser persistence and uses `person_profiles: 'identified_only'`. The cookieless profile deliberately uses `person_profiles: 'never'`; with that setting, the SDK suppresses identification.
 
-The ClickHouse mapping is a replica. Projection lag can make a query observe an older resolution than SQLite. The API needs an explicit consistency contract before identity mutations become available. A sequence or version in the projection should make lag measurable and prevent older updates from replacing newer ones.
+```js
+posthog.init(projectKey, { ...identifiedBrowserProfile, api_host: porcupineOrigin })
 
-Identity links are project-local. A link must never merge people across projects. Concurrent identity mutations must serialize through SQLite transactions and preserve a consistent mapping.
+posthog.capture('signup_started')
+posthog.identify('user-42', { plan: 'pro' })
+posthog.capture('signup_finished')
 
-## Unresolved identity rules
+// On logout, reset the SDK before the next visitor starts using this browser.
+posthog.reset()
+```
 
-The following decisions block a stable identity API:
+Once delivery catches up, the two ordinary events keep their original IDs and share a person:
 
-- Define what happens when an anonymous ID already belongs to a different identified person.
-- Reject or resolve alias cycles without creating ambiguous query results.
-- Define whether links can be split or removed and how historical queries change afterward.
-- Define reset behavior on shared browsers and devices so a later visitor does not inherit an earlier visitor's identity.
-- Specify which authority can merge or repair identity links and how those actions are audited.
+```sql
+SELECT event, distinct_id, person_id, JSONExtractString(person_properties, 'plan') AS plan
+FROM events
+WHERE person_id = {user:String}
+ORDER BY received_at_ms, id
+```
 
-`identity:write` is accepted as a reserved permission name, but no identity
-mutation operation exists. The final authority and behavior of future identity
-operations remain open. Issuing this permission does not enable identity merging.
+Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_started`, whose `distinct_id` is still the anonymous browser ID. Use `uniqExact(person_id)` to count resolved users. An unlinked event falls back to its own `distinct_id`. Queries that request identity columns (including `SELECT *`) join the project's delivered links and profiles at read time. Select explicit event-only columns to avoid those joins. Profile properties reflect the latest delivered profile; send a property on the business event itself when you need its value at the time the event occurred.
+
+### What capture accepts
+
+- The project comes from the credential on the capture request. Browser identification uses the same public, project-scoped ingestion key as other browser events. Treat supplied IDs and traits as analytics data; authenticate logins and authorize access to application data separately. A `server_only` project still requires an authorized backend.
+- `$identify` records the target user's ID and links a supplied `$anon_distinct_id` to that user. A call with no anonymous ID can still update the target profile. Multiple anonymous browsers may each link to the same identified user.
+- `$set_once` fills missing traits and `$set` supplies current values, including updates made by a subsequent identify on the same user. Control records travel through the durable queue and stay out of analytics event counts and webhook payloads.
+- A link belongs to one project and cannot be reassigned to another user. An already identified user cannot become another user's anonymous predecessor. Cookieless sentinels and server-generated daily cookieless IDs cannot participate. If a control has invalid traits or a conflicting link, Porcupine accepts a durable no-op and increments `identity_ignored` in the capture response. Other valid events in the batch still go through. A profile accepts up to 128 top-level traits, 200 bytes per key, and 32 KiB of encoded JSON.
+- SQLite commits identity changes and their projection records in the same capture transaction. The usual project/UUID receipt deduplicates retries. ClickHouse resolves links on reads after delivery, without rewriting historical events. A capture acknowledgment can precede the identity projection.
+- General aliasing, merging two identified users, unlinking, and person-profile deletion do not have API operations in this implementation. Event corrections and deletions apply to ordinary events, and supported restores include identity state. The reserved `identity:write` permission does not grant a management API.
 
 ## Session semantics
 
@@ -106,8 +105,7 @@ sharing a network IP and User-Agent can count as one; a changed IP or browser ca
 count as a new visitor. Different days and projects deliberately get different
 pseudonyms. Multi-day unique users and retention must not be presented as exact
 person counts. Cookieless session statistics are not implemented; shared SDK
-session sentinels are not retained as real sessions. Identified-person merging
-remains unsupported, and the SDK profile disables identify calls.
+session sentinels are not retained as real sessions. Identified browsing uses the separate opt-in profile above; a cookieless visitor cannot be retroactively linked to a login.
 
 ### Reverse proxies
 

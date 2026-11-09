@@ -16,6 +16,8 @@ make check
 make compat
 ```
 
+With Docker available, run `npm --prefix compat run test:identify-clickhouse` to exercise the browser and backend SDKs through to a project-scoped SQL query against a disposable ClickHouse. Its report is `compat/artifacts/identify-clickhouse.json`.
+
 The runner builds the real Go binary, starts it with a temporary SQLite database,
 creates two projects, and loads official SDK packages. Chromium runs a local page
 on a different origin from the ingestion server. No SDK events go to PostHog Cloud.
@@ -40,11 +42,7 @@ successful response with a 503, then observes the SDK resend the same UUID. The
 read API must show one logical event. This proves retry deduplication for that
 scenario, not exactly-once delivery under every failure.
 
-Session assertions verify identifiers produced by the SDK and persisted on events.
-Reset assertions verify local SDK identity/session changes. Neither proves
-identified-person resolution, session duration calculations, or identity mapping
-projection. Those features remain unimplemented; ClickHouse event delivery is
-covered by the separate integration suite.
+Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. ClickHouse integration verifies SQL resolution for historical events.
 
 The current browser profile disables unrelated PostHog features and chooses an
 explicit transport. Headless Chromium may need the documented SDK bot-filter
@@ -93,9 +91,7 @@ runs succeed. Local results do not imply that remote CI has run.
 ## Cookieless product default
 
 The supported cookieless profile is exported as `cookielessProfile` in
-`compat/profiles.mjs`. The identified diagnostic profile still uses localStorage
-only to test explicit identity persistence and reset. Neither requires PostHog
-Cloud, a flags service, or session replay.
+`compat/profiles.mjs`. The default keeps anonymous capture free of browser storage. To link activity at login, use the opt-in identified profile with `person_profiles: "identified_only"`; it requires persistent IDs.
 
 `browser.cookieless-no-storage` runs the real SDK in isolated Chromium contexts.
 It verifies successful CORS responses and stored daily pseudonyms for repeated
@@ -109,8 +105,8 @@ See the [identity design](data-and-identity.md#cookieless-by-default).
 
 The matrix lists current gaps explicitly. Expand it before claiming support for
 additional SDK versions, browsers, unload/beacon delivery, browser retry behavior,
-new-tab session behavior, and compressed browser configurations. Identity merging,
-aliasing, group updates, feature flags, replay, surveys, and full default SDK
+new-tab session behavior, and compressed browser configurations. Merging two identified users,
+general aliasing, group updates, feature flags, replay, surveys, and full default SDK
 configuration are outside the supported initial profile.
 
 Future server-side identity and analytics features need their own semantic

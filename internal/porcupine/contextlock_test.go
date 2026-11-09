@@ -211,8 +211,8 @@ func TestExportProvisioningUsesShortChildDeadline(t *testing.T) {
 	if _, _, _, err := s.exportReader(parent, "project"); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 6 || provisioningContext == nil {
-		t.Fatalf("expected six export provisioning requests, got %d", calls)
+	if calls != 7 || provisioningContext == nil {
+		t.Fatalf("expected seven export provisioning requests, got %d", calls)
 	}
 	if !errors.Is(provisioningContext.Err(), context.Canceled) || parent.Err() != nil {
 		t.Fatal("short provisioning context did not close independently of export parent")

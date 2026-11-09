@@ -42,6 +42,9 @@ func (c *clickHouse) initialize(ctx context.Context) error {
 		if tables[eventTable] == "" {
 			return errors.New("completed event migration table is missing")
 		}
+		if err = c.ensureIdentityColumn(ctx, table); err != nil {
+			return err
+		}
 		if err = c.ensureOperatorPolicy(ctx, table); err != nil {
 			return err
 		}
@@ -63,11 +66,15 @@ received_at String,
 received_at_ms Int64,
 revision UInt64,
 is_deleted UInt8,
-original_snapshot String
+original_snapshot String,
+identity_snapshot String DEFAULT ''
 ) ENGINE = ReplacingMergeTree(revision,is_deleted)
 PARTITION BY toYYYYMM(fromUnixTimestamp64Milli(received_at_ms,'UTC'))
 ORDER BY (project_id,uuid)
 SETTINGS fsync_after_insert=1,fsync_part_directory=1,allow_experimental_replacing_merge_with_cleanup=0`); err != nil {
+		return err
+	}
+	if err = c.ensureIdentityColumn(ctx, table); err != nil {
 		return err
 	}
 	if err = c.ensureOperatorPolicy(ctx, table); err != nil {
@@ -165,10 +172,10 @@ func legacyOriginalSnapshotSQL() string {
 	return `concat('{"event":',toJSONString(event),',"distinct_id":',toJSONString(distinct_id),',"properties":',properties,',"timestamp":',toJSONString(timestamp),'}')`
 }
 
-const projectionColumns = "event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot"
+const projectionColumns = "event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot"
 
 func (c *clickHouse) copyLegacy(ctx context.Context) error {
-	_, err := c.admin(ctx, migrationPrefix+"INSERT INTO "+c.config.Database+"."+eventTable+" ("+projectionColumns+") SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,toUInt64(0),toUInt8(0),"+legacyOriginalSnapshotSQL()+" FROM "+c.config.Database+".events FINAL SETTINGS async_insert=0")
+	_, err := c.admin(ctx, migrationPrefix+"INSERT INTO "+c.config.Database+"."+eventTable+" ("+projectionColumns+") SELECT event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,toUInt64(0),toUInt8(0),"+legacyOriginalSnapshotSQL()+",'' FROM "+c.config.Database+".events FINAL SETTINGS async_insert=0")
 	return err
 }
 
@@ -201,4 +208,9 @@ func (c *clickHouse) verifyLegacy(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c *clickHouse) ensureIdentityColumn(ctx context.Context, table string) error {
+	_, err := c.admin(ctx, migrationPrefix+"ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS identity_snapshot String DEFAULT ''")
+	return err
 }

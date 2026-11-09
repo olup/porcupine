@@ -86,7 +86,7 @@ func TestAnalyticsProjectReaderIsolation(t *testing.T) {
 			t.Fatal("UInt64 precision lost")
 		}
 	}
-	if len(ddl) != 18 {
+	if len(ddl) != 22 {
 		t.Fatalf("expected cached provisioning per project, got %d DDL calls", len(ddl))
 	}
 	if readers[0] != readers[1] || passwords[0] != passwords[1] || readers[0] == readers[2] || databases[0] == databases[2] || passwords[0] == passwords[2] {
@@ -102,7 +102,7 @@ func TestAnalyticsProjectReaderIsolation(t *testing.T) {
 		"max_result_rows=1000 READONLY", "max_result_bytes=1048576 READONLY", "result_overflow_mode='throw' READONLY",
 		"read_overflow_mode='throw' READONLY", "timeout_overflow_mode='throw' READONLY", "max_threads=2 READONLY",
 		"allow_ddl=0 READONLY", "allow_introspection_functions=0 READONLY",
-		"output_format_json_quote_64bit_integers=1 READONLY", "SQL SECURITY INVOKER", "CREATE ROW POLICY OR REPLACE", "_admin ON analytics." + eventTable + " USING 1 TO `admin_user`", "GRANT SELECT(event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision) ON analytics." + eventTable + " TO", "." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectA)) + "')",
+		"output_format_json_quote_64bit_integers=1 READONLY", "SQL SECURITY INVOKER", "CREATE ROW POLICY OR REPLACE", "_admin ON analytics." + eventTable + " USING 1 TO `admin_user`", "GRANT SELECT(" + analyticsPhysicalColumns + ") ON analytics." + eventTable + " TO", "." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectA)) + "')",
 		"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectB)) + "')", "REVOKE ALL ON *.* FROM", "GRANT SELECT ON", "final=1 READONLY", "optimize_move_to_prewhere_if_final=0 READONLY",
 	} {
 		if !strings.Contains(joined, required) {

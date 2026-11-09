@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile": "cookieless-product-and-identified-diagnostics",
+  "profile": "cookieless-default-and-opt-in-identified",
   "supported_versions": {
     "posthog-js": "1.447.3",
     "posthog-node": "5.63.1",
@@ -34,28 +34,63 @@
       "required": true,
       "status": "implemented",
       "scope": "Headless Chromium real cross-origin capture, local session/distinct IDs, Unicode, nested properties, timestamp, UUID and SDK metadata",
-      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+      "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
     },
     {
       "id": "browser.batch-compression",
       "required": true,
       "status": "implemented",
       "scope": "Real SDK browser batch and CompressionStream gzip transport persisted by Go",
-      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+      "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
     },
     {
       "id": "browser.persistence-reset",
       "required": true,
       "status": "implemented",
       "scope": "SDK local IDs persist after reload, reset changes IDs, next event contains new local IDs; no identity projection claim",
-      "configuration": "browserProfile (opt-in identified/session diagnostics)"
+      "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
     },
     {
       "id": "isolation-and-network",
       "required": true,
       "status": "implemented",
-      "scope": "Other project remains empty, no credential persisted, no external network requests or unknown SDK routes",
+      "scope": "Each credential keeps ordinary events within its project; no persisted credentials, external network requests or unknown SDK routes",
       "configuration": "all tested profiles"
+    },
+    {
+      "id": "browser.identify-before-after",
+      "required": true,
+      "status": "implemented",
+      "scope": "Cookie profile: real initial root traits, anonymous link, durable original IDs, repeated calls suppressed, identified cookie reload",
+      "configuration": "identifiedBrowserProfile"
+    },
+    {
+      "id": "browser.identify-traits-repeat",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real same-ID $set traits and set_once semantics, repeated calls, stable UUID retry without identity version advance",
+      "configuration": "identifiedBrowserProfile"
+    },
+    {
+      "id": "browser.identify-reset-switch",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real reset produces fresh anonymous ID, preserves device ID and links separate users without merging their identities",
+      "configuration": "identifiedBrowserProfile"
+    },
+    {
+      "id": "browser.identify-batched-controls",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real SDK identify bypasses queue; queued anonymous capture/$set/identified capture share one request; atomic durable identity and retry",
+      "configuration": "identifiedBrowserProfile"
+    },
+    {
+      "id": "node.identify-target-only",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real official Node identify target-only profile and nested traits, mixed control/ordinary batch without anonymous link",
+      "configuration": "nodeProfile"
     },
     {
       "id": "browser.cookieless-no-storage",
@@ -66,8 +101,8 @@
     }
   ],
   "unsupported": [
-    "identified-user identity resolution and merging",
-    "identify/alias/group control events",
+    "identified-to-identified person merging",
+    "alias/group control events",
     "remote configuration and feature flags",
     "session replay",
     "autocapture",

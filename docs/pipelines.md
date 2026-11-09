@@ -67,7 +67,7 @@ The credential-replacement endpoint accepts `{"credentials":{...}}` without retu
 ## Webhook event and batch modes
 
 Webhooks deliver newly accepted original events after cookieless identity
-resolution, without waiting for ClickHouse projection. Batch mode groups those
+resolution, without waiting for ClickHouse projection. Private identity controls are excluded. A scheduled S3 query can select `person_id` and `person_properties` on ordinary events after identity projection. Batch mode groups those
 raw accepted events; it does not execute an analytical SQL query. They do not backfill older events or emit a correction stream.
 `include_events` and `exclude_events` match exact event names, with exclusions
 taking precedence. Each list accepts up to 100 names. An empty inclusion list

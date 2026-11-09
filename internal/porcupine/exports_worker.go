@@ -263,6 +263,10 @@ func (s *Service) executeExport(ctx context.Context, job storedExport) error {
 	if err != nil {
 		return err
 	}
+	canonical, err = identitySQL(canonical, namespace)
+	if err != nil {
+		return errExportStreamInvalid
+	}
 	body, err := s.ch.openExport(ctx, namespace, reader, password, job.QueryID, canonical, job.Parameters)
 	if err != nil {
 		return err

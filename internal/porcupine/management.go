@@ -386,7 +386,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 }
 
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered FROM events WHERE project_id=? ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}

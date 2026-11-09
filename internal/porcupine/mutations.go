@@ -150,6 +150,9 @@ func (s *Service) getEvent(ctx context.Context, input *EventGetInput) (*EventGet
 	if err != nil {
 		return nil, err
 	}
+	if projection.IdentitySnapshot != "" {
+		return nil, apiError(404, "event not found")
+	}
 	if projection.IsDeleted {
 		return nil, apiError(410, "event was deleted")
 	}
@@ -180,7 +183,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 	if revision == 0 {
 		var event Event
 		var properties string
-		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered)
+		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot)
 		if err == nil {
 			event.Properties = json.RawMessage(properties)
 			snapshot, err := originalSnapshot(event)
@@ -259,6 +262,9 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	current, pending, err := s.currentEvent(ctx, project, uuid)
 	if err != nil {
 		return nil, err
+	}
+	if current.IdentitySnapshot != "" {
+		return nil, apiError(409, "identity control records cannot be edited or deleted")
 	}
 	if current.IsDeleted {
 		return nil, apiError(410, "event was deleted")

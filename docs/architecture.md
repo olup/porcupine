@@ -9,8 +9,7 @@ Porcupine is an open source, headless product analytics service for small self-h
 The Go process owns ingestion, authentication, project management, queue processing, SQL validation, and query coordination. A pure-Go SQLite driver keeps local builds free of a C toolchain requirement.
 
 SQLite stores authoritative projects, credential hashes and grants, cookieless daily keys, the query-reader derivation secret, the durable ingestion queue, delivery receipts, mutation heads, metadata audit, the bounded mutation outbox, and delivery metadata. ClickHouse stores revisioned event facts, private original snapshots, and deletion tombstones. SQLite also stores encrypted pipeline credentials, configuration, delivery
-state, and scheduled-run checkpoints. Identified-person links and identity
-mapping replicas remain planned work. Optional S3-compatible cold storage uses a global operator-configured ClickHouse disk. [Webhook and scheduled S3 pipelines](pipelines.md) run in the same process.
+state, and scheduled-run checkpoints. SQLite stores identified-person links and current profile traits. The ingestion worker projects accepted identity controls into ClickHouse for project-scoped reads. Optional S3-compatible cold storage uses a global operator-configured ClickHouse disk. [Webhook and scheduled S3 pipelines](pipelines.md) run in the same process.
 
 Docker Compose starts Porcupine and ClickHouse 26.8.36.3 with separate volumes. ClickHouse has no published host port. The application can also run without ClickHouse when `PORCUPINE_CLICKHOUSE_URL` is empty. In that mode, accepted events remain in the bounded SQLite queue, and analytical queries are unavailable.
 
@@ -61,4 +60,4 @@ configuration and migration, and [event mutations](events.md) for logical deleti
 [One-off SQL exports](exports.md) and [project delivery pipelines](pipelines.md)
 are separate from native cold storage.
 
-Identified-person conflict rules and mutation semantics remain open. See [identity](data-and-identity.md) and [reliability](reliability.md). SDK compatibility is bounded by [the tested profile](compatibility.md).
+Identified capture supports project-local anonymous-to-user links and profile traits. See [identity](data-and-identity.md) and [reliability](reliability.md). SDK compatibility is bounded by [the tested profile](compatibility.md).

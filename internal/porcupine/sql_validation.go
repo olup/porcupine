@@ -45,8 +45,9 @@ var sqlFunctions = func() map[string]bool {
 }()
 
 type sqlReferences struct {
-	eventSources map[*chsql.TableIdentifier]bool // true for a source with a table alias
-	parameters   map[string]string               // parameter name to its declared ClickHouse type
+	identityColumns *bool
+	eventSources    map[*chsql.TableIdentifier]bool // true for a source with a table alias
+	parameters      map[string]string               // parameter name to its declared ClickHouse type
 }
 
 type sqlScope struct {
@@ -90,7 +91,7 @@ func validateSQLWithReferences(raw string, refs sqlReferences) (string, error) {
 		return "", errors.New("only SELECT queries are allowed")
 	}
 	scope := sqlScope{refs: refs, tables: map[string]bool{"events": true}, qualifiers: map[string]bool{}, names: map[string]bool{}}
-	for _, name := range strings.Fields("id project_id uuid event distinct_id properties timestamp timestamp_ms event_time received_at received_at_ms revision") {
+	for _, name := range strings.Fields("id project_id uuid event distinct_id person_id person_properties properties timestamp timestamp_ms event_time received_at received_at_ms revision") {
 		scope.names[name] = true
 	}
 	if err := checkSQLExpr(query, scope, 0); err != nil {
@@ -227,6 +228,9 @@ func checkSQLExpr(expr chsql.Expr, scope sqlScope, depth int) error {
 		if n == nil {
 			return nil
 		}
+		if scope.refs.identityColumns != nil && sqlProjectionStar(n.Expr) {
+			*scope.refs.identityColumns = true
+		}
 		if len(n.Modifiers) != 0 {
 			return errors.New("SELECT modifiers are unsupported")
 		}
@@ -289,6 +293,7 @@ func checkSQLExpr(expr chsql.Expr, scope sqlScope, depth int) error {
 		if n == nil {
 			return nil
 		}
+		scope.noteIdentity(n.Name)
 		if n.Name != "*" && (!sqlName(n) || !scope.names[n.Name]) {
 			return errors.New("unsupported identifier")
 		}
@@ -296,14 +301,20 @@ func checkSQLExpr(expr chsql.Expr, scope sqlScope, depth int) error {
 		if n == nil {
 			return nil
 		}
-		if n.Ident == nil || !scope.qualifiers[n.Ident.Name] || !sqlName(n.DotIdent) {
+		if n.DotIdent != nil {
+			scope.noteIdentity(n.DotIdent.Name)
+		}
+		if n.Ident == nil || !scope.qualifiers[n.Ident.Name] || n.DotIdent == nil || (n.DotIdent.Name != "*" && (!sqlName(n.DotIdent) || !scope.names[n.DotIdent.Name])) {
 			return errors.New("only source aliases may qualify columns")
 		}
 	case *chsql.Path:
 		if n == nil {
 			return nil
 		}
-		if len(n.Fields) != 2 || !scope.qualifiers[n.Fields[0].Name] || n.Fields[1].Name != "*" && !sqlName(n.Fields[1]) {
+		if len(n.Fields) == 2 {
+			scope.noteIdentity(n.Fields[1].Name)
+		}
+		if len(n.Fields) != 2 || !scope.qualifiers[n.Fields[0].Name] || n.Fields[1].Name != "*" && (!sqlName(n.Fields[1]) || !scope.names[n.Fields[1].Name]) {
 			return errors.New("only source aliases may qualify columns")
 		}
 	case *chsql.NumberLiteral, *chsql.StringLiteral, *chsql.BoolLiteral, *chsql.NullLiteral:

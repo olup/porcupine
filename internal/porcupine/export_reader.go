@@ -70,7 +70,7 @@ func (s *Service) configureExportReader(ctx context.Context, projectID string, c
 		"max_bytes_before_external_sort=" + strconv.FormatInt(spill, 10) + " READONLY",
 		"max_rows_to_read=0 READONLY", "max_result_rows=0 READONLY", "max_result_bytes=0 READONLY",
 		"read_overflow_mode='throw' READONLY", "result_overflow_mode='throw' READONLY", "timeout_overflow_mode='throw' READONLY",
-		"session_timezone='UTC' READONLY", "use_query_cache=0 READONLY", "output_format_json_quote_64bit_integers=1 READONLY",
+		"session_timezone='UTC' READONLY", "use_query_cache=0 READONLY", "join_use_nulls=0 READONLY", "output_format_json_quote_64bit_integers=1 READONLY",
 		"cancel_http_readonly_queries_on_client_close=1 READONLY",
 	}
 	database := s.ch.config.Database
@@ -79,8 +79,9 @@ func (s *Service) configureExportReader(ctx context.Context, projectID string, c
 		"ALTER USER " + reader + authentication + " DEFAULT ROLE NONE SETTINGS " + strings.Join(settings, ", "),
 		"REVOKE ALL ON *.* FROM " + reader,
 		"CREATE ROW POLICY OR REPLACE " + namespace + suffix + "_scope ON " + database + "." + eventTable + " USING project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') TO " + reader,
-		"GRANT SELECT(event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision) ON " + database + "." + eventTable + " TO " + reader,
+		"GRANT SELECT(" + analyticsPhysicalColumns + ") ON " + database + "." + eventTable + " TO " + reader,
 		"GRANT SELECT ON " + namespace + ".events TO " + reader,
+		"GRANT SELECT ON " + namespace + ".events_with_persons TO " + reader,
 	}
 	for _, statement := range statements {
 		if _, err = s.ch.admin(ctx, statement); err != nil {

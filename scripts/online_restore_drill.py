@@ -114,7 +114,7 @@ def sqlite_rows(path, sql, parameters=()):
 
 def sqlite_state(path):
     state = {}
-    for table in ("projects", "access_keys", "oauth_clients", "events", "event_receipts", "event_heads", "mutation_audit", "mutation_outbox", "delivery_quarantine", "delivery_ready", "cookieless_keys", "queue_usage"):
+    for table in ("projects", "access_keys", "oauth_clients", "events", "event_receipts", "event_heads", "mutation_audit", "mutation_outbox", "delivery_quarantine", "delivery_ready", "cookieless_keys", "queue_usage", "identity_profiles", "identity_links"):
         rows = sqlite_rows(path, "SELECT * FROM " + table)
         convert = lambda value: value.hex() if isinstance(value, bytes) else value
         rows.sort(key=lambda row: json.dumps(row, default=convert, separators=(",", ":")))
@@ -124,7 +124,7 @@ def sqlite_state(path):
 
 
 def fingerprint(endpoint, environment):
-    sql = "SELECT event_id,project_id,uuid,event,distinct_id,hex(SHA256(properties)) AS properties_sha,timestamp,received_at,revision,is_deleted,hex(SHA256(original_snapshot)) AS evidence_sha FROM (SELECT * FROM " + TABLE + " ORDER BY revision DESC LIMIT 1 BY project_id,uuid) ORDER BY project_id,uuid FORMAT JSONEachRow"
+    sql = "SELECT event_id,project_id,uuid,event,distinct_id,hex(SHA256(properties)) AS properties_sha,timestamp,received_at,revision,is_deleted,hex(SHA256(original_snapshot)) AS evidence_sha,hex(SHA256(identity_snapshot)) AS identity_sha FROM (SELECT * FROM " + TABLE + " ORDER BY revision DESC LIMIT 1 BY project_id,uuid) ORDER BY project_id,uuid FORMAT JSONEachRow"
     return hashlib.sha256(ch(endpoint, environment, sql)).hexdigest()
 
 
@@ -305,6 +305,10 @@ def run():
         baseline = ["cold-evicted","deleted-evicted","corrected","pending-correction","pending-deletion","cookieless"]
         for name in baseline:
             capture(name,distinct="$posthog_cookieless" if name=="cookieless" else "synthetic-person")
+        capture("before-login", distinct="browser-before-login")
+        link = {"api_key": ingest, "uuid": "restore-link", "event": "$identify", "distinct_id": "account-42",
+                "properties": {"$anon_distinct_id": "browser-before-login", "$set": {"plan": "free"}}}
+        check(api(origin, "/capture/", link)["accepted"] == 1, "accepted identity link before checkpoint")
         for index in range(16):
             capture("bulk-%02d"%index,{"synthetic":True,"backup_data":secrets.token_hex(150000)})
         last_diagnostic = [time.monotonic()]
@@ -336,6 +340,9 @@ def run():
         pending_edit=edit("pending-correction","pending-correction-v2","pending-correction")
         pending_delete=remove("pending-deletion","pending-deletion")
         capture("pending-original")
+        update = {"api_key": ingest, "uuid": "restore-traits", "event": "$set", "distinct_id": "account-42",
+                  "properties": {"$set": {"plan": "pro"}}}
+        check(api(origin, "/capture/", update)["accepted"] == 1, "accepted pending profile update")
         frozen_fingerprint=fingerprint(source_ch,environment)
         checks.append("live source seeded applied and pending corrections/deletions with native cold parts")
         accepted=[]; writer_errors=[]; writer_stop=threading.Event()
@@ -433,7 +440,7 @@ def run():
         wait_until(lambda:sqlite_rows(restored_db,"SELECT (SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox)")[0][0]==0,"restored normal worker did not resume",60)
         for mutation in (pending_edit,pending_delete):
             check(api(origin,base+"/event-mutations/"+mutation,token=restored_reader)["state"]=="applied","restored mutation acknowledged")
-        rows=[json.loads(raw) for raw in ch(target_ch,destination_environment,"SELECT uuid,event FROM "+TABLE+" FINAL WHERE project_id=unhex('"+pid.encode().hex()+"') AND is_deleted=0 ORDER BY uuid FORMAT JSONEachRow").splitlines()]
+        rows=[json.loads(raw) for raw in ch(target_ch,destination_environment,"SELECT uuid,event FROM "+TABLE+" FINAL WHERE project_id=unhex('"+pid.encode().hex()+"') AND is_deleted=0 AND identity_snapshot='' ORDER BY uuid FORMAT JSONEachRow").splitlines()]
         expected=set(payloads)-{"deleted-evicted","pending-deletion","after-sqlite-snapshot"}-{name for name,_ in accepted}
         expected.update(cut)
         check({row["uuid"] for row in rows}==expected and len(rows)==len(expected),"restored history includes exact checkpoint cut and excludes later source acknowledgements")
@@ -443,6 +450,9 @@ def run():
             result=api(origin,"/capture/",payloads[name]); check(result["accepted"]==0 and result["duplicates"]==1,"evicted cold/deleted receipt remains exact duplicate after restore")
         status=api(origin,base+"/query",{"sql":"SELECT count() AS total FROM events"},restored_reader)
         check(int(status["result"]["data"][0]["total"])==len(expected),"restored reader sees exact checkpoint cardinality")
+        resolved = api(origin, base+"/query", {"sql": "SELECT distinct_id,person_id,JSONExtractString(person_properties,'plan') AS plan FROM events WHERE uuid='before-login'"}, restored_reader)
+        check(resolved["result"]["data"] == [{"distinct_id": "browser-before-login", "person_id": "account-42", "plan": "pro"}], "restored profile resolves cold pre-login event after pending trait replay")
+        checks.append("restored anonymous link and pending trait update resolve through public SQL")
         mcp_token=token(origin,clients["active"],origin+"/mcp")
         def mcp(method,params):
             request=urllib.request.Request(origin+"/mcp",data=json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params}).encode(),headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":"2025-11-25","Authorization":"Bearer "+mcp_token})

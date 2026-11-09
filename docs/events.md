@@ -17,7 +17,7 @@ API Bearer keys apply only to legacy mode. HTTP and [MCP](mcp.md) expose the sam
 
 ## Current accepted event
 
-`get-event` returns `event`, `revision`, and `pending`. The event contains its durable ID, project, UUID, event name, distinct ID, properties, timestamp, and receipt metadata. `revision` is a decimal string; the original revision is `"0"`. Later revisions are positive SQLite mutation audit sequence numbers and can have gaps for an individual event.
+`get-event` returns `event`, `revision`, and `pending`. Private `$identify` and `$set` control records are excluded from event reads and cannot be changed through event mutation endpoints. See [identity](data-and-identity.md) for how to query the resulting profile. The event contains its durable ID, project, UUID, event name, distinct ID, properties, timestamp, and receipt metadata. `revision` is a decimal string; the original revision is `"0"`. Later revisions are positive SQLite mutation audit sequence numbers and can have gaps for an individual event.
 
 `pending: true` means the current mutation awaits ClickHouse acknowledgment. This endpoint reflects an accepted pending correction immediately. The initial ingestion queue's delivery state is separate. A deleted event returns `410`, including while its tombstone is pending. Unknown events return `404`.
 

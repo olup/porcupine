@@ -208,7 +208,7 @@ func TestConcurrentCapacity(t *testing.T) {
 func TestInputBoundaries(t *testing.T) {
 	s := service(t, 20)
 	_, ingest := project(t, s)
-	for _, event := range []string{"$identify", "$create_alias", "$groupidentify", "$unknown"} {
+	for _, event := range []string{"$create_alias", "$groupidentify", "$unknown"} {
 		request(t, s, "POST", "/capture/", "", `{"api_key":"`+ingest+`","event":"`+event+`","distinct_id":"a"}`, 400)
 	}
 	request(t, s, "POST", "/capture/", "", `{"api_key":"`+ingest+`","event":"ok","distinct_id":"a","timestamp":"yesterday"}`, 400)

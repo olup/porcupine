@@ -141,7 +141,14 @@ def full_visibility(ch, database):
 def logical_summary(ch, database):
     # Include tombstones, which FINAL deliberately hides. Native archive file
     # checksums protect stored bytes; this independent summary checks row meaning.
-    projected = "(SELECT argMax(tuple(" + PROJECTION_COLUMNS + "),revision) AS winner FROM " + database + ".events_v2 GROUP BY project_id,uuid)"
+    identity_column = ch.query("SELECT name,type FROM system.columns WHERE database=" + literal(database) +
+                               " AND table='events_v2' AND name='identity_snapshot'")
+    columns = PROJECTION_COLUMNS
+    if identity_column:
+        if identity_column != [{"name": "identity_snapshot", "type": "String"}]:
+            raise RuntimeError("unexpected identity snapshot type")
+        columns += ",identity_snapshot"
+    projected = "(SELECT argMax(tuple(" + columns + "),revision) AS winner FROM " + database + ".events_v2 GROUP BY project_id,uuid)"
     rows = ch.query("SELECT count() AS rows,groupBitXor(cityHash64(winner)) AS city,groupBitXor(sipHash64(winner)) AS sip,max(tupleElement(winner,1)) AS max_event_id,max(tupleElement(winner,11)) AS max_revision FROM " + projected + " SETTINGS final=0,optimize_aggregation_in_order=1,max_memory_usage=536870912,max_bytes_before_external_group_by=134217728,max_temporary_data_on_disk_size_for_query=1073741824,max_execution_time=" + str(ch.timeout))
     if len(rows) != 1:
         raise RuntimeError("cannot validate logical event checkpoint")

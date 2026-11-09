@@ -131,7 +131,7 @@ func pipelineWindowSQL(raw, namespace string) (string, error) {
 		text       string
 	}
 	var edits []replacement
-	source := "(SELECT * FROM " + namespace + ".events WHERE received_at_ms >= {window_start:Int64} AND received_at_ms < {window_end:Int64})"
+	source := "(SELECT * FROM " + namespace + "." + identitySourceName(canonical) + " WHERE received_at_ms >= {window_start:Int64} AND received_at_ms < {window_end:Int64})"
 	for table, aliased := range sources {
 		text := source
 		if !aliased {

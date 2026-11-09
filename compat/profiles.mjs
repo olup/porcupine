@@ -1,4 +1,4 @@
-// Opt-in identified/session diagnostic profile. This deliberately exercises local IDs.
+// Local-ID/session transport diagnostics only; person processing is disabled.
 export const browserProfile = Object.freeze({
   // Headless Chromium is a bot user agent; still exercise its real network transport.
   opt_out_useragent_filter: true,
@@ -23,6 +23,12 @@ const { persistence: _identifiedPersistence, ...analyticsOptions } = browserProf
 export const cookielessProfile = Object.freeze({
   ...analyticsOptions,
   cookieless_mode: 'always',
+});
+// Opt-in identified browser mode. Person processing is separate from local-ID diagnostics.
+export const identifiedBrowserProfile = Object.freeze({
+  ...browserProfile,
+  persistence: 'cookie',
+  person_profiles: 'identified_only',
 });
 export const nodeProfile = Object.freeze({
   flushAt: 100,

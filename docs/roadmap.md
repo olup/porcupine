@@ -9,7 +9,7 @@ and a bounded mutation outbox. JSON capture, batches, bounded gzip transport, an
 
 [The management API](management-api.md) uses Huma request types and generated OpenAPI. Central policies govern project creation, scoped key creation, metadata listing, and revocation. Revocation cannot remove the last active instance administrator. Key expiry and audit history remain future work.
 
-Cookieless capture provides project-scoped daily pseudonyms with a real SDK no-storage contract. These estimate daily network-and-browser combinations, not exact people. Cookieless sessions and identified-person merging remain unsupported.
+Cookieless capture provides project-scoped daily pseudonyms with a real SDK no-storage contract. These estimate daily network-and-browser combinations, not exact people. Cookieless sessions remain unsupported. Identified capture can link a persisted anonymous browser ID to one identified user within a project.
 
 ## Implemented analytics and agent access
 
@@ -27,7 +27,7 @@ Clients and agents write SQL for their question. Supported functions include num
 
 Add named metrics or saved query catalogs only when an explicit product requirement warrants them. Agent-written SQL already supports aggregation and business-property grouping. Dedicated session analytics, paths, live heartbeats, and reusable views still need definitions, permission rules, time semantics, and bounded results.
 
-Identified-person resolution depends on transactional SQLite links and a versioned ClickHouse projection. Resolve alias conflicts, cycles, unlink behavior, browser resets, and mutation authority before publishing an identity API. Session support needs a tested SDK contract for `$session_id` propagation.
+General aliasing, unlinking and merging identified users remain outside the supported identity contract. Session support needs a tested SDK contract for `$session_id` propagation.
 
 ## Storage and operations
 
@@ -77,7 +77,7 @@ is established by synthetic local checks.
 - [Project pipelines](pipelines.md) documents webhooks, scheduled windows, egress grants, and restore safety.
 - [Event mutations](events.md) documents revisions, corrections, deletions, and idempotency.
 - [Storage](storage.md) explains operator-only S3 tiering, schema migration, and recovery limits.
-- [Events, identity, and sessions](data-and-identity.md) describes implemented cookieless behavior and unresolved identity rules.
+- [Events, identity, and sessions](data-and-identity.md) describes cookieless capture, anonymous-to-user linking, and current person properties.
 - [Access and interfaces](security-and-interfaces.md) describes permissions and query isolation.
 - [Management API](management-api.md) lists endpoints, authorization, and response codes.
 - [MCP reference](mcp.md) describes discovery, calls, credentials, and limits.
