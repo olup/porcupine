@@ -10,3 +10,5 @@ Start with the [local quickstart](hosting.md#laptop-with-docker-compose) to run 
 | Connect and query a project | [OAuth](oauth.md) · [MCP](mcp.md) · [SQL](analytics.md) |
 | Send data to a destination | [Per-event or batched webhooks and scheduled S3 queries](pipelines.md) |
 | Operate the instance | [Storage](storage.md) · [Backup and restore](online-backup.md) |
+
+[Native and Segment ingestion](native-and-segment-ingestion.md) documents the source-build HTTP endpoints, source bindings, retry receipts, and cross-SDK analytics.

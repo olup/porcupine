@@ -19,6 +19,15 @@ func (s *Service) initializeOAuthClients(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
+	var sourceColumn bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('access_keys') WHERE name='source_id')`).Scan(&sourceColumn); err != nil {
+		return err
+	}
+	if !sourceColumn {
+		if _, err = tx.ExecContext(ctx, `ALTER TABLE access_keys ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_clients (
 client_id TEXT PRIMARY KEY REFERENCES access_keys(id),
 secret_hash TEXT NOT NULL
@@ -38,6 +47,7 @@ ORDER BY created_at,id LIMIT 1`); err != nil {
 type OAuthClient struct {
 	ClientID    string   `json:"client_id" doc:"OAuth client and access-key principal identifier"`
 	Name        string   `json:"name"`
+	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions []string `json:"permissions"`
 	Projects    []string `json:"projects"`
 	CreatedAt   string   `json:"created_at"`
@@ -47,6 +57,7 @@ type OAuthClient struct {
 type OAuthClientCreateInput struct {
 	Body struct {
 		Name        string   `json:"name" minLength:"1" maxLength:"200"`
+		SourceID    string   `json:"source_id,omitempty" maxLength:"128" pattern:"^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$" doc:"Optional logical producer, requiring events:write and exactly one project. Immutable after creation; posthog is reserved for unbound ingestion."`
 		Permissions []string `json:"permissions" minItems:"1" doc:"Permissions cannot exceed the caller's current grants"`
 		Projects    []string `json:"projects" minItems:"1" doc:"Existing project IDs, or * for instance-wide scope; cannot exceed caller scope"`
 	}
@@ -56,6 +67,7 @@ type OAuthClientCreated struct {
 	ClientID     string   `json:"client_id"`
 	ClientSecret string   `json:"client_secret" doc:"One-time OAuth token-exchange secret. It is never a bearer token or ingestion key."`
 	Name         string   `json:"name"`
+	SourceID     string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions  []string `json:"permissions"`
 	Projects     []string `json:"projects"`
 	CreatedAt    string   `json:"created_at"`
@@ -92,6 +104,11 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
 	}
+	sourceID, err := delegatedSourceID(a, body.SourceID, body.Permissions, body.Projects)
+	if err != nil {
+		return nil, err
+	}
+	body.SourceID = sourceID
 	var clientSecret, unknownBearer [32]byte
 	if _, err := rand.Read(clientSecret[:]); err != nil {
 		return nil, apiError(500, "cannot create OAuth client")
@@ -108,7 +125,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,?,?,?,?,?)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,?,?,?,?)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash) VALUES(?,?)`, id, hash(secret)); err != nil {
@@ -117,12 +134,12 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err = tx.Commit(); err != nil {
 		return nil, apiError(500, "storage error")
 	}
-	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created}}, nil
+	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created}}, nil
 }
 
 func (s *Service) managementListOAuthClients(ctx context.Context, _ *struct{}) (*OAuthClientListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at
+	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id
 FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
@@ -132,7 +149,7 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_a
 	for rows.Next() {
 		var item OAuthClient
 		var permissions, projects string
-		if err := rows.Scan(&item.ClientID, &item.Name, &permissions, &projects, &item.CreatedAt, &item.RevokedAt); err != nil {
+		if err := rows.Scan(&item.ClientID, &item.Name, &permissions, &projects, &item.CreatedAt, &item.RevokedAt, &item.SourceID); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &item.Permissions) != nil || json.Unmarshal([]byte(projects), &item.Projects) != nil {

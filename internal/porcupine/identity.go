@@ -90,7 +90,7 @@ func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[s
 		return nil, false, err
 	}
 	var traits map[string]any
-	if err := json.Unmarshal([]byte(raw), &traits); err != nil || traits == nil {
+	if err := decodeIngestionJSON([]byte(raw), &traits); err != nil || traits == nil {
 		return nil, false, errors.New("invalid stored identity profile")
 	}
 	return traits, identified, nil
@@ -133,7 +133,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 		return true, nil
 	}
 	var properties map[string]any
-	if err := json.Unmarshal(event.Properties, &properties); err != nil {
+	if err := decodeIngestionJSON(event.Properties, &properties); err != nil {
 		return false, err
 	}
 	for _, key := range []string{"$set", "$set_once"} {

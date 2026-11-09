@@ -125,6 +125,11 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	}
 	columns := []AnalyticsColumn{
 		{"id", "UInt64", "Durable event ID. JSON queries return this as a string."},
+		{"event_id", "UInt64", "Alias of the existing durable id; JSON represents it as a decimal string."},
+		{"source_id", "String", "Authenticated ingestion source, or posthog for legacy compatible inputs."},
+		{"message_id", "String", "Original source-scoped message identifier; legacy events use uuid."},
+		{"event_type", "String", "Canonical pageview, identify or track input category."},
+		{"context", "String", "Canonical input context as JSON, including available page/browser/locale/session metadata."},
 		{"revision", "UInt64", "Current event revision as a decimal string. Use it as expected_revision for an edit or deletion."},
 		{"project_id", "String", "Owning project, enforced by ClickHouse row policies and the project view."},
 		{"uuid", "String", "SDK event identifier, unique within this project."},
@@ -337,7 +342,7 @@ func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string,
 		"CREATE DATABASE IF NOT EXISTS " + namespace,
 		"CREATE ROW POLICY OR REPLACE " + namespace + "_admin ON " + database + "." + eventTable + " USING 1 TO " + quoteAnalyticsIdentifier(s.ch.config.User),
 		"CREATE OR REPLACE VIEW " + namespace + ".events SQL SECURITY INVOKER AS " +
-			"SELECT event_id AS id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,revision," +
+			"SELECT event_id AS id,event_id," + eventMetadataFallbackSQL + "if(context=''," + legacyContextSQL("properties") + ",context) AS context,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,revision," +
 			"fromUnixTimestamp64Milli(timestamp_ms,'UTC') AS event_time,received_at,received_at_ms FROM " + database +
 			"." + eventTable + " FINAL WHERE project_id=unhex('" + hex.EncodeToString([]byte(projectID)) + "') AND identity_snapshot=''",
 		identityViewSQL(database, namespace, projectID),

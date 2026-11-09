@@ -199,3 +199,7 @@ applies to ingestion endpoints only. `events:edit` and `events:delete` authorize
 implemented mutation endpoints. `identity:write` remains a reserved permission.
 The [access design](security-and-interfaces.md) describes analytics, SQL, and
 MCP boundaries.
+
+### Source-bound ingestion credentials
+
+In source builds with [native and Segment ingestion](native-and-segment-ingestion.md), both access key and OAuth client creation accept an optional `source_id`. A bound writer needs `events:write` for one concrete project. The source is case sensitive, starts with a letter or digit, and accepts letters, digits, dots, underscores, colons, and hyphens up to 128 ASCII characters. The exact value `posthog` is reserved for legacy PostHog capture. The source appears in credential metadata. A source-bound parent issuing another writer delegates its own source.

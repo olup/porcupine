@@ -67,7 +67,7 @@ func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (stor
 func (s *Service) exportActor(ctx context.Context, keyID string) (actor, error) {
 	var result actor
 	var permissions, projects string
-	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&result.ID, &permissions, &projects)
+	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&result.ID, &permissions, &projects, &result.SourceID)
 	if err != nil {
 		return result, err
 	}

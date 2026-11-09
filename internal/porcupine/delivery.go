@@ -102,7 +102,7 @@ func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
 }
 
 func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT 100`, cursor)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT 100`, cursor)
 	if err != nil {
 		return nil, errors.New("cannot read delivery queue")
 	}
@@ -111,14 +111,17 @@ func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event
 	bytes := 0
 	for rows.Next() {
 		var event Event
-		var properties string
-		if err := rows.Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.IdentitySnapshot); err != nil {
+		var properties, ingestion string
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.IdentitySnapshot, &ingestion); err != nil {
 			return nil, errors.New("cannot read queued event")
+		}
+		if err := decodeIngestionMetadata(&event, ingestion); err != nil {
+			return nil, err
 		}
 		event.Properties = json.RawMessage(properties)
 		// Properties are already JSON. Encoding that JSON as a String at most doubles
 		// its size; other strings can expand sixfold when JSON escapes control bytes.
-		size := 4*len(properties) + 2*len(event.IdentitySnapshot) + 12*(len(event.ProjectID)+len(event.UUID)+len(event.Event)+len(event.DistinctID)+len(event.Timestamp)+len(event.ReceivedAt)) + 2048
+		size := 4*len(properties) + 2*len(event.IdentitySnapshot) + 2*len(ingestion) + 12*(len(event.ProjectID)+len(event.UUID)+len(event.Event)+len(event.DistinctID)+len(event.Timestamp)+len(event.ReceivedAt)) + 2048
 		// The byte budget is soft for one event: previously accepted JSON can grow
 		// during encoding, and a large event must not permanently block the queue.
 		if bytes+size > 4<<20 && len(batch) > 0 {
@@ -167,7 +170,7 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 	defer tx.Rollback()
 	projects := map[string]bool{}
 	for _, event := range batch {
-		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, source); err != nil {
+		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, source, event.ID); err != nil {
 			return errors.New("cannot save delivery receipt")
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id=?`, event.ID); err != nil {

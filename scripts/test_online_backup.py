@@ -63,6 +63,33 @@ class OnlineBackupTests(unittest.TestCase):
                 digest_sql = next(sql for sql in statements if "cityHash64(winner)" in sql)
                 self.assertEqual("original_snapshot,identity_snapshot)" in digest_sql, present)
 
+    def test_input_metadata_is_hashed_and_attested_without_breaking_legacy(self):
+        for columns in ([], ["identity_snapshot"],
+                        ["identity_snapshot", "source_id", "message_id", "event_type", "context"]):
+            with self.subTest(columns=columns):
+                native = NativeFailure()
+                statements = []
+                def query(sql):
+                    statements.append(sql)
+                    if "FROM system.columns" in sql:
+                        return [{"name": name, "type": "String"} for name in reversed(columns)]
+                    return NativeFailure.query(native, sql)
+                native.query = query
+                result = backup.logical_summary(native, "example")
+                digest = next(sql for sql in statements if "cityHash64(winner)" in sql)
+                for name in columns:
+                    self.assertIn("," + name, digest)
+                self.assertEqual("projection_columns" in result, "source_id" in columns)
+                if "source_id" in columns:
+                    self.assertEqual(result["projection_columns"][-4:],
+                                     ["source_id", "message_id", "event_type", "context"])
+
+    def test_invalid_input_metadata_column_fails_closed(self):
+        native = NativeFailure()
+        native.query = lambda sql: [{"name": "context", "type": "Nullable(String)"}]
+        with self.assertRaisesRegex(RuntimeError, "projection column"):
+            backup.logical_summary(native, "example")
+
     def fixture(self, directory):
         db = Path(directory).resolve() / "source.db"
         with sqlite3.connect(db) as connection:

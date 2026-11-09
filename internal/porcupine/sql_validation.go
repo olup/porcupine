@@ -91,7 +91,7 @@ func validateSQLWithReferences(raw string, refs sqlReferences) (string, error) {
 		return "", errors.New("only SELECT queries are allowed")
 	}
 	scope := sqlScope{refs: refs, tables: map[string]bool{"events": true}, qualifiers: map[string]bool{}, names: map[string]bool{}}
-	for _, name := range strings.Fields("id project_id uuid event distinct_id person_id person_properties properties timestamp timestamp_ms event_time received_at received_at_ms revision") {
+	for _, name := range strings.Fields("id event_id source_id message_id event_type context project_id uuid event distinct_id person_id person_properties properties timestamp timestamp_ms event_time received_at received_at_ms revision") {
 		scope.names[name] = true
 	}
 	if err := checkSQLExpr(query, scope, 0); err != nil {

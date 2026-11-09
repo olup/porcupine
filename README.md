@@ -40,6 +40,8 @@ across restarts. The operator also controls allowed custom S3 origins;
 destination credentials are encrypted. Delivery is at least once. Supported restores pause
 destinations for review before resumption.
 
+Source builds add [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
+
 ## Install a release
 
 The `v0.2.0` release includes Linux amd64 and arm64 images. Use the matching

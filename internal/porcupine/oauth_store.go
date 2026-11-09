@@ -49,11 +49,11 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 	var permissions, projects string
 	var row *sql.Row
 	if id == "bootstrap" {
-		row = query.QueryRowContext(ctx, `SELECT id,token_hash,permissions,projects FROM access_keys WHERE id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id') AND revoked_at IS NULL`)
+		row = query.QueryRowContext(ctx, `SELECT id,token_hash,permissions,projects,source_id FROM access_keys WHERE id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id') AND revoked_at IS NULL`)
 	} else {
-		row = query.QueryRowContext(ctx, `SELECT k.id,c.secret_hash,k.permissions,k.projects FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=? AND k.revoked_at IS NULL`, id)
+		row = query.QueryRowContext(ctx, `SELECT k.id,c.secret_hash,k.permissions,k.projects,k.source_id FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=? AND k.revoked_at IS NULL`, id)
 	}
-	if err := row.Scan(&client.ID, &client.secretHash, &permissions, &projects); err != nil {
+	if err := row.Scan(&client.ID, &client.secretHash, &permissions, &projects, &client.SourceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oautherrors.ErrInvalidClient
 		}

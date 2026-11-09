@@ -21,6 +21,7 @@ type receiptKey struct {
 }
 type receiptLookup struct {
 	known           map[string]bool
+	ids             map[string]int64
 	unknown         int
 	leaseID, source string
 	active          bool
@@ -143,7 +144,7 @@ func localReceipt(ctx context.Context, q oauthQueryer, project, uuid string) (bo
 }
 
 func (s *Service) prepareReceiptLookup(ctx context.Context, project string, events []Event) (*receiptLookup, error) {
-	lookup := &receiptLookup{known: map[string]bool{}}
+	lookup := &receiptLookup{known: map[string]bool{}, ids: map[string]int64{}}
 	// Until the first eviction the complete ledger is local. The final write
 	// transaction rechecks this bit, closing the first-eviction race.
 	fallback, err := receiptMetadata(ctx, s.db, "receipt_fallback_required")
@@ -219,7 +220,7 @@ func (s *Service) prepareReceiptLookup(ctx context.Context, project string, even
 	}
 	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	source, seenFacts, err := s.ch.receiptFacts(probe, keys)
+	source, seenFacts, err := s.ch.receiptFactsWithIDs(probe, keys)
 	lookup.source = source
 	if err == nil {
 		var pinned string
@@ -232,8 +233,9 @@ func (s *Service) prepareReceiptLookup(ctx context.Context, project string, even
 		s.releaseReceiptLookup(lookup)
 		return nil, errReceiptHistory
 	}
-	for key := range seenFacts {
+	for key, id := range seenFacts {
 		lookup.known[key.UUID] = true
+		lookup.ids[key.UUID] = id
 	}
 	return lookup, nil
 }
@@ -288,7 +290,16 @@ func (s *Service) receiptAcknowledgmentSource(ctx context.Context) (string, erro
 	return s.receiptSourceIdentity(probe)
 }
 
-func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid, source string) error {
+func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid, source string, eventIDs ...int64) error {
+	var eventID int64
+	if len(eventIDs) > 0 {
+		eventID = eventIDs[0]
+	}
+	if eventID > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE event_heads SET event_id=CASE WHEN event_id=0 THEN ? ELSE event_id END WHERE project_id=? AND uuid=?`, eventID, project, uuid); err != nil {
+			return err
+		}
+	}
 	// Mutation heads permanently remember accepted UUIDs, including a deletion
 	// whose tombstone has not reached ClickHouse yet.
 	if s.hotReceiptLimit > 0 {
@@ -303,7 +314,7 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid, 
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO event_receipts(project_id,uuid) VALUES(?,?)`, project, uuid); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event_receipts(project_id,uuid,event_id) VALUES(?,?,?) ON CONFLICT(project_id,uuid) DO UPDATE SET event_id=CASE WHEN event_receipts.event_id=0 THEN excluded.event_id ELSE event_receipts.event_id END`, project, uuid, eventID); err != nil {
 		return err
 	}
 	if source != "" {
@@ -490,4 +501,13 @@ func (s *Service) unprovenReceipts(ctx context.Context, cursor receiptKey) ([]re
 		keys = append(keys, key)
 	}
 	return keys, rows.Err()
+}
+
+func localReceiptEventID(ctx context.Context, q oauthQueryer, project, uuid string) (int64, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `SELECT id FROM (SELECT id FROM events WHERE project_id=? AND uuid=? UNION ALL SELECT event_id AS id FROM event_receipts WHERE project_id=? AND uuid=? UNION ALL SELECT event_id AS id FROM event_heads WHERE project_id=? AND uuid=?) WHERE id>0 LIMIT 1`, project, uuid, project, uuid, project, uuid).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }

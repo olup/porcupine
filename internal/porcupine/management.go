@@ -42,6 +42,7 @@ type ProjectCreateOutput struct{ Body ProjectCreated }
 type AccessKey struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
+	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions []string `json:"permissions"`
 	Projects    []string `json:"projects"`
 	CreatedAt   string   `json:"created_at"`
@@ -54,6 +55,7 @@ type AccessKeyListOutput struct{ Body AccessKeyList }
 type AccessKeyCreateInput struct {
 	Body struct {
 		Name        string   `json:"name" minLength:"1" maxLength:"200"`
+		SourceID    string   `json:"source_id,omitempty" maxLength:"128" pattern:"^([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?$" doc:"Optional logical producer, requiring events:write and exactly one project. Immutable after creation; posthog is reserved for unbound ingestion."`
 		Permissions []string `json:"permissions" minItems:"1" doc:"Permissions: instance:admin, management:read, management:write, events:read, events:write, events:edit, events:delete, identity:write, pipelines:read, pipelines:write"`
 		Projects    []string `json:"projects" minItems:"1" doc:"Project IDs, or * for instance-wide scope"`
 	}
@@ -61,6 +63,7 @@ type AccessKeyCreateInput struct {
 type AccessKeyCreated struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
+	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions []string `json:"permissions"`
 	Projects    []string `json:"projects"`
 	Token       string   `json:"token" doc:"One-time secret. Store securely; it cannot be retrieved later."`
@@ -270,7 +273,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 
 func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessKeyListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,permissions,projects,created_at,revoked_at FROM access_keys ORDER BY created_at,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,permissions,projects,created_at,revoked_at,source_id FROM access_keys ORDER BY created_at,id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -279,7 +282,7 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	for rows.Next() {
 		var key AccessKey
 		var permissions, projects string
-		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt); err != nil {
+		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
@@ -332,17 +335,22 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
 	}
+	sourceID, err := delegatedSourceID(a, body.SourceID, body.Permissions, body.Projects)
+	if err != nil {
+		return nil, err
+	}
+	body.SourceID = sourceID
 	if s.oauth != nil && !s.oauth.config.AllowLegacyKeys && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
 		return nil, apiError(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
 	id, raw := newID(), token()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,?,?,?,?,?)`, id, body.Name, hash(raw), string(permissions), string(projects), now())
+	_, err = s.db.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,?,?,?,?)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
-	return &AccessKeyCreateOutput{Body: AccessKeyCreated{ID: id, Name: body.Name, Permissions: body.Permissions, Projects: body.Projects, Token: raw}}, nil
+	return &AccessKeyCreateOutput{Body: AccessKeyCreated{ID: id, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, Token: raw}}, nil
 }
 
 func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDeleteInput) (*struct{}, error) {
@@ -386,7 +394,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 }
 
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -394,9 +402,12 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 	events := []Event{}
 	for rows.Next() {
 		var e Event
-		var props string
-		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered); err != nil {
+		var props, ingestion string
+		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered, &ingestion); err != nil {
 			return nil, apiError(500, "storage error")
+		}
+		if err := decodeIngestionMetadata(&e, ingestion); err != nil {
+			return nil, apiError(503, "event storage unavailable")
 		}
 		e.Properties = json.RawMessage(props)
 		events = append(events, e)

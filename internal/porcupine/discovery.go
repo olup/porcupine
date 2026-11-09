@@ -116,7 +116,7 @@ func (s *Service) eventCatalog(ctx context.Context, input *EventCatalogInput) (*
 		return nil, err
 	}
 	for _, event := range events {
-		if len(event.Event) > 500 || len(event.LatestEventUUID) > 128 || len(event.FirstReceivedAt) > 64 || len(event.LastReceivedAt) > 64 || len(event.LatestEventTimestamp) > 64 || !catalogCount(event.Count, 0) {
+		if len(event.Event) > 500 || !validStoredEventUUID(event.LatestEventUUID) || len(event.FirstReceivedAt) > 64 || len(event.LastReceivedAt) > 64 || len(event.LatestEventTimestamp) > 64 || !catalogCount(event.Count, 0) {
 			return nil, apiError(503, "invalid analytics storage response")
 		}
 	}
@@ -143,7 +143,7 @@ func (s *Service) eventCatalog(ctx context.Context, input *EventCatalogInput) (*
 			return nil, err
 		}
 		for _, property := range properties {
-			if len(property.Key) > 200 || property.Types == nil || len(property.Types) > 16 || len(property.LatestEventUUID) > 128 || len(property.LastReceivedAt) > 64 || !catalogCount(property.SampleOccurrences, 1000) {
+			if len(property.Key) > 200 || property.Types == nil || len(property.Types) > 16 || !validStoredEventUUID(property.LatestEventUUID) || len(property.LastReceivedAt) > 64 || !catalogCount(property.SampleOccurrences, 1000) {
 				return nil, apiError(503, "invalid analytics storage response")
 			}
 			for _, kind := range property.Types {

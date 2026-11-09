@@ -224,8 +224,8 @@ func mcpCall(ctx context.Context, native http.Handler, operations map[string]*hu
 			pathNames = append(pathNames, parameter.Name)
 			value := input.Path[parameter.Name]
 			if parameter.Name == "uuid" {
-				if value == "" || len(value) > 128 {
-					return mcpCallFailure(400, "event uuid must contain 1..128 bytes")
+				if !validStoredEventUUID(value) {
+					return mcpCallFailure(400, "invalid event uuid")
 				}
 				value = strings.ReplaceAll(url.PathEscape(value), ".", "%2E")
 			} else if !mcpPathValue.MatchString(value) {
