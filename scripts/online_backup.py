@@ -141,13 +141,13 @@ def full_visibility(ch, database):
 def logical_summary(ch, database):
     # Include tombstones, which FINAL deliberately hides. Native archive file
     # checksums protect stored bytes; this independent summary checks row meaning.
-    optional = ("identity_snapshot", "source_id", "message_id", "event_type", "context")
+    optional = ("identity_snapshot", "source_id", "message_id", "event_type", "context", "is_imported")
     metadata = ch.query("SELECT name,type FROM system.columns WHERE database=" + literal(database) +
                         " AND table='events_v2' AND name IN (" + ",".join(literal(name) for name in optional) + ")")
     present = {}
     for column in metadata:
         name = column.get("name")
-        if name not in optional or name in present or column.get("type") != "String":
+        if name not in optional or name in present or column.get("type") != ("UInt8" if name == "is_imported" else "String"):
             raise RuntimeError("unexpected optional event projection column")
         present[name] = True
     columns = PROJECTION_COLUMNS + "".join("," + name for name in optional if name in present)
@@ -255,6 +255,18 @@ def backup(arguments):
     progress("backup_complete", bundle=str(output), manifest_sha256=file_hash(output / "manifest.json"), projection_pause_seconds=round(time.monotonic() - paused_at, 6))
 
 
+def invalidate_interactive_sessions(snapshot, restored_at):
+    # One-use codes and refresh tokens cannot safely move backwards in time.
+    if not snapshot.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='oauth_interactive_grants'").fetchone():
+        return
+    snapshot.execute("UPDATE access_keys SET revoked_at=coalesce(revoked_at,?) WHERE id IN (SELECT principal_id FROM oauth_interactive_grants)", (restored_at,))
+    snapshot.execute("DELETE FROM oauth_tokens WHERE interactive_grant_id != '' OR token_hash IN (SELECT token_hash FROM oauth_interactive_access)")
+    snapshot.execute("DELETE FROM oauth_interactive_access")
+    snapshot.execute("DELETE FROM oauth_authorization_codes")
+    snapshot.execute("DELETE FROM oauth_refresh_tokens")
+    snapshot.execute("DELETE FROM oauth_authorization_requests")
+
+
 def restore(arguments):
     bundle = Path(arguments.bundle).resolve(strict=True)
     manifest = json.loads((bundle / "manifest.json").read_bytes())
@@ -311,6 +323,7 @@ def restore(arguments):
             if not arguments.preserve_access_tokens:
                 snapshot.execute("DELETE FROM oauth_tokens")
             restored_at = datetime.now(timezone.utc).isoformat()
+            invalidate_interactive_sessions(snapshot, restored_at)
             for principal in arguments.revoke_principal:
                 if not snapshot.execute("SELECT 1 FROM access_keys WHERE id=?", (principal,)).fetchone():
                     raise RuntimeError("requested post-checkpoint revocation principal is absent from the snapshot")

@@ -13,7 +13,7 @@ state, and scheduled-run checkpoints. SQLite stores identified-person links and 
 
 Docker Compose starts Porcupine and ClickHouse 26.8.36.3 with separate volumes. ClickHouse has no published host port. The application can also run without ClickHouse when `PORCUPINE_CLICKHOUSE_URL` is empty. In that mode, accepted events remain in the bounded SQLite queue, and analytical queries are unavailable.
 
-One instance supports multiple projects without organizations, human accounts, a web interface, or billing. The operator bootstraps the first administrative credential. Clients use HTTP or MCP. A dedicated CLI remains future work.
+One instance supports multiple projects. The operator bootstraps its first administrative credential. Clients use HTTP or MCP. Optional OIDC integration adds a browser consent page. The bundled CLI uploads historical PostHog exports from local files.
 
 MCP runs in the Go process. Two tools expose a permission-filtered operation catalog, on-demand OpenAPI contracts, and calls by operation ID. Huma registrations define the callable operations and their access policies. Calls dispatch to local API handlers with the caller's credential and reuse validation and authorization.
 

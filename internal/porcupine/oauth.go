@@ -3,11 +3,9 @@ package porcupine
 import (
 	"context"
 	"errors"
-	"io"
-	"mime"
 	"net/http"
 	"net/url"
-	"strings"
+	"slices"
 	"time"
 
 	liboauth "github.com/go-oauth2/oauth2/v4"
@@ -22,7 +20,13 @@ token_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES access_keys(id),r
 issued_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS oauth_tokens_client ON oauth_tokens(client_id);
 CREATE INDEX IF NOT EXISTS oauth_tokens_expiry ON oauth_tokens(expires_at_ms);`)
-	return err
+	if err != nil {
+		return err
+	}
+	if err = s.initializeInteractiveOAuth(ctx); err != nil {
+		return err
+	}
+	return s.initializeOIDCHumans(ctx)
 }
 
 func oauthTokenError(w http.ResponseWriter, status int, code string) {
@@ -44,74 +48,58 @@ func (s *Service) oauthToken(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 405, "invalid_request")
 		return
 	}
-	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || contentType != "application/x-www-form-urlencoded" || r.URL.RawQuery != "" || r.URL.ForceQuery || (r.Header.Get("Content-Encoding") != "" && r.Header.Get("Content-Encoding") != "identity") {
+	form, status, code := readOAuthForm(w, r)
+	if code != "" {
+		oauthTokenError(w, status, code)
+		return
+	}
+	grantType := form.Get("grant_type")
+	if grantType == "" {
 		oauthTokenError(w, 400, "invalid_request")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var large *http.MaxBytesError
-		if errors.As(err, &large) {
-			oauthTokenError(w, 413, "invalid_request")
-		} else {
-			oauthTokenError(w, 400, "invalid_request")
-		}
-		return
-	}
-	form, err := url.ParseQuery(string(body))
-	if err != nil {
-		oauthTokenError(w, 400, "invalid_request")
-		return
-	}
-	for _, values := range form {
-		if len(values) != 1 {
-			oauthTokenError(w, 400, "invalid_request")
-			return
-		}
-	}
-	for _, credential := range []string{"client_secret", "client_assertion", "client_assertion_type"} {
-		if _, present := form[credential]; present {
-			oauthTokenError(w, 400, "invalid_request")
-			return
-		}
-	}
-	if form.Get("grant_type") == "" {
-		oauthTokenError(w, 400, "invalid_request")
-		return
-	}
-	if form.Get("grant_type") != "client_credentials" {
+	if grantType != "client_credentials" && (!s.interactiveOAuthEnabled() || grantType != "authorization_code" && grantType != "refresh_token") {
 		oauthTokenError(w, 400, "unsupported_grant_type")
 		return
 	}
-	if len(r.Header.Values("Authorization")) != 1 {
-		oauthTokenError(w, 401, "invalid_client")
+	client, status, code := s.authenticateOAuthEndpoint(r, form)
+	if code != "" {
+		oauthTokenError(w, status, code)
 		return
 	}
-	clientID, secret, ok := r.BasicAuth()
-	if !ok {
-		oauthTokenError(w, 401, "invalid_client")
+	if !slices.Contains(client.GrantTypes, grantType) {
+		oauthTokenError(w, 400, "unauthorized_client")
 		return
 	}
-	clientID, err = url.QueryUnescape(clientID)
-	if err != nil {
-		oauthTokenError(w, 401, "invalid_client")
+	if grantType != "client_credentials" {
+		var response map[string]any
+		var err error
+		if grantType == "authorization_code" {
+			response, err = s.exchangeInteractiveCode(r.Context(), client, form)
+		} else {
+			response, err = s.exchangeInteractiveRefresh(r.Context(), client, form)
+		}
+		if err != nil {
+			if errors.Is(err, errOAuthCapacity) {
+				w.Header().Set("Retry-After", "1")
+				oauthTokenError(w, 429, "temporarily_unavailable")
+			} else if errors.Is(err, errInteractiveTarget) {
+				oauthTokenError(w, 400, "invalid_target")
+			} else if errors.Is(err, errInteractiveGrant) {
+				oauthTokenError(w, 400, "invalid_grant")
+			} else {
+				oauthTokenError(w, 503, "temporarily_unavailable")
+			}
+			return
+		}
+		write(w, 200, response)
 		return
 	}
-	secret, err = url.QueryUnescape(secret)
-	if err != nil || clientID == "" || secret == "" || len(clientID) > 256 || len(secret) > 4096 || strings.ContainsAny(clientID+secret, "\r\n\x00") {
-		oauthTokenError(w, 401, "invalid_client")
-		return
-	}
-	if values, present := form["client_id"]; present && values[0] != clientID {
-		oauthTokenError(w, 400, "invalid_request")
-		return
-	}
-	client, err := loadOAuthClient(r.Context(), s.db, clientID)
-	if err != nil || !client.VerifyPassword(secret) {
-		oauthTokenError(w, 401, "invalid_client")
-		return
+	clientID, secret := form.Get("client_id"), form.Get("client_secret")
+	if client.AuthMethod == "client_secret_basic" {
+		clientID, secret, _ = r.BasicAuth()
+		clientID, _ = url.QueryUnescape(clientID)
+		secret, _ = url.QueryUnescape(secret)
 	}
 	resource := s.oauth.apiResource
 	if values, present := form["resource"]; present {

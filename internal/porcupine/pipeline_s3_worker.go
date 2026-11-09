@@ -16,7 +16,7 @@ func pipelineManifestKey(w *s3PipelineWork) string {
 }
 func (s *Service) pipelineS3Admission(ctx context.Context, w *s3PipelineWork) (bool, error) {
 	var barrier, pending, failed int64
-	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=? AND id<=?)+(SELECT count(*) FROM mutation_outbox WHERE project_id=? AND seq<=?),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox),(SELECT count(*) FROM metadata WHERE key='last_delivery_error')`, w.pipeline.ProjectID, w.eventWatermark, w.pipeline.ProjectID, w.mutationWatermark).Scan(&barrier, &pending, &failed)
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=? AND id<=? AND is_imported=0)+(SELECT count(*) FROM mutation_outbox WHERE project_id=? AND seq<=?),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox),(SELECT count(*) FROM metadata WHERE key='last_delivery_error')`, w.pipeline.ProjectID, w.eventWatermark, w.pipeline.ProjectID, w.mutationWatermark).Scan(&barrier, &pending, &failed)
 	return barrier == 0 && pending <= s.pipelines.config.ExportLimits.QueueThreshold && failed == 0, err
 }
 func (s *Service) pipelineS3CanContinue(ctx context.Context, w *s3PipelineWork) error {

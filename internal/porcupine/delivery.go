@@ -102,7 +102,7 @@ func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
 }
 
 func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT 100`, cursor)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT 100`, cursor)
 	if err != nil {
 		return nil, errors.New("cannot read delivery queue")
 	}
@@ -112,7 +112,7 @@ func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event
 	for rows.Next() {
 		var event Event
 		var properties, ingestion string
-		if err := rows.Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.IdentitySnapshot, &ingestion); err != nil {
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.IdentitySnapshot, &ingestion, &event.Imported); err != nil {
 			return nil, errors.New("cannot read queued event")
 		}
 		if err := decodeIngestionMetadata(&event, ingestion); err != nil {

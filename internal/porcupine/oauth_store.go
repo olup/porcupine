@@ -28,13 +28,16 @@ type oauthIssue struct{ resource string }
 
 type oauthClient struct {
 	actor
-	secretHash string
+	secretHash   string
+	GrantTypes   []string
+	RedirectURIs []string
+	AuthMethod   string
 }
 
 func (c *oauthClient) GetID() string     { return c.ID }
 func (c *oauthClient) GetSecret() string { return "" }
 func (c *oauthClient) GetDomain() string { return "" }
-func (c *oauthClient) IsPublic() bool    { return false }
+func (c *oauthClient) IsPublic() bool    { return c.AuthMethod == "none" }
 func (c *oauthClient) GetUserID() string { return c.ID }
 func (c *oauthClient) VerifyPassword(secret string) bool {
 	return subtle.ConstantTimeCompare([]byte(hash(secret)), []byte(c.secretHash)) == 1
@@ -47,13 +50,14 @@ type oauthQueryer interface {
 func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauthClient, error) {
 	client := &oauthClient{}
 	var permissions, projects string
+	var grants, redirects string
 	var row *sql.Row
 	if id == "bootstrap" {
-		row = query.QueryRowContext(ctx, `SELECT id,token_hash,permissions,projects,source_id FROM access_keys WHERE id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id') AND revoked_at IS NULL`)
+		row = query.QueryRowContext(ctx, `SELECT id,token_hash,permissions,projects,source_id,'["client_credentials"]','[]','client_secret_basic' FROM access_keys WHERE id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id') AND revoked_at IS NULL`)
 	} else {
-		row = query.QueryRowContext(ctx, `SELECT k.id,c.secret_hash,k.permissions,k.projects,k.source_id FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=? AND k.revoked_at IS NULL`, id)
+		row = query.QueryRowContext(ctx, `SELECT k.id,c.secret_hash,k.permissions,k.projects,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=? AND k.revoked_at IS NULL`, id)
 	}
-	if err := row.Scan(&client.ID, &client.secretHash, &permissions, &projects, &client.SourceID); err != nil {
+	if err := row.Scan(&client.ID, &client.secretHash, &permissions, &projects, &client.SourceID, &grants, &redirects, &client.AuthMethod); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oautherrors.ErrInvalidClient
 		}
@@ -61,6 +65,9 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 	}
 	if json.Unmarshal([]byte(permissions), &client.Permissions) != nil || json.Unmarshal([]byte(projects), &client.Projects) != nil {
 		return nil, errors.New("invalid OAuth client grants")
+	}
+	if json.Unmarshal([]byte(grants), &client.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &client.RedirectURIs) != nil {
+		return nil, errors.New("invalid OAuth registration")
 	}
 	return client, nil
 }
@@ -137,6 +144,10 @@ func (store oauthTokenStore) Create(ctx context.Context, info liboauth.TokenInfo
 	if err != nil {
 		return err
 	}
+	if !slices.Contains(client.GrantTypes, "client_credentials") {
+		return oautherrors.ErrUnauthorizedClient
+	}
+
 	allowed := oauthPermissions(client.actor)
 	for _, permission := range strings.Split(info.GetScope(), " ") {
 		if !slices.Contains(allowed, permission) {
@@ -172,15 +183,16 @@ type oauthStoredToken struct {
 	*models.Token
 	resource string
 	projects []string
+	grantID  string
 }
 
 func (store oauthTokenStore) GetByAccess(ctx context.Context, raw string) (liboauth.TokenInfo, error) {
 	if !strings.HasPrefix(raw, "pc_at_") || len(raw) != 49 {
 		return nil, oautherrors.ErrInvalidAccessToken
 	}
-	var clientID, resource, scope, projectsJSON string
+	var clientID, resource, scope, projectsJSON, grantID string
 	var issued, expires int64
-	err := store.s.db.QueryRowContext(ctx, `SELECT client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms FROM oauth_tokens WHERE token_hash=?`, hash(raw)).Scan(&clientID, &resource, &scope, &projectsJSON, &issued, &expires)
+	err := store.s.db.QueryRowContext(ctx, `SELECT t.client_id,t.resource,t.scope,t.projects_json,t.issued_at_ms,t.expires_at_ms,t.interactive_grant_id FROM oauth_tokens t WHERE t.token_hash=?`, hash(raw)).Scan(&clientID, &resource, &scope, &projectsJSON, &issued, &expires, &grantID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oautherrors.ErrInvalidAccessToken
@@ -201,7 +213,7 @@ func (store oauthTokenStore) GetByAccess(ctx context.Context, raw string) (liboa
 	token.SetAccessCreateAt(time.UnixMilli(issued))
 	token.SetAccessExpiresIn(time.Duration(expires-issued) * time.Millisecond)
 	token.SetExtension(url.Values{"resource": {resource}})
-	return &oauthStoredToken{Token: token, resource: resource, projects: projects}, nil
+	return &oauthStoredToken{Token: token, resource: resource, projects: projects, grantID: grantID}, nil
 }
 func (store oauthTokenStore) RemoveByAccess(ctx context.Context, raw string) error {
 	_, err := store.s.db.ExecContext(ctx, `DELETE FROM oauth_tokens WHERE token_hash=?`, hash(raw))
@@ -233,6 +245,9 @@ func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource stri
 		return actor{}, oautherrors.ErrInvalidAccessToken
 	}
 	current, err := s.exportActor(ctx, info.GetClientID())
+	if stored.grantID != "" {
+		current, err = s.loadInteractiveOAuthActor(ctx, s.db, stored.grantID)
+	}
 	if err != nil {
 		return actor{}, oautherrors.ErrInvalidAccessToken
 	}

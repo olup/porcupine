@@ -295,22 +295,6 @@ func (s *Service) executeExport(ctx context.Context, job storedExport) error {
 	return s.publishExport(ctx, job, result, sink)
 }
 
-func exportActorInTx(ctx context.Context, tx *sql.Tx, keyID, project string) (bool, error) {
-	var permissions, projects string
-	err := tx.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&permissions, &projects)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	actor := actor{ID: keyID}
-	if json.Unmarshal([]byte(permissions), &actor.Permissions) != nil || json.Unmarshal([]byte(projects), &actor.Projects) != nil {
-		return false, errExportRevoked
-	}
-	return authorize(actor, "events:read", project), nil
-}
-
 func (s *Service) publishExport(ctx context.Context, job storedExport, result exportStreamResult, sink *exportSink) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -335,11 +319,14 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return errExportSink
 	}
-	allowed, err := exportActorInTx(ctx, tx, job.ActorID, job.ProjectID)
+	current, err := s.exportActorFrom(ctx, tx, job.ActorID)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, errInteractiveGrant) {
+		return errExportRevoked
+	}
 	if err != nil {
 		return errExportSink
 	}
-	if !allowed {
+	if !authorize(current, "events:read", job.ProjectID) {
 		return errExportRevoked
 	}
 	completed := s.clock().UTC()

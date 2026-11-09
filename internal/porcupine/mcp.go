@@ -67,7 +67,7 @@ func managementOperations(doc *huma.OpenAPI) map[string]*huma.Operation {
 			continue
 		}
 		for _, op := range []*huma.Operation{item.Get, item.Post, item.Put, item.Patch, item.Delete} {
-			if op == nil {
+			if op == nil || op.Metadata["http_only"] == true {
 				continue
 			}
 			access, ok := op.Metadata["access"].(operationAccess)

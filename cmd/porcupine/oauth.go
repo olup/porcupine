@@ -9,6 +9,10 @@ import (
 )
 
 func oauthConfiguration() (*porcupine.OAuthConfig, error) {
+	interactive, err := oidcConfiguration()
+	if err != nil {
+		return nil, err
+	}
 	issuer := os.Getenv("PORCUPINE_OAUTH_ISSUER")
 	if issuer == "" {
 		if os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || os.Getenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" {
@@ -16,7 +20,7 @@ func oauthConfiguration() (*porcupine.OAuthConfig, error) {
 		}
 		return nil, nil
 	}
-	config := &porcupine.OAuthConfig{Issuer: issuer}
+	config := &porcupine.OAuthConfig{Issuer: issuer, OIDC: interactive}
 	if raw := os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS"); raw != "" {
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 60 || value > 3600 {

@@ -12,3 +12,5 @@ Start with the [local quickstart](hosting.md#laptop-with-docker-compose) to run 
 | Operate the instance | [Storage](storage.md) · [Backup and restore](online-backup.md) |
 
 [Native and Segment ingestion](native-and-segment-ingestion.md) documents the HTTP endpoints, source bindings, retry receipts, and cross-SDK analytics.
+
+[Import a local PostHog export](posthog-import.md) · [Configure interactive MCP login](mcp-interactive-oauth.md)

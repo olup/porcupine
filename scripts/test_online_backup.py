@@ -46,6 +46,30 @@ class NativeFailure:
 
 
 class OnlineBackupTests(unittest.TestCase):
+    def test_restore_invalidates_user_sessions_even_when_preserving_machine_tokens(self):
+        with sqlite3.connect(":memory:") as snap:
+            snap.executescript("""
+                CREATE TABLE access_keys(id TEXT PRIMARY KEY, revoked_at TEXT);
+                INSERT INTO access_keys VALUES ('grant',NULL),('machine',NULL);
+                CREATE TABLE oauth_interactive_grants(principal_id TEXT);
+                INSERT INTO oauth_interactive_grants VALUES ('grant');
+                CREATE TABLE oauth_tokens(token_hash TEXT, interactive_grant_id TEXT);
+                INSERT INTO oauth_tokens VALUES ('user-token','grant'),('missing-map-token','grant'),('machine-token','');
+                CREATE TABLE oauth_interactive_access(token_hash TEXT);
+                INSERT INTO oauth_interactive_access VALUES ('user-token');
+                CREATE TABLE oauth_refresh_tokens(token_hash TEXT);
+                INSERT INTO oauth_refresh_tokens VALUES ('refresh');
+                CREATE TABLE oauth_authorization_codes(code_hash TEXT);
+                INSERT INTO oauth_authorization_codes VALUES ('code');
+                CREATE TABLE oauth_authorization_requests(request_hash TEXT);
+                INSERT INTO oauth_authorization_requests VALUES ('request');
+            """)
+            backup.invalidate_interactive_sessions(snap, "restored")
+            self.assertEqual(snap.execute("SELECT token_hash FROM oauth_tokens").fetchall(), [("machine-token",)])
+            self.assertEqual(snap.execute("SELECT id FROM access_keys WHERE revoked_at IS NULL").fetchall(), [("machine",)])
+            for table in ("oauth_authorization_requests", "oauth_authorization_codes", "oauth_interactive_access", "oauth_refresh_tokens"):
+                self.assertEqual(snap.execute("SELECT count(*) FROM "+table).fetchone()[0], 0)
+
     def test_identity_projection_is_included_in_checkpoint_hash_when_present(self):
         for present in (False, True):
             with self.subTest(present=present):
@@ -89,6 +113,20 @@ class OnlineBackupTests(unittest.TestCase):
         native.query = lambda sql: [{"name": "context", "type": "Nullable(String)"}]
         with self.assertRaisesRegex(RuntimeError, "projection column"):
             backup.logical_summary(native, "example")
+
+    def test_import_marker_is_included_in_checkpoint_hash(self):
+        native = NativeFailure()
+        statements = []
+        def query(sql):
+            statements.append(sql)
+            if "FROM system.columns" in sql:
+                return [{"name": "is_imported", "type": "UInt8"}]
+            return NativeFailure.query(native, sql)
+        native.query = query
+        result = backup.logical_summary(native, "example")
+        digest = next(sql for sql in statements if "cityHash64(winner)" in sql)
+        self.assertIn(",is_imported)", digest)
+        self.assertIn("is_imported", result["projection_columns"])
 
     def fixture(self, directory):
         db = Path(directory).resolve() / "source.db"

@@ -88,6 +88,14 @@ def api(origin, path, body=None, token=None, expected=200, method=None):
     return value
 
 
+def import_chunk(origin, path, token_value, offset, data):
+    headers = {"Content-Type": "application/octet-stream", "Authorization": "Bearer "+token_value,
+               "Upload-Offset": str(offset), "X-Chunk-SHA256": hashlib.sha256(data).hexdigest()}
+    req = urllib.request.Request(origin+path, data=data, method="PUT", headers=headers)
+    with OPENER.open(req, timeout=15) as response:
+        return json.load(response)
+
+
 def token(origin, role, resource=None, expected=200):
     status, body = http(origin, "/oauth/token", form={"grant_type": "client_credentials", "resource": resource or origin + "/api/v1"}, basic=role)
     check(status == expected, "OAuth exchange status")
@@ -299,6 +307,14 @@ def run():
         wait_until(lambda:http(origin,base+"/query",body={"sql":"SELECT count() AS total FROM events","use_cache":False},token=reader)[0]==200,"source analytics initialization",45)
         revoked_token = token(origin,clients["revoked"])
         api(origin,"/api/v1/oauth-clients/"+clients["revoked"][0],token=admin,expected=204,method="DELETE")
+        import_line = b'{"uuid":"import-restore-row","event":"archived_test","distinct_id":"synthetic-person","timestamp":"2020-01-02T00:00:00Z"}'
+        manifest = {"idempotency_key": "restore-prefix", "files": [{"kind":"events","path":"events.jsonl","size_bytes":len(import_line),"sha256":hashlib.sha256(import_line).hexdigest()}]}
+        upload = api(origin, base+"/imports", manifest, admin, 201)
+        upload_path = base+"/imports/"+upload["id"]
+        file_path = upload_path+"/files/"+upload["files"][0]["id"]
+        split = 41
+        partial = import_chunk(origin, file_path, admin, 0, import_line[:split])
+        check(partial["files"][0]["offset_bytes"] == split, "pre-backup partial import row committed")
         payloads = {}
         def capture(name, properties=None, distinct="synthetic-person"):
             body={"api_key":ingest,"uuid":name,"event":name,"distinct_id":distinct,"properties":properties or {"synthetic":True}}
@@ -479,6 +495,17 @@ def run():
         check("result" in mcp("initialize",{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"online-restore-drill","version":"1"}}),"restored MCP session")
         result=mcp("tools/call",{"name":"porcupine_call","arguments":{"operation_id":"query-events","path":{"id":pid},"body":{"sql":"SELECT count() AS total FROM events","use_cache":False}}})["result"]
         check(not result.get("isError") and int(result["structuredContent"]["body"]["result"]["data"][0]["total"])==len(expected),"restored MCP query matches HTTP")
+        resumed = api(origin, upload_path, token=restored_admin)
+        check(resumed["files"][0]["offset_bytes"] == split, "restored partial row offset")
+        import_chunk(origin, file_path, restored_admin, split, import_line[split:])
+        api(origin, file_path+"/complete", token=restored_admin, method="POST")
+        finished = api(origin, upload_path+"/complete", token=restored_admin, method="POST")
+        check(finished["counts"]["accepted"] == 1 and finished["state"] == "completed", "restored partial import resumed exactly once")
+        def restored_import_visible():
+            result = api(origin, base+"/query", {"sql":"SELECT count() AS n FROM events WHERE uuid='import-restore-row' AND is_imported=1","use_cache":False},restored_reader)
+            return int(result["result"]["data"][0]["n"]) == 1
+        wait_until(restored_import_visible, "resumed imported row missing in ClickHouse", 45)
+        checks.append("partial uploaded bytes and checksum cursor survived coordinated restore; resumed row appears once in SQL")
         check(restored_process.poll() is None,"restored service remains live")
         checks.append("restored live API/MCP, active/revoked credentials, pending replay, tombstones and evicted cold receipt deduplication verified")
         report={"passed":True,"started_at":started_at,"completed_at":datetime.now(timezone.utc).isoformat(),"method":"online SQLite snapshot plus native ClickHouse backup under live projection guard","clickhouse_image":IMAGE,"porcupine_binary_sha256":hashlib.sha256(binary.read_bytes()).hexdigest(),"restored_native_cold_parts":cold_parts,"acknowledged_during_native_backup":during_native,"native_backup_seconds":round(native_end-native_start,3),"concurrent_acknowledged_total":len(accepted),"concurrent_checkpoint_cut":len(cut),"restored_visible_events":len(expected),"native_original_event_id":native_event_id,"metadata_fingerprint_columns":["source_id","message_id","event_type","context"],"checkpoint_tables":checkpoint_state,"checks":checks,"production_connected":False}

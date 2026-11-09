@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestOAuthOperatorConfiguration(t *testing.T) {
-	for _, name := range []string{"PORCUPINE_OAUTH_ISSUER", "PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"} {
+	for _, name := range []string{"PORCUPINE_OAUTH_ISSUER", "PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS", "PORCUPINE_OIDC_ISSUER", "PORCUPINE_OIDC_CLIENT_ID", "PORCUPINE_OIDC_CLIENT_SECRET_FILE", "PORCUPINE_OIDC_BINDINGS_FILE"} {
 		t.Setenv(name, "")
 	}
 	config, err := oauthConfiguration()

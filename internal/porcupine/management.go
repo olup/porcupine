@@ -206,6 +206,7 @@ Queries see only this project's delivered logical events. event_time uses UTC mi
 	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous", operationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
 	s.registerQuarantine(api, op)
+	s.registerImportUploads(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
 	s.registerPipelines(api, op)
@@ -394,7 +395,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 }
 
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata,is_imported FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -403,7 +404,7 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 	for rows.Next() {
 		var e Event
 		var props, ingestion string
-		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered, &ingestion); err != nil {
+		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered, &ingestion, &e.Imported); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if err := decodeIngestionMetadata(&e, ingestion); err != nil {

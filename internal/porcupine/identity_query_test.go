@@ -32,7 +32,7 @@ func TestIdentitySQLUsesResolutionOnlyWhenRequested(t *testing.T) {
 		t.Fatal("plain pipeline forces identityjoins")
 	}
 	resolved, err := pipelineWindowSQL("SELECT events.person_id FROM events", "pc_scope")
-	if err != nil || !strings.Contains(resolved, "pc_scope.events_with_persons WHERE received_at_ms") {
+	if err != nil || !strings.Contains(resolved, "pc_scope.events_with_persons AS _porcupine_window WHERE _porcupine_window.received_at_ms") {
 		t.Fatalf("pipelinewindow lost identity source: %s %v", resolved, err)
 	}
 }
