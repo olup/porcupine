@@ -1,6 +1,6 @@
 # Native and Segment ingestion
 
-These endpoints are available in source builds containing this change. The published v0.2.0 image supports the [PostHog capture profile](compatibility.md).
+Porcupine v0.3.0 supports native and Segment inputs alongside the [PostHog capture profile](compatibility.md).
 
 ## Send native events
 
