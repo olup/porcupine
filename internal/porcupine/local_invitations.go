@@ -121,7 +121,7 @@ func (s *Service) oauthInvitationLogin(w http.ResponseWriter, r *http.Request) {
 	browser := s.oauth.browser
 	key, session := browser.session(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if session == nil || session.humanID != "" || r.Header.Get("Origin") != s.oauth.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil || len(r.PostForm["csrf"]) != 1 || subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(session.csrf)) != 1 || len(r.PostForm["code"]) != 1 {
+	if session == nil || session.humanID != "" || !session.emailChallenge.expires.IsZero() || r.Header.Get("Origin") != s.oauth.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil || len(r.PostForm["csrf"]) != 1 || subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(session.csrf)) != 1 || len(r.PostForm["code"]) != 1 {
 		http.Error(w, "Invalid login session", 400)
 		return
 	}

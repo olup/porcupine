@@ -16,7 +16,7 @@ import (
 )
 
 type Project struct {
-	IngestionMode string `json:"ingestion_mode" enum:"mixed,server_only" doc:"mixed permits public project keys and authorized OAuth; server_only requires API-resource OAuth for every capture."`
+	IngestionMode string `json:"ingestion_mode" enum:"mixed,server_only" doc:"mixed permits public ingestion keys; server_only requires an API-resource access token or service key in the Authorization header."`
 	ID            string `json:"id" doc:"Project identifier"`
 	Name          string `json:"name" doc:"Project name"`
 	CreatedAt     string `json:"created_at" doc:"Creation time in UTC"`
@@ -29,7 +29,7 @@ type ProjectListOutput struct{ Body ProjectList }
 type ProjectCreateInput struct {
 	Body struct {
 		Name          string `json:"name" minLength:"1" maxLength:"200" doc:"Project name"`
-		IngestionMode string `json:"ingestion_mode,omitempty" enum:"mixed,server_only" default:"mixed" doc:"server_only requires configured OAuth, creates no public ingestion key, and requires API-resource OAuth on every capture route."`
+		IngestionMode string `json:"ingestion_mode,omitempty" enum:"mixed,server_only" default:"mixed" doc:"server_only requires configured OAuth, creates no public ingestion key, and requires an API-resource access token or service key on every capture route."`
 	}
 }
 type ProjectCreated struct {
@@ -40,13 +40,15 @@ type ProjectCreateOutput struct{ Body ProjectCreated }
 
 // AccessKey contains public credential metadata. Secrets and hashes have no fields here.
 type AccessKey struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
-	Permissions []string `json:"permissions"`
-	Projects    []string `json:"projects"`
-	CreatedAt   string   `json:"created_at"`
-	RevokedAt   *string  `json:"revoked_at" nullable:"true"`
+	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
+	Audience        string   `json:"audience,omitempty" doc:"API or MCP resource for a static service key."`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	SourceID        string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
+	Permissions     []string `json:"permissions"`
+	Projects        []string `json:"projects"`
+	CreatedAt       string   `json:"created_at"`
+	RevokedAt       *string  `json:"revoked_at" nullable:"true"`
 }
 type AccessKeyList struct {
 	AccessKeys []AccessKey `json:"access_keys"`
@@ -61,12 +63,14 @@ type AccessKeyCreateInput struct {
 	}
 }
 type AccessKeyCreated struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	SourceID    string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
-	Permissions []string `json:"permissions"`
-	Projects    []string `json:"projects"`
-	Token       string   `json:"token" doc:"One-time secret. Store securely; it cannot be retrieved later."`
+	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
+	Audience        string   `json:"audience,omitempty" doc:"API or MCP resource for a static service key."`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	SourceID        string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
+	Permissions     []string `json:"permissions"`
+	Projects        []string `json:"projects"`
+	Token           string   `json:"token" doc:"One-time secret. Store securely; it cannot be retrieved later."`
 }
 type AccessKeyCreateOutput struct{ Body AccessKeyCreated }
 type AccessKeyDeleteInput struct {
@@ -109,8 +113,14 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		for _, permission := range validPermissions {
 			scopes[permission] = permission
 		}
+		tokenURL := s.oauth.issuer + "/oauth/token"
+		flows := &huma.OAuthFlows{ClientCredentials: &huma.OAuthFlow{TokenURL: tokenURL, Scopes: scopes}}
+		if s.oauth.config.Email != nil {
+			flows.AuthorizationCode = &huma.OAuthFlow{AuthorizationURL: s.oauth.issuer + "/oauth/authorize", TokenURL: tokenURL, RefreshURL: tokenURL, Scopes: scopes}
+		}
 		config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-			"oauth2": {Type: "oauth2", Description: "Short-lived opaque access token from the client credentials grant; audience is the Porcupine API", Flows: &huma.OAuthFlows{ClientCredentials: &huma.OAuthFlow{TokenURL: s.oauth.issuer + "/oauth/token", Scopes: scopes}}},
+			"serviceKey": {Type: "http", Scheme: "bearer", Description: "Static service key for the API resource."},
+			"oauth2":     {Type: "oauth2", Description: "Short-lived access token issued for the Porcupine API resource. Interactive clients request this exact resource with S256 PKCE.", Flows: flows},
 		}
 	}
 	// Keep the service's existing error envelope and avoid reflecting secret inputs.
@@ -174,7 +184,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 					scopes = append(scopes, permission)
 				}
 			}
-			security = []map[string][]string{{"oauth2": scopes}}
+			security = []map[string][]string{{"oauth2": scopes}, {"serviceKey": {}}}
 		}
 		return huma.Operation{OperationID: id, Method: method, Path: path, Summary: summary, DefaultStatus: status,
 			MaxBodyBytes: maxBodyBytes, Security: security,
@@ -209,6 +219,8 @@ Queries see only this project's delivered logical events. event_time uses UTC mi
 	s.registerImportUploads(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
+	s.registerServiceKeys(api, op)
+	s.registerEmailAccounts(api, op)
 	s.registerPipelines(api, op)
 	return api
 }
@@ -274,7 +286,8 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 
 func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessKeyListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,permissions,projects,created_at,revoked_at,source_id FROM access_keys ORDER BY created_at,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
+		coalesce(b.client_id,''),coalesce(b.audience,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -283,7 +296,7 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	for rows.Next() {
 		var key AccessKey
 		var permissions, projects string
-		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID); err != nil {
+		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
@@ -333,6 +346,9 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a actor, name str
 
 func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreateInput) (*AccessKeyCreateOutput, error) {
 	a, body := principal(ctx), input.Body
+	if !a.canProvisionCredentials() {
+		return nil, apiError(403, "instance administrator required to provision independent credentials")
+	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
 	}
@@ -377,12 +393,26 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 		return nil, apiError(500, "storage error")
 	}
 	if slices.Contains(granted, "instance:admin") {
-		var admins int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM access_keys WHERE revoked_at IS NULL AND EXISTS (SELECT 1 FROM json_each(access_keys.permissions) WHERE value='instance:admin')`).Scan(&admins); err != nil {
+		// Human grants, interactive-only client registrations, and service keys are
+		// dependent credentials. Keep an independent recovery administrator.
+		var replacement bool
+		static := s.oauth == nil || s.oauth.config.AllowLegacyKeys
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM access_keys k WHERE k.id<>? AND k.revoked_at IS NULL
+ AND EXISTS(SELECT 1 FROM json_each(k.permissions) WHERE value='instance:admin')
+ AND (k.id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id')
+ OR (? AND EXISTS(SELECT 1 FROM oauth_clients c, json_each(c.grant_types) g
+ WHERE c.client_id=k.id AND g.value='client_credentials'))
+ OR (? AND k.id NOT IN (
+ SELECT client_id FROM oauth_clients UNION ALL SELECT principal_id FROM email_humans
+ UNION ALL SELECT principal_id FROM oidc_humans UNION ALL SELECT principal_id FROM local_invitations
+ UNION ALL SELECT principal_id FROM service_api_keys UNION ALL SELECT principal_id FROM oauth_interactive_grants))))`,
+			input.ID, s.oauth != nil, static).Scan(&replacement)
+		if err != nil {
 			return nil, apiError(500, "storage error")
 		}
-		if admins <= 1 {
-			return nil, apiError(409, "cannot revoke the last active administrator")
+		if !replacement {
+			return nil, apiError(409, "cannot revoke the last independent administrator")
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), input.ID); err != nil {

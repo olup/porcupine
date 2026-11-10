@@ -41,7 +41,7 @@ destinations for review before resumption.
 
 Porcupine supports [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
 
-[Local MCP invitations](docs/local-invitations.md) let an admin connect a read-only client to one project without an identity provider.
+For the source build, [connect your team](docs/connect-your-team.md) with email verification or [manual invitations](docs/local-invitations.md). A shared agent can authenticate with its own [service key](docs/service-keys.md).
 
 Since v0.4.0, Porcupine supports [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
 
@@ -131,7 +131,7 @@ The Streamable HTTP endpoint at `/mcp` exposes two tools: `porcupine_docs` for
 permission-filtered contracts and `porcupine_call` for API operations. Obtain an
 OAuth token for the `/mcp` resource; an `/api/v1` token cannot authenticate MCP.
 Clients must support machine credentials or accept a token from their host.
-There is no interactive OAuth login flow. See [MCP setup](docs/mcp.md).
+People can also connect through OAuth with PKCE. See [MCP setup](docs/mcp.md).
 
 ## Storage and operations
 

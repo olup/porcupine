@@ -32,6 +32,8 @@ Local setup: https://raw.githubusercontent.com/olup/porcupine/v0.5.0/README.md
 
 ## OAuth and instance discovery
 
+Discover the installed operations before setup. On builds offering invite-human, an instance administrator can authorize a mailbox once for specified projects and permissions. Email-enabled deployments offer porcupine-local for local read-only PKCE clients and, with a seeded admin mailbox, porcupine-local-admin for explicitly authorized instance administration. Request a fresh email verification code when connecting another tool. For a team-owned integration, discover create-service-api-key on an authorized machine client. Use separate API and MCP credentials. On released versions without these operations, use the installed client-credentials or invitation flow.
+
 Machine clients use the client_credentials grant. For interactive MCP, an operator
 registers an exact callback for each client. Discover create-local-invitation to issue a 24-hour single-use project invitation when enabled. Upstream OIDC is an alternative. Authorization uses S256 PKCE and explicit read-only project consent.
 Local invitations: https://raw.githubusercontent.com/olup/porcupine/v0.5.0/docs/local-invitations.md

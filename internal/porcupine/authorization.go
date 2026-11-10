@@ -6,13 +6,19 @@ import (
 )
 
 type actor struct {
-	ID          string
-	SourceID    string
-	Permissions []string
-	Projects    []string
+	emailProjectPermissions map[string][]string
+	serviceKey              bool
+	emailHuman              bool // Verified durable email principal.
+	interactive             bool // Authority derived from a human consent grant.
+	ID                      string
+	SourceID                string
+	Permissions             []string
+	Projects                []string
 }
 
 var validPermissions = []string{"instance:admin", "management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "imports:write", "identity:write", "pipelines:read", "pipelines:write"}
+
+func (a actor) canProvisionCredentials() bool { return a.admin() || (!a.interactive && !a.serviceKey) }
 
 func (a actor) admin() bool                { return slices.Contains(a.Permissions, "instance:admin") }
 func (a actor) can(permission string) bool { return authorize(a, permission, "") }

@@ -47,7 +47,7 @@ jobs:
           cache-dependency-path: compat/package-lock.json
       - run: npm ci --prefix compat
       - run: cd compat && npx playwright install --with-deps chromium
-      - run: PORCUPINE_OIDC_BROWSER=1 go test -race ./internal/porcupine -run "^(TestInteractiveOIDC|TestLocalInvitation)" -count=1
+      - run: PORCUPINE_OIDC_BROWSER=1 go test -race ./internal/porcupine -run "^(TestInteractiveOIDC|TestLocalInvitation|TestEmail)" -count=1
       - run: make compat
       - run: npm ci --prefix compat/segment
       - run: npm test --prefix compat/segment

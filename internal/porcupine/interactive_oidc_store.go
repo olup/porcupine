@@ -76,6 +76,12 @@ func (s *Service) initializeOIDCHumans(ctx context.Context) error {
 func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (actor, error) {
 	var subject, issuer, permissions, projects string
 	var result actor
+	if s.oauth != nil && s.oauth.config.Email != nil {
+		human, err := loadEmailHuman(ctx, query, humanID)
+		if err == nil || !errors.Is(err, sql.ErrNoRows) {
+			return human, err
+		}
+	}
 	if s.oauth != nil && s.oauth.config.LocalInvitations {
 		return loadInvitedHuman(ctx, query, humanID)
 	}

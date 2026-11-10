@@ -1,0 +1,16 @@
+# Add to compose.yaml and compose.oauth.yaml for email OTP over authenticated SMTP.
+services:
+  porcupine:
+    environment:
+      PORCUPINE_SMTP_HOST: ${PORCUPINE_SMTP_HOST:?Set your SMTP relay hostname}
+      PORCUPINE_SMTP_FROM: ${PORCUPINE_SMTP_FROM:?Set a verified sender mailbox}
+      PORCUPINE_SMTP_PORT: ${PORCUPINE_SMTP_PORT:-}
+      PORCUPINE_SMTP_TLS: ${PORCUPINE_SMTP_TLS:-starttls}
+      PORCUPINE_SMTP_USERNAME: ${PORCUPINE_SMTP_USERNAME:?Set the SMTP user}
+      PORCUPINE_SMTP_PASSWORD_FILE: /run/secrets/porcupine_smtp_password
+      PORCUPINE_ADMIN_EMAIL: ${PORCUPINE_ADMIN_EMAIL:-}
+    secrets:
+      - porcupine_smtp_password
+secrets:
+  porcupine_smtp_password:
+    file: ${PORCUPINE_SMTP_PASSWORD_FILE:?Set the host path of the SMTP password file}

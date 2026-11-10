@@ -123,6 +123,9 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
+	if !a.canProvisionCredentials() {
+		return nil, apiError(403, "this credential cannot create independent clients")
+	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
 	}
@@ -134,6 +137,14 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	grants, redirects, authMethod, err := normalizeOAuthClientRegistration(body.GrantTypes, body.RedirectURIs, body.TokenEndpointAuthMethod)
 	if err != nil {
 		return nil, apiError(400, "invalid OAuth client registration")
+	}
+	if slices.Contains(grants, "authorization_code") {
+		if sourceID != "" {
+			return nil, apiError(400, "interactive clients cannot have a producer source")
+		}
+		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || !a.admin() || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
+			return nil, apiError(400, "administrator login requires a dedicated interactive email client with only instance:admin across all projects")
+		}
 	}
 	if slices.Contains(grants, "authorization_code") && !s.interactiveOAuthEnabled() {
 		return nil, apiError(503, "interactive OAuth is not configured")
