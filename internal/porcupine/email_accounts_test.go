@@ -142,7 +142,7 @@ func TestEmailInvitationDeliveryRecovery(t *testing.T) {
 	var calls atomic.Int32
 	enter := make(chan struct{})
 	release := make(chan struct{})
-	s.oauth.config.Email.SendInvitation = func(ctx context.Context, to string) error {
+	s.oauth.config.Email.SendInvitation = func(ctx context.Context, to string, _ bool) error {
 		if to != in.Body.Email {
 			return errors.New("wrong recipient")
 		}

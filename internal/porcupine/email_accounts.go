@@ -319,7 +319,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	}
 	if attempt != "" {
 		sendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		sendErr := send(sendCtx, h.Email)
+		sendErr := send(sendCtx, h.Email, slices.Contains(h.Permissions, "instance:admin"))
 		cancel()
 		// If the request disconnected during delivery, still save the result.
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

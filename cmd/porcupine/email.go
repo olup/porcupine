@@ -90,7 +90,11 @@ func (s smtpDelivery) sendCode(ctx context.Context, recipient, code string) erro
 	return s.send(ctx, recipient, "Your Porcupine verification code", body)
 }
 
-func (s smtpDelivery) sendInvitation(ctx context.Context, recipient string) error {
+func (s smtpDelivery) sendInvitation(ctx context.Context, recipient string, instanceAdmin bool) error {
+	if instanceAdmin {
+		body := fmt.Sprintf("You have been invited to administer the Porcupine instance at %s.\r\n\r\nFor a local MCP client, use %s/mcp, client ID porcupine-local-admin, callback http://127.0.0.1:43179/callback and scope instance:admin. In Porcupine, enter this email address to request a verification code, then review and approve access to all projects.", s.issuer, s.issuer)
+		return s.send(ctx, recipient, "Invitation to administer Porcupine", body)
+	}
 	body := fmt.Sprintf("You have been invited to Porcupine at %s.\r\n\r\nIn your team's approved analytics tool, choose Connect for this Porcupine instance. Enter your email address to request a verification code, then review the project access requested by the tool.", s.issuer)
 	return s.send(ctx, recipient, "You have been invited to Porcupine", body)
 }

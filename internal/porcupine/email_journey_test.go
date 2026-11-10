@@ -38,7 +38,7 @@ func newEmailJourney(t *testing.T) *emailJourney {
 		DBPath: filepath.Join(t.TempDir(), "journey.db"), BootstrapToken: adminToken,
 		OAuth: &OAuthConfig{Issuer: j.issuer, Email: &EmailConfig{
 			AdminEmail: "operator@example.test",
-			SendInvitation: func(ctx context.Context, to string) error {
+			SendInvitation: func(ctx context.Context, to string, _ bool) error {
 				select {
 				case j.notices <- to:
 					return nil

@@ -129,12 +129,19 @@ func TestVerificationEmailDelivery(t *testing.T) {
 			default:
 				t.Fatal("no message")
 			}
-			if err := transport.sendInvitation(context.Background(), "lea@example.test"); err != nil {
+			if err := transport.sendInvitation(context.Background(), "lea@example.test", false); err != nil {
 				t.Fatal(err)
 			}
 			notice := <-delivered
 			if !strings.Contains(notice, "Subject: You have been invited to Porcupine") || !strings.Contains(notice, transport.issuer) || !strings.Contains(notice, "request a verification code") || strings.Contains(notice, "135790") || strings.Contains(notice, transport.password) {
 				t.Fatal("invalid invitation notice")
+			}
+			if err := transport.sendInvitation(context.Background(), "operator@example.test", true); err != nil {
+				t.Fatal(err)
+			}
+			adminNotice := <-delivered
+			if !strings.Contains(adminNotice, "Subject: Invitation to administer Porcupine") || !strings.Contains(adminNotice, "porcupine-local-admin") || !strings.Contains(adminNotice, "instance:admin") || strings.Contains(notice, "instance:admin") {
+				t.Fatal("incorrect role in invitation notice")
 			}
 
 		})
