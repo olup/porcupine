@@ -410,3 +410,37 @@ func TestEmailConsentRestrictsWriteToItsGrantedProject(t *testing.T) {
 	request(t, j.service, "GET", "/api/v1/projects/"+b+"/schema", token.AccessToken, "", 401)
 	j.checkRefresh(t, app, token, "/api/v1", 400)
 }
+
+func TestEmailInvitedInstanceAdmin(t *testing.T) {
+	j := newEmailJourney(t)
+	app := j.client("porcupine-local-admin", localOAuthCallback, []string{"instance:admin"})
+	owner := j.browserLogin(t, app, "operator@example.test", "/api/v1", "*", "", 200)
+	project := request(t, j.service, "POST", "/api/v1/projects", owner.AccessToken, `{"name":"Demo"}`, 201)["project"].(map[string]any)["id"].(string)
+	const member = "second@example.test"
+	const adminInvite = `{"email":"second@example.test","projects":["*"],"permissions":["instance:admin"]}`
+	invited := request(t, j.service, "POST", "/api/v1/humans", owner.AccessToken, adminInvite, 201)
+	id := invited["id"].(string)
+	if invited["deployment_admin"] != false || <-j.notices != member {
+		t.Fatal("wrong invitation recipient or seed identity")
+	}
+	retry := request(t, j.service, "POST", "/api/v1/humans", owner.AccessToken, adminInvite, 201)
+	if retry["id"] != id || len(j.notices) != 0 {
+		t.Fatal("duplicate invitation")
+	}
+	admin := j.browserLogin(t, app, member, "/mcp", "*", "", 200)
+	ctx, session := mcpTestSession(t, j.issuer, admin.AccessToken, "2025-11-25")
+	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "invite-human", Body: map[string]any{"email": "reader@example.test", "projects": []string{project}, "permissions": []string{"events:read"}}}, 201)
+	if <-j.notices != "reader@example.test" {
+		t.Fatal("second administrator could not invite a member")
+	}
+	// Replacing the role also revokes previously issued administrative grants.
+	request(t, j.service, "PUT", "/api/v1/humans/"+id, owner.AccessToken, `{"projects":["`+project+`"],"permissions":["events:read"]}`, 200)
+	request(t, j.service, "POST", "/mcp", admin.AccessToken, "{}", 401)
+	j.checkRefresh(t, app, admin, "/mcp", 400)
+	j.browserLogin(t, app, member, "/mcp", "*", "", 403)
+	request(t, j.service, "PUT", "/api/v1/humans/"+id, owner.AccessToken, `{"grants":[{"project_id":"*","permissions":["instance:admin"]}]}`, 200)
+	restored := j.browserLogin(t, app, member, "/api/v1", "*", "", 200)
+	request(t, j.service, "DELETE", "/api/v1/humans/"+id, owner.AccessToken, "", 204)
+	request(t, j.service, "GET", "/api/v1/humans", restored.AccessToken, "", 401)
+	request(t, j.service, "GET", "/api/v1/humans", owner.AccessToken, "", 200)
+}

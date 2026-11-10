@@ -22,10 +22,8 @@ func (s *Service) initializeLocalEmailClients(ctx context.Context) error {
 	if err := registerLocalEmailClient(ctx, tx, "porcupine-local", "Porcupine local analytics", interactiveOAuthScopes); err != nil {
 		return err
 	}
-	if s.oauth.config.Email.AdminEmail != "" {
-		if err := registerLocalEmailClient(ctx, tx, "porcupine-local-admin", "Porcupine local administration", []string{"instance:admin"}); err != nil {
-			return err
-		}
+	if err := registerLocalEmailClient(ctx, tx, "porcupine-local-admin", "Porcupine local administration", []string{"instance:admin"}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

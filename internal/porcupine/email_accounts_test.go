@@ -243,3 +243,20 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 		t.Fatal("swapping rights across projects kept a stale consent grant")
 	}
 }
+
+func TestEmailAdminInviteWithoutSeedMailbox(t *testing.T) {
+	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
+	ctx := context.Background()
+	client, err := loadOAuthClient(ctx, s.db, "porcupine-local-admin")
+	if err != nil || !client.permitsInteractiveScope("instance:admin") {
+		t.Fatal("admin PKCE client must be available without a seeded mailbox")
+	}
+	admin := accountTestToken(t, s)
+	for _, grants := range []string{
+		`[{"project_id":"*","permissions":["instance:admin","events:read"]}]`,
+		`[{"project_id":"*","permissions":["instance:admin"]},{"project_id":"something","permissions":["events:read"]}]`,
+	} {
+		request(t, s, "POST", "/api/v1/humans", admin, `{"email":"new@example.test","grants":`+grants+`}`, 400)
+	}
+	request(t, s, "POST", "/api/v1/humans", admin, `{"email":"new@example.test","projects":["*"],"permissions":["instance:admin"]}`, 201)
+}
