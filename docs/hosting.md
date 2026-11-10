@@ -1,6 +1,6 @@
-# Host Porcupine 0.5.0
+# Host Porcupine 0.6.0
 
-Porcupine runs as one Go process with persistent SQLite and a separate ClickHouse server. These recipes use the 0.5.0 container image, OAuth client credentials, and private ClickHouse networking. They add no UI, Redis, or message broker.
+Porcupine runs as one Go process with persistent SQLite and a separate ClickHouse server. These recipes use the 0.6.0 container image, OAuth client credentials, and private ClickHouse networking. They add no UI, Redis, or message broker.
 
 Use one application writer per SQLite database on local persistent storage. Multiple projects share that instance. These are single-host deployments, without replication or automatic failover.
 
@@ -9,7 +9,7 @@ Use one application writer per SQLite database on local persistent storage. Mult
 Install Git, Python 3, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies the last two on macOS and Windows. Run from the repository root:
 
 ```sh
-git clone --branch v0.5.0 https://github.com/olup/porcupine.git
+git clone --branch v0.6.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'
@@ -27,7 +27,7 @@ python3 examples/hello.py
 
 The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Running it again creates another project.
 
-`compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.5.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
+`compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.6.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
 
 Only `127.0.0.1:8080` is published. ClickHouse has no host port. Named volumes preserve `/data/porcupine.db` and `/var/lib/clickhouse` through container replacement:
 
@@ -48,8 +48,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.5.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.5.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.6.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.6.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 python3 - "$PORCUPINE_RELEASE_ARCHIVE" <<'PY'
@@ -176,7 +176,7 @@ docker run -d --name porcupine-app --restart unless-stopped \
   --env PORCUPINE_CLICKHOUSE_DATABASE=porcupine \
   --env PORCUPINE_CLICKHOUSE_USER=porcupine_admin \
   --mount type=volume,source=porcupine-standalone-data,target=/data \
-  "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.5.0}"
+  "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.6.0}"
 python3 examples/hello.py
 ```
 
