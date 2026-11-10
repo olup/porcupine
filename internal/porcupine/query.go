@@ -299,8 +299,7 @@ func (s *Service) analyticsReader(ctx context.Context, projectID string) (namesp
 
 func (s *Service) analyticsReaderForCache(ctx context.Context, projectID string, useCache bool) (namespace, reader, password string, err error) {
 	database := s.ch.config.Database
-	digest := sha256.Sum256([]byte(database + "\x00" + projectID))
-	namespace = "pc_" + hex.EncodeToString(digest[:16])
+	namespace = projectNamespace(database, projectID)
 	reader = namespace + "_reader"
 	mac := hmac.New(sha256.New, s.querySecret)
 	mac.Write([]byte(projectID + "\x00" + database))

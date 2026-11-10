@@ -99,6 +99,11 @@ def check(directory, binary, origin, bootstrap):
         ids.append(project["id"])
     assert set(ids) == {p["id"] for p in json.loads(cli("list-projects", key=admin_key))["projects"]}
 
+    renamed = json.loads(cli("rename-project", "--id", ids[0], "--body",
+                         '{"name":"CLI renamed"}', key=admin_key))["project"]
+    assert renamed["name"] == "CLI renamed" and renamed["id"] == ids[0]
+    cli("delete-project", "--id", ids[0], key=admin_key, denied=403)
+
     scoped = service_key("importer", [ids[0]],
                          ["management:read", "events:read", "events:write", "imports:write"])
     key = scoped["token"]
@@ -129,6 +134,10 @@ def check(directory, binary, origin, bootstrap):
     assert finished["state"] == "completed"
     setup("DELETE", "/access-keys/" + scoped["id"])
     cli("list-projects", key=key, denied=401)
+    cli("delete-project", "--id", ids[0], key=admin)
+    cli("delete-project", "--id", ids[0], key=admin)
+    remaining = json.loads(cli("list-projects", key=admin_key))["projects"]
+    assert [p["id"] for p in remaining] == [ids[1]]
 
 
 def main():
@@ -141,7 +150,7 @@ def main():
         bootstrap = secrets.token_urlsafe(32)
         with local_server(directory, bootstrap) as origin:
             check(directory, binary, origin, bootstrap)
-    print("Standalone CLI passed status, project isolation, binary upload/retry, and key revocation.")
+    print("Standalone CLI passed status, project rename and deletion, isolation, binary upload/retry, and key revocation.")
 
 
 if __name__ == "__main__":

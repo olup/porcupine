@@ -147,6 +147,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "delete-project", Method: "DELETE", Path: "/api/v1/projects/{id}",
+		Summary: "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
 		ID: "edit-event", Method: "PATCH", Path: "/api/v1/projects/{id}/events/{uuid}",
 		Summary: "Queue an audited full event correction with expected_revision and idempotency_key",
 		Params: []parameter{
@@ -348,6 +355,17 @@ var operations = []operation{
 			"parameters (object) Typed ClickHouse placeholders such as {event:String}. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
 			"sql (string, required) One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
 			"use_cache (boolean) Omitted or true allows a 60-second ClickHouse result cache. False bypasses cache reads and writes and reads currently projected data. Caching is bypassed while edits or deletions await projection.",
+		},
+	},
+	{
+		ID: "rename-project", Method: "PATCH", Path: "/api/v1/projects/{id}",
+		Summary: "Set a project's display name, preserving its ID, data and credentials",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"name (string, required) New display name (up to 200 UTF-8 bytes).",
 		},
 	},
 	{

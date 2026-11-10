@@ -42,6 +42,11 @@ type Config struct {
 }
 
 type Service struct {
+	activity        projectActivity
+	catalogMu       sync.RWMutex
+	deletionMu      contextMutex
+	deletionCancel  context.CancelFunc
+	deletionDone    chan struct{}
 	db              *sql.DB
 	queueMax        int
 	queueMaxBytes   int64
@@ -177,6 +182,7 @@ func Open(c Config) (*Service, error) {
 		ch.projectionGuard = s.projectionGuard
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
+CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
 CREATE TABLE IF NOT EXISTS access_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, permissions TEXT NOT NULL, projects TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL, event TEXT NOT NULL, distinct_id TEXT NOT NULL, properties TEXT NOT NULL, timestamp TEXT NOT NULL, received_at TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, UNIQUE(project_id,uuid));
@@ -288,6 +294,7 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializePipelines(context.Background()); err != nil {
 		return fail(err)
 	}
+	s.startDeletionRecovery()
 	s.startPipelines()
 	if ch != nil {
 		s.startDelivery()
@@ -299,6 +306,8 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 }
 
 func (s *Service) Close() error {
+	s.deletionCancel()
+	<-s.deletionDone
 	s.stopPipelines()
 	if s.exports != nil {
 		s.stopExports()
@@ -467,7 +476,13 @@ func (s *Service) Handler() http.Handler {
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
-	return s.ingestionCORS(m)
+	return s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/oauth/") {
+			s.catalogMu.RLock()
+			defer s.catalogMu.RUnlock()
+		}
+		m.ServeHTTP(w, r)
+	}))
 }
 
 type eventInput struct {
@@ -607,6 +622,13 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		return
 	}
 	projectID := a.Projects[0]
+	ctx, finish, active := s.activity.begin(r.Context(), projectID)
+	if !active {
+		problem(w, 404, "project unavailable")
+		return
+	}
+	defer finish()
+	r = r.WithContext(ctx)
 	mode, policyErr := s.projectIngestionMode(r.Context(), projectID)
 	if policyErr != nil {
 		problem(w, 503, "project ingestion policy unavailable")

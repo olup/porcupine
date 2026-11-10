@@ -26,6 +26,16 @@ On an email-enabled instance, login opens the browser for approval using OAuth w
 
 For automation, set `PORCUPINE_API_KEY` from your secret manager to a service key with the API audience. When set, this key takes precedence over the browser session. API permissions and project grants apply to every command.
 
+## Rename or delete a project
+
+Use `porcupine list-projects` to find the project ID. Renaming requires `management:write` for the selected project.
+
+```sh
+porcupine rename-project --id PROJECT_ID --body '{"name":"Research"}'
+```
+
+For permanent deletion, use an instance administrator credential. With browser login, run `porcupine login --admin`, then `porcupine delete-project --id PROJECT_ID`. The command exits successfully when cleanup finishes. See [project lifecycle and cleanup scope](../docs/management-api.md#operations).
+
 ## Discover commands
 
 Run `porcupine --help` for the catalog or `porcupine query-events --help` for parameters and body fields. Operation names match the HTTP API's OpenAPI operation IDs. JSON results go to stdout. An HTTP failure exits with a nonzero status and prints its status code to stderr. Operations that issue access keys return secrets on stdout.

@@ -53,6 +53,11 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 	if err != nil || w == nil {
 		return false, err
 	}
+	ctx, finish, active := s.activity.begin(ctx, w.pipeline.ProjectID)
+	if !active {
+		return false, nil
+	}
+	defer finish()
 	allowed, err := pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
 	if err != nil {
 		return false, err
