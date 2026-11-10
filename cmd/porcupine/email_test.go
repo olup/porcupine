@@ -136,7 +136,7 @@ func TestVerificationEmailDelivery(t *testing.T) {
 			if !strings.Contains(notice, "Subject: You have been invited to Porcupine") || !strings.Contains(notice, transport.issuer) || !strings.Contains(notice, "request a verification code") || strings.Contains(notice, "135790") || strings.Contains(notice, transport.password) {
 				t.Fatal("invalid invitation notice")
 			}
-			if err := transport.sendInvitation(context.Background(), "operator@example.test", true); err != nil {
+			if err := transport.sendInvitation(context.Background(), "lea@example.test", true); err != nil {
 				t.Fatal(err)
 			}
 			adminNotice := <-delivered
