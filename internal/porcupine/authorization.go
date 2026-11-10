@@ -36,6 +36,9 @@ func authorize(a actor, permission, project string) bool {
 }
 
 func (a actor) containsProjects(projects []string) bool {
+	if len(projects) == 0 {
+		return a.admin()
+	}
 	for _, project := range projects {
 		if !authorize(a, "", project) {
 			return false

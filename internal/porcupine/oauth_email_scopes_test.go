@@ -69,6 +69,10 @@ func TestEmailProjectManagementGrantCannotMintIndependentClient(t *testing.T) {
 	// The caller would otherwise have every permission and project in this body.
 	clientBody, _ := json.Marshal(map[string]any{"name": "independent", "permissions": []string{"events:read"}, "projects": []string{project}})
 	request(t, s, "POST", "/api/v1/oauth-clients", token.AccessToken, string(clientBody), 403)
+	request(t, s, "PATCH", "/api/v1/projects/"+project, token.AccessToken, `{"name":"Member-managed project"}`, 200)
+	other := request(t, s, "POST", "/api/v1/projects", admin, `{"name":"Separate project"}`, 201)["project"].(map[string]any)["id"].(string)
+	request(t, s, "PATCH", "/api/v1/projects/"+other, token.AccessToken, `{"name":"Out of scope"}`, 403)
+	request(t, s, "DELETE", "/api/v1/projects/"+project, token.AccessToken, "", 403)
 }
 
 func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {

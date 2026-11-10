@@ -178,6 +178,11 @@ func (s *Service) exportPressure(ctx context.Context) (bool, error) {
 }
 
 func (s *Service) runExport(parent context.Context, job storedExport) {
+	parent, finish, active := s.activity.begin(parent, job.ProjectID)
+	if !active {
+		return
+	}
+	defer finish()
 	started, err := time.Parse(time.RFC3339Nano, job.StartedAt)
 	if err != nil {
 		s.failExport(parent, job, errors.New("invalid export start"))
@@ -444,13 +449,7 @@ func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 		return err
 	}
 	for _, file := range files {
-		if file.id != "" {
-			if err = s.exports.store.Abort(ctx, file.key, file.id); err != nil {
-				return err
-			}
-		}
-		// Complete may have committed despite a lost acknowledgment; always delete.
-		if err = s.exports.store.Delete(ctx, file.key); err != nil {
+		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {
 			return err
 		}
 		if _, err = s.db.ExecContext(ctx, `DELETE FROM export_files WHERE job_id=? AND attempt_id=? AND file_index=?`, job.ID, file.attempt, file.index); err != nil {

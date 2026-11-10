@@ -40,6 +40,8 @@ for mutation invalidation and delivery consistency.
 | --- | --- | --- |
 | `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |
 | `POST /api/v1/projects` | `management:write` and `events:write`, both with `*` scope | `201` |
+| `PATCH /api/v1/projects/{id}` | `management:write` for this project | `200` with the updated project |
+| `DELETE /api/v1/projects/{id}` | `instance:admin` | `204` after cleanup |
 | `GET /api/v1/access-keys` | `management:read`; results restricted to keys whose entire project scope the caller holds | `200` |
 | `POST /api/v1/access-keys` | `management:write`; every requested permission and project must be held by the caller | `201` |
 | `DELETE /api/v1/access-keys/{id}` | `instance:admin` | `204` |
@@ -63,6 +65,12 @@ enabled, send `{"name":"Trusted service","ingestion_mode":"server_only"}` to
 require authenticated backend writes. The response omits the public key. The
 creation operation requires the same permissions for both modes. See the
 [ingestion policy](oauth.md#project-ingestion-policy).
+
+`rename-project` accepts `{"name":"Research"}`. Names must contain 1–200 UTF-8 bytes after trimming whitespace. The response contains the updated `project`. Existing SDKs, dashboards and pipelines continue to address the project by ID.
+
+`delete-project` accepts the project ID in the path and takes no request body. An instance administrator can use it to permanently remove a project's queued and analytical events, metadata, pipeline definitions and Porcupine-managed exports. Copies already delivered to customers' webhook or S3 destinations and existing backups are outside the deletion scope. Bucket lifecycle rules control retention of noncurrent object versions. See [export cleanup](exports.md#bucket-permissions-lifecycle-and-cleanup). If a storage dependency is unavailable and the request returns `503`, retry the same ID. The server also retries pending cleanup every minute and on restart. A repeat request for a completed deletion returns `204`. An unknown ID returns `404`.
+
+Deleting a project removes it from access grants. Changing a parent grant also revokes its derived keys and sessions under the usual credential rules. A user or service with access to a surviving project may need to reconnect or obtain a replacement key.
 
 OAuth client creation accepts this body:
 

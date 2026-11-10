@@ -10,6 +10,8 @@ import (
 // The mutex serializes projection lookups, CAS acceptance, and acknowledgment,
 // while network calls run without holding a SQLite transaction.
 func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
 	if s.ch == nil {
 		return false, errors.New("ClickHouse delivery is disabled")
 	}

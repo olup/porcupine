@@ -38,6 +38,21 @@ type ProjectCreated struct {
 }
 type ProjectCreateOutput struct{ Body ProjectCreated }
 
+type ProjectIDInput struct {
+	ID string `path:"id" doc:"Project identifier"`
+}
+type ProjectRenameInput struct {
+	ID   string `path:"id" doc:"Project identifier"`
+	Body struct {
+		Name string `json:"name" minLength:"1" maxLength:"200" doc:"New display name (up to 200 UTF-8 bytes)."`
+	}
+}
+type ProjectRenameOutput struct {
+	Body struct {
+		Project Project `json:"project"`
+	}
+}
+
 // AccessKey contains public credential metadata. Secrets and hashes have no fields here.
 type AccessKey struct {
 	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
@@ -138,6 +153,11 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
 		req, w := humago.Unwrap(ctx)
 		w.Header().Set("Cache-Control", "no-store")
+		access, _ := ctx.Operation().Metadata["access"].(operationAccess)
+		if access.ProjectParameter == "" && ctx.Operation().OperationID != "delete-project" {
+			s.catalogMu.RLock()
+			defer s.catalogMu.RUnlock()
+		}
 		raw, err := bearerCredential(req)
 		resource := ""
 		if s.oauth != nil {
@@ -155,11 +175,19 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			problem(w, http.StatusUnauthorized, "invalid access credential")
 			return
 		}
-		access, _ := ctx.Operation().Metadata["access"].(operationAccess)
 		if !access.allows(a, ctx.Param(access.ProjectParameter)) {
 			_, w := humago.Unwrap(ctx)
 			problem(w, http.StatusForbidden, "required permission and project access missing")
 			return
+		}
+		if access.ProjectParameter != "" && ctx.Operation().OperationID != "delete-project" {
+			child, finish, active := s.activity.begin(ctx.Context(), ctx.Param(access.ProjectParameter))
+			if !active {
+				problem(w, http.StatusNotFound, "project unavailable")
+				return
+			}
+			defer finish()
+			ctx = huma.WithContext(ctx, child)
 		}
 		if encoding := strings.ToLower(strings.TrimSpace(ctx.Header("Content-Encoding"))); encoding != "" && encoding != "identity" {
 			_, w := humago.Unwrap(ctx)
@@ -192,6 +220,8 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	}
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
 	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key", operationAccess{Permission: "management:write", InstancePermissions: []string{"management:write", "events:write"}}, 201), s.managementCreateProject)
+	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
+	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", operationAccess{Permission: "instance:admin", ProjectParameter: "id"}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListKeys)
 	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", operationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
 	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke a key; the last active administrator is protected", operationAccess{Permission: "instance:admin"}, 204), s.managementRevokeKey)
@@ -248,10 +278,39 @@ func (s *Service) managementListProjects(ctx context.Context, _ *struct{}) (*Pro
 	return &ProjectListOutput{Body: ProjectList{Projects: items}}, nil
 }
 
-func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCreateInput) (*ProjectCreateOutput, error) {
-	name := strings.TrimSpace(input.Body.Name)
+func projectName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
 	if name == "" || len(name) > 200 {
-		return nil, apiError(400, "name must contain 1 to 200 characters")
+		return "", apiError(400, "name must contain 1 to 200 UTF-8 bytes")
+	}
+	return name, nil
+}
+
+func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRenameInput) (*ProjectRenameOutput, error) {
+	name, err := projectName(input.Body.Name)
+	if err != nil {
+		return nil, err
+	}
+	out := &ProjectRenameOutput{}
+	p := &out.Body.Project
+	err = s.db.QueryRowContext(ctx, `UPDATE projects SET name=? WHERE id=? RETURNING id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.IngestionMode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, apiError(404, "project not found")
+	}
+	if err != nil {
+		return nil, apiError(500, "storage error")
+	}
+	return out, nil
+}
+
+func (s *Service) managementDeleteProject(ctx context.Context, input *ProjectIDInput) (*struct{}, error) {
+	return nil, s.deleteProject(ctx, input.ID)
+}
+
+func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCreateInput) (*ProjectCreateOutput, error) {
+	name, err := projectName(input.Body.Name)
+	if err != nil {
+		return nil, err
 	}
 	mode := input.Body.IngestionMode
 	if mode == "" {

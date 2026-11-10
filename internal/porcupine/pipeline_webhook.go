@@ -250,6 +250,11 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 		}
 	}()
 
+	ctx, finish, active := s.activity.begin(ctx, d.projectID)
+	if !active {
+		return true, nil
+	}
+	defer finish()
 	secret, err := s.openPipelineSecret(d.projectID, d.pipelineID, d.secret)
 	var destination WebhookPipelineSecret
 	if err != nil || json.Unmarshal(secret, &destination) != nil || validateWebhookEndpoint(destination.Endpoint) != nil || validateWebhookHeaders(destination.Headers) != nil {

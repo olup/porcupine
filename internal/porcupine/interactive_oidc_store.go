@@ -56,15 +56,22 @@ func (s *Service) initializeOIDCHumans(ctx context.Context) error {
 		var id string
 		err = tx.QueryRowContext(ctx, `SELECT principal_id FROM oidc_humans WHERE issuer=? AND subject=?`, s.oauth.oidc.issuer, subject).Scan(&id)
 		permissions, _ := json.Marshal(grant.Permissions)
-		projects, _ := json.Marshal(grant.Projects)
+		configured, _ := json.Marshal(grant.Projects)
+		// Operator settings can still mention a project deleted through the API.
+		// Preserve its tombstone across restarts while allowing future bindings.
+		var projects string
+		if filterErr := tx.QueryRowContext(ctx, `SELECT json_group_array(value) FROM json_each(?)
+WHERE value NOT IN (SELECT project_id FROM project_deletions)`, string(configured)).Scan(&projects); filterErr != nil {
+			return filterErr
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			id = newID()
-			_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'OIDC human',?,?,?,?)`, id, hash("unusable-oidc-"+newID()+newID()), string(permissions), string(projects), now())
+			_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'OIDC human',?,?,?,?)`, id, hash("unusable-oidc-"+newID()+newID()), string(permissions), projects, now())
 			if err == nil {
 				_, err = tx.ExecContext(ctx, `INSERT INTO oidc_humans(principal_id,issuer,subject) VALUES(?,?,?)`, id, s.oauth.oidc.issuer, subject)
 			}
 		} else if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE access_keys SET permissions=?,projects=? WHERE id=?`, string(permissions), string(projects), id)
+			_, err = tx.ExecContext(ctx, `UPDATE access_keys SET permissions=?,projects=? WHERE id=?`, string(permissions), projects, id)
 		}
 		if err != nil {
 			return err

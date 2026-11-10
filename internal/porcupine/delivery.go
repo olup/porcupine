@@ -137,6 +137,8 @@ func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event
 }
 
 func (s *Service) deliverBatch(ctx context.Context) (bool, error) {
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
 	ctx, release, err := s.projectionContext(ctx)
 	if err != nil {
 		return false, err

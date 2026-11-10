@@ -23,7 +23,8 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
-func TestClickHouseIntegrationExports(t *testing.T) {
+func liveExportService(t *testing.T) (*Service, ClickHouseConfig) {
+	t.Helper()
 	if os.Getenv("PORCUPINE_TEST_S3_ENDPOINT") == "" {
 		t.Skip("run make integration-s3 for real export objects")
 	}
@@ -34,6 +35,11 @@ func TestClickHouseIntegrationExports(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
+	return s, config
+}
+
+func TestClickHouseIntegrationExports(t *testing.T) {
+	s, config := liveExportService(t)
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableCompression: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -42,6 +48,7 @@ func TestClickHouseIntegrationExports(t *testing.T) {
 		t.Helper()
 		var encoded []byte
 		if body != nil {
+			var err error
 			encoded, err = json.Marshal(body)
 			if err != nil {
 				t.Fatal("encode integration request")
@@ -358,4 +365,53 @@ func TestClickHouseIntegrationExports(t *testing.T) {
 	if json.Unmarshal(bytes.TrimSpace(download(artifact[0])), &corrected) != nil || corrected["uuid"] != "row-000000" || corrected["event"] != "corrected-export" || corrected["distinct_id"] != "changed-user" {
 		t.Fatal("export did not include latest corrected logical row")
 	}
+
+}
+
+func TestClickHouseIntegrationDeleteProjectExport(t *testing.T) {
+	s, _ := liveExportService(t)
+	id, ingest := project(t, s)
+	request(t, s, "POST", "/capture/", "", captureBody(ingest, "exported"), 200)
+	base := "/api/v1/projects/" + id
+	res := request(t, s, "POST", base+"/exports", adminToken, `{"idempotency_key":"delete-test","format":"jsonl","sql":"SELECT count() AS total FROM events"}`, 202)
+	jobID := res["id"].(string)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for {
+		job, err := s.loadExport(ctx, id, jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.State == ExportSucceeded {
+			break
+		}
+		if job.State == ExportFailed {
+			t.Fatalf("export failed: %s", job.Error)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("export did not finish")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	files := request(t, s, "GET", base+"/exports/"+jobID+"/files", adminToken, "", 200)["files"].([]any)
+	if len(files) != 1 {
+		t.Fatal("expected one published export")
+	}
+	signed := files[0].(map[string]any)["url"].(string)
+	checkURL := func(want int) {
+		t.Helper()
+		client := http.Client{Timeout: 5 * time.Second}
+		r, err := client.Get(signed)
+		if err != nil {
+			t.Fatal("could not download signed test export")
+		}
+		r.Body.Close()
+		if r.StatusCode != want {
+			t.Fatalf("export object returned %d, want %d", r.StatusCode, want)
+		}
+	}
+	checkURL(200)
+	request(t, s, "DELETE", base, adminToken, "", 204)
+	checkURL(404)
 }
