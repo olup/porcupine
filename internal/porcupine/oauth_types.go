@@ -14,7 +14,7 @@ import (
 // EmailConfig enables passwordless browser authentication for approved addresses.
 type EmailConfig struct {
 	SendCode       func(context.Context, string, string) error
-	SendInvitation func(context.Context, string) error
+	SendInvitation func(ctx context.Context, email string, instanceAdmin bool) error
 	AdminEmail     string
 }
 

@@ -33,7 +33,7 @@ type InviteHumanInput struct {
 	Body struct {
 		Grants      []HumanProjectGrant `json:"grants,omitempty" minItems:"1" maxItems:"64" doc:"Per-project rights. Alternatively supply both projects and permissions."`
 		Email       string              `json:"email" minLength:"3" maxLength:"254"`
-		Projects    []string            `json:"projects,omitempty" minItems:"1" maxItems:"64" doc:"Explicit projects assigned to this human."`
+		Projects    []string            `json:"projects,omitempty" minItems:"1" maxItems:"64" doc:"Explicit project IDs. For an instance administrator, use only * with only instance:admin."`
 		Permissions []string            `json:"permissions,omitempty" minItems:"1" maxItems:"32" doc:"Permissions applied in every assigned project."`
 	}
 }
@@ -197,7 +197,7 @@ func (s *Service) registerEmailAccounts(api huma.API, op func(string, string, st
 	}
 	admin := operationAccess{Permission: "instance:admin"}
 	base := "/api/v1/humans"
-	huma.Register(api, op("invite-human", "POST", base, "Authorize a mailbox to sign in and connect its own tools", admin, 201), s.inviteHuman)
+	huma.Register(api, op("invite-human", "POST", base, "Invite a project member or instance administrator. For an administrator use projects [*] and permissions [instance:admin].", admin, 201), s.inviteHuman)
 	huma.Register(api, op("list-humans", "GET", base, "List human accounts and project permissions", admin, 200), s.listHumans)
 	huma.Register(api, op("update-human", "PUT", base+"/{id}", "Replace an invited human’s grants and invalidate affected connections", admin, 200), s.updateHuman)
 	huma.Register(api, op("revoke-human", "DELETE", base+"/{id}", "Disable this account and its OAuth connections", admin, 204), s.revokeHuman)
@@ -235,8 +235,13 @@ func (s *Service) emailGrantSpec(ctx context.Context, explicit []HumanProjectGra
 	}
 	perProject := make(map[string][]string, len(explicit))
 	for _, g := range explicit {
-		if g.ProjectID == "*" || len(g.Permissions) == 0 || len(g.Permissions) > 32 || slices.Contains(g.Permissions, "instance:admin") {
-			return h, apiError(400, "invited humans require explicit projects and non-admin permissions")
+		if g.ProjectID == "*" || slices.Contains(g.Permissions, "instance:admin") {
+			if len(explicit) != 1 || g.ProjectID != "*" || !slices.Equal(g.Permissions, []string{"instance:admin"}) {
+				return h, apiError(400, "instance administration requires exactly one grant: instance:admin on *")
+			}
+		}
+		if len(g.Permissions) == 0 || len(g.Permissions) > 32 {
+			return h, apiError(400, "expected 1 to 32 permissions per grant")
 		}
 		perProject[g.ProjectID] = append(perProject[g.ProjectID], g.Permissions...)
 	}
@@ -314,7 +319,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	}
 	if attempt != "" {
 		sendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		sendErr := send(sendCtx, h.Email)
+		sendErr := send(sendCtx, h.Email, slices.Contains(h.Permissions, "instance:admin"))
 		cancel()
 		// If the request disconnected during delivery, still save the result.
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

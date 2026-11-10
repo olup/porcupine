@@ -27,7 +27,15 @@ For example, authorize Léa to query project A and import historical events into
 
 Use the same `grants` field for updates, omitting `email`. When all assigned projects have identical permissions, the alternative body shape is `{"email":"lea@example.org","projects":["PROJECT_A","PROJECT_B"],"permissions":["events:read"]}`. Choose one shape per request. The `grants` field in the response gives the authoritative per-project rights. The `projects` and `permissions` fields summarize the union of project IDs and permissions, respectively.
 
-Invitations require explicit projects. Wildcards and `instance:admin` are reserved for the operator. Email domains are case-insensitive; Porcupine preserves the case of the mailbox before `@` and recognizes an exact ASCII mailbox address. Provide the invited address when signing in.
+To invite another instance administrator, call `invite-human` with:
+
+```json
+{"email":"colleague@example.org","projects":["*"],"permissions":["instance:admin"]}
+```
+
+Only an authenticated instance administrator can grant this role. Use this exact grant by itself. The recipient signs in with their own mailbox on the dedicated admin OAuth client and consents to administration of all projects. For an existing member, call `update-human` with the same grant and their ID. Replacing it with explicit project grants removes admin access and invalidates previous connections. The `deployment_admin` field identifies the original deployment seed; the effective administrator permission is `instance:admin`.
+
+Project member invitations require explicit project IDs. Email domains are case-insensitive; Porcupine preserves the case of the mailbox before `@` and recognizes an exact ASCII mailbox address. Provide the invited address when signing in.
 
 The initial invitation notice contains connection instructions. Sign-in codes are issued only when the account holder starts a login. The account exists durably before the notice is sent. If delivery fails, Porcupine returns `503`; retry the same invite after at least five seconds. If an attempt is already in flight, Porcupine returns `429`. A crashed attempt can be retried after one minute. Retrying an acknowledged delivery returns the same human ID without sending again. A crash between SMTP acceptance and recording success can lead to duplicate notices; a notice alone grants no access. Reinviting a disabled account or submitting different grants for an existing account returns `409`.
 

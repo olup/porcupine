@@ -6,7 +6,7 @@ Enable [email delivery](email-transport.md) on a build with email login. Set you
 
 Optionally set `PORCUPINE_ADMIN_EMAIL` to the mailbox of the operator during deployment. This seeds a durable human account. Keep the separate machine bootstrap credential as a recovery path. The operator can use their mailbox to authorize an administrative tool on a new computer. A revoked account stays revoked after restart.
 
-Email-enabled deployments provide the public PKCE client `porcupine-local` for local read-only tools. Setting the admin email also provisions `porcupine-local-admin`. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
+Email-enabled deployments provide the public PKCE client `porcupine-local` for local read-only tools. They also provide the separate `porcupine-local-admin` client for instance administrators. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
 
 For Codex, add the following to your Codex configuration, replacing the host with your own. The client and its callback are configured once. Use the issuer's `/mcp` URL exactly.
 
@@ -21,7 +21,7 @@ callback_url = "http://127.0.0.1:43179/callback"
 callback_port = 43179
 ```
 
-Run `codex mcp login porcupine_admin --scopes instance:admin`. Enter the deployment admin email on the Porcupine page, enter the code delivered to its inbox, and approve instance administration. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
+Run `codex mcp login porcupine_admin --scopes instance:admin`. Enter your authorized administrator email on the Porcupine page, enter the code delivered to its inbox, and approve instance administration. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
 
 ## Invite someone once
 
