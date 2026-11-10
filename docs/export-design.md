@@ -8,8 +8,7 @@ full result on the application host. See [the API and configuration](exports.md)
 `POST /api/v1/projects/{id}/exports` accepts the same authorized SELECT and typed
 parameters as interactive queries, plus `format: jsonl|csv` and an idempotency key.
 It returns a durable job. Clients poll its status and fetch paginated, temporary
-links to gzip files after success. Cancellation is a separate operation. MCP uses
-the same operations through its existing two tools.
+links to gzip files after success. Use the operation IDs from HTTP, the standalone CLI or MCP. The MCP client discovers the contract with `porcupine_docs` and calls it with `porcupine_call`.
 
 ## Existing boundaries
 
@@ -77,8 +76,7 @@ key revocation. No query result is silently truncated and reported successful.
 Unit/race tests cover SQLite transitions, permissions, idempotency, streaming
 completion, oversized values, late errors, abort/delete and publication races.
 Real ClickHouse and MinIO checks exercise large results, types, aggregates,
-multiple files, cancellation, restart, cold data and object integrity. A mixed
-load run measures ingestion and interactive latency while an export is active.
+multiple files, cancellation, restart, cold data and object integrity. Use the [load-testing guide](load-testing.md) to measure ingestion and interactive latency while an export is active.
 
 Provisioning locks are context-aware. Export account/schema setup has a separate
 five-second deadline so a slow administrative request cannot hold interactive

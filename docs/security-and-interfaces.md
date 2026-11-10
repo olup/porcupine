@@ -1,7 +1,6 @@
 # Access and interfaces
 
-This document describes current access rules and planned interfaces. The
-[management API reference](management-api.md) lists implemented operations.
+The HTTP API, CLI and MCP use the same project grants. The [management API reference](management-api.md) lists operations and their required permissions.
 
 ## Technical access
 
@@ -12,7 +11,7 @@ the operator configures an issuer. Clients exchange an ID and secret through
 HTTP Basic at `/oauth/token`; only the resulting short-lived access token goes
 in Bearer authorization. SQLite stores separate secret and token hashes.
 Creation returns a client secret once. Logs must not contain raw credentials.
-HTTP and MCP share operation policies, with resource-bound tokens for each.
+An administrator can also issue a [static service key](service-keys.md) for a single audience. HTTP and MCP share operation policies.
 
 Each request checks token expiry, parent revocation, and current grants. Effective
 authority intersects token scope and issued projects with current permissions
@@ -57,6 +56,8 @@ authentication and authorization must use a separate source of authority.
 
 ## Ingestion compatibility
 
+[Native and Segment inputs](native-and-segment-ingestion.md) accept product events with stable producer message IDs. Public capture uses the project's ingestion key. A server can use an API-audience service key or access token scoped to that project.
+
 Porcupine accepts [a tested PostHog ingestion subset](compatibility.md), including
 JSON capture, batches, and bounded gzip transport. The matrix names pinned SDKs
 and supported settings. It does not claim every endpoint, default SDK behavior,
@@ -86,8 +87,7 @@ rules. Event names, properties, and SQL results are untrusted data for agents.
 MCP uses stateless Streamable HTTP and MCP-resource OAuth tokens in Bearer
 headers. RFC 8414 authorization-server metadata and RFC 9728 protected-resource
 metadata advertise the machine grant and pinned resource URLs. Tokens for the
-API resource cannot authenticate MCP. This does not implement a generic
-interactive MCP OAuth login flow. The endpoint rejects cross-origin browser
+API resource cannot authenticate MCP. People can approve pre-registered MCP clients with email verification or upstream OIDC. The endpoint rejects cross-origin browser
 requests and retains the SDK's localhost DNS rebinding protection. Ingestion
 CORS grants do not apply to MCP.
 
@@ -159,11 +159,9 @@ for limits, credential replacement, and retry behavior.
 ## Ingestion under load
 
 Each process accepts up to 32 concurrent capture requests across ingestion routes,
-and eight concurrent requests to the OAuth token endpoint in an independent pool.
+and a separate pool of eight for token exchange and revocation.
 Excess requests receive HTTP 503 with `Retry-After: 1` before body decoding or
-SQLite access. Use stable event UUIDs when retrying. Bodies are limited to
-1 MiB before and after decompression, and the JSON decoder stops growing a batch
-at 1,000 events. These limits bound concurrent work in the process. Configure
+SQLite access. Retry with the original event UUID or producer message ID. The general request limit is 1 MiB before and after decompression and 1,000 events per batch. [Segment](native-and-segment-ingestion.md) also enforces a 32 KiB message limit and a 500 KiB batch limit. These limits bound concurrent work in the process. Configure
 rate limits at your reverse proxy if you also need quotas per caller or IP.
 
 For records used in billing or trusted reporting, create a `server_only` project

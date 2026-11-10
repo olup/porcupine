@@ -6,7 +6,7 @@ Porcupine durably accepts events into SQLite, then delivers them to ClickHouse a
 
 SQLite uses WAL mode and `synchronous=FULL`. A successful ingestion response follows the transaction commit. A batch validates and commits atomically. The original-event queue enforces both count and byte budgets. Requests have a separate 1 MiB limit. A full queue returns an explicit failure rather than discarding accepted events.
 
-A stable project and UUID keeps the first accepted event. A retry with different content cannot overwrite it. Missing UUIDs receive a generated ID, so a client retry without a stable UUID cannot deduplicate reliably.
+For PostHog capture, retry with the same project and event UUID. For native or Segment capture, send the same producer message ID from the same project and source. A repeat returns the original event ID and keeps the original payload. When the producer omits a stable ID, separate submissions can produce separate events. See the [receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources).
 
 ## Delivery and acknowledgments
 
@@ -80,7 +80,7 @@ the accepted event itself needs correction or deletion, use the
 [event mutation API](events.md), which preserves its audit and revision contract.
 Do not edit accepted payload columns or remove their deduplication receipts.
 
-Use `list-quarantined-events` through HTTP or MCP to inspect safe metadata. The
+Use `list-quarantined-events` through HTTP, CLI or MCP to inspect safe metadata. The
 HTTP operation requires `events:read` and returns event IDs, UUIDs, receipt and
 quarantine times, and numeric error codes. It omits payloads and server messages.
 Pagination uses `after_event_id` and a `limit` from 1 through 1,000. Event IDs are
@@ -101,7 +101,7 @@ curl --fail-with-body --request POST \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
-Use an OAuth access token for the API resource with the required project grants.
+Use an API-audience OAuth access token or service key with the required project grants.
 The `202` response contains `event_id` and `requeued`. `requeued: true` means the
 retained original became eligible again, not that delivery succeeded. Repeating
 the request while that original is still queued returns `requeued: false`; an
@@ -141,6 +141,10 @@ indefinitely and `FINAL CLEANUP` is not used. Old parts, S3 versions, SQLite WAL
 and free pages, and backups clean up separately. Logical deletion is not an
 immediate physical-erasure guarantee.
 
+## Whole-project deletion
+
+An instance administrator can delete a project through HTTP, CLI or MCP. Porcupine drains its active work, removes its SQLite state and checkpoints cleanup of managed export objects and ClickHouse data. A storage outage can leave cleanup pending after the project disappears from the catalog. The server retries on startup and every minute. Repeating the deletion for the same ID returns `204` once cleanup finishes. [Management API](management-api.md#operations)
+
 ## Visibility and delivery status
 
 Schema, catalog, and query responses include project delivery state: `enabled`, `pending`, `quarantined`, `pending_mutations`, optional `last_success`, and an
@@ -149,7 +153,7 @@ has pending original events or mutations. It does not expose another project's e
 
 Delivery is eventual. An event can already be queryable after a lost acknowledgment while still counted as pending. A query and its delivery status use separate systems without a shared snapshot. `last_success` records acknowledged delivery for the project; it does not prove that the queue is empty.
 
-`/healthz` checks the process and `/readyz` checks SQLite. Neither proves that ClickHouse is healthy or that delivery is caught up. Queue age, rejected request counts, and richer delivery metrics remain operational work.
+`/healthz` checks the process and `/readyz` checks SQLite. Neither proves that ClickHouse is healthy or that delivery is caught up. Use the project's `oldest_pending_received_at` to measure the age of the oldest queued original. Check `pending_mutations` separately.
 
 ## Storage and backups
 
@@ -174,12 +178,8 @@ The [storage reference](storage.md) describes the deployment boundaries.
 A lost-acknowledgment test stops background merges, delivers twice, and checks two physical rows against one logical row. This verifies deduplication before merges. Normal `make check` skips real ClickHouse tests unless their test environment is configured.
 
 A test forces SQLite to return SQLITE_FULL and checks batch rollback, preservation of previously accepted events, capacity counters and recovery on retry.
-Further release work includes operating-system ENOSPC injection, additional safely classified
-row failures, mutation isolation, large historical backup validation, and arbitrary partial delivery
-failures. Future identity projections need race and out-of-order replay tests.
 Pipeline failure and receiver-idempotence checks are described in
-[the delivery contract](pipelines.md). Benchmarks require
-recorded hardware, workload, event sizes, and durability settings before publication.
+[the delivery contract](pipelines.md). The [benchmark report](benchmarks.md) includes workload, hardware, latency and queue measurements.
 
 ## Pipelines and identity
 

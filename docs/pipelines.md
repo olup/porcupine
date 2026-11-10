@@ -15,6 +15,8 @@ credentials, or event payloads. S3 rules include their SQL and destination
 bucket, region, prefix, and addressing mode, so authorized readers can inspect
 what a scheduled run does.
 
+Deleting a project removes its pipeline definitions and cancels pending local work. Copies previously delivered to a webhook or external S3 destination remain with the receiver. [Project lifecycle](management-api.md#operations)
+
 ## Enable the runtime
 
 | Environment variable | Meaning |
@@ -33,7 +35,7 @@ Custom S3 origins match scheme, hostname, and port. They cannot contain paths, c
 
 ## Permissions and API
 
-Use an API-resource [OAuth access token](oauth.md) for HTTP, or an MCP-resource token through `porcupine_call`. All operations apply to one authorized project.
+Use a scoped [service key](service-keys.md) or [OAuth access token](oauth.md) with the API audience for HTTP and CLI operations. For `porcupine_call`, use a credential with the MCP audience. Each pipeline belongs to one project.
 
 - Reads require both `pipelines:read` and `events:read`.
 - Creation, pause, resume, deletion, credential replacement, and manual retry require both `pipelines:write` and `events:read`.

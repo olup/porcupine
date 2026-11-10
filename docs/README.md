@@ -1,17 +1,18 @@
 # Porcupine documentation
 
-Start with the [local quickstart](hosting.md#laptop-with-docker-compose) to run the released image, send an event, and query it. For an existing instance, give your agent the [plain-text agent guide](https://olup.github.io/porcupine/llms.txt).
+To try Porcupine on your laptop, [send your first event and query it](../README.md#quickstart). For an existing instance, [connect an agent](mcp.md) or [install the standalone CLI](../cli/README.md). Give an agent the [plain-text guide](https://olup.github.io/porcupine/llms.txt).
 
-| Task | Guide |
+| I want to… | Start here |
 | --- | --- |
-| Choose an image or get a checksummed offline archive | [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0) · [Loading an archive](hosting.md#load-a-release-image-without-registry-access) |
-| Deploy on a server | [Single VM with HTTPS](hosting.md#single-linux-vm-with-https) · [Separate ClickHouse](hosting.md#application-container-with-a-separate-clickhouse-service) |
-| Ingest application events | [PostHog SDK compatibility and configuration](compatibility.md) |
-| Invite people or connect a team agent | [Team setup](connect-your-team.md) · [SMTP configuration](email-transport.md) · [Scoped service keys](service-keys.md) |
-| Connect and query a project | [OAuth](oauth.md) · [MCP](mcp.md) · [SQL](analytics.md) |
-| Send data to a destination | [Per-event or batched webhooks and scheduled S3 queries](pipelines.md) |
-| Operate the instance | [Storage](storage.md) · [Backup and restore](online-backup.md) |
+| Self-host | [Deployment options](hosting.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0) · [Architecture](architecture.md) |
+| Give someone access | [Team setup](connect-your-team.md) · [Human accounts](email-accounts.md) · [Email delivery](email-transport.md) · [Interactive OAuth and OIDC](mcp-interactive-oauth.md) |
+| Connect a service or shared agent | [Service keys](service-keys.md) · [OAuth resources and scopes](oauth.md) · [Authorization boundaries](security-and-interfaces.md) |
+| Capture or identify | [Tested PostHog SDK profiles](compatibility.md) · [Native and Segment inputs](native-and-segment-ingestion.md) · [Cookieless and identified capture](data-and-identity.md) |
+| Import historical events | [Resumable PostHog uploads](posthog-import.md) · [Supported file formats](posthog-import-format.md) |
+| Answer a product question | [Schema discovery and SQL examples](analytics.md) · [MCP tools](mcp.md) · [CLI usage](../cli/README.md) |
+| Manage projects and events | [Management API, rename and delete](management-api.md#operations) · [Event corrections and deletion](events.md) |
+| Send data elsewhere | [One-off SQL exports](exports.md) · [Webhooks and scheduled S3 pipelines](pipelines.md) |
+| Operate and recover | [Queryable cold storage](storage.md) · [Durability and limits](reliability.md) · [Deduplication receipts](receipts.md) · [Online backups](online-backup.md) · [Recovery drills](restore.md) |
+| Size a deployment | [Benchmark results](benchmarks.md) · [Run a load test](load-testing.md) |
 
-[Native and Segment ingestion](native-and-segment-ingestion.md) documents the HTTP endpoints, source bindings, retry receipts, and cross-SDK analytics.
-
-[Import a local PostHog export](posthog-import.md) · [Invite a person](email-accounts.md) · [Configure OIDC login](mcp-interactive-oauth.md)
+The running instance serves its HTTP contract at `/openapi.json`. MCP clients discover the operations available to their credential with `porcupine_docs`.

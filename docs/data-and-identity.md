@@ -1,10 +1,10 @@
 # Events, identity, and sessions
 
-The default browser profile uses a daily cookieless pseudonym. The opt-in identified profile supports anonymous-to-user linking through `posthog.identify()`. Identified capture is available starting in v0.2.0.
+Porcupine’s recommended browser profile sends a cookieless event that the server assigns a daily pseudonym. The opt-in identified profile supports anonymous-to-user linking through `posthog.identify()`.
 
 ## Event identity and immutability
 
-Every accepted event belongs to one project. Its deduplication identity is the pair of project ID and event UUID. A UUID reused in another project does not refer to the same event. Requests without a client UUID need a server-generated UUID, so a client retry without a stable UUID cannot reliably deduplicate.
+Within a project, the unbound PostHog input uses the original event UUID. Native and Segment inputs use the logical source and producer message ID to derive the stored UUID. Reuse the same source and message ID on a retry to receive the same durable event ID. Without a stable producer ID, a retry can create another event. [Receipts and logical sources](native-and-segment-ingestion.md#receipts-and-logical-sources)
 
 Each ordinary event retains its accepted `distinct_id`. SQL exposes `person_id` to group that event under the currently resolved identity, including events accepted before login. `person_properties` contains the current profile as a JSON object encoded in a string.
 
@@ -17,7 +17,7 @@ SQL shows the latest projected revision; the current-event API also reflects
 accepted pending corrections.
 
 Tombstones prevent late original deliveries from resurrecting deleted events
-and remain indefinitely. Old parts, S3 object versions, free pages, WAL, and
+and remain for the life of the project. Old parts, S3 object versions, free pages, WAL, and
 backups have separate cleanup lifecycles. Deletion does not promise immediate
 physical erasure from every copy.
 
@@ -45,7 +45,7 @@ WHERE person_id = {user:String}
 ORDER BY received_at_ms, id
 ```
 
-Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_started`, whose `distinct_id` is still the anonymous browser ID. Use `uniqExact(person_id)` to count resolved users. An unlinked event falls back to its own `distinct_id`. Queries that request identity columns (including `SELECT *`) join the project's delivered links and profiles at read time. Select explicit event-only columns to avoid those joins. Profile properties reflect the latest delivered profile; send a property on the business event itself when you need its value at the time the event occurred.
+Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_started`, whose `distinct_id` is still the anonymous browser ID. Use `uniqExactIf(person_id, person_id != '')` to count distinct resolved IDs on events that carry an actor. An unlinked event falls back to its own `distinct_id`. Queries that request identity columns (including `SELECT *`) join the project's delivered links and profiles at read time. Select explicit event-only columns to avoid those joins. Profile properties reflect the latest delivered profile; send a property on the business event itself when you need its value at the time the event occurred.
 
 ### What capture accepts
 
@@ -58,11 +58,9 @@ Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_star
 
 ## Session semantics
 
-The intended session key is the SDK's `$session_id`, scoped to a project. Backend events can join a browser session when the application propagates that same value. A backend event without it must not silently join an unrelated browser session.
+For events carrying a real SDK `$session_id`, the PostHog adapter exposes it in `context.session_id`. In SQL, use `JSONExtractString(context, 'session_id')` and exclude empty values before grouping. Backend events can join the same session when the application propagates the ID. The cookieless profile strips browser session IDs.
 
-Compatibility tests must establish the exact behavior of supported SDK versions, including resets, inactivity, multiple tabs, missing values, and malformed values. SDK session IDs do not by themselves prove a server-side session timeout or identity merge policy.
-
-Session analytics and live activity are separate concepts. Optional heartbeats can support a live view, but the timeout and meaning of "active" need a documented contract. No heartbeat is required for durable event ingestion.
+The span between the first and last event measures observed activity. A quiet reader produces no new timestamp. If your product needs a live visitor count, instrument activity or heartbeats and choose an explicit time window. The [compatibility matrix](../compat/matrix.json) documents the browser session and reset behavior exercised by the SDK tests.
 
 ## Cookieless by default
 

@@ -4,7 +4,7 @@ Use `porcupine` to query an instance, manage projects and upload import chunks f
 
 ## Install
 
-Choose the `porcupine-cli-<tag>-<os>-<arch>` archive from [GitHub Releases](https://github.com/olup/porcupine/releases). The CLI is available starting with v0.8.0. Choose `darwin` for macOS, `linux` for Linux, or `windows` for Windows. Apple Silicon and other ARM64 systems use `arm64`. Intel and AMD 64-bit systems use `amd64`. Verify the archive against the release's `SHA256SUMS`, extract it and place `porcupine` or `porcupine.exe` on your PATH.
+Choose the `porcupine-cli-<tag>-<os>-<arch>` archive from [GitHub Releases](https://github.com/olup/porcupine/releases). Use the release that matches your server. Project rename and deletion require v0.9.0 or later on both sides. Choose `darwin` for macOS, `linux` for Linux, or `windows` for Windows. Apple Silicon and other ARM64 systems use `arm64`. Intel and AMD 64-bit systems use `amd64`. Verify the archive against the release's `SHA256SUMS`, extract it and place `porcupine` or `porcupine.exe` on your PATH.
 
 To build from the repository, run `make cli`. The executable is written to `bin/cli/porcupine`.
 
@@ -24,7 +24,7 @@ On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"
 
 On an email-enabled instance, login opens the browser for approval using OAuth with PKCE. The default client requests event and management read access. An instance administrator can run `porcupine login --admin` to authorize administration. Login needs the local callback port 43179. The latest login replaces the previous session for that origin. Tokens are refreshed on demand and stored in the user's configuration directory under `porcupine/credentials`.
 
-For automation, set `PORCUPINE_API_KEY` from your secret manager to a service key with the API audience. When set, this key takes precedence over the browser session. API permissions and project grants apply to every command.
+For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audience service key](../docs/service-keys.md). The CLI uses it ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. The upstream OIDC login option is for read-only MCP clients. See [team setup](../docs/connect-your-team.md) to enable CLI browser login.
 
 ## Rename or delete a project
 

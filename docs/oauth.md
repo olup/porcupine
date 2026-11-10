@@ -1,13 +1,8 @@
 # OAuth client credentials
 
-Porcupine provides machine-to-machine OAuth for the native API and MCP. A service exchanges its client ID and secret at `/oauth/token`, then sends the returned access token as Bearer authorization. Client secrets are token-exchange credentials, never API Bearer tokens or visitor identities.
+A backend or unattended agent can exchange its client ID and secret at `/oauth/token` and use the resulting short-lived Bearer token for either the HTTP API or MCP. Porcupine issues tokens in the same process as the analytics API and stores grants in SQLite. A [service key](service-keys.md) offers a fixed Bearer credential for one audience.
 
-The authorization server runs in the existing Go process and stores state in
-SQLite. It requires no separate identity application, external authorization
-server, or human account system. Interactive browser login requires a canonical HTTPS origin (lowercase scheme and host, default port omitted). Operator configuration pins the issuer and
-resources; project grants remain Porcupine's own authority.
-
-This page covers machine credentials. Porcupine v0.4.0 also supports [interactive MCP authorization](mcp-interactive-oauth.md) when an upstream OpenID Connect provider is configured. That optional flow uses pre-registered clients, an exact redirect URI, explicit user/project grants, and authorization codes with PKCE S256. The v0.3.0 release supports machine credentials only.
+For interactive applications, Porcupine also supports [email sign-in for CLI and MCP](connect-your-team.md) and [upstream OIDC for read-only MCP](mcp-interactive-oauth.md). These flows use OAuth authorization codes with S256 PKCE.
 
 ## Operator configuration
 
@@ -53,7 +48,7 @@ Revocation returns `204` and disables the principal and all its access tokens fo
 
 ## Token exchange
 
-`POST /oauth/token` accepts an uncompressed `application/x-www-form-urlencoded` body of at most 16 KiB. Authenticate with one HTTP Basic header. Body client secrets, assertions, duplicate form parameters, and query-string parameters are rejected.
+`POST /oauth/token` accepts an uncompressed `application/x-www-form-urlencoded` body of at most 16 KiB. Use HTTP Basic for the bootstrap client and clients registered with the default `client_secret_basic` method. Clients explicitly registered with `client_secret_post` send their client ID and secret as form fields. Send credentials with one method per request. The endpoint rejects assertions, duplicate form parameters and query-string parameters.
 
 | Field | Meaning |
 | --- | --- |
@@ -103,7 +98,7 @@ Tokens are opaque random secrets, not self-contained JWTs. SQLite stores hashes 
 
 Revoking a client invalidates its tokens without waiting for their default 15-minute expiry. Ordinary already-authenticated calls are not automatically canceled. Long-running exports additionally poll creator authority and check it before publication. Previously issued S3 presigned links retain their separate lifetime.
 
-Token issuance is limited to five authenticated valid exchanges per second with a burst of ten. Invalid anonymous traffic does not consume this issuance budget. There are at most 64 unexpired tokens per client and 10,000 instance-wide. Capacity and issuance limits return `429` with `Retry-After: 1`. Expired entries are removed during issuance. There is no public token-list or individual token-revocation endpoint.
+Token issuance is limited to five authenticated valid exchanges per second with a burst of ten. Invalid anonymous traffic does not consume this issuance budget. There are at most 64 unexpired tokens per client and 10,000 instance-wide. Capacity and issuance limits return `429` with `Retry-After: 1`. Expired entries are removed during issuance. To revoke one machine access token, authenticate its issuing client at `POST /oauth/revoke` and send the token in the form field `token`. Revoking an interactive access or refresh token invalidates its consent grant. An instance administrator can also inspect or revoke consent grants through the [management API](management-api.md#operations).
 
 ## Browser and backend ingestion
 
@@ -119,7 +114,7 @@ The authenticated service's client ID is never substituted for the event's `dist
 
 | Mode | Capture authority | Creation response |
 | --- | --- | --- |
-| `mixed` | Public single-project key or authorized API-resource OAuth token | Returns a one-time `ingest_token` |
+| `mixed` | Public single-project key, authorized API-resource OAuth token or API-audience service key | Returns a one-time `ingest_token` |
 | `server_only` | API-resource access token or private service key with `events:write` for the selected project | Omits `ingest_token` and creates no public ingestion credential |
 
 Omitting the field selects `mixed`. Existing projects migrate to `mixed`, preserving their ingestion keys. Each project object in creation and listing responses includes `ingestion_mode`. There is no API for changing an existing project's mode.
@@ -135,7 +130,7 @@ Create a project for confidential server collection with this body:
 
 Creating a `server_only` project requires configured OAuth and returns `503` when OAuth is disabled. A persisted `server_only` policy continues to reject writes if OAuth is later disabled. Enabling legacy API keys does not relax the policy. Public payload keys, legacy Bearer keys, client secrets, expired tokens, and MCP-audience tokens cannot authenticate server-only captures.
 
-The policy covers `/capture/`, `/batch/`, `/i/v0/e/`, and `/e/`. Batches retain atomic validation and project isolation. A payload `project_id` cannot select a project. Prefer a client scoped to one project so its API-resource token needs no payload selector. A token spanning projects still needs a separately issued valid project key as its selector. On a `server_only` project, that selector grants no write authority without a private API credential.
+The policy applies to the PostHog, [native and Segment ingestion endpoints](native-and-segment-ingestion.md). Batches retain atomic validation and project isolation. A payload `project_id` cannot select a project. Prefer a client scoped to one project so its API-resource token needs no payload selector. A token spanning projects still needs a separately issued valid project key as its selector. On a `server_only` project, that selector grants no write authority without a private API credential.
 
 `mixed` project events remain client-supplied data. Event names and UUIDs do not establish server authority. Use a separate `server_only` project when the collection boundary must exclude public writers.
 

@@ -1,6 +1,6 @@
 # Exact deduplication with a finite local receipt cache
 
-Porcupine remembers every accepted `(project_id, uuid)` indefinitely. The default
+Porcupine retains accepted `(project_id, uuid)` receipts for the lifetime of the project. [Deleting the project](management-api.md#operations) removes its receipts and analytical history. The default
 `PORCUPINE_HOT_RECEIPT_LIMIT=0` keeps delivered-event receipts in SQLite. There is
 no UUID expiry window.
 

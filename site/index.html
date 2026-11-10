@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Self-hosted product analytics for agents. Capture events with PostHog SDKs, query ClickHouse through MCP or HTTP, and deliver data to webhooks and S3.">
+  <meta name="description" content="Headless product analytics you can self-host. Capture native, PostHog or Segment events and query ClickHouse through your own agent.">
   <meta name="theme-color" content="#ffffff">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
   <title>Porcupine · Product analytics for agents</title>
@@ -19,34 +19,34 @@
         <img class="mark" src="./assets/favicon.svg" width="76" height="76" alt="">
         <h1 id="name">porcupine</h1>
       </div>
-      <p class="lead">Agent-first, self-hosted product analytics.</p>
-      <p class="description">I love PostHog, but I never open its dashboard. When I have a question about my users, my own agent writes the SQL, analyzes the results, and draws the graphs. I don’t need PostHog’s agents for that.</p>
-      <p class="description">I built Porcupine to make that workflow easy to self-host. There’s no admin UI. My agent queries the events directly through MCP or HTTP.</p>
+      <p class="lead">Headless product analytics for your agent.</p>
+      <p class="description">I love PostHog, but I rarely open the dashboard. When I have a question about how people use my product, my agent writes the SQL and draws the graph.</p>
+      <p class="description">I built Porcupine to self-host that workflow with one Go service and ClickHouse. There’s no admin UI. I can give an agent access to one project or manage the instance from the CLI.</p>
     </section>
 
     <section id="get-started" aria-labelledby="start">
       <h2 id="start">Get started</h2>
       <p>Paste this into your coding agent.</p>
       <div class="prompt-box">
-        <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Help me connect to an existing instance or start one locally. Then capture a test event and query it with SQL.</p>
+        <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Start the local quickstart, send a test event, and show me the SQL and its result.</p>
         <button type="button" id="copy" hidden>Copy prompt</button>
       </div>
       <span id="copy-status" role="status"></span>
-      <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="https://github.com/olup/porcupine/blob/v0.9.0/docs/hosting.md">Hosting guide</a></div>
+      <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="https://github.com/olup/porcupine/blob/main/docs/hosting.md">Hosting guide</a><a href="https://github.com/olup/porcupine/blob/main/cli/README.md">Standalone CLI</a></div>
     </section>
 
     <section class="features" aria-label="Features">
       <article>
-        <h2><a href="https://github.com/olup/porcupine/blob/v0.9.0/docs/compatibility.md">Capture</a></h2>
+        <h2><a href="https://github.com/olup/porcupine/blob/main/docs/compatibility.md">Capture</a></h2>
         <p>Send native events or use the supported PostHog and Segment inputs. Browser capture can run without cookies.</p>
       </article>
       <article>
-        <h2><a href="https://github.com/olup/porcupine/blob/v0.9.0/docs/analytics.md">Query</a></h2>
-        <p>Let an agent discover your events and run project-scoped SQL through MCP or HTTP.</p>
+        <h2><a href="https://github.com/olup/porcupine/blob/main/docs/analytics.md">Query</a></h2>
+        <p>Ask your agent which events people triggered this week. It can discover the properties, query the project and plot the results.</p>
       </article>
       <article>
-        <h2><a href="https://github.com/olup/porcupine/blob/v0.9.0/docs/pipelines.md">Deliver</a></h2>
-        <p>Forward events to webhooks individually or in batches. Send the results of a scheduled SQL query to S3.</p>
+        <h2><a href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md">Deliver</a></h2>
+        <p>Forward events to webhooks individually or in batches. Export a query once or send its results to S3 on a schedule.</p>
       </article>
     </section>
   </main>

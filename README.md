@@ -2,70 +2,23 @@
 
 # Porcupine
 
-Lightweight, self-hosted, agent-only product analytics. No built-in UI.
+Headless, self-hosted product analytics. Send events to Porcupine and give your agent access to a project. It can discover event names and properties, write ClickHouse SQL, and use the results to draw a chart or write a report.
 
-Agents discover events and properties, write SQL, and work through MCP or the
-HTTP API. Applications send native events or use the supported PostHog and Segment inputs. Destination pipelines send
-events to webhooks and scheduled query results to S3.
+I built Porcupine because I like PostHog and its SDKs, but I rarely open the dashboard. I already ask my agent to write the queries and draw the graphs. I wanted to self-host just the parts I use. Porcupine runs as a Go service with embedded SQLite and a ClickHouse server. There’s no admin UI. You manage projects, access and destinations through MCP, the HTTP API or the standalone CLI.
 
-One Go process, embedded SQLite, and ClickHouse. Optional S3; no Redis or message
-broker to operate. See the [architecture](docs/architecture.md) for the deployment.
+[Quickstart](#quickstart) · [Guide for agents](https://olup.github.io/porcupine/llms.txt) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0)
 
-[Get started](#quickstart) · [Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting guide](docs/hosting.md) ·
-[Releases](https://github.com/olup/porcupine/releases) · [Project site](https://olup.github.io/porcupine/) ·
-[Connect an agent](docs/mcp.md) · [Delivery pipelines](docs/pipelines.md) ·
-[Standalone CLI](cli/README.md) · [API reference](docs/management-api.md) · [MIT license](LICENSE)
+## Try it with your agent
 
-Porcupine is an early project. It does not implement the full PostHog product or
-its default SDK configuration. This release includes [opt-in identified capture](docs/data-and-identity.md#link-an-anonymous-browser-at-login) for linking pre-login events and updating person traits. Feature flags and session replay are outside the current scope. See the
-[compatibility profile](docs/compatibility.md) before pointing an SDK at it.
+If your agent is already connected to an instance, give it this prompt:
 
-## Send data to your destinations
+> Read https://olup.github.io/porcupine/llms.txt. List the projects I can read. In the project I choose, discover the event names, count the last seven days of events by name, and show me the SQL you used.
 
-[Project pipelines](docs/pipelines.md) send data repeatedly. Choose a destination
-for each pipeline:
-
-- Webhooks send accepted original events individually or in closed-window
-  batches. Retries keep stable delivery identities; receivers deduplicate.
-- Scheduled S3 queries process closed receipt-time windows and publish gzip
-  CSV or JSONL with a committed manifest for each completed run.
-
-These destinations are separate from native ClickHouse cold storage and
-[one-off SQL downloads](docs/exports.md). Configure them through HTTP or MCP with
-`pipelines:write` plus `events:read`; inspect them with `pipelines:read` plus
-`events:read`. Enable the runtime by setting `PORCUPINE_PIPELINE_KEY` in the
-private `.env` to a stable base64-encoded 32-byte random key. Preserve that key
-across restarts. The operator also controls allowed custom S3 origins;
-destination credentials are encrypted. Delivery is at least once. Supported restores pause
-destinations for review before resumption.
-
-Porcupine supports [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
-
-In v0.7.0, [connect your team](docs/connect-your-team.md) with email verification. A shared agent can authenticate with its own [service key](docs/service-keys.md).
-
-Since v0.4.0, Porcupine supports [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
-
-In v0.9.0, the CLI and MCP can rename projects and permanently delete them. See the [project management endpoints](docs/management-api.md#operations).
-
-## Install a release
-
-The `v0.9.0` release includes Linux amd64 and arm64 server images and the [standalone CLI](cli/README.md) for macOS, Linux and Windows on both architectures. Use the matching
-tag for configuration files and pin the image version when you deploy.
-
-```sh
-docker pull ghcr.io/olup/porcupine:0.9.0
-docker run --rm ghcr.io/olup/porcupine:0.9.0 --version
-```
-
-Each release also has checksummed image archives for `docker load`.
-Follow the [hosting guide](docs/hosting.md) for Compose, a single server,
-or an existing ClickHouse deployment. Give agents the [agent guide](https://olup.github.io/porcupine/llms.txt).
+The MCP endpoint exposes two tools. `porcupine_docs` finds the operations your credential can use and describes their inputs. `porcupine_call` runs the selected operation. A person can connect through OAuth. A backend or shared agent can use a service credential scoped to its projects. [Connect your team](docs/connect-your-team.md) · [MCP setup](docs/mcp.md)
 
 ## Quickstart
 
-Requires Git, Docker Compose 2.24.4 or newer, and Python 3. This starts the released image with
-OAuth enabled, fresh private credentials, and persistent Docker volumes.
-ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
+On a machine with Git, curl, Python 3 and Docker Compose 2.24.4 or newer, run the following commands in a POSIX shell. The example uses two containers and binds the API to `localhost:8080`. It needs no cloud account or email provider.
 
 ```sh
 git clone --branch v0.9.0 https://github.com/olup/porcupine.git
@@ -74,104 +27,45 @@ umask 077
 python3 - <<'PY'
 import secrets
 with open(".env", "x") as env:
-    env.write("PORCUPINE_BOOTSTRAP_TOKEN=" + secrets.token_hex(32) + "\n")
-    env.write("PORCUPINE_CLICKHOUSE_PASSWORD=" + secrets.token_hex(32) + "\n")
-    env.write("PORCUPINE_OAUTH_ISSUER=http://localhost:8080\n")
+    for key in ("PORCUPINE_BOOTSTRAP_TOKEN", "PORCUPINE_CLICKHOUSE_PASSWORD"):
+        print(key + "=" + secrets.token_hex(32), file=env)
+    print("PORCUPINE_OAUTH_ISSUER=http://localhost:8080", file=env)
 PY
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
-curl --fail --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8080/readyz
-```
-
-The configuration step refuses to overwrite an existing `.env`. Keep this file
-private. Changing its bootstrap secret does not reset credentials in an existing
-database. For a public deployment, use HTTPS, set the issuer to its exact public
-origin, and configure a reverse proxy before exposing the service.
-
-Run this example from the same directory. It exchanges the bootstrap secret for
-an administrator access token, creates a project, sends one cookieless event,
-and waits up to 90 seconds for SQL to find it. Credentials and the short-lived
-token stay in memory; only the project ID and query result are printed.
-
-```sh
+curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
 python3 examples/hello.py
 ```
 
-The [example](examples/hello.py) asks ClickHouse for:
+The example creates a project, captures one `hello` event, and waits for ClickHouse. It prints the new project ID and the result of a SQL query:
 
-```sql
-SELECT event, count() AS total
-FROM events
-WHERE event = {name:String}
-GROUP BY event
+```json
+[{"event": "hello", "total": "1"}]
 ```
 
+Stop the example with `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml down`. The volumes keep your data. For a shared instance, set the public HTTPS origin and configure access. [Hosting guide](docs/hosting.md) · [CLI for macOS, Linux and Windows](cli/README.md)
 
-The result contains `hello` with a total of `"1"`. ClickHouse 64-bit integers use
-JSON strings to preserve precision. Running the example again creates another
-project. `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml down` stops the
-services and keeps their volumes. Adding `--volumes` destroys the local data.
+## What you can do
 
-Use the bootstrap administrator only for setup. Register separate
-[OAuth clients](docs/oauth.md) with permissions and project grants for each
-service or agent. Browser ingestion keys are public, write-only project
-credentials; never put an OAuth client secret in a browser. Projects can instead
-require authenticated backend collection with `ingestion_mode: "server_only"`.
+| Task | How it works |
+| --- | --- |
+| Collect events | Send native HTTP events from a backend, use the supported PostHog SDK profiles, or send Segment track, page and identify calls. Browser collection supports a cookieless profile. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) |
+| Understand usage | Discover the properties actually present in a project, then query its `events` table with bounded, read-only ClickHouse SQL. Opt-in identity linking ties an anonymous visit to a signed-in user. [Queries and examples](docs/analytics.md) · [Identity](docs/data-and-identity.md) |
+| Deliver data | Forward individual events or timed batches to a webhook. Run a SQL query on a schedule and send the results to S3. Use a one-off export for a large download. [Pipelines](docs/pipelines.md) · [SQL exports](docs/exports.md) |
+| Migrate and manage | Import PostHog files with resumable uploads. Create or rename projects, grant access and delete a project through the management API. [PostHog imports](docs/posthog-import.md) · [Management operations](docs/management-api.md) |
+| Keep history on a small server | SQLite durably queues accepted events until ClickHouse receives them. Optional cold storage moves older ClickHouse parts to S3 and keeps them queryable. [Storage](docs/storage.md) · [Backups and recovery](docs/online-backup.md) |
 
-## SQL and agents
-
-The native API exposes project creation, credentials, event/schema discovery,
-read-only SQL, revision-checked corrections and deletions, private SQL exports,
-and project delivery pipelines. [OpenAPI](docs/management-api.md) is served at `/openapi.json`.
-
-SQL addresses the project-local `events` table. The service validates the SQL
-subset and executes it with a restricted ClickHouse reader and row policies.
-Project grants apply to HTTP and MCP, including administrators. Queries are
-bounded; exports use separate operator-controlled budgets. Start with the
-[schema and query examples](docs/analytics.md).
-
-The Streamable HTTP endpoint at `/mcp` exposes two tools: `porcupine_docs` for
-permission-filtered contracts and `porcupine_call` for API operations. Obtain an
-OAuth token for the `/mcp` resource; an `/api/v1` token cannot authenticate MCP.
-Clients must support machine credentials or accept a token from their host.
-People can also connect through OAuth with PKCE. See [MCP setup](docs/mcp.md).
-
-## Storage and operations
-
-- **Durable acceptance:** a successful capture follows the SQLite transaction
-  commit. Count and byte limits bound pending payloads; a full queue returns a
-  retryable error. Keep a stable event `uuid` across retries. Delivery is at least
-  once, with deduplication in project queries. See [reliability](docs/reliability.md).
-- **Persistent state:** preserve both Docker volumes. SQLite holds credentials,
-  queue state, and receipts; ClickHouse holds analytical history. Delivered event
-  payloads leave the local queue. Permanent deduplication receipts are the
-  default; [bounded receipts](docs/receipts.md) are optional.
-- **Cookieless collection:** the supported SDK profile uses daily, project-scoped
-  pseudonyms rather than browser storage. These are not persistent people across
-  days. Configure trusted proxies explicitly. See [identity](docs/data-and-identity.md).
-- **Cold S3 storage:** an optional operator-only Compose override moves eligible
-  ClickHouse parts to S3, where they remain queryable. It does not impose an
-  age-based deletion policy or replace a backup. Keep local disk metadata as
-  well as S3 objects. See [storage](docs/storage.md).
-- **Recovery and exports:** use [online checkpoints](docs/online-backup.md) for
-  paired SQLite/ClickHouse recovery. Optional [SQL exports](docs/exports.md)
-  publish gzip CSV or JSONL to a separate private S3 prefix after full success.
-
-See [.env.example](.env.example) for configuration and
-[load testing](docs/load-testing.md) for measurement. The
-[local benchmark](docs/benchmarks.md) records the workload, resource limits and results.
+PostHog compatibility covers **ingestion**. Porcupine has its own query and management API. See the [tested SDK configurations](docs/compatibility.md) before switching an application’s capture host.
 
 ## Development
 
-The server requires Go 1.26.10 or newer and builds without CGO. Docker is needed
-for integration tests; the pinned SDK suite also needs Node.js and Chromium.
+Build the server with `make build` and the separate CLI with `make cli`. The repository pins the Go toolchain in [go.mod](go.mod).
 
 ```sh
-make check              # vet, Go tests, formatting
-make integration        # real local ClickHouse
+make check              # Go tests, vet, formatting and generated CLI catalog
+make integration        # local ClickHouse
 make integration-s3     # ClickHouse and local S3-compatible storage
 make compat-install
-make compat             # pinned official PostHog SDK profile
+make compat             # pinned PostHog SDKs
 ```
 
-See the [roadmap](docs/roadmap.md) for planned work and the
-[access and isolation reference](docs/security-and-interfaces.md) for security boundaries.
+[Architecture](docs/architecture.md) · [Benchmark workloads and results](docs/benchmarks.md) · [MIT license](LICENSE)

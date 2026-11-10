@@ -2,9 +2,9 @@
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-## Invite and manage humans through HTTP or MCP
+## Invite and manage people
 
-Use an instance-admin credential for the appropriate resource. In MCP, use `porcupine_docs` to discover the operation and `porcupine_call` to invoke it. In HTTP, use an API-resource token.
+Use an instance-admin credential for the appropriate resource. In MCP, use `porcupine_docs` to discover the operation and `porcupine_call` to invoke it. The HTTP API and CLI use the API audience. After `porcupine login --admin`, the standalone CLI accepts each operation name below as a command. Save the example grant in `member.json` and run `porcupine invite-human --body @member.json`.
 
 | Operation | HTTP request | Result |
 | --- | --- | --- |

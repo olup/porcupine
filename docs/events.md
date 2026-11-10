@@ -11,9 +11,7 @@ Event mutations use project-scoped permissions and durable SQLite acceptance. Cl
 | `delete-event` | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` | `202` |
 | `get-event-mutation` | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` | `200` |
 
-All calls use an API-resource OAuth access token and the path's authorized
-project. Exchange client credentials as described in [OAuth](oauth.md). Static
-API Bearer keys apply only to legacy mode. HTTP and [MCP](mcp.md) expose the same operations. SQL remains read-only even for administrators; corrections and deletions use these endpoints.
+Use a [service key](service-keys.md) or [OAuth token](oauth.md) with the required project grant and the audience of the interface. The CLI and HTTP API use the API audience. The same operations are available through [MCP](mcp.md) with the MCP audience. Use the mutation endpoints to correct or delete individual events. To remove an entire project, see [project deletion](management-api.md#operations).
 
 ## Current accepted event
 
@@ -61,7 +59,7 @@ Mutations require configured ClickHouse delivery. A disabled delivery configurat
 
 The supplied revision must come from the current event; `"1"` is illustrative. Deletion queues a higher-revision tombstone with blank current and original payloads. It preserves project, UUID, durable event ID, original receipt metadata, and revision. If the original event is still queued, the acceptance transaction removes its SQLite payload and records a receipt atomically. A later revision-zero delivery cannot resurrect the tombstoned event.
 
-After projection, SQL and catalog results exclude the event. Tombstones remain indefinitely; Porcupine does not run `FINAL CLEANUP`. Old ClickHouse parts, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads until their own asynchronous cleanup or retention processes complete. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
+After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. Old ClickHouse parts, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads until their own asynchronous cleanup or retention processes complete. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
 
 ## Idempotency, concurrency, and audit
 

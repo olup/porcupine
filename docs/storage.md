@@ -1,6 +1,6 @@
 # ClickHouse hot and cold storage
 
-S3 tiering is a global deployment setting controlled by the operator. It uses ClickHouse's native S3 disk and a MOVE TTL. Cold parts remain in the same table and use the same API and SQL queries. This is not an export pipeline, a separate archive API, or an instance backup.
+S3 tiering is a global deployment setting controlled by the operator. ClickHouse moves eligible table parts onto its native S3 disk. Query cold and hot parts with the same SQL through the API, CLI, or MCP. To send a copy to a customer, use a [destination pipeline](pipelines.md). To recover the instance, take a [paired checkpoint](online-backup.md).
 
 Project credentials and agents cannot inspect or change storage policy, hot duration, bucket endpoint, region, or AWS credentials through HTTP or MCP. Even instance API administration does not expose deployment storage controls.
 
@@ -24,12 +24,11 @@ Use an existing bucket and credentials authorized for that deployment's prefix. 
 
 1. Keep the base deployment's `.env` with its bootstrap and ClickHouse provisioning secrets.
 2. Copy [the S3 environment example](../deployment/.env.s3.example) to a private `.env.s3` file and set the real endpoint, region, and deployment settings. Use secret-manager or IAM credentials where available.
-3. Stop the old Porcupine binary before starting the upgraded single writer.
-4. Start the Compose override:
+3. Keep the same Compose project name, data volumes, and existing overlays. For the release deployment in the [hosting guide](hosting.md), add the S3 overlay to the start command.
 
 ```sh
 docker compose --env-file .env --env-file .env.s3 \
-	-f compose.yaml -f compose.s3.yaml up -d --build
+	-f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.s3.yaml up -d
 ```
 
 For an AWS Paris bucket, the endpoint has the form `https://YOUR_BUCKET.s3.eu-west-3.amazonaws.com/UNIQUE_PREFIX/` with `AWS_REGION=eu-west-3`. The endpoint must match the bucket's actual region. No bucket is created by this command.
@@ -42,7 +41,7 @@ Initialization applies the policy and compares the current TTL with deployment c
 
 An empty policy leaves an existing policy and TTL untouched. Removing the override or increasing hot duration does not recall cold data to local storage. Tables that already contain cold parts still need the S3 disk configuration, credentials, object data, and local disk metadata. Removing these can make historical data unavailable.
 
-No DELETE TTL is installed. Total event history remains unbounded except for explicit event deletion. ClickHouse deletion tombstones remain. Operators can keep permanent SQLite receipts or [cap the local receipt ledger](receipts.md). There is no automatic age-based loss of history.
+Porcupine keeps event history without an age limit. Deleting an individual event writes a tombstone. An instance administrator can [delete an entire project](management-api.md#operations), which also removes that project's rows from the hot and cold table parts. Other projects sharing those parts remain queryable. Operators can keep permanent SQLite receipts or [cap the local receipt ledger](receipts.md).
 
 ## Migration from the first event table
 
@@ -56,6 +55,6 @@ Stop the old binary before upgrading. Migration requires one application writer;
 
 The native S3 disk relies on local ClickHouse metadata under the persistent `/var/lib/clickhouse` volume as well as S3 objects. A bucket containing objects alone is not a documented restore procedure. Protect the local metadata and preserve the mounted disk configuration. Back up authoritative SQLite state separately.
 
-Corrections and tombstones work through the same table whether older parts are local or cold. Deleted payloads can persist in obsolete parts, object versions, and backups until their own cleanup. Logical API deletion does not synchronously erase every physical copy. Do not configure object lifecycle expiration against live ClickHouse disk objects as a substitute for retention in the application.
+Corrections and tombstones work through the same table whether older parts are local or cold. Deleted payloads can persist in obsolete parts, object versions, and backups until their own cleanup. A whole-project deletion also cleans up Porcupine-managed one-time export objects. Backups, noncurrent object versions, obsolete parts and data already delivered to customer destinations follow their own retention rules. Do not configure object lifecycle expiration against live ClickHouse disk objects as a substitute for retention in the application.
 
 `make integration-s3` starts isolated real ClickHouse and MinIO services for opt-in native cold-storage and mutation tests, then removes its own test containers. It does not deploy AWS resources. Normal checks do not establish AWS connectivity, production backup recovery, or storage cost benchmarks.
