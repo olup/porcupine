@@ -14,7 +14,7 @@ broker to operate. See the [architecture](docs/architecture.md) for the deployme
 [Get started](#quickstart) · [Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting guide](docs/hosting.md) ·
 [Releases](https://github.com/olup/porcupine/releases) · [Project site](https://olup.github.io/porcupine/) ·
 [Connect an agent](docs/mcp.md) · [Delivery pipelines](docs/pipelines.md) ·
-[API reference](docs/management-api.md) · [MIT license](LICENSE)
+[Standalone CLI](cli/README.md) · [API reference](docs/management-api.md) · [MIT license](LICENSE)
 
 Porcupine is an early project. It does not implement the full PostHog product or
 its default SDK configuration. This release includes [opt-in identified capture](docs/data-and-identity.md#link-an-anonymous-browser-at-login) for linking pre-login events and updating person traits. Feature flags and session replay are outside the current scope. See the

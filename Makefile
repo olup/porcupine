@@ -9,13 +9,13 @@ run:
 test:
 	go test ./...
 
-check:
+check: cli-check
 	go vet ./...
 	go test ./...
 	@test -z "$$(gofmt -l cmd internal)" || (echo 'Run make fmt'; exit 1)
 
 fmt:
-	gofmt -w cmd internal
+	gofmt -w cmd internal cli/cmd
 
 integration:
 	python3 scripts/integration.py
@@ -51,3 +51,15 @@ restore-drill:
 online-restore-drill:
 	python3 scripts/online_restore_drill.py
 	python3 scripts/default_restore_drill.py
+
+.PHONY: cli cli-check cli-generate
+cli:
+	cd cli && CGO_ENABLED=0 go build -trimpath -o ../bin/cli/porcupine ./cmd/porcupine
+
+cli-generate:
+	go run ./internal/cmd/gencli
+
+cli-check:
+	go run ./internal/cmd/gencli -check
+	cd cli && go vet ./... && go test ./...
+	@test -z "$$(gofmt -l cli/cmd)" || (echo 'Run make fmt'; exit 1)

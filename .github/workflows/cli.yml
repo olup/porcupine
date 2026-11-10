@@ -1,0 +1,40 @@
+name: Package standalone CLI
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin, runner: macos-latest }
+          - { target: linux, runner: ubuntu-latest }
+          - { target: windows, runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: go test ./...
+        working-directory: cli
+      - name: Build both architectures and smoke-test the native archive
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          TARGET_OS: ${{ matrix.target }}
+        shell: bash
+        run: python scripts/package_cli.py "$TARGET_OS" "$RELEASE_VERSION" dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/porcupine-cli-*
+          compression-level: 0
+          if-no-files-found: error
