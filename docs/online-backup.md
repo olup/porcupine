@@ -1,6 +1,6 @@
 # Back up a live single-host instance
 
-Use `scripts/online_backup.py` to create a coordinated recovery point while ingestion continues. The operator tool takes a SQLite online snapshot and a full native ClickHouse backup. It exposes no HTTP or MCP operation and uses no agent credential.
+Use `scripts/online_backup.py` to create a coordinated recovery point while ingestion continues. The operator tool takes a SQLite online snapshot and a full native ClickHouse backup. Run it on the host or in the [Compose backup container](backup-compose.md) with operator credentials and access to the SQLite volume.
 
 The tool pauses event projection, not HTTP capture, for the checkpoint operation. Capture continues to commit new events to the bounded SQLite queue. Those accepted after the SQLite snapshot are outside this recovery point. If the queue fills during the pause, capture returns its normal backpressure response.
 
@@ -99,9 +99,13 @@ These values bind the restored receipt source to the daemon's configuration. The
 
 Restoring the checkpoint also restores its authorization state. A client revoked after that point can otherwise become active again. Review an independent revocation record before opening the recovered service. Replay known revocations during restore with repeatable `--revoke-principal ID` options. The command refuses to leave no active instance administrator.
 
-By default, restore deletes every saved OAuth access token. Clients must exchange their retained client secrets for fresh tokens. The stored client grants and checkpoint-time revocations remain. `--preserve-access-tokens` retains still-valid checkpoint tokens only when the operator deliberately chooses that behavior. Neither choice reconstructs post-checkpoint client revocations. `--acknowledge-credential-rollback` records the operator's acknowledgment of that recovery boundary.
+By default, restore deletes every saved OAuth access token. Machine clients exchange their client secrets for fresh tokens. Human users sign in and approve their tools again. The stored client grants and checkpoint-time revocations remain. `--preserve-access-tokens` retains still-valid checkpoint tokens only when the operator deliberately chooses that behavior. Neither choice reconstructs post-checkpoint client revocations. `--acknowledge-credential-rollback` records the operator's acknowledgment of that recovery boundary.
 
 SQLite stores hashes rather than recoverable client secrets. Keep the operator's recovery credentials separately. Changing the bootstrap environment value does not reset the restored bootstrap credential.
+
+A checkpoint predates any project deletions made afterward. Record those project IDs separately and reapply their deletions on the isolated recovery instance before opening access. Project IDs survive renames.
+
+A checkpoint can also contain a project deletion whose S3 cleanup was pending. On startup the server retries deletion of those managed export objects by key. Keep the recovery instance isolated from the source export bucket and prefix during a restore drill. If restoring service after an outage, verify the configured export store before allowing cleanup to resume.
 
 External result-export objects are outside this checkpoint. Restore cancels export jobs, clears stored request SQL and file references, and requires fresh export requests. It does not mint links to checkpoint-time exports, resume their uploads, or delete objects in the source deployment. Apply the source export prefix's independent retention and multipart-cleanup rules. Native cold event data is included through ClickHouse's backup and follows a different recovery path.
 

@@ -4,20 +4,20 @@
 HTTPS service. It creates synthetic events in an existing project. It does not
 create projects, change storage settings, or delete the generated events.
 
-Save credentials outside the repository in an owner-only JSON file:
+Create a dedicated test project. Give one machine client `events:write` and another `events:read` on that project. Save the credentials outside the repository in a JSON file with mode `600`. The writer can send to a `server_only` project. The script requests and renews access tokens for the API audience at the configured issuer.
 
 ```json
 {
-  "admin_token": "INSTANCE_ADMIN_SECRET",
   "project_id": "DEDICATED_LOAD_PROJECT_ID",
-  "ingest_token": "PROJECT_INGEST_SECRET",
-  "read_token": "OPTIONAL_PROJECT_EVENTS_READ_SECRET"
+  "oauth": {
+    "issuer": "https://analytics.example.test",
+    "write": {"client_id": "WRITER_CLIENT_ID", "client_secret": "WRITER_SECRET"},
+    "read": {"client_id": "READER_CLIENT_ID", "client_secret": "READER_SECRET"}
+  }
 }
 ```
 
-Omit `read_token` to use the administrator token for reads. An existing project
-with an `events:read` key is enough for the query path. Set file permissions to
-`600`; the script rejects credentials readable by other users on POSIX systems.
+To exercise public ingestion on a mixed project, include its `ingest_token` as a top-level field and select `--ingestion-auth public`. Keep the reader for query verification.
 
 Run a short ramp:
 
@@ -55,7 +55,7 @@ replays one successful batch exactly once and requires zero newly accepted event
 on replay. `--run-id` can choose a marker, but preflight rejects an existing run.
 
 A concurrent query counts only this run's `porcupine_load` events using bound SQL
-parameters. After ingestion, the script polls until the acknowledged unique event
+parameters and `use_cache: false`. After ingestion, the script polls until the acknowledged unique event
 count matches ClickHouse and the project's original and mutation queues are empty.
 It requires two matching observations because query results and delivery status
 do not share one database snapshot. Use a dedicated load project so unrelated
@@ -85,8 +85,8 @@ For example, `PORCUPINE_QUEUE_MAX_BYTES=67108864` limits pending original payloa
 to 64 MiB. Compose forwards both settings to the service.
 
 The byte charge is the stored UTF-8 length of the project ID, UUID, event name,
-distinct ID, properties JSON, event timestamp and received timestamp, plus
-64 bytes per row. The service checks the charge after cookieless identity and
+distinct ID, properties JSON, event and receipt timestamps, identity snapshot and
+serialized ingestion metadata, plus 64 bytes per row. The service checks the charge after cookieless identity and
 property processing. Both limits cover all projects sharing the SQLite queue.
 
 If a new event would exceed either limit, ingestion returns HTTP 503 with

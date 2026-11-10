@@ -71,13 +71,15 @@ print("Paused pipeline destinations:", count)
 PY
 ```
 
+Project deletion also has its own retry queue. Before starting the restored service, isolate it from the source's one-time export bucket and prefix. This prevents pending project deletions from cleaning up the live deployment's objects during a drill. Replay deletions that occurred after the checkpoint before admitting clients on a recovery target. [Online recovery](online-backup.md#reconcile-credentials-exports-and-pipeline-destinations)
+
 The lifetime lock refuses this change while a guarded application is running. The command changes only destination state. It preserves encrypted credentials and pending delivery records. Older snapshots without a `pipelines` table need no update. Do not run an older writer that ignores the lock protocol.
 
 Preserve the original pipeline encryption key outside SQLite and ClickHouse backups. Restore the same `PORCUPINE_PIPELINE_KEY` value or the secure file configured by `PORCUPINE_PIPELINE_KEY_FILE`. Review destination ownership, pending deliveries, post-checkpoint credential revocations, and possible receiver-side effects before resuming any destination. Keeping the key available does not itself authorize restored egress.
 
 ## Preserve the recovery boundary
 
-Use this drill as a reproducible check of the repository's synthetic recovery case. It does not provide an online production backup command or an automated cross-database snapshot mechanism.
+For a live single-host instance, use the [online backup and restore procedure](online-backup.md).
 
 For an instance recovery procedure, stop the application writer before taking the coordinated storage copies. Preserve the matching SQLite database, ClickHouse metadata and data, S3 objects, disk configuration, credentials, and software version. Restore into isolated storage and verify the recovery point before admitting writes. Follow [the storage requirements](storage.md) and [the reliability contract](reliability.md) when designing that procedure.
 

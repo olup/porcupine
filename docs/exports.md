@@ -8,9 +8,7 @@ destination and does not create a recurring job.
 
 ## API operations
 
-Every operation requires an API-resource OAuth access token and `events:read`
-for the path's project. Use [client credentials](oauth.md) to obtain that token.
-Static API Bearer keys apply only to legacy mode. Any authorized project reader can list jobs, read status, and obtain successful file links. Only the creator credential or an instance administrator can cancel a job.
+Each operation requires `events:read` for the project. HTTP and the CLI accept an API-audience [OAuth token](oauth.md) or [service key](service-keys.md). Use the MCP audience for MCP calls. Any authorized project reader can list jobs, read status and retrieve links for completed files. The creator credential or an instance administrator can cancel a job.
 
 | Operation ID | Endpoint | Success |
 | --- | --- | --- |
@@ -171,4 +169,4 @@ Lifecycle age starts at object or multipart creation, not job success. A strict 
 
 ## Verification status
 
-Unit tests, the complete race suite, real HTTP smoke checks, and all six real ClickHouse integration tests pass. The S3 suite also checks actual multipart upload/download against MinIO, multi-file exports, types, SQL semantics, cold data and mutations.
+Run `make integration-s3` to exercise multipart upload and download, multi-file exports, typed parameters, cold data and mutations against disposable ClickHouse and S3-compatible services. The suite also downloads a signed export URL, deletes its project and checks that the same URL returns HTTP 404.

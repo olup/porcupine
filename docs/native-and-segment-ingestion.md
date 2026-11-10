@@ -1,6 +1,6 @@
 # Native and Segment ingestion
 
-Porcupine v0.3.0 supports native and Segment inputs alongside the [PostHog capture profile](compatibility.md).
+Native, Segment and supported [PostHog inputs](compatibility.md) write to the same project event table. Choose a stable producer message ID for each original event so that a retry returns the same event ID.
 
 ## Send native events
 
@@ -51,7 +51,7 @@ The pageview and purchase become two queryable rows. The identify operation upda
 
 Each native receipt includes the producer's `message_id`, the server's `event_id` as a decimal string, the `uuid` for the event management routes, and a `duplicate` flag. Receipts follow input order. The server returns success after the SQLite transaction commits. A stable message ID lets you retry a whole batch after a lost response. Omitting the message ID requests a new ID on each submission. An explicit native message ID can contain up to 1,024 bytes.
 
-Configure `source_id` when creating an ingestion credential. For example, issue a key with `{"name":"orders writer","permissions":["events:write"],"projects":["PROJECT_ID"],"source_id":"orders-service"}`. The credential associates messages with one project and one logical producer. Give a replacement credential the same source to preserve retries across rotation. A native and a Segment credential can share the same source when both deliver events from that producer. The first accepted combination of project, source and message ID wins, including if a retry changes the payload.
+For a named source, set `source_id` on the single-project writer when [provisioning a service credential](service-keys.md). The writer needs `events:write`. The credential associates messages with one project and one logical producer. Give a replacement credential the same source to preserve retries across rotation. A native and a Segment credential can share the same source when both deliver events from that producer. The first accepted combination of project, source and message ID wins, including if a retry changes the payload.
 
 Unbound native and Segment credentials use `native` and `segment` as their respective sources. Unbound PostHog clients keep their existing UUIDs and use the reserved source `posthog`. An explicitly source-bound PostHog writer uses the same source-scoped ID scheme as the other adapters. Switching an existing writer from an unbound to a bound source changes its deduplication namespace, so finish outstanding retries first. [Credential API](management-api.md)
 

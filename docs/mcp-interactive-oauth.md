@@ -2,6 +2,8 @@
 
 Porcupine can authenticate a person through an operator-selected OpenID Connect provider before asking them to approve an MCP client. The upstream provider authenticates the person. Porcupine grants access only to projects explicitly assigned to that provider's verified subject ID.
 
+Choose either SMTP email login or upstream OIDC for a deployment. OIDC consent grants read access to MCP. For CLI browser login or interactive write and admin permissions, configure [email login](connect-your-team.md).
+
 This mode requires a public HTTPS Porcupine OAuth issuer. Use a lowercase scheme and hostname, canonical IP and port spelling, and omit default ports such as `:443`; noncanonical issuer representations are rejected so browser Origin, cookies and OAuth metadata agree. HTTP is accepted only for loopback development. Machine client credentials remain separate. There is no public client registration and no automatic access based on email domains, provider groups, or client-supplied project IDs.
 
 ## Operator setup
@@ -40,7 +42,7 @@ Upstream discovery must succeed at startup. Discovery, token, authorization and 
 
 An instance administrator must pre-register each MCP client's exact callback URL and appropriate authentication method through the OAuth client management API. Authorize only `events:read` and `management:read` for the interactive MCP flow. The client registration is an application capability limit; it does not give a person access to any project.
 
-Copy the callback shown by the actual client's connection setup. ChatGPT can use a stable callback `https://chatgpt.com/connector_platform_oauth_redirect` when the authorization server supports issuer identification; other connection modes use a callback-specific URL. The local protocol fixtures also exercise `https://claude.ai/api/mcp/auth_callback`. These are examples, not ambient allowlists or a substitute for the callback displayed by the current client setup. Register each exact URL and avoid wildcard callbacks. See the [OpenAI authentication guide](https://developers.openai.com/plugins/build/auth) and [Claude connector setup guide](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities).
+Copy the exact callback URL displayed in the hosted client's connection settings. Register that URL with Porcupine. For a confidential client, save its returned client ID and secret in the connector configuration. A public client needs its client ID and S256 PKCE.
 
 For a public client, save a registration body to a private file and replace every placeholder with the operator-approved values:
 
@@ -67,7 +69,7 @@ curl --fail-with-body --config "$PORCUPINE_ADMIN_CURL_CONFIG" \
   --data-binary @oauth-client-registration.json > oauth-client-created.json
 ```
 
-Use the returned `client_id` in the client setup. In Claude custom connector setup, select “Use your own OAuth client” under OAuth client. The published-identity and automatic-registration options do not create an operator-approved Porcupine registration. For any client, use its supported preconfigured-client mode; if that mode is unavailable, do not enable public registration as a workaround. Keep any returned client secret out of browser JavaScript, URLs and analytics payloads. The [machine OAuth guide](oauth.md) describes the bootstrap exchange for obtaining an administrator API token. An MCP resource token cannot be used as this API administrator token.
+Enter the returned `client_id` in the connector's preconfigured OAuth client settings. Keep any secret in that connector's secret store. The [machine OAuth guide](oauth.md) covers the bootstrap exchange for an administrator API token.
 
 The client connects to `https://analytics.example.com/mcp`, discovers OAuth metadata, and sends an authorization-code request with its registered client ID, exact callback, MCP resource and S256 PKCE challenge. The upstream login completes before Porcupine displays the client name, client ID, callback address and permissions. The person explicitly selects which of their assigned projects to share. An approval cannot add projects or permissions. Denial returns `access_denied` to the validated callback.
 
@@ -84,13 +86,7 @@ curl --fail-with-body --config "$PORCUPINE_ADMIN_CURL_CONFIG" \
   -X DELETE "$PORCUPINE_OAUTH_ISSUER/api/v1/oauth-clients/$CLIENT_ID"
 ```
 
-To revoke one human or one consent-grant principal, find its ID through `GET /api/v1/access-keys` and use the instance-admin `DELETE /api/v1/access-keys/{id}` operation. Human records have the name `OIDC human`; consent principals have `Interactive CLIENT_NAME`. When several humans exist, the operator can resolve the exact subject to principal ID through a private read-only SQLite query rather than guessing by name:
-
-```sql
-SELECT principal_id FROM oidc_humans
-WHERE issuer = 'https://login.example.com/realms/analytics'
-  AND subject = 'the-providers-stable-subject-id';
-```
+Use `list-oauth-grants` to find a connection by its verified issuer, subject, client ID and resource. The result includes the grant `id` and the `human_id`. Pass the grant ID to `revoke-oauth-grant` to disconnect that authorization. To disable an OIDC human, remove their operator binding and restart. To revoke their active principal immediately through the API, pass the verified `human_id` to `revoke-access-key`. Each of these management operations requires an administrator credential.
 
 The API never returns an OIDC human bearer secret. Remove the matching binding as part of offboarding. Confirm that the old MCP access token and refresh token both fail, then confirm that a new login cannot grant the removed project. The integration tests perform token rejection after human revocation and reject attempts to select a project outside the binding.
 

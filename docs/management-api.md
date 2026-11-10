@@ -6,11 +6,7 @@ documentation UI. The project analytics schema has its own endpoint.
 
 ## Authentication and scope
 
-Management requests use `Authorization: Bearer ACCESS_TOKEN`. In OAuth mode,
-exchange a registered client's ID and secret at `/oauth/token` for a token
-bound to `ISSUER/api/v1`. [The OAuth reference](oauth.md) describes bootstrap,
-private credential files, scopes, expiry, metadata, and migration. Client secrets
-are not Bearer tokens. SQLite stores client-secret and access-token hashes.
+Send a Bearer credential issued for `ISSUER/api/v1`. A person can authorize the [CLI](../cli/README.md) with email sign-in. A machine can use an [API-audience service key](service-keys.md) or exchange its client credentials for a short-lived [OAuth access token](oauth.md).
 
 On first startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
 principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
@@ -20,9 +16,9 @@ does not reset credentials. The alias stays pinned to that first administrator.
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
 issued scope and project snapshot intersect current parent grants on every
-request. Operators can enable [email accounts](email-accounts.md) or configure OIDC human bindings and consent grants for read-only MCP access. Authentication
+request. Operators can choose [email accounts](email-accounts.md) for interactive API and MCP access, or [upstream OIDC](mcp-interactive-oauth.md) for read-only MCP. Each deployment selects one interactive login method. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
-and project checks, with separate API and MCP token resources.
+and project checks, with separate API and MCP token resources. The CLI generates its commands from the same OpenAPI operations.
 
 With an issuer configured, legacy API and MCP Bearer keys are rejected by
 default. Explicit legacy-key allowance is a migration setting. Without any OAuth
@@ -48,6 +44,13 @@ for mutation invalidation and delivery consistency.
 | `POST /api/v1/oauth-clients` | `management:write`; requested grants cannot exceed the caller | `201` |
 | `GET /api/v1/oauth-clients` | `management:read`; complete project scope required for each returned client | `200` |
 | `DELETE /api/v1/oauth-clients/{id}` | `instance:admin`; last administrator protected | `204` |
+| `POST /api/v1/oauth-clients/{id}/api-keys` | `instance:admin`; service key must fit the machine client's grants | `201` |
+| `GET /api/v1/oauth-grants` | `instance:admin` | `200` |
+| `DELETE /api/v1/oauth-grants/{id}` | `instance:admin` | `204` |
+| `POST /api/v1/humans` | `instance:admin` on an email-enabled instance | `201` |
+| `GET /api/v1/humans` | `instance:admin` on an email-enabled instance | `200` |
+| `PUT /api/v1/humans/{id}` | `instance:admin` on an email-enabled instance | `200` |
+| `DELETE /api/v1/humans/{id}` | `instance:admin` on an email-enabled instance | `204` |
 | `GET /api/v1/projects/{id}/events?limit=100` | `events:read` and access to the project | `200` |
 | `GET /api/v1/projects/{id}/quarantined-events` | `events:read` and access to the project | `200` |
 | `POST /api/v1/projects/{id}/quarantined-events/{event_id}/retry` | `events:edit` and access to the project | `202` |
@@ -58,6 +61,8 @@ for mutation invalidation and delivery consistency.
 | `PATCH /api/v1/projects/{id}/events/{uuid}` | `events:edit` and access to the project | `202` |
 | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
+
+For managed SQL exports, see the [export job operations](exports.md). The [pipeline operations](pipelines.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
 
 Project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
 a one-time public `ingest_token` with `events:write` for that project. With OAuth
@@ -85,7 +90,7 @@ OAuth client creation accepts this body:
 The response contains `client_id`, one-time `client_secret`, `name`,
 `permissions`, `projects`, and `created_at`. The secret is for token exchange,
 not direct API authorization. Names contain 1 to 200 UTF-8 bytes and cannot be whitespace only.
-Permissions and projects must each contain at least one entry. Project IDs
+Creating independent access keys or OAuth clients also requires an instance administrator or an eligible machine credential. A project-scoped human session or static service key with `management:write` can rename its project but cannot issue independent credentials. Permissions and projects must each contain at least one entry. Project IDs
 must exist unless the scope is `*`.
 
 OAuth client listing returns `{"enabled":true,"oauth_clients":[...]}` without
@@ -95,8 +100,7 @@ client. See [OAuth client management](oauth.md#bootstrap-and-registered-clients)
 
 In OAuth mode with legacy keys disabled, access-key creation is restricted to
 `permissions: ["events:write"]` and exactly one project. It returns the one-time
-`token` used by public PostHog ingestion. Use OAuth client registration for
-service and agent access. Legacy mode retains the older scoped-key behavior.
+`token` used by public PostHog ingestion. Use an OAuth machine client or a [service key](service-keys.md) for service and agent access. Legacy mode retains the older scoped-key behavior.
 
 Key listing returns `{"access_keys":[...]}`. Each item contains `id`, `name`,
 `permissions`, `projects`, `created_at`, and `revoked_at`. Active keys have
@@ -169,7 +173,7 @@ Storage tiering is deployment-only and has no management endpoint.
 
 ## Historical PostHog imports
 
-The [import reference](posthog-import.md) covers HTTP manifest creation, binary chunk upload, status, resume, cancellation, and privileges. These operations use the API audience. The management API also exposes operator [consent grant inspection and revocation](mcp-interactive-oauth.md).
+The [import reference](posthog-import.md) covers manifest creation, binary chunk upload, status, resume, cancellation and import permissions. These operations use the API audience.
 
 ## Delivery pipeline management
 
@@ -206,7 +210,7 @@ with the same envelope.
 | `500` | Storage or internal error |
 | `503` | Analytics storage, reader provisioning, or delivery-status storage unavailable |
 
-Management bodies use JSON without compression. Browser CORS configuration
+Management requests with a body use uncompressed JSON, except for binary PostHog import chunks. Browser CORS configuration
 applies to ingestion endpoints only. `events:edit` and `events:delete` authorize
 implemented mutation endpoints. `identity:write` remains a reserved permission.
 The [access design](security-and-interfaces.md) describes analytics, SQL, and
@@ -214,4 +218,4 @@ MCP boundaries.
 
 ### Source-bound ingestion credentials
 
-Starting with v0.3.0 and [native and Segment ingestion](native-and-segment-ingestion.md), both access key and OAuth client creation accept an optional `source_id`. A bound writer needs `events:write` for one concrete project. The source is case sensitive, starts with a letter or digit, and accepts letters, digits, dots, underscores, colons, and hyphens up to 128 ASCII characters. The exact value `posthog` is reserved for legacy PostHog capture. The source appears in credential metadata. A source-bound parent issuing another writer delegates its own source.
+Ingestion credentials accept an optional `source_id` for [producer identity and retry deduplication](native-and-segment-ingestion.md). A bound writer needs `events:write` for one concrete project. The source is case sensitive, starts with a letter or digit, and accepts letters, digits, dots, underscores, colons, and hyphens up to 128 ASCII characters. The exact value `posthog` is reserved for legacy PostHog capture. The source appears in credential metadata. A source-bound parent issuing another writer delegates its own source.

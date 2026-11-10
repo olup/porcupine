@@ -22,7 +22,7 @@ installation uses. For example, a new OAuth deployment using the base and backup
 files can start with:
 
 ```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.backup.yaml up -d
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.backup.yaml up -d
 ```
 
 Adding the disk changes the ClickHouse configuration. Plan the initial
@@ -30,7 +30,7 @@ configuration rollout separately from the recurring backup job. For the example
 above, run a backup with a unique checkpoint name:
 
 ```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.backup.yaml \
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.backup.yaml \
   run --rm --no-deps backup backup \
   --db /data/porcupine.db --clickhouse-url http://clickhouse:8123 \
   --database porcupine --backup-disk backups \

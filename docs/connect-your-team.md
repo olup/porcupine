@@ -1,14 +1,16 @@
 # Connect a team to Porcupine
 
-Enable [email delivery](email-transport.md) on a build with email login. Set your canonical public HTTPS origin in `PORCUPINE_OAUTH_ISSUER`. The SMTP overlay sends invitations and verification codes. People can authorize both a CLI and an MCP client through OAuth with their email account. Project grants may cover different permissions across multiple projects.
+A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Enable [SMTP delivery](email-transport.md) and set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. The server sends an invitation notice when an administrator grants access and a verification code when the person starts a login.
 
-When upgrading from v0.6, sessions created with a manual invitation are revoked. Reconnect those tools using email sign-in. Email and OIDC sessions and machine credentials keep their existing authority.
+For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). Choose one interactive login method per deployment. An alternative for teams with an existing identity provider is [OIDC for read-only MCP](mcp-interactive-oauth.md).
 
 ## Connect the first administrator
 
 Optionally set `PORCUPINE_ADMIN_EMAIL` to the mailbox of the operator during deployment. This seeds a durable human account. Keep the separate machine bootstrap credential as a recovery path. The operator can use their mailbox to authorize an administrative tool on a new computer. A revoked account stays revoked after restart.
 
 Email-enabled deployments provide the public PKCE client `porcupine-local` for local read-only tools. They also provide the separate `porcupine-local-admin` client for instance administrators. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
+
+To administer the instance from the [standalone CLI](../cli/README.md), set `PORCUPINE_URL` to the issuer and run `porcupine login --admin`. Enter your administrator email in the browser, verify the code and approve the grant. Run `porcupine list-projects` to check the connection. Each tool gets its own grant.
 
 For Codex, add the following to your Codex configuration, replacing the host with your own. The client and its callback are configured once. Use the issuer's `/mcp` URL exactly.
 

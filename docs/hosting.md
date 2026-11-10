@@ -1,12 +1,14 @@
 # Host Porcupine 0.9.0
 
-Porcupine runs as one Go process with persistent SQLite and a separate ClickHouse server. These recipes use the 0.9.0 container image, OAuth client credentials, and private ClickHouse networking. They add no UI, Redis, or message broker.
+The server runs one Go process with a persistent SQLite volume. ClickHouse stores analytical history on a private network. Start with Docker Compose on a laptop, add HTTPS on a single VM, or connect the application to an existing ClickHouse server.
 
-Use one application writer per SQLite database on local persistent storage. Multiple projects share that instance. These are single-host deployments, without replication or automatic failover.
+Use one application writer per SQLite database on local persistent storage. Multiple projects share that instance. Host failure requires restoring a checkpoint or recovering the host.
+
+The [v0.9.0 release](https://github.com/olup/porcupine/releases/tag/v0.9.0) contains two Linux server image archives and six standalone CLI archives for macOS, Linux, and Windows on amd64 and arm64. Install the [CLI](../cli/README.md) on the machine that will call the HTTP API. Use the server image for the deployment.
 
 ## Laptop with Docker Compose
 
-Install Git, Python 3, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies the last two on macOS and Windows. Run from the repository root:
+Install Git, curl, Python 3, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies Docker and Compose on macOS and Windows. Use a POSIX shell for the commands below, such as a WSL shell with Docker integration on Windows. Start in the directory where you want to clone Porcupine.
 
 ```sh
 git clone --branch v0.9.0 https://github.com/olup/porcupine.git
@@ -21,11 +23,11 @@ with Path('.env').open('x') as env:
     env.write('PORCUPINE_OAUTH_ISSUER=http://localhost:8080\n')
 PY
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
-curl --fail --retry 30 --retry-connrefused --retry-delay 1 http://localhost:8080/readyz
+curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
 python3 examples/hello.py
 ```
 
-The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Running it again creates another project.
+The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Each run creates another project. An instance administrator can remove the example with the printed project ID using the [project management API](management-api.md#operations).
 
 `compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.9.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
 
@@ -40,7 +42,7 @@ docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml sto
 
 ### Load a release image without registry access
 
-Release assets contain Linux images for `amd64` and `arm64`. Select the Docker server's architecture, verify the downloaded archive, then load it:
+Select the Docker server's architecture. Download the `porcupine-0.9.0-linux-*` archive for that architecture, verify its checksum, then load it.
 
 ```sh
 case "$(docker info --format '{{.Architecture}}')" in
@@ -146,7 +148,7 @@ Replace the example hostname in the checks. Keep Caddy's volumes across restarts
 
 ## Application container with a separate ClickHouse service
 
-Use this instead of the base Compose application when ClickHouse has a separate lifecycle. Keep one application container attached to its SQLite volume. A dedicated ClickHouse provisioning user must be able to insert events and create database objects, restricted project readers, grants, views, and row policies. Application OAuth clients do not receive those database credentials.
+Use this instead of the base Compose application when ClickHouse has a separate lifecycle. Keep one application container attached to its SQLite volume. The dedicated ClickHouse provisioning user inserts events and manages the database objects, users, grants, views, and row policies used for project isolation. Project deletion also needs permission to inspect and mutate the shared event table, terminate the project's active reader queries, and drop its readers, policies and namespace. Application OAuth clients do not receive those database credentials.
 
 The following runnable example starts a separate ClickHouse container on a private Docker network. It assumes the laptop `.env` already exists and port 8080 is free. Its volumes are distinct from the Compose volumes:
 
@@ -177,6 +179,7 @@ docker run -d --name porcupine-app --restart unless-stopped \
   --env PORCUPINE_CLICKHOUSE_USER=porcupine_admin \
   --mount type=volume,source=porcupine-standalone-data,target=/data \
   "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.9.0}"
+curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
 python3 examples/hello.py
 ```
 
@@ -204,7 +207,7 @@ The default original-event queue is bounded by 100,000 events and 256 MiB of pen
 
 `/readyz` checks SQLite readiness, not ClickHouse health or a drained queue. Verify capture, SQL visibility, and project delivery state before routing traffic. A ClickHouse outage can fill the bounded local queue; new capture then receives backpressure.
 
-## Optional S3 capabilities
+## Optional destinations and cold storage
 
 | Capability | How to enable | What remains your responsibility |
 | --- | --- | --- |
@@ -216,7 +219,11 @@ Keep the release and OAuth overlays when adding an optional overlay. Native cold
 
 ## Authentication, backups, and upgrades
 
-Keep OAuth enabled for API and MCP. The bootstrap secret exchanges as client ID `bootstrap`; it is not a direct API Bearer token. Create separate scoped clients for applications and agents. Tokens for `/api/v1` and `/mcp` are distinct. Browser PostHog ingestion keys remain public, single-project, write-only credentials. Configure exact browser origins when needed. Use `server_only` projects for trusted backend collection. Changing `.env` does not reset credentials in an existing database.
+Keep the original bootstrap secret privately for recovery. Exchange it as OAuth client `bootstrap` to provision the instance. Changing `.env` on an initialized deployment leaves the original credential in effect.
+
+For human access to the CLI or MCP, configure [email sign-in and the initial administrator](connect-your-team.md), or configure an [OIDC provider for interactive clients](mcp-interactive-oauth.md). The laptop quickstart works with machine credentials alone. A backend or shared agent can use a [project-scoped service key](service-keys.md) or exchange its own OAuth client credentials. Each bearer credential has an API or MCP audience.
+
+For browser capture, allow the exact browser origins and issue a single-project ingestion key. For trusted backends, create a `server_only` project. See the [ingestion policy](oauth.md#project-ingestion-policy).
 
 Before storing important history, configure and exercise [paired online checkpoints](online-backup.md). The [backup Compose overlay](backup-compose.md) supplies shared SQLite lock-file mounts and a ClickHouse backup disk. Add it to the same complete overlay set used by the application. Preserve the SQLite bundle, native archive, private deployment configuration, software version, and pipeline encryption key separately off the host. A live volume copy, S3 bucket listing, or export is not that checkpoint.
 
@@ -228,4 +235,4 @@ If only the container changed and storage remains compatible, an earlier image m
 
 Local checks exercised the release overlay with a source-built image override, the documented Compose/OAuth flow and `hello.py`, restart persistence, and a standalone image with private ClickHouse 26.8.36.3. A Caddy reverse-proxy check verified TLS using a local test CA, fixed issuer metadata, capture and SQL, and MCP initialization. Its proxy used the same fixed trusted address and upstream Host configuration.
 
-No cloud instance, DNS record, public certificate, bucket, or production destination was created by those checks. Public ACME issuance, external ClickHouse connectivity, and each provider's resource capacity still need deployment-specific verification. Registry and downloadable release availability are distribution checks, separate from the local runtime proof.
+The v0.9.0 release was also deployed on a single AWS Lightsail VM with an existing ClickHouse and HTTPS proxy. The published CLI renamed a synthetic project and an MCP client deleted it. The final project inventory matched its pre-upgrade contents. The [release workflow](https://github.com/olup/porcupine/actions/runs/42829136190) built the server images, packaged both CLI architectures for each OS, and ran the native CLI on each OS.

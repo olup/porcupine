@@ -1,9 +1,24 @@
-# Test PostHog ingestion compatibility
+# PostHog SDK compatibility
 
-Porcupine supports an explicit ingestion profile, not the entire PostHog product.
-The executable compatibility matrix is [compat/matrix.json](../compat/matrix.json).
-Supported SDK versions are pinned in [compat/package.json](../compat/package.json)
-and its lockfile. The SDK settings live in [compat/profiles.mjs](../compat/profiles.mjs).
+The v0.9.0 test matrix pins `posthog-js` 1.447.3 and `posthog-node` 5.63.1. Porcupine accepts event capture from these SDKs. Its query, management and MCP interfaces use Porcupine’s own contracts. [Tested behaviors and known gaps](../compat/matrix.json)
+
+## Configure browser capture
+
+Create a `mixed` project and use its public ingestion key in the browser. Add the application’s exact origin to `PORCUPINE_ALLOWED_ORIGINS` on the server. Copy the [profile definitions](../compat/profiles.mjs) into your application and choose the mode you need.
+
+```js
+import posthog from 'posthog-js'
+import { cookielessProfile } from './profiles.mjs'
+
+posthog.init(projectIngestionKey, {
+  ...cookielessProfile,
+  api_host: porcupineOrigin,
+  opt_out_useragent_filter: false
+})
+posthog.capture('article_opened', { section: 'news' })
+```
+
+Set `porcupineOrigin` to your instance origin, for example `https://analytics.example.com`. The cookieless profile disables autocapture and browser storage. Porcupine derives a project-specific daily pseudonym when the SDK sends the cookieless sentinel. To link a returning browser at login, choose `identifiedBrowserProfile` and call `posthog.identify()`. For backend events, use the Node profile or the [native ingestion endpoint](native-and-segment-ingestion.md). [Identity and privacy](data-and-identity.md)
 
 ## Run the suite
 
@@ -44,10 +59,7 @@ scenario, not exactly-once delivery under every failure.
 
 Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. ClickHouse integration verifies SQL resolution for historical events.
 
-The current browser profile disables unrelated PostHog features and chooses an
-explicit transport. Headless Chromium may need the documented SDK bot-filter
-override in profiles.mjs; the override is visible rather than hidden in the test.
-Do not advertise compatibility with the default SDK configuration.
+The browser tests use fetch and a bot-filter override so headless Chromium can send events. The example above restores normal SDK bot filtering for application use.
 
 ## Fixtures and provenance
 
@@ -85,8 +97,7 @@ The canary intentionally modifies the local node_modules installation. Run
 A passing canary does not automatically widen support. Update the pins, matrix,
 fixtures, and documented profile together, then pass the required checks.
 
-GitHub workflows are configuration until this repository is published and their
-runs succeed. Local results do not imply that remote CI has run.
+See the [pinned SDK checks](https://github.com/olup/porcupine/actions/workflows/check.yml) and [SDK canary runs](https://github.com/olup/porcupine/actions/workflows/sdk-canary.yml) for the revision tested.
 
 ## Cookieless product default
 
@@ -103,12 +114,4 @@ See the [identity design](data-and-identity.md#cookieless-by-default).
 
 ## Remaining contracts
 
-The matrix lists current gaps explicitly. Expand it before claiming support for
-additional SDK versions, browsers, unload/beacon delivery, browser retry behavior,
-new-tab session behavior, and compressed browser configurations. Merging two identified users,
-general aliasing, group updates, feature flags, replay, surveys, and full default SDK
-configuration are outside the supported initial profile.
-
-Future server-side identity and analytics features need their own semantic
-fixtures and, where useful, comparison against a PostHog reference installation.
-This suite does not currently run a PostHog server or claim differential parity.
+The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, and identified capture. Browser retry behavior, independent new-tab sessions, and beacon and XHR transports remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../compat/matrix.json) before changing your SDK configuration.

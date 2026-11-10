@@ -2,7 +2,7 @@
 
 Porcupine exposes delivered events through project-scoped ClickHouse SQL. Clients and agents write SQL for their question. There are no named prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
-Every operation below requires `Authorization: Bearer ACCESS_TOKEN` with `events:read` for the path's project. In OAuth mode, obtain an API-resource token through [client credentials](oauth.md). Static API keys are legacy authentication only. HTTP and [MCP](mcp.md) use the same policies. A request targets one project even when its token grants several projects.
+Every request targets one project and requires `events:read`. For HTTP, send an API-audience [service key](service-keys.md) or [OAuth token](oauth.md) as a bearer credential. The CLI uses the HTTP API. On MCP, use a credential for the MCP resource. [MCP reference](mcp.md)
 
 ## Operations
 
@@ -21,7 +21,8 @@ Schema discovery returns `tables`, `sql`, `limits`, and `delivery`. `sql.functio
 | Column | ClickHouse type | Meaning |
 | --- | --- | --- |
 | `id` | `UInt64` | Durable SQLite event ID |
-| `event_id` | `UInt64` | Same durable ID as `id`, stable across producer retries |
+| `event_id` | `UInt64` | Same durable ID as `id`, stable across producer retries with a stable message ID |
+| `is_imported` | `UInt8` | `1` for historical imports, `0` for live capture |
 | `source_id` | `String` | Credential-bound logical producer or the adapter default |
 | `message_id` | `String` | Original producer message ID, or the generated ID when absent |
 | `event_type` | `String` | Normalized category of the visible row, `pageview` or `track` |

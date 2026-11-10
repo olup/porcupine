@@ -1,6 +1,6 @@
 # Send verification codes through SMTP
 
-Configure a transactional SMTP relay to send invitation notices and verification codes. An invitation tells the recipient which Porcupine instance to connect to. The person requests a separate code each time they authorize a client. Porcupine uses the [go-smtp](https://github.com/emersion/go-smtp) client and the operating system's TLS trust store.
+Start with a working [Porcupine deployment](hosting.md). Configure a transactional SMTP relay to send invitation notices and verification codes. An invitation tells the recipient which Porcupine instance to connect to. The person requests a separate code each time they authorize a client. Porcupine uses the [go-smtp](https://github.com/emersion/go-smtp) client and the operating system's TLS trust store.
 
 1. Verify a sender address with your provider. Create SMTP credentials for it. The same transport works with [Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html), [Postmark](https://postmarkapp.com/developer/user-guide/send-email-with-smtp), [SendGrid](https://www.twilio.com/docs/sendgrid/for-developers/sending-email/integrating-with-the-smtp-api), [Mailgun](https://documentation.mailgun.com/docs/mailgun/user-manual/sending-messages/send-smtp), or a self-hosted TLS relay.
 2. Save the password in a file accessible to the Porcupine process. The official image runs as UID 65532. With file-backed Compose secrets on Linux, place the file in a private host directory and grant read access to the container UID.
@@ -15,10 +15,10 @@ Configure a transactional SMTP relay to send invitation notices and verification
    PORCUPINE_ADMIN_EMAIL=operator@example.com
    ```
 
-4. Add the OAuth and email overlays to the deployment and restart Porcupine:
+4. From the matching release checkout, apply the OAuth and email overlays to your Compose deployment. Keep the release image overlay last.
 
    ```sh
-   docker compose -f compose.yaml -f compose.oauth.yaml -f compose.email.yaml up -d --build
+   docker compose -f compose.yaml -f compose.oauth.yaml -f compose.email.yaml -f compose.release.yaml up -d
    ```
 
 The email overlay mounts the specified host file at `/run/secrets/porcupine_smtp_password`. When running the binary directly, set `PORCUPINE_SMTP_PASSWORD_FILE` to the path on the server. Credentials are loaded at startup. Use your provider's SMTP password and username; some providers issue separate credentials for their HTTP API.

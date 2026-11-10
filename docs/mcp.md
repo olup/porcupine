@@ -16,36 +16,13 @@ v1.8.0 in the existing Go process. It requires no additional service.
 
 For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
-Agents and applications use separate registered [OAuth clients](oauth.md).
-A reader client typically has `management:read` and `events:read` for selected
-projects. Exchange its ID and secret at `/oauth/token` with
-`resource=ISSUER/mcp`, then put the returned token value in the Authorization
-header. Client secrets are not MCP Bearer credentials. An API-resource token
-cannot authenticate MCP, and an MCP token cannot authenticate direct API calls.
+Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. Upstream OIDC supports read-only MCP access. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
 
-Access tokens expire after 15 minutes by default. Machine clients repeat the client-credentials exchange. Interactive clients can use rotating refresh tokens within the consent grant lifetime. The server
-revalidates expiry, resource, parent revocation, and effective grants on every
-HTTP request. Ordinary in-flight calls are not canceled solely by that check.
-Export jobs additionally recheck creator authority while running and before
-publication. MCP session IDs grant no authority.
+Access tokens expire after 15 minutes by default. Machine clients repeat the token exchange. Interactive clients rotate refresh tokens during the seven-day consent grant. When the grant expires, the person connects again. Each request checks expiry, resource, parent revocation and effective grants. Exports also check creator authority while running and before publication.
 
-OAuth mode provides authorization-server and protected-resource metadata.
-Unauthorized MCP responses point to
-`ISSUER/.well-known/oauth-protected-resource/mcp`. URLs come from the pinned
-operator issuer, not the request Host. [The OAuth reference](oauth.md) describes
-the client-credentials exchange, Basic authentication, scopes, and challenges.
+Unauthorized requests include the discovery URL `ISSUER/.well-known/oauth-protected-resource/mcp`. [OAuth configuration](oauth.md) controls the issuer and optional legacy-key migration. Public browser write keys authorize ingestion only.
 
-Machine clients can also use a [service key](service-keys.md) issued for MCP. Interactive clients support email OTP or an upstream OIDC provider. The MCP transport is streamable HTTP.
-
-Configured OAuth rejects legacy MCP Bearer keys by default. Explicit legacy-key
-allowance is a migration option. Entirely unconfigured OAuth retains the older
-static-key mode for offline use; it exposes no OAuth endpoints. Public browser
-ingestion credentials do not grant MCP access.
-
-Cross-origin browser requests are rejected. Ingestion CORS configuration does
-not apply to MCP. The SDK's localhost DNS rebinding protection remains enabled.
-With a reverse proxy forwarding to a loopback listener, the upstream Host header
-must also name that loopback host. External clients use the public HTTPS URL.
+The endpoint rejects cross-origin browser requests. When a reverse proxy forwards to a loopback listener, set its upstream Host header to the loopback host. Clients connect to the public HTTPS URL.
 
 ## Discovery with `porcupine_docs`
 
@@ -148,7 +125,7 @@ SQL schema discovery, observed event and property discovery, read-only
 ClickHouse SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
 operations to the same discovery catalog; the tool count remains two. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
-operations through the same tools. Identity mutation remains unimplemented.
+operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical PostHog imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
 
 For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,
 and `query-events`. Schema discovery lists supported functions and quotas. The
@@ -187,14 +164,12 @@ requires no body and is restricted to the creator credential or an administrator
 
 The tool returns job metadata or bounded file pages, never a large result body.
 Files become available only after the entire query succeeds. Their presigned
-URLs last at most five minutes and cannot be revoked through Porcupine once
-issued. Bucket, prefix, endpoint, credentials, and budgets are operator-only
+URLs last at most five minutes. Revoking a credential does not expire an issued URL. Project deletion removes the underlying managed export object. Bucket, prefix, endpoint, credentials, and budgets are operator-only
 configuration. Export SQL remains read-only and uses the same project isolation
 as interactive analytics. The delivery barrier is not a point-in-time snapshot.
 
 The [export reference](exports.md#mcp-examples) includes create, poll, and cancel
-arguments. Export-specific validation is in progress; this reference does not
-claim that its real-storage integration suite has passed yet.
+arguments. Run `make integration-s3` to test export objects, downloads and project cleanup against real ClickHouse and an isolated S3-compatible store.
 
 ## Delivery pipelines
 
@@ -222,5 +197,4 @@ cross-origin rejection, transport limits, and bounded responses.
 clients for analytical calls, catalog discovery, schemas, and UUID pointers.
 Ordinary `make check` does not start ClickHouse.
 
-OAuth-specific deployment and final verification status are tracked in the
-[OAuth reference](oauth.md#verification-status).
+See the [OAuth reference](oauth.md#verification-status) for machine authentication tests.
