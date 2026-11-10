@@ -18,9 +18,9 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	if !s.interactiveOAuthEnabled() {
 		return actor{}, errInteractiveGrant
 	}
-	var principalID, humanID, clientID string
+	var principalID, humanID, clientID, resource string
 	var expires int64
-	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,expires_at_ms FROM oauth_interactive_grants WHERE id=?`, grantID).Scan(&principalID, &humanID, &clientID, &expires)
+	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,resource,expires_at_ms FROM oauth_interactive_grants WHERE id=?`, grantID).Scan(&principalID, &humanID, &clientID, &resource, &expires)
 	if err != nil || expires <= s.clock().UnixMilli() {
 		return actor{}, errInteractiveGrant
 	}
@@ -40,15 +40,16 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	}
 	filtered := []string{}
 	for _, permission := range a.Permissions {
-		if slices.Contains(interactiveOAuthScopes, permission) && human.can(permission) && client.can(permission) {
+		if s.interactiveScopesAllowed(human, client, resource, []string{permission}) {
 			filtered = append(filtered, permission)
 		}
 	}
 	a.Permissions = filtered
 	a.Projects = oauthProjectIntersection(oauthProjectIntersection(a.Projects, human.Projects), client.Projects)
-	if len(a.Permissions) == 0 || len(a.Projects) == 0 {
+	if len(a.Permissions) == 0 || !interactiveProjectsAllowed(human, client.actor, a.Permissions, a.Projects) {
 		return actor{}, errInteractiveGrant
 	}
+	a.interactive = true
 	return a, nil
 }
 
@@ -57,7 +58,7 @@ func revokeInteractiveGrant(ctx context.Context, tx *sql.Tx, grantID string) err
 	return err
 }
 
-func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, client *oauthClient, grantID, familyID, scope string, projects []string, refreshExpiry int64) (map[string]any, error) {
+func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, client *oauthClient, grantID, familyID, resource, scope string, projects []string, refreshExpiry int64) (map[string]any, error) {
 	current, err := s.loadInteractiveOAuthActor(ctx, tx, grantID)
 	if err != nil {
 		return nil, errInteractiveGrant
@@ -99,7 +100,7 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 		return nil, errInteractiveGrant
 	}
 	expiry := now + lifetime*1000
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms,interactive_grant_id) VALUES(?,?,?,?,?,?,?,?)`, hash(access), client.ID, s.oauth.mcpResource, scope, string(encodedProjects), now, expiry, grantID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms,interactive_grant_id) VALUES(?,?,?,?,?,?,?,?)`, hash(access), client.ID, resource, scope, string(encodedProjects), now, expiry, grantID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,14 +112,14 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": lifetime, "scope": scope, "resource": s.oauth.mcpResource, "refresh_token": refresh}, nil
+	return map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": lifetime, "scope": scope, "resource": resource, "refresh_token": refresh}, nil
 }
 
 func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClient, form url.Values) (map[string]any, error) {
 	if !s.interactiveOAuthEnabled() || !slices.Contains(client.GrantTypes, "authorization_code") {
 		return nil, errInteractiveGrant
 	}
-	if resource, present := form["resource"]; present && resource[0] != s.oauth.mcpResource {
+	if resource, present := form["resource"]; present && !s.interactiveResourceAllowed(resource[0]) {
 		return nil, errInteractiveTarget
 	}
 	if form.Get("code") == "" || len(form.Get("code")) > 256 || form.Get("redirect_uri") == "" || !slices.Contains(client.RedirectURIs, form.Get("redirect_uri")) {
@@ -132,11 +133,14 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, err
 	}
-	var grantID, clientID, redirect, challenge string
+	var grantID, clientID, redirect, challenge, resource string
 	var expires, used int64
-	err = tx.QueryRowContext(ctx, `SELECT grant_id,client_id,redirect_uri,challenge,expires_at_ms,used_at_ms FROM oauth_authorization_codes WHERE code_hash=?`, hash(form.Get("code"))).Scan(&grantID, &clientID, &redirect, &challenge, &expires, &used)
+	err = tx.QueryRowContext(ctx, `SELECT c.grant_id,c.client_id,c.redirect_uri,c.challenge,c.expires_at_ms,c.used_at_ms,g.resource FROM oauth_authorization_codes c JOIN oauth_interactive_grants g ON g.id=c.grant_id WHERE c.code_hash=?`, hash(form.Get("code"))).Scan(&grantID, &clientID, &redirect, &challenge, &expires, &used, &resource)
 	if err != nil || clientID != client.ID || redirect != form.Get("redirect_uri") || !oauthPKCE(form.Get("code_verifier"), challenge) {
 		return nil, errInteractiveGrant
+	}
+	if target, present := form["resource"]; present && target[0] != resource {
+		return nil, errInteractiveTarget
 	}
 	if used != 0 {
 		if err = revokeInteractiveGrant(ctx, tx, grantID); err != nil {
@@ -158,7 +162,7 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 	if err = tx.QueryRowContext(ctx, `SELECT expires_at_ms FROM oauth_interactive_grants WHERE id=?`, grantID).Scan(&refreshExpiry); err != nil {
 		return nil, err
 	}
-	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, strings.Join(a.Permissions, " "), a.Projects, refreshExpiry)
+	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, resource, strings.Join(a.Permissions, " "), a.Projects, refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +179,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	if !s.interactiveOAuthEnabled() || !slices.Contains(client.GrantTypes, "refresh_token") {
 		return nil, errInteractiveGrant
 	}
-	if resource, present := form["resource"]; present && resource[0] != s.oauth.mcpResource {
+	if resource, present := form["resource"]; present && !s.interactiveResourceAllowed(resource[0]) {
 		return nil, errInteractiveTarget
 	}
 	raw := form.Get("refresh_token")
@@ -190,11 +194,14 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, err
 	}
-	var grantID, familyID, clientID, scope, projectsJSON string
+	var grantID, familyID, clientID, scope, projectsJSON, resource string
 	var expires, used int64
-	err = tx.QueryRowContext(ctx, `SELECT grant_id,family_id,client_id,scope,projects_json,expires_at_ms,used_at_ms FROM oauth_refresh_tokens WHERE token_hash=?`, hash(raw)).Scan(&grantID, &familyID, &clientID, &scope, &projectsJSON, &expires, &used)
+	err = tx.QueryRowContext(ctx, `SELECT r.grant_id,r.family_id,r.client_id,r.scope,r.projects_json,r.expires_at_ms,r.used_at_ms,g.resource FROM oauth_refresh_tokens r JOIN oauth_interactive_grants g ON g.id=r.grant_id WHERE r.token_hash=?`, hash(raw)).Scan(&grantID, &familyID, &clientID, &scope, &projectsJSON, &expires, &used, &resource)
 	if err != nil || clientID != client.ID || expires <= s.clock().UnixMilli() {
 		return nil, errInteractiveGrant
+	}
+	if target, present := form["resource"]; present && target[0] != resource {
+		return nil, errInteractiveTarget
 	}
 	if used != 0 {
 		if err = revokeInteractiveGrant(ctx, tx, grantID); err != nil {
@@ -238,7 +245,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	if len(current) == 0 || len(projects) == 0 {
 		return nil, errInteractiveGrant
 	}
-	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, familyID, strings.Join(current, " "), projects, expires)
+	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, familyID, resource, strings.Join(current, " "), projects, expires)
 	if err != nil {
 		return nil, err
 	}

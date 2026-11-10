@@ -46,9 +46,10 @@ func newOAuthBrowser(secure bool) *oauthBrowser {
 }
 
 type oauthBrowser struct {
-	mu       sync.Mutex
-	sessions map[string]*oidcBrowserSession
-	secure   bool
+	emailDelivery emailDeliveryWindow
+	mu            sync.Mutex
+	sessions      map[string]*oidcBrowserSession
+	secure        bool
 }
 
 type oidcResponseBody struct {

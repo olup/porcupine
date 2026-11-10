@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -19,13 +20,14 @@ const oidcSessionLifetime = 10 * time.Minute
 const oidcSessionCapacity = 1024
 
 type oidcBrowserSession struct {
-	requestID string
-	state     string
-	nonce     string
-	verifier  string
-	csrf      string
-	humanID   string
-	expires   time.Time
+	emailChallenge emailChallenge
+	requestID      string
+	state          string
+	nonce          string
+	verifier       string
+	csrf           string
+	humanID        string
+	expires        time.Time
 }
 
 func oidcRandom() string {
@@ -92,9 +94,12 @@ func oidcPageHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 }
 func (s *Service) registerInteractiveOIDC(m *http.ServeMux) {
+	if s.oauth.config.Email != nil {
+		s.registerEmailLogin(m)
+	}
 	if s.oauth.config.LocalInvitations {
 		m.HandleFunc("POST /oauth/invitation", s.oauthInvitationLogin)
-	} else {
+	} else if s.oauth.oidc != nil {
 		m.HandleFunc("GET /oauth/oidc/callback", s.oauthOIDCCallback)
 	}
 	m.HandleFunc("GET /oauth/consent", s.oauthOIDCConsent)
@@ -102,6 +107,10 @@ func (s *Service) registerInteractiveOIDC(m *http.ServeMux) {
 }
 func (s *Service) oauthHumanAuthorize(w http.ResponseWriter, r *http.Request, request oauthAuthorizationRequest) {
 	oidcPageHeaders(w)
+	if s.oauth.config.Email != nil {
+		s.startEmailLogin(w, request)
+		return
+	}
 	if s.oauth.config.LocalInvitations {
 		s.startInvitationLogin(w, request)
 		return
@@ -176,7 +185,7 @@ func (s *Service) oauthOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/oauth/consent", http.StatusSeeOther)
 }
 
-var oidcConsentPage = template.Must(template.New("consent").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Porcupine access</title><style>body{max-width:38rem;margin:3rem auto;padding:0 1rem;font:17px/1.5 system-ui;color:#161616;background:white}fieldset{margin:1rem 0}label{display:block;padding:.4rem}button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0}code{overflow-wrap:anywhere}</style><main><h1>Authorize access</h1><p><strong>{{.ClientName}}</strong> requests access to Porcupine.</p><p>Client: <code>{{.ClientID}}</code></p><p>Return address: <code>{{.RedirectURI}}</code></p><p>Permissions: <code>{{.Scope}}</code></p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><fieldset><legend>Select projects to share</legend>{{range .Projects}}<label><input type="checkbox" name="project" value="{{.}}"> {{.}}</label>{{end}}</fieldset><button type="submit" name="decision" value="approve">Approve access</button><button type="submit" name="decision" value="deny">Deny</button></form></main></html>`))
+var oidcConsentPage = template.Must(template.New("consent").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Porcupine access</title><style>body{max-width:38rem;margin:3rem auto;padding:0 1rem;font:17px/1.5 system-ui;color:#161616;background:white}fieldset{margin:1rem 0}label{display:block;padding:.4rem}button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0}code{overflow-wrap:anywhere}</style><main><h1>Authorize access</h1><p><strong>{{.ClientName}}</strong> requests access to Porcupine.</p><p>Client: <code>{{.ClientID}}</code></p><p>Return address: <code>{{.RedirectURI}}</code></p><p>Resource: <code>{{.Resource}}</code></p><p>Permissions: <code>{{.Scope}}</code></p>{{if .Admin}}<p><strong>Grant full instance administration, including management of all people, clients and projects.</strong></p>{{end}}<form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><fieldset><legend>Select projects to share</legend>{{range .Projects}}<label><input type="checkbox" name="project" value="{{.}}"> {{if eq . "*"}}All projects (instance-wide administrator){{else}}{{.}}{{end}}</label>{{end}}</fieldset><button type="submit" name="decision" value="approve">Approve access</button><button type="submit" name="decision" value="deny">Deny</button></form></main></html>`))
 
 func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	oidcPageHeaders(w)
@@ -201,22 +210,30 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Client access revoked", 403)
 		return
 	}
-	human.Projects = slices.DeleteFunc(human.Projects, func(project string) bool { return !authorize(client.actor, "", project) })
-	if len(human.Projects) == 0 {
-		http.Error(w, "No shared projects are granted", 403)
+	permissions := strings.Fields(request.Scope)
+	if human.emailHuman && onlyInteractiveReadScopes(permissions) {
+		permissions = slices.DeleteFunc(permissions, func(permission string) bool { return !human.can(permission) })
+	}
+	if !s.interactiveScopesAllowed(human, client, request.Resource, permissions) {
+		http.Error(w, "Requested permissions are not granted", 403)
 		return
 	}
-	permissions := []string{}
-	for _, permission := range strings.Fields(request.Scope) {
-		if (permission == "events:read" || permission == "management:read") && slices.Contains(human.Permissions, permission) && client.can(permission) {
-			permissions = append(permissions, permission)
-		} else {
-			http.Error(w, "Requested permissions are not granted", 403)
+	projectsOffered := oauthProjectIntersection(human.Projects, client.Projects)
+	admin := slices.Contains(permissions, "instance:admin")
+	if slices.Contains(projectsOffered, "*") && !admin {
+		// A wildcard in both upstream grants still requires choosing concrete projects here.
+		var encoded string
+		err = s.db.QueryRowContext(r.Context(), `SELECT json_group_array(id) FROM (SELECT id FROM projects ORDER BY id LIMIT 1000)`).Scan(&encoded)
+		if err != nil || json.Unmarshal([]byte(encoded), &projectsOffered) != nil {
+			http.Error(w, "Project access unavailable", 503)
 			return
 		}
 	}
-	if len(permissions) == 0 || request.Resource != s.oauth.mcpResource {
-		http.Error(w, "Requested permissions are not granted", 403)
+	projectsOffered = slices.DeleteFunc(projectsOffered, func(project string) bool {
+		return !interactiveProjectsAllowed(human, client.actor, permissions, []string{project})
+	})
+	if len(projectsOffered) == 0 {
+		http.Error(w, "No shared projects are granted", 403)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -225,9 +242,10 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "+callback.Scheme+"://"+callback.Host+"; frame-ancestors 'none'; base-uri 'none'")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = oidcConsentPage.Execute(w, struct {
-			ClientName, ClientID, RedirectURI, Scope, CSRF string
-			Projects                                       []string
-		}{request.ClientName, request.ClientID, request.RedirectURI, strings.Join(permissions, " "), session.csrf, human.Projects})
+			ClientName, ClientID, RedirectURI, Resource, Scope, CSRF string
+			Admin                                                    bool
+			Projects                                                 []string
+		}{request.ClientName, request.ClientID, request.RedirectURI, request.Resource, strings.Join(permissions, " "), session.csrf, admin, projectsOffered})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
@@ -242,7 +260,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	projects := []string{}
 	for _, project := range r.PostForm["project"] {
-		if !slices.Contains(human.Projects, project) || slices.Contains(projects, project) {
+		if !slices.Contains(projectsOffered, project) || slices.Contains(projects, project) {
 			http.Error(w, "Project is not granted", 403)
 			return
 		}

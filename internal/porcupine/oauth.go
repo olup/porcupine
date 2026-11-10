@@ -26,7 +26,13 @@ CREATE INDEX IF NOT EXISTS oauth_tokens_expiry ON oauth_tokens(expires_at_ms);`)
 	if err = s.initializeInteractiveOAuth(ctx); err != nil {
 		return err
 	}
-	return s.initializeOIDCHumans(ctx)
+	if err = s.initializeOIDCHumans(ctx); err != nil {
+		return err
+	}
+	if err = s.initializeEmailAccounts(ctx); err != nil {
+		return err
+	}
+	return s.initializeLocalEmailClients(ctx)
 }
 
 func oauthTokenError(w http.ResponseWriter, status int, code string) {

@@ -130,7 +130,7 @@ func TestCredentialSourceMigrationPreservesExistingCredentials(t *testing.T) {
 	}
 	projectID, _ := project(t, s)
 	_, oldKey := key(t, s, []string{"events:write"}, []string{projectID})
-	if _, err = s.db.Exec(`ALTER TABLE access_keys DROP COLUMN source_id`); err != nil {
+	if _, err = s.db.Exec(`DROP TRIGGER revoke_service_api_keys; ALTER TABLE access_keys DROP COLUMN source_id`); err != nil {
 		s.Close()
 		t.Fatal(err)
 	}

@@ -26,6 +26,71 @@ type oauthAuthorizationRequest struct {
 
 func (s *Service) interactiveOAuthEnabled() bool { return s.oauth != nil && s.oauth.browser != nil }
 
+func onlyInteractiveReadScopes(scopes []string) bool {
+	for _, scope := range scopes {
+		if !slices.Contains(interactiveOAuthScopes, scope) {
+			return false
+		}
+	}
+	return len(scopes) > 0
+}
+
+// Interactive clients explicitly list the scopes they may request. A deployment
+// administrator's client is separate from analytics clients and machine clients.
+func (c *oauthClient) permitsInteractiveScope(permission string) bool {
+	if c.SourceID != "" || !slices.Contains(c.Permissions, permission) {
+		return false
+	}
+	if c.admin() {
+		return permission == "instance:admin" && len(c.Permissions) == 1 && slices.Equal(c.Projects, []string{"*"}) && !slices.Contains(c.GrantTypes, "client_credentials")
+	}
+	return true
+}
+
+func (s *Service) interactiveResourceAllowed(resource string) bool {
+	return resource == s.oauth.mcpResource || s.oauth.config.Email != nil && resource == s.oauth.apiResource
+}
+
+func (s *Service) interactiveScopesAllowed(human actor, client *oauthClient, resource string, permissions []string) bool {
+	if len(permissions) == 0 || !s.interactiveResourceAllowed(resource) {
+		return false
+	}
+	if !human.emailHuman && resource != s.oauth.mcpResource {
+		return false
+	}
+	for _, permission := range permissions {
+		if !slices.Contains(validPermissions, permission) || !human.can(permission) || !client.permitsInteractiveScope(permission) {
+			return false
+		}
+		if !human.emailHuman && !slices.Contains(interactiveOAuthScopes, permission) {
+			return false
+		}
+	}
+	return true
+}
+
+func interactiveProjectsAllowed(human, client actor, permissions, projects []string) bool {
+	if len(projects) == 0 || len(projects) > 64 || slices.Contains(projects, "") {
+		return false
+	}
+	if slices.Contains(permissions, "instance:admin") {
+		return human.emailHuman && human.admin() && client.admin() && slices.Contains(human.Projects, "*") && slices.Contains(client.Projects, "*") && slices.Equal(projects, []string{"*"})
+	}
+	if slices.Contains(projects, "*") || !human.containsProjects(projects) || !client.containsProjects(projects) {
+		return false
+	}
+	if human.emailHuman && !human.admin() {
+		for _, project := range projects {
+			for _, permission := range permissions {
+				if !slices.Contains(human.emailProjectPermissions[project], permission) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func oauthRandom(prefix string) (string, error) {
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {

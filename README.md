@@ -41,18 +41,18 @@ destinations for review before resumption.
 
 Porcupine supports [native and Segment ingestion](docs/native-and-segment-ingestion.md), with stable producer message IDs and Porcupine event receipts.
 
-[Local MCP invitations](docs/local-invitations.md) let an admin connect a read-only client to one project without an identity provider.
+In v0.6.0, [connect your team](docs/connect-your-team.md) with email verification or [manual invitations](docs/local-invitations.md). A shared agent can authenticate with its own [service key](docs/service-keys.md).
 
 Since v0.4.0, Porcupine supports [resumable PostHog file imports](docs/posthog-import.md) and [interactive OAuth for MCP clients](docs/mcp-interactive-oauth.md).
 
 ## Install a release
 
-The `v0.5.0` release includes Linux amd64 and arm64 images. Use the matching
+The `v0.6.0` release includes Linux amd64 and arm64 images. Use the matching
 tag for configuration files and pin the image version when you deploy.
 
 ```sh
-docker pull ghcr.io/olup/porcupine:0.5.0
-docker run --rm ghcr.io/olup/porcupine:0.5.0 --version
+docker pull ghcr.io/olup/porcupine:0.6.0
+docker run --rm ghcr.io/olup/porcupine:0.6.0 --version
 ```
 
 Each release also has checksummed image archives for `docker load`.
@@ -66,7 +66,7 @@ OAuth enabled, fresh private credentials, and persistent Docker volumes.
 ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
 
 ```sh
-git clone --branch v0.5.0 https://github.com/olup/porcupine.git
+git clone --branch v0.6.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'
@@ -131,7 +131,7 @@ The Streamable HTTP endpoint at `/mcp` exposes two tools: `porcupine_docs` for
 permission-filtered contracts and `porcupine_call` for API operations. Obtain an
 OAuth token for the `/mcp` resource; an `/api/v1` token cannot authenticate MCP.
 Clients must support machine credentials or accept a token from their host.
-There is no interactive OAuth login flow. See [MCP setup](docs/mcp.md).
+People can also connect through OAuth with PKCE. See [MCP setup](docs/mcp.md).
 
 ## Storage and operations
 

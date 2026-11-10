@@ -21,7 +21,7 @@ The issuer is an origin with no path, credentials, query, or fragment. HTTPS is 
 
 [compose.oauth.yaml](../compose.oauth.yaml) adds these settings to the base deployment. Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
 
-A configured issuer disables legacy API and MCP Bearer keys by default. Leaving OAuth entirely unconfigured retains legacy authentication for offline use and migration; it does not enable OAuth endpoints. Set `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS=true` only for an explicit migration period. Public PostHog ingestion keys remain separate and continue to work without OAuth for `mixed` projects. Projects with `server_only` ingestion always require OAuth.
+A configured issuer disables legacy API and MCP Bearer keys by default. Leaving OAuth entirely unconfigured retains legacy authentication for offline use and migration; it does not enable OAuth endpoints. Set `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS=true` only for an explicit migration period. Public PostHog ingestion keys remain separate and continue to work without OAuth for `mixed` projects. Projects with `server_only` ingestion require an API-resource OAuth token or a private [service key](service-keys.md).
 
 ## Bootstrap and registered clients
 
@@ -107,7 +107,7 @@ Token issuance is limited to five authenticated valid exchanges per second with 
 
 ## Browser and backend ingestion
 
-For `mixed` projects, PostHog browser SDKs keep their public write-only single-project ingestion key in the documented payload field. They do not receive OAuth client secrets. With OAuth enabled and legacy keys disabled, new `/access-keys` credentials are restricted to `events:write` and exactly one project. Use OAuth clients for read, edit, delete, management, and agent access.
+For `mixed` projects, PostHog browser SDKs keep their public write-only single-project ingestion key in the documented payload field. They do not receive OAuth client secrets. With OAuth enabled and legacy keys disabled, new `/access-keys` credentials are restricted to `events:write` and exactly one project. Use OAuth clients or [audience-bound service keys owned by machine clients](service-keys.md) for read, edit, delete, management and agent access.
 
 A backend can send an API-resource OAuth access token with `events:write` in Authorization. A token granting exactly one project needs no payload selector. A token spanning projects must also supply a valid single-project public ingestion key as the payload selector. That key must resolve to a project the token may write; an arbitrary payload project ID cannot choose scope. An invalid Authorization header cannot fall back to an otherwise valid payload key.
 
@@ -120,7 +120,7 @@ The authenticated service's client ID is never substituted for the event's `dist
 | Mode | Capture authority | Creation response |
 | --- | --- | --- |
 | `mixed` | Public single-project key or authorized API-resource OAuth token | Returns a one-time `ingest_token` |
-| `server_only` | API-resource OAuth access token with `events:write` for the selected project | Omits `ingest_token` and creates no public ingestion credential |
+| `server_only` | API-resource access token or private service key with `events:write` for the selected project | Omits `ingest_token` and creates no public ingestion credential |
 
 Omitting the field selects `mixed`. Existing projects migrate to `mixed`, preserving their ingestion keys. Each project object in creation and listing responses includes `ingestion_mode`. There is no API for changing an existing project's mode.
 
@@ -135,7 +135,7 @@ Create a project for confidential server collection with this body:
 
 Creating a `server_only` project requires configured OAuth and returns `503` when OAuth is disabled. A persisted `server_only` policy continues to reject writes if OAuth is later disabled. Enabling legacy API keys does not relax the policy. Public payload keys, legacy Bearer keys, client secrets, expired tokens, and MCP-audience tokens cannot authenticate server-only captures.
 
-The policy covers `/capture/`, `/batch/`, `/i/v0/e/`, and `/e/`. Batches retain atomic validation and project isolation. A payload `project_id` cannot select a project. Prefer a client scoped to one project so its API-resource token needs no payload selector. A token spanning projects still needs a separately issued valid project key as its selector. On a `server_only` project, that selector grants no write authority without the OAuth token.
+The policy covers `/capture/`, `/batch/`, `/i/v0/e/`, and `/e/`. Batches retain atomic validation and project isolation. A payload `project_id` cannot select a project. Prefer a client scoped to one project so its API-resource token needs no payload selector. A token spanning projects still needs a separately issued valid project key as its selector. On a `server_only` project, that selector grants no write authority without a private API credential.
 
 `mixed` project events remain client-supplied data. Event names and UUIDs do not establish server authority. Use a separate `server_only` project when the collection boundary must exclude public writers.
 

@@ -270,6 +270,27 @@ def invalidate_interactive_sessions(snapshot, restored_at):
         snapshot.execute("UPDATE access_keys SET revoked_at=coalesce(revoked_at,?) WHERE id IN (SELECT principal_id FROM local_invitations)", (restored_at,))
 
 
+def has_recovery_admin(snapshot):
+    # The restore target's runtime flags are unknown. In an OAuth-capable snapshot
+    # count the pinned bootstrap or a machine client that can authenticate on its own.
+    # A user grant, interactive client or child service key is not a recovery path.
+    has_oauth = snapshot.execute(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='oauth_clients')"
+    ).fetchone()[0]
+    eligible = ""
+    if has_oauth:
+        eligible = """AND (
+            k.id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id')
+            OR EXISTS(SELECT 1 FROM oauth_clients c, json_each(c.grant_types) grant_type
+                      WHERE c.client_id=k.id AND grant_type.value='client_credentials')
+        )"""
+    return bool(snapshot.execute(f"""SELECT EXISTS(
+        SELECT 1 FROM access_keys k WHERE k.revoked_at IS NULL
+        AND EXISTS(SELECT 1 FROM json_each(k.permissions) WHERE value='instance:admin')
+        {eligible}
+    )""").fetchone()[0])
+
+
 def restore(arguments):
     bundle = Path(arguments.bundle).resolve(strict=True)
     manifest = json.loads((bundle / "manifest.json").read_bytes())
@@ -331,8 +352,8 @@ def restore(arguments):
                 if not snapshot.execute("SELECT 1 FROM access_keys WHERE id=?", (principal,)).fetchone():
                     raise RuntimeError("requested post-checkpoint revocation principal is absent from the snapshot")
                 snapshot.execute("UPDATE access_keys SET revoked_at=coalesce(revoked_at,?) WHERE id=?", (restored_at, principal))
-            if not snapshot.execute("SELECT count(*) FROM access_keys WHERE revoked_at IS NULL AND EXISTS(SELECT 1 FROM json_each(permissions) WHERE value='instance:admin')").fetchone()[0]:
-                raise RuntimeError("restore would leave no active instance administrator")
+            if not has_recovery_admin(snapshot):
+                raise RuntimeError("restore would leave no independent recovery administrator")
             snapshot.execute("DELETE FROM export_files")
             snapshot.execute("UPDATE export_jobs SET state='canceled',cancel_requested=1,cleanup_pending=0,sql='',parameters='{}',completed_at=?,error='operator_restore_reissue_required' WHERE state!='expired'", (restored_at,))
             pipelines_paused = pause_restored_pipelines(snapshot)

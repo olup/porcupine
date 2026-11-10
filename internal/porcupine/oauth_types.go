@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -10,7 +11,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// OAuthConfig is operator-controlled machine-to-machine authorization configuration.
+// EmailConfig enables passwordless browser authentication for approved addresses.
+type EmailConfig struct {
+	SendCode       func(context.Context, string, string) error
+	SendInvitation func(context.Context, string) error
+	AdminEmail     string
+}
+
+// OAuthConfig is operator-controlled authorization configuration.
 // A nil configuration retains legacy key authentication for migration/offline use.
 type OAuthConfig struct {
 	Issuer                     string
@@ -18,6 +26,7 @@ type OAuthConfig struct {
 	AllowLegacyKeys            bool
 	LocalInvitations           bool
 	OIDC                       *OIDCConfig
+	Email                      *EmailConfig
 }
 
 type oauthRuntime struct {
@@ -43,10 +52,13 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 		}
 	}
 	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
-	if c.OIDC != nil && c.LocalInvitations {
-		return nil, errors.New("choose local invitations or OIDC")
+	if c.OIDC != nil && (c.LocalInvitations || c.Email != nil) {
+		return nil, errors.New("choose OIDC or local login methods")
 	}
-	if c.OIDC != nil || c.LocalInvitations {
+	if c.Email != nil && c.Email.SendCode == nil {
+		return nil, errors.New("email login requires a configured sender")
+	}
+	if c.Email != nil || c.OIDC != nil || c.LocalInvitations {
 		if err := validateBrowserIssuer(u, c.Issuer); err != nil {
 			return nil, err
 		}
@@ -64,7 +76,7 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	var browser *oauthBrowser
 	if interactive != nil {
 		browser = interactive.oauthBrowser
-	} else if c.LocalInvitations {
+	} else if c.LocalInvitations || c.Email != nil {
 		browser = newOAuthBrowser(u.Scheme == "https")
 	}
 	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil

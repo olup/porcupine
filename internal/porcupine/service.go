@@ -276,6 +276,9 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializeServiceKeys(context.Background()); err != nil {
+		return fail(err)
+	}
 	if err := s.initializeOAuth(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -334,8 +337,8 @@ func hash(v string) string { b := sha256.Sum256([]byte(v)); return hex.EncodeToS
 func (s *Service) authenticate(ctx context.Context, raw string) (actor, error) {
 	var a actor
 	var permissions, projects string
-	if raw == "" {
-		return a, errors.New("missing access key")
+	if raw == "" || strings.HasPrefix(raw, serviceKeyPrefix) {
+		return a, errors.New("invalid access key")
 	}
 	err := s.db.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE token_hash=? AND revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
@@ -568,7 +571,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	var a actor
 	var err error
-	authenticatedOAuth := false
+	authenticatedAPI := false
 	if len(r.Header.Values("Authorization")) != 0 {
 		var access string
 		access, err = bearerCredential(r)
@@ -578,7 +581,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 				resource = s.oauth.apiResource
 			}
 			a, err = s.authenticateResource(r.Context(), access, resource)
-			authenticatedOAuth = err == nil && s.oauth != nil && strings.HasPrefix(access, "pc_at_")
+			authenticatedAPI = err == nil && s.oauth != nil && (a.serviceKey || strings.HasPrefix(access, "pc_at_"))
 		}
 		if err == nil && rawKey != "" {
 			var selector actor
@@ -609,8 +612,8 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 503, "project ingestion policy unavailable")
 		return
 	}
-	if mode == ingestionServerOnly && !authenticatedOAuth {
-		problem(w, 401, "server_only ingestion requires an API OAuth access token")
+	if mode == ingestionServerOnly && !authenticatedAPI {
+		problem(w, 401, "server_only ingestion requires an API access token or service key")
 		return
 	}
 	if len(batch) == 0 || len(batch) > maxCaptureEvents {

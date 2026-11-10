@@ -2,5 +2,5 @@
 services:
   porcupine:
     build: !reset null
-    image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.5.0}
+    image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.6.0}
     pull_policy: missing

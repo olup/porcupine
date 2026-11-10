@@ -27,6 +27,9 @@ func (s *Service) authenticateResource(ctx context.Context, raw, resource string
 	if strings.HasPrefix(raw, "pc_at_") {
 		return s.authenticateOAuthToken(ctx, raw, resource)
 	}
+	if strings.HasPrefix(raw, serviceKeyPrefix) {
+		return s.authenticateServiceKey(ctx, raw, resource)
+	}
 	if s.oauth.config.AllowLegacyKeys {
 		return s.authenticate(ctx, raw)
 	}
@@ -42,7 +45,7 @@ func (s *Service) authChallenge(w http.ResponseWriter, resource string, invalid 
 		}
 		challenge += `, resource_metadata="` + s.oauth.issuer + "/.well-known/oauth-protected-resource" + suffix + `"`
 	}
-	if s.interactiveOAuthEnabled() && resource == s.oauth.mcpResource {
+	if s.interactiveOAuthEnabled() && s.interactiveResourceAllowed(resource) {
 		challenge += `, scope="events:read management:read"`
 	}
 	if invalid {
@@ -66,6 +69,9 @@ func (s *Service) registerOAuth(m *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-store")
 		metadata := map[string]any{"issuer": s.oauth.issuer, "token_endpoint": s.oauth.issuer + "/oauth/token", "grant_types_supported": []string{"client_credentials"}, "token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"}, "scopes_supported": append([]string(nil), validPermissions...), "resource_indicators_supported": true, "revocation_endpoint": s.oauth.issuer + "/oauth/revoke"}
 		if s.interactiveOAuthEnabled() {
+			// MCP clients often request every scope returned by discovery. Point tools
+			// that need explicit write or administrator grants to the complete contract.
+			metadata["service_documentation"] = s.oauth.issuer + "/openapi.json"
 			metadata["scopes_supported"] = append([]string{}, interactiveOAuthScopes...)
 			metadata["authorization_endpoint"] = s.oauth.issuer + "/oauth/authorize"
 			metadata["revocation_endpoint"] = s.oauth.issuer + "/oauth/revoke"
@@ -83,7 +89,7 @@ func (s *Service) registerOAuth(m *http.ServeMux) {
 		m.HandleFunc("GET /.well-known/oauth-protected-resource"+suffix, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			scopes := append([]string(nil), validPermissions...)
-			if s.interactiveOAuthEnabled() && resource == s.oauth.mcpResource {
+			if s.interactiveOAuthEnabled() && s.interactiveResourceAllowed(resource) {
 				scopes = append([]string{}, interactiveOAuthScopes...)
 			}
 			write(w, 200, map[string]any{"resource": resource, "authorization_servers": []string{s.oauth.issuer}, "scopes_supported": scopes, "bearer_methods_supported": []string{"header"}})

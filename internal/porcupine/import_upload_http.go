@@ -71,14 +71,14 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 			}
 			if s.oauth != nil {
 				raw, err := bearerCredential(req)
-				if err != nil || !strings.HasPrefix(raw, "pc_at_") {
+				if err != nil || (!strings.HasPrefix(raw, "pc_at_") && !strings.HasPrefix(raw, serviceKeyPrefix)) {
 					s.authChallenge(w, s.oauth.apiResource, true)
-					problem(w, 401, "imports require an API OAuth access token")
+					problem(w, 401, "imports require an API access token or service key")
 					return
 				}
 				if _, err := s.authenticateResource(ctx.Context(), raw, s.oauth.apiResource); err != nil {
 					s.authChallenge(w, s.oauth.apiResource, true)
-					problem(w, 401, "imports require an API OAuth access token")
+					problem(w, 401, "imports require an API access token or service key")
 					return
 				}
 			}

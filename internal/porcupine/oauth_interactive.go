@@ -26,7 +26,7 @@ func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
  scope TEXT NOT NULL,resource TEXT NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,peer_hash TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS oauth_interactive_grants(
  id TEXT PRIMARY KEY,principal_id TEXT NOT NULL UNIQUE REFERENCES access_keys(id),human_id TEXT NOT NULL REFERENCES access_keys(id),
- client_id TEXT NOT NULL REFERENCES access_keys(id),created_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL);
+ client_id TEXT NOT NULL REFERENCES access_keys(id),resource TEXT NOT NULL,created_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS oauth_grants_human ON oauth_interactive_grants(human_id);
  CREATE INDEX IF NOT EXISTS oauth_grants_client ON oauth_interactive_grants(client_id);
  CREATE TABLE IF NOT EXISTS oauth_authorization_codes(
@@ -48,7 +48,7 @@ func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, column := range []struct{ table, name, definition string }{{"oauth_tokens", "interactive_grant_id", "TEXT NOT NULL DEFAULT ''"}, {"oauth_authorization_requests", "peer_hash", "TEXT NOT NULL DEFAULT ''"}} {
+	for _, column := range []struct{ table, name, definition string }{{"oauth_tokens", "interactive_grant_id", "TEXT NOT NULL DEFAULT ''"}, {"oauth_authorization_requests", "peer_hash", "TEXT NOT NULL DEFAULT ''"}, {"oauth_interactive_grants", "resource", "TEXT NOT NULL DEFAULT ''"}} {
 		var exists bool
 		if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name=?)`, column.table, column.name).Scan(&exists); err != nil {
 			return err
@@ -127,7 +127,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if resource == "" {
 		resource = s.oauth.mcpResource
 	}
-	if resource != s.oauth.mcpResource {
+	if !s.interactiveResourceAllowed(resource) {
 		oauthTokenError(w, 400, "invalid_target")
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if _, present := q["scope"]; !present {
 		requested = []string{}
 		for _, permission := range interactiveOAuthScopes {
-			if client.can(permission) {
+			if client.permitsInteractiveScope(permission) {
 				requested = append(requested, permission)
 			}
 		}
@@ -144,8 +144,17 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 400, "invalid_scope")
 		return
 	}
+	// Discovery recommends both read scopes. A read-only tool can be registered for
+	// just one. The token and consent page report the subset the tool actually gets.
+	if s.oauth.config.Email != nil && onlyInteractiveReadScopes(requested) {
+		requested = slices.DeleteFunc(requested, func(permission string) bool { return !client.permitsInteractiveScope(permission) })
+	}
+	if len(requested) == 0 {
+		oauthTokenError(w, 400, "invalid_scope")
+		return
+	}
 	for _, permission := range requested {
-		if !slices.Contains(interactiveOAuthScopes, permission) || !client.can(permission) {
+		if !slices.Contains(validPermissions, permission) || !client.permitsInteractiveScope(permission) || s.oauth.config.Email == nil && !slices.Contains(interactiveOAuthScopes, permission) {
 			oauthTokenError(w, 400, "invalid_scope")
 			return
 		}
@@ -224,17 +233,13 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if err != nil {
 		return "", err
 	}
-	if len(approved.Permissions) == 0 || len(approved.Projects) == 0 || len(approved.Projects) > 64 {
+	if !s.interactiveScopesAllowed(human, client, current.Resource, approved.Permissions) || !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
 		return "", errors.New("invalid consent grants")
 	}
+	requested := strings.Fields(current.Scope)
 	for _, permission := range approved.Permissions {
-		if !slices.Contains(strings.Fields(current.Scope), permission) || !slices.Contains(interactiveOAuthScopes, permission) || !human.can(permission) || !client.can(permission) {
+		if !slices.Contains(requested, permission) {
 			return "", errors.New("invalid consent scope")
-		}
-	}
-	for _, project := range approved.Projects {
-		if project == "*" || project == "" || !authorize(human, "", project) || !authorize(client.actor, "", project) {
-			return "", errors.New("invalid consent project")
 		}
 	}
 	slices.Sort(approved.Permissions)
@@ -245,7 +250,7 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=?) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>?`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
 		return "", errOAuthCapacity
 	}
-	if s.oauth.config.LocalInvitations {
+	if s.oauth.config.LocalInvitations && !human.emailHuman {
 		result, err := tx.ExecContext(ctx, `UPDATE local_invitations SET code_hash=NULL,used_at_ms=? WHERE principal_id=? AND used_at_ms IS NULL AND expires_at_ms>?`, s.clock().UnixMilli(), humanID, s.clock().UnixMilli())
 		if err != nil {
 			return "", err
@@ -270,7 +275,7 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?)`, grantID, grantID, human.ID, client.ID, s.clock().UnixMilli(), s.clock().Add(oauthRefreshTTL).UnixMilli())
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, human.ID, client.ID, current.Resource, s.clock().UnixMilli(), s.clock().Add(oauthRefreshTTL).UnixMilli())
 	if err != nil {
 		return "", err
 	}

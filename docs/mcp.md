@@ -12,9 +12,9 @@ v1.8.0 in the existing Go process. It requires no additional service.
 | Transport | Streamable HTTP, stateless, JSON responses |
 | Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` for the MCP resource |
 | Permissions | Same project and operation permissions as the native API |
-| Supported client setup | Client credentials, a host-supplied token, or opt-in interactive OAuth in v0.4.0 |
+| Supported client setup | Machine OAuth, audience-scoped service keys, or interactive OAuth for people |
 
-For ChatGPT or Claude, see the [interactive OAuth setup](mcp-interactive-oauth.md). The administrator pre-registers the client and maps authenticated people to projects.
+For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
 Agents and applications use separate registered [OAuth clients](oauth.md).
 A reader client typically has `management:read` and `events:read` for selected
@@ -23,8 +23,7 @@ projects. Exchange its ID and secret at `/oauth/token` with
 header. Client secrets are not MCP Bearer credentials. An API-resource token
 cannot authenticate MCP, and an MCP token cannot authenticate direct API calls.
 
-Tokens expire after 15 minutes by default. A client or host application must
-obtain another token before expiry; no refresh token is issued. The server
+Access tokens expire after 15 minutes by default. Machine clients repeat the client-credentials exchange. Interactive clients can use rotating refresh tokens within the consent grant lifetime. The server
 revalidates expiry, resource, parent revocation, and effective grants on every
 HTTP request. Ordinary in-flight calls are not canceled solely by that check.
 Export jobs additionally recheck creator authority while running and before
@@ -36,7 +35,7 @@ Unauthorized MCP responses point to
 operator issuer, not the request Host. [The OAuth reference](oauth.md) describes
 the client-credentials exchange, Basic authentication, scopes, and challenges.
 
-Machine clients use client credentials. For pre-registered interactive clients, enable [local invitations](local-invitations.md) or configure an upstream OIDC provider. The MCP transport is streamable HTTP.
+Machine clients can also use a [service key](service-keys.md) issued for MCP. Interactive clients support email OTP, [manual invitations](local-invitations.md), or an upstream OIDC provider. The MCP transport is streamable HTTP.
 
 Configured OAuth rejects legacy MCP Bearer keys by default. Explicit legacy-key
 allowance is a migration option. Entirely unconfigured OAuth retains the older

@@ -1,6 +1,6 @@
 # Import a PostHog file or directory
 
-The HTTP API accepts PostHog events and persons in JSON Lines format. An agent with local file access can upload a file or enumerate a directory. It needs an API token with `imports:write` and `events:write` for the destination project. [Import format](posthog-import-format.md)
+The HTTP API accepts PostHog events and persons in JSON Lines format. An agent with local file access can upload a file or enumerate a directory. It needs an API-resource token or a private [API service key](service-keys.md) with `imports:write` and `events:write` for the destination project. [Import format](posthog-import-format.md)
 
 For each file, record its relative path and model (events or persons), decompress gzip locally, and calculate the SHA-256 digest and byte length of the uncompressed content. Keep the files unchanged until completion. Create the import with a stable idempotency key, then follow the HTTP protocol below. After interruption, fetch the job and seek to each file’s confirmed offset in its uncompressed bytes. The server never receives a local filesystem path to open.
 

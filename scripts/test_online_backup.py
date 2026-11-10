@@ -46,6 +46,36 @@ class NativeFailure:
 
 
 class OnlineBackupTests(unittest.TestCase):
+    def test_restore_requires_an_independent_admin(self):
+        with sqlite3.connect(":memory:") as snap:
+            snap.executescript("""
+                CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE access_keys(id TEXT PRIMARY KEY, permissions TEXT, revoked_at TEXT);
+                INSERT INTO access_keys VALUES ('bootstrap', '["instance:admin"]', NULL);
+            """)
+            self.assertTrue(backup.has_recovery_admin(snap))
+            snap.executescript("""
+                INSERT INTO metadata VALUES ('oauth_bootstrap_id','bootstrap');
+                CREATE TABLE oauth_clients(client_id TEXT PRIMARY KEY, grant_types TEXT);
+                INSERT INTO access_keys VALUES
+                    ('local-admin-client', '["instance:admin"]', NULL),
+                    ('human', '["instance:admin"]', NULL),
+                    ('consent-grant', '["instance:admin"]', NULL),
+                    ('service-key', '["instance:admin"]', NULL),
+                    ('machine', '["events:read"]', NULL);
+                INSERT INTO oauth_clients VALUES
+                    ('local-admin-client', '["authorization_code","refresh_token"]'),
+                    ('machine', '["client_credentials"]');
+            """)
+            self.assertTrue(backup.has_recovery_admin(snap))
+            snap.execute("UPDATE access_keys SET revoked_at='now' WHERE id='bootstrap'")
+            self.assertFalse(backup.has_recovery_admin(snap))
+            snap.execute("""UPDATE access_keys SET permissions='["instance:admin"]' WHERE id='machine'""")
+            self.assertTrue(backup.has_recovery_admin(snap))
+            snap.execute("UPDATE access_keys SET revoked_at='now' WHERE id='machine'")
+            self.assertFalse(backup.has_recovery_admin(snap))
+
+
     def test_restore_invalidates_user_sessions_even_when_preserving_machine_tokens(self):
         with sqlite3.connect(":memory:") as snap:
             snap.executescript("""
