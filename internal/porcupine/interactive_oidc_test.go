@@ -122,19 +122,11 @@ type oidcFixture struct {
 
 func newOIDCFixture(t *testing.T) *oidcFixture {
 	t.Helper()
-	return newLoginFixture(t, false)
-}
-
-func newLoginFixture(t *testing.T, local bool) *oidcFixture {
-	t.Helper()
 	host := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + host.Listener.Addr().String()
-	var p *oidcMock
-	cfg := &OAuthConfig{Issuer: issuer, LocalInvitations: local}
-	if !local {
-		p = newOIDCMock(t)
-		cfg.OIDC = &OIDCConfig{Issuer: p.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret", Bindings: []OIDCBinding{{Subject: "operator-subject", Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}}}}
-	}
+	p := newOIDCMock(t)
+	cfg := &OAuthConfig{Issuer: issuer}
+	cfg.OIDC = &OIDCConfig{Issuer: p.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret", Bindings: []OIDCBinding{{Subject: "operator-subject", Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}}}}
 	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "auth.db"), BootstrapToken: adminToken, OAuth: cfg})
 	if err != nil {
 		host.Close()

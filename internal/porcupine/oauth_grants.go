@@ -17,7 +17,7 @@ type OAuthGrant struct {
 	ClientID    string   `json:"client_id"`
 	Resource    string   `json:"resource" doc:"API or MCP resource authorized by this grant."`
 	Issuer      string   `json:"issuer"`
-	Subject     string   `json:"subject" doc:"Verified email address, OIDC subject or local invitation ID."`
+	Subject     string   `json:"subject" doc:"Verified email address, OIDC subject or retired principal ID."`
 	CreatedAtMS int64    `json:"created_at_ms"`
 	ExpiresAtMS int64    `json:"expires_at_ms"`
 	RevokedAt   *string  `json:"revoked_at" nullable:"true"`
@@ -38,7 +38,6 @@ type OAuthGrantRevokeInput struct {
 }
 
 func (s *Service) registerInteractiveOAuthManagement(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	s.registerLocalInvitations(api, op)
 	access := operationAccess{Permission: "instance:admin"}
 	huma.Register(api, op("list-oauth-grants", "GET", "/api/v1/oauth-grants", "Inspect interactive human consent grants and their revocation identities", access, 200), s.managementListOAuthGrants)
 	huma.Register(api, op("revoke-oauth-grant", "DELETE", "/api/v1/oauth-grants/{id}", "Revoke a human consent grant, its tokens and background creator authority", access, 204), s.managementRevokeOAuthGrant)

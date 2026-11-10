@@ -5,7 +5,7 @@ This document describes current access rules and planned interfaces. The
 
 ## Technical access
 
-An operator bootstraps the deployment and creates its first technical access. Operators can enable [local invitations](local-invitations.md) or configure an upstream OIDC provider and explicit human-to-project bindings for [interactive MCP](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
+An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md) or configure an upstream OIDC provider and explicit human-to-project bindings for [interactive MCP](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
 
 [OAuth client credentials](oauth.md) authorize machine API and MCP access when
 the operator configures an issuer. Clients exchange an ID and secret through

@@ -47,4 +47,4 @@ Optionally set `PORCUPINE_ADMIN_EMAIL` to seed the original human operator. This
 
 Porcupine records this admin address once. Restarts leave the account’s ID, grants and revoked status intact. Removing the environment setting leaves the existing account in place. Setting a different admin email later, or attempting to promote an already invited address through the deployment setting, fails startup. Restore the pinned value or remove the setting. To disable the email admin, revoke the account using its human ID. Retain an independent admin credential for recovery.
 
-Service accounts can continue to authenticate separately. Disabling a human revokes that human’s access across their clients. To disconnect just one client grant, use `list-oauth-grants` and `revoke-oauth-grant`. When SMTP is unavailable or undesired, the operator can use [manual invitations](local-invitations.md).
+Service accounts can continue to authenticate separately. Disabling a human revokes that human’s access across their clients. To disconnect just one client grant, use `list-oauth-grants` and `revoke-oauth-grant`.

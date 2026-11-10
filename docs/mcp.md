@@ -35,7 +35,7 @@ Unauthorized MCP responses point to
 operator issuer, not the request Host. [The OAuth reference](oauth.md) describes
 the client-credentials exchange, Basic authentication, scopes, and challenges.
 
-Machine clients can also use a [service key](service-keys.md) issued for MCP. Interactive clients support email OTP, [manual invitations](local-invitations.md), or an upstream OIDC provider. The MCP transport is streamable HTTP.
+Machine clients can also use a [service key](service-keys.md) issued for MCP. Interactive clients support email OTP or an upstream OIDC provider. The MCP transport is streamable HTTP.
 
 Configured OAuth rejects legacy MCP Bearer keys by default. Explicit legacy-key
 allowance is a migration option. Entirely unconfigured OAuth retains the older
