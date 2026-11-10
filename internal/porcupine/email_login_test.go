@@ -109,7 +109,7 @@ func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
 	defer close(finishSMTP)
 	email := "owner@example.test"
 	const origin = "http://127.0.0.1"
-	cfg := OAuthConfig{Issuer: origin, LocalInvitations: true, Email: &EmailConfig{AdminEmail: email, SendCode: func(ctx context.Context, to, code string) error {
+	cfg := OAuthConfig{Issuer: origin, Email: &EmailConfig{AdminEmail: email, SendCode: func(ctx context.Context, to, code string) error {
 		deliveries <- delivery{to, code}
 		// An SMTP round trip must not leak account existence through the HTTP response time.
 		select {
@@ -142,8 +142,8 @@ func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
 		if len(match) != 2 {
 			t.Fatal("missing csrf")
 		}
-		if !strings.Contains(rec.Body.String(), `action="/oauth/invitation"`) {
-			t.Fatal("missing manual login option")
+		if strings.Contains(rec.Body.String(), `action="/oauth/invitation"`) {
+			t.Fatal("removed manual login option present")
 		}
 		return match[1], rec.Result().Cookies()[0]
 	}
@@ -200,7 +200,7 @@ func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
 	default:
 	}
 	form.Set("csrf", challenge)
-	if post("/oauth/invitation", c, form, origin).Code != 400 {
+	if post("/oauth/invitation", c, form, origin).Code != 404 {
 		t.Fatal("email challenge used as manual invitation session")
 	}
 	if post("/oauth/email/verify", c, form, "https://attacker.example").Code != 400 {

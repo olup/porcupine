@@ -1,6 +1,6 @@
 # Send verification codes through SMTP
 
-Configure a transactional SMTP relay to send invitation notices and verification codes. An invitation tells the recipient which Porcupine instance to connect to. The person requests a separate code each time they authorize a client. Porcupine uses the [go-smtp](https://github.com/emersion/go-smtp) client and the operating system's TLS trust store. An installation using manual invitations can run without any email configuration.
+Configure a transactional SMTP relay to send invitation notices and verification codes. An invitation tells the recipient which Porcupine instance to connect to. The person requests a separate code each time they authorize a client. Porcupine uses the [go-smtp](https://github.com/emersion/go-smtp) client and the operating system's TLS trust store.
 
 1. Verify a sender address with your provider. Create SMTP credentials for it. The same transport works with [Amazon SES](https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html), [Postmark](https://postmarkapp.com/developer/user-guide/send-email-with-smtp), [SendGrid](https://www.twilio.com/docs/sendgrid/for-developers/sending-email/integrating-with-the-smtp-api), [Mailgun](https://documentation.mailgun.com/docs/mailgun/user-manual/sending-messages/send-smtp), or a self-hosted TLS relay.
 2. Save the password in a file accessible to the Porcupine process. The official image runs as UID 65532. With file-backed Compose secrets on Linux, place the file in a private host directory and grant read access to the container UID.
@@ -31,6 +31,5 @@ The email overlay mounts the specified host file at `/run/secrets/porcupine_smtp
 | `PORCUPINE_SMTP_PORT` | Defaults to 587 for STARTTLS and 465 for implicit TLS. |
 | `PORCUPINE_SMTP_USERNAME`, `PORCUPINE_SMTP_PASSWORD_FILE` | Configure both for PLAIN or LOGIN authentication. For a private TLS relay that authenticates connections by network policy, omit both in a custom deployment. |
 | `PORCUPINE_ADMIN_EMAIL` | Optional operator-approved mailbox for the deployment administrator. Use an address controlled by the administrator. |
-| `PORCUPINE_LOCAL_INVITATIONS` | Set to `true` to offer manual invitation codes alongside email login. |
 
 To test, invite an address you control and start an OAuth login. Check the mailbox and finish consent for the intended project. If mail delivery fails, check the relay's delivery records, sender verification, allowed recipients, and TLS configuration. Each SMTP attempt has a ten-second deadline. Code delivery to a real provider depends on its account and deliverability settings.

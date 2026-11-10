@@ -1,6 +1,8 @@
 # Connect a team to Porcupine
 
-Enable [email delivery](email-transport.md) on a build with email login. Set your canonical public HTTPS origin in `PORCUPINE_OAUTH_ISSUER`. The SMTP overlay sends invitations and verification codes. An operator who prefers to distribute codes directly can enable [manual invitations](local-invitations.md) without configuring SMTP. Manual and email invitations can also be enabled together.
+Enable [email delivery](email-transport.md) on a build with email login. Set your canonical public HTTPS origin in `PORCUPINE_OAUTH_ISSUER`. The SMTP overlay sends invitations and verification codes. People can authorize both a CLI and an MCP client through OAuth with their email account. Project grants may cover different permissions across multiple projects.
+
+When upgrading from v0.6, sessions created with a manual invitation are revoked. Reconnect those tools using email sign-in. Email and OIDC sessions and machine credentials keep their existing authority.
 
 ## Connect the first administrator
 

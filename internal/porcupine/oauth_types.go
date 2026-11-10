@@ -24,7 +24,6 @@ type OAuthConfig struct {
 	Issuer                     string
 	AccessTokenLifetimeSeconds int
 	AllowLegacyKeys            bool
-	LocalInvitations           bool
 	OIDC                       *OIDCConfig
 	Email                      *EmailConfig
 }
@@ -52,13 +51,13 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 		}
 	}
 	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
-	if c.OIDC != nil && (c.LocalInvitations || c.Email != nil) {
-		return nil, errors.New("choose OIDC or local login methods")
+	if c.OIDC != nil && c.Email != nil {
+		return nil, errors.New("choose OIDC or email login")
 	}
 	if c.Email != nil && c.Email.SendCode == nil {
 		return nil, errors.New("email login requires a configured sender")
 	}
-	if c.Email != nil || c.OIDC != nil || c.LocalInvitations {
+	if c.Email != nil || c.OIDC != nil {
 		if err := validateBrowserIssuer(u, c.Issuer); err != nil {
 			return nil, err
 		}
@@ -76,7 +75,7 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	var browser *oauthBrowser
 	if interactive != nil {
 		browser = interactive.oauthBrowser
-	} else if c.LocalInvitations || c.Email != nil {
+	} else if c.Email != nil {
 		browser = newOAuthBrowser(u.Scheme == "https")
 	}
 	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil

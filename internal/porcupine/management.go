@@ -405,7 +405,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
  WHERE c.client_id=k.id AND g.value='client_credentials'))
  OR (? AND k.id NOT IN (
  SELECT client_id FROM oauth_clients UNION ALL SELECT principal_id FROM email_humans
- UNION ALL SELECT principal_id FROM oidc_humans UNION ALL SELECT principal_id FROM local_invitations
+ UNION ALL SELECT principal_id FROM oidc_humans
  UNION ALL SELECT principal_id FROM service_api_keys UNION ALL SELECT principal_id FROM oauth_interactive_grants))))`,
 			input.ID, s.oauth != nil, static).Scan(&replacement)
 		if err != nil {

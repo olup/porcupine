@@ -64,7 +64,7 @@ func (o *oauthBrowser) finishEmailDelivery() {
 var emailLoginPage = template.Must(template.New("email-login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Porcupine</title><main>
 <h1>Connect {{.Client}} to Porcupine</h1>
 <form method="post" action="/oauth/email/request"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Email address <input type="email" name="email" autocomplete="email" required></label> <button>Send sign-in code</button></form>
-{{if .Manual}}<form method="post" action="/oauth/invitation"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Invitation code <input type="password" name="code" autocomplete="off" required></label> <button>Use invitation</button></form>{{end}}</main></html>`))
+</main></html>`))
 
 var emailVerificationPage = template.Must(template.New("email-verification").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify your email</title><main>
 <h1>Verify your email</h1>{{if .Rejected}}<p>The code is invalid or expired. If necessary, restart the connection to request another code.</p>{{else}}<p>If your email address has access, check your inbox for an eight-digit code.</p>{{end}}
@@ -94,8 +94,7 @@ func (s *Service) startEmailLogin(w http.ResponseWriter, request oauthAuthorizat
 	browser.cookie(w, raw, int(oidcSessionLifetime.Seconds()))
 	_ = emailLoginPage.Execute(w, struct {
 		Client, CSRF string
-		Manual       bool
-	}{request.ClientName, session.csrf, s.oauth.config.LocalInvitations})
+	}{request.ClientName, session.csrf})
 }
 
 // All login forms carry a session-bound token as well as an exact browser origin.

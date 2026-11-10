@@ -19,19 +19,12 @@ func oauthConfiguration() (*porcupine.OAuthConfig, error) {
 	}
 	issuer := os.Getenv("PORCUPINE_OAUTH_ISSUER")
 	if issuer == "" {
-		if os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || os.Getenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" || os.Getenv("PORCUPINE_LOCAL_INVITATIONS") != "" {
+		if os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || os.Getenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" {
 			return nil, errors.New("PORCUPINE_OAUTH_ISSUER is required when OAuth is configured")
 		}
 		return nil, nil
 	}
 	config := &porcupine.OAuthConfig{Issuer: issuer, OIDC: interactive, Email: email}
-	if raw := os.Getenv("PORCUPINE_LOCAL_INVITATIONS"); raw != "" {
-		enabled, err := strconv.ParseBool(raw)
-		if err != nil {
-			return nil, errors.New("invalid PORCUPINE_LOCAL_INVITATIONS")
-		}
-		config.LocalInvitations = enabled
-	}
 	if raw := os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS"); raw != "" {
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 60 || value > 3600 {

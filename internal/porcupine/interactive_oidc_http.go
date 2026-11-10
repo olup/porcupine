@@ -97,9 +97,7 @@ func (s *Service) registerInteractiveOIDC(m *http.ServeMux) {
 	if s.oauth.config.Email != nil {
 		s.registerEmailLogin(m)
 	}
-	if s.oauth.config.LocalInvitations {
-		m.HandleFunc("POST /oauth/invitation", s.oauthInvitationLogin)
-	} else if s.oauth.oidc != nil {
+	if s.oauth.oidc != nil {
 		m.HandleFunc("GET /oauth/oidc/callback", s.oauthOIDCCallback)
 	}
 	m.HandleFunc("GET /oauth/consent", s.oauthOIDCConsent)
@@ -109,10 +107,6 @@ func (s *Service) oauthHumanAuthorize(w http.ResponseWriter, r *http.Request, re
 	oidcPageHeaders(w)
 	if s.oauth.config.Email != nil {
 		s.startEmailLogin(w, request)
-		return
-	}
-	if s.oauth.config.LocalInvitations {
-		s.startInvitationLogin(w, request)
 		return
 	}
 	o := s.oauth.oidc
