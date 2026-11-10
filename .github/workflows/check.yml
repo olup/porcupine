@@ -5,6 +5,11 @@ on:
 permissions:
   contents: read
 jobs:
+  cli:
+    if: github.ref_type != 'tag'
+    uses: ./.github/workflows/cli.yml
+    with:
+      version: dev
   go:
     runs-on: ubuntu-latest
     steps:
@@ -14,6 +19,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make check
+      - run: python3 scripts/standalone_cli_check.py
       - run: make build
       - run: go test -race ./...
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
