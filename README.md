@@ -47,12 +47,12 @@ Since v0.4.0, Porcupine supports [resumable PostHog file imports](docs/posthog-i
 
 ## Install a release
 
-The `v0.7.0` release includes Linux amd64 and arm64 images. Use the matching
+The `v0.8.0` release includes Linux amd64 and arm64 server images and the [standalone CLI](cli/README.md) for macOS, Linux and Windows on both architectures. Use the matching
 tag for configuration files and pin the image version when you deploy.
 
 ```sh
-docker pull ghcr.io/olup/porcupine:0.7.0
-docker run --rm ghcr.io/olup/porcupine:0.7.0 --version
+docker pull ghcr.io/olup/porcupine:0.8.0
+docker run --rm ghcr.io/olup/porcupine:0.8.0 --version
 ```
 
 Each release also has checksummed image archives for `docker load`.
@@ -66,7 +66,7 @@ OAuth enabled, fresh private credentials, and persistent Docker volumes.
 ClickHouse is private to the Compose network; HTTP binds to `127.0.0.1:8080`.
 
 ```sh
-git clone --branch v0.7.0 https://github.com/olup/porcupine.git
+git clone --branch v0.8.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 python3 - <<'PY'
