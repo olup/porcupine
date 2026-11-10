@@ -2,21 +2,25 @@
 
 # Porcupine
 
-Porcupine collects product events and lets a coding agent query them with SQL. It’s headless. I run it on a Lightsail VM.
+Porcupine is a headless product analytic tool and general event store. It's compatible with pothog and segment client. 
 
-I like PostHog. I just found that for the things I do, I hardly ever need to open it. I’ll ask Codex a question about usage and have it show me the query and the graph together. What I wanted to keep was the bit where I could call `posthog.capture()` from my app. Running all of PostHog myself seemed like a lot for that.
+Headless means it ships no ui at all, and once installed is managed, operated or queried by an agent or a human though an mcp or a cli.
 
-[Quickstart](#quickstart) · [Guide for agents](https://olup.github.io/porcupine/llms.txt) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0)
+It came to be because I wanted a lightweight product analytic tool to self host, and realised that no one on my team ever opens the posthog ui - its all managed and queried by our local agents. 
 
-## Try it with your agent
+Existing option where big inspirations - posthog, openpanel, pug - but no one offered the specific blend of lightness and power I envisionned - with features like direct sql queries, outward pipelines or s3 offload.
 
-One of my first tests was to open a fresh Codex chat and ask it to count events by name. It found two `page_viewed` events and one `signup_completed` in the demo project. Here’s what I’d ask on a project with some traffic.
+The rest of this readme is LLM generated.
 
-> Which events did we record this week? Show me the counts and the SQL you ran.
-
-Connect your agent to `/mcp` and grant it read access to a project. It uses `porcupine_docs` to find out what it can call, then `porcupine_call` to run the query. [Connect your team](docs/connect-your-team.md) · [MCP setup](docs/mcp.md)
+[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0)
 
 ## Quickstart
+
+Paste this into your coding agent:
+
+> Read https://olup.github.io/porcupine/llms.txt and follow the guide to start Porcupine on my machine. Send a test event and show me the SQL that counts it.
+
+### Local setup
 
 The example runs Porcupine and ClickHouse on your laptop. You’ll need Git, curl, Python 3 and Docker Compose 2.24.4 or newer. Run this in a POSIX shell.
 
