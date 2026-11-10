@@ -19,9 +19,9 @@
         <img class="mark" src="./assets/favicon.svg" width="76" height="76" alt="">
         <h1 id="name">porcupine</h1>
       </div>
-      <p class="lead">Headless product analytics for your agent.</p>
-      <p class="description">I love PostHog, but I rarely open the dashboard. When I have a question about how people use my product, my agent writes the SQL and draws the graph.</p>
-      <p class="description">I built Porcupine to self-host that workflow with one Go service and ClickHouse. There’s no admin UI. I can give an agent access to one project or manage the instance from the CLI.</p>
+      <p class="lead">Self-hosted product analytics for coding agents.</p>
+      <p class="description">I love PostHog. I just hardly ever open it. Say I want a graph of signups by day. I’m already in Codex, so I ask there, read the SQL it came up with and look at the graph in the chat.</p>
+      <p class="description">The bit I wanted to self-host was the part between the SDK and that conversation. That’s Porcupine. It takes the events, stores them in ClickHouse and gives my agent a way to query them over MCP. Mine runs on a single Lightsail VM.</p>
     </section>
 
     <section id="get-started" aria-labelledby="start">
@@ -38,15 +38,15 @@
     <section class="features" aria-label="Features">
       <article>
         <h2><a href="https://github.com/olup/porcupine/blob/main/docs/compatibility.md">Capture</a></h2>
-        <p>Send native events or use the supported PostHog and Segment inputs. Browser capture can run without cookies.</p>
+        <p>Keep a supported PostHog SDK, send Segment events, or POST your own JSON. For a website, you can estimate daily visitors without setting a cookie.</p>
       </article>
       <article>
         <h2><a href="https://github.com/olup/porcupine/blob/main/docs/analytics.md">Query</a></h2>
-        <p>Ask your agent which events people triggered this week. It can discover the properties, query the project and plot the results.</p>
+        <p>Give an agent read access to a project. It can look up event names and properties before it writes a ClickHouse query.</p>
       </article>
       <article>
         <h2><a href="https://github.com/olup/porcupine/blob/main/docs/pipelines.md">Deliver</a></h2>
-        <p>Forward events to webhooks individually or in batches. Export a query once or send its results to S3 on a schedule.</p>
+        <p>Send each signup to a webhook, or batch the events. For a daily extract, schedule a SQL query and have Porcupine write the results to S3.</p>
       </article>
     </section>
   </main>
