@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/urfave/cli/v3"
 )
@@ -146,8 +149,57 @@ func runOperation(ctx context.Context, c *cli.Command, op operation, authenticat
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s returned HTTP %d (%s)", op.Method, op.Path, resp.StatusCode, http.StatusText(resp.StatusCode))
+		return responseError(op, resp, req.Header.Get("Authorization"))
 	}
 	_, err = io.Copy(c.Root().Writer, resp.Body)
 	return err
+}
+
+// responseError reads only the API's message field. Response headers, HTML
+// gateway pages and other JSON fields can contain credentials or large payloads.
+func responseError(op operation, resp *http.Response, authorization string) error {
+	status := fmt.Sprintf("%s %s returned HTTP %d (%s)", op.Method, op.Path, resp.StatusCode, http.StatusText(resp.StatusCode))
+	fallback := fmt.Errorf("%s", status)
+	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" && media != "application/problem+json" {
+		return fallback
+	}
+	const maxErrorBytes = 64 << 10
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes+1))
+	if err != nil || len(raw) > maxErrorBytes {
+		return fallback
+	}
+	var body struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+		Title  string `json:"title"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return fallback
+	}
+	message := body.Error
+	if media == "application/problem+json" && message == "" {
+		message = body.Detail
+		if message == "" {
+			message = body.Title
+		}
+	}
+	if credential := strings.TrimPrefix(authorization, "Bearer "); credential != "" {
+		message = strings.ReplaceAll(message, credential, "[redacted]")
+	}
+	message = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return ' '
+		}
+		return r
+	}, message)
+	message = strings.Join(strings.Fields(message), " ")
+	const maxMessageRunes = 1024
+	if runes := []rune(message); len(runes) > maxMessageRunes {
+		message = string(runes[:maxMessageRunes]) + "…"
+	}
+	if message == "" {
+		return fallback
+	}
+	return fmt.Errorf("%s: %s", status, message)
 }

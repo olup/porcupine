@@ -66,7 +66,7 @@ def check(directory, binary, origin, bootstrap):
         return setup("POST", "/oauth-clients/" + account["client_id"] + "/api-keys",
                      dict(grant, audience="api"))
 
-    def cli(*args, key=None, stdin=None, denied=None):
+    def cli(*args, key=None, stdin=None, denied=None, message=None):
         # Only the copied CLI is on PATH. No local server credentials, plugin or spec.
         env = {"PATH": str(binary.parent), "XDG_CONFIG_HOME": str(directory / "config"),
                "PORCUPINE_URL": origin, "NO_COLOR": "1"}
@@ -82,6 +82,10 @@ def check(directory, binary, origin, bootstrap):
                 raise AssertionError(f"{args[0]} should report HTTP {denied} on stderr")
         elif result.returncode:
             raise AssertionError(f"{args[0]} failed: {result.stderr.decode(errors='replace')}")
+        if message is not None:
+            assert message.encode() in result.stderr, f"API error message missing from stderr: {result.stderr!r}"
+        if denied is not None:
+            assert not result.stdout, "error body written to stdout"
         return result.stdout
 
     assert b"--x-chunk-sha256" in cli("upload-posthog-import-chunk", "--help")
@@ -89,6 +93,10 @@ def check(directory, binary, origin, bootstrap):
     assert b"ready" in cli("--url", origin, "status")
     admin_key = service_key("project provisioner", ["*"],
                             ["management:read", "management:write", "events:write"])["token"]
+    cli("create-project", "--body", '{"name":"   "}', key=admin_key, denied=400,
+        message="name must contain 1 to 200 UTF-8 bytes")
+    cli("create-project", "--body", '{"name":', key=admin_key, denied=400,
+        message="validation failed")
     project_file = directory / "project with spaces.json"
     ids = []
     for name in ("CLI private", "CLI other"):

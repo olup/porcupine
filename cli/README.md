@@ -38,7 +38,7 @@ For permanent deletion, use an instance administrator credential. With browser l
 
 ## Discover commands
 
-Run `porcupine --help` for the catalog or `porcupine query-events --help` for parameters and body fields. Operation names match the HTTP API's OpenAPI operation IDs. JSON results go to stdout. An HTTP failure exits with a nonzero status and prints its status code to stderr. Operations that issue access keys return secrets on stdout.
+Run `porcupine --help` for the catalog or `porcupine query-events --help` for parameters and body fields. Operation names match the HTTP API's OpenAPI operation IDs. JSON results go to stdout. An HTTP failure exits with a nonzero status and prints its status code and the API’s error message to stderr. Unreadable responses fall back to the HTTP status. Operations that issue access keys return secrets on stdout.
 
 Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to read from stdin. The binary upload operation streams bytes from a file or stdin. See [resumable imports](../docs/posthog-import.md) for manifests, checksums and chunk offsets.
 
