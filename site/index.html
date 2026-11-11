@@ -18,23 +18,29 @@
       <div class="signature">
         <img class="mark" src="./assets/favicon.svg" width="76" height="76" alt="">
         <h1 id="name">porcupine</h1>
+        <p class="lead">Porcupine is a headless product analytics tool and a general-purpose event store.</p>
       </div>
-      <p class="lead">Porcupine is a headless product analytics tool and a general-purpose event store.</p>
-      <p class="description">It works with PostHog and Segment clients. Headless means it ships with no UI at all. Once it’s installed, an agent or a human can manage it and query it through MCP or the CLI.</p>
-      <p class="description">I wanted a lightweight product analytics tool I could self-host. Then I realised no one on my team ever opens the PostHog UI. Our local agents already manage everything and run the queries.</p>
-      <p class="description">PostHog, OpenPanel and Pug were big inspirations. I wanted direct SQL queries, pipelines that send data to other systems, and the option to offload older data to S3, all in something light enough to host myself.</p>
-      <p class="description"><small>The rest of this page is LLM-generated.</small></p>
+      <div class="story">
+        <p class="description">It works with PostHog and Segment clients. Headless means it ships with no UI at all. Once it’s installed, an agent or a human can manage it and query it through MCP or the CLI.</p>
+        <p class="description">I wanted a lightweight product analytics tool I could self-host. Then I realised no one on my team ever opens the PostHog UI. Our local agents already manage everything and run the queries.</p>
+        <p class="description">PostHog, OpenPanel and Pug were big inspirations. I wanted direct SQL queries, pipelines that send data to other systems, and the option to offload older data to S3, all in something light enough to host myself.</p>
+        <p class="credit"><small>The rest of this page is LLM-generated.</small></p>
+      </div>
     </section>
 
     <section id="get-started" aria-labelledby="start">
-      <h2 id="start">Get started</h2>
-      <p>Paste this into your coding agent.</p>
-      <div class="prompt-box">
-        <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Start the local quickstart, send a test event, and show me the SQL and its result.</p>
-        <button type="button" id="copy" hidden>Copy prompt</button>
+      <div class="start-intro">
+        <h2 id="start">Get started</h2>
+        <p>Paste this into your coding agent.</p>
       </div>
-      <span id="copy-status" role="status"></span>
-      <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="https://github.com/olup/porcupine/blob/main/docs/hosting.md">Hosting guide</a><a href="https://github.com/olup/porcupine/blob/main/cli/README.md">Standalone CLI</a></div>
+      <div class="start-content">
+        <div class="prompt-box">
+          <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Start the local quickstart, send a test event, and show me the SQL and its result.</p>
+          <button type="button" id="copy" hidden>Copy prompt</button>
+        </div>
+        <span id="copy-status" role="status"></span>
+        <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="https://github.com/olup/porcupine/blob/main/docs/hosting.md">Hosting guide</a><a href="https://github.com/olup/porcupine/blob/main/cli/README.md">Standalone CLI</a></div>
+      </div>
     </section>
 
     <section class="features" aria-label="Features">
