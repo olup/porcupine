@@ -1,6 +1,6 @@
 module github.com/olup/porcupine
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/AfterShip/clickhouse-sql-parser v0.5.6
