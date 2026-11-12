@@ -1,8 +1,8 @@
 # Management API reference
 
-The Go server uses Huma to validate management requests and generate its
-OpenAPI contract at `GET /openapi.json`. The contract is public. There is no
-documentation UI. The project analytics schema has its own endpoint.
+This reference lists HTTP operations, required permissions, and response codes. For a task walkthrough, start with [projects](projects.md), [people](email-accounts.md), [queries](query-events.md), or [pipelines](pipelines.md).
+
+The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
 
 ## Authentication and scope
 

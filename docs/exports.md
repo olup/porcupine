@@ -1,10 +1,33 @@
 # SQL result exports
 
+Use an export when a query result is too large for an interactive response. For recurring delivery to a customer's bucket or webhook, use a [pipeline](pipelines.md).
+
 Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same SQL grammar, parameters, row policies, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets. Select `person_id` to include the resolved user and `person_properties` for the latest projected profile.
 
 Native [ClickHouse S3 cold storage](storage.md) and result exports are separate. Export objects use their own private prefix and credentials. Recurring [project pipelines](pipelines.md) configure their own scoped
 destination and schedule. This one-off export API still has no caller-selected
 destination and does not create a recurring job.
+
+## Export from your agent or CLI
+
+The operator must first [enable export storage](#operator-configuration). Your connection needs `events:read` for the project.
+
+Ask your MCP agent to export the result of your query, wait for completion, and return the download links. It uses `create-event-export`, `get-event-export`, and `list-event-export-files` through the existing two MCP tools.
+
+With the CLI, save your SQL request as `export.json`, including `sql`, `format`, and a stable `idempotency_key`. See the [example request below](#create-and-poll). Then run:
+
+```sh
+porcupine create-event-export --id PROJECT_ID --body @export.json
+porcupine get-event-export --id PROJECT_ID --export-id EXPORT_ID
+```
+
+Replace `EXPORT_ID` with the returned ID and poll until the state is `succeeded`. Then retrieve the file links:
+
+```sh
+porcupine list-event-export-files --id PROJECT_ID --export-id EXPORT_ID
+```
+
+A failed or canceled export publishes no download links. Links expire within five minutes. Download the files before expiry, or request new links while the export is retained. Keep the links private.
 
 ## API operations
 

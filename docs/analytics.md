@@ -1,5 +1,7 @@
 # Analytics API reference
 
+For a first query with your agent or CLI, follow [Query your events](query-events.md). This page describes the schema, discovery fields, SQL grammar, cache behavior, and execution limits.
+
 Porcupine exposes delivered events through project-scoped ClickHouse SQL. Clients and agents write SQL for their question. There are no named prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
 Every request targets one project and requires `events:read`. For HTTP, send an API-audience [service key](service-keys.md) or [OAuth token](oauth.md) as a bearer credential. The CLI uses the HTTP API. On MCP, use a credential for the MCP resource. [MCP reference](mcp.md)

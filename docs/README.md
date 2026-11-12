@@ -1,18 +1,36 @@
 # Porcupine documentation
 
-To try Porcupine on your laptop, [send your first event and query it](../README.md#quickstart). For an existing instance, [connect an agent](mcp.md) or [install the standalone CLI](../cli/README.md). Give an agent the [plain-text guide](https://olup.github.io/porcupine/llms.txt).
+Porcupine collects product events and makes them queryable through ClickHouse SQL. Connect an agent through MCP, use the standalone CLI, or call the HTTP API. Your agent generates the analysis and charts. Porcupine has no analytics dashboard.
 
-| I want to… | Start here |
+## Start here
+
+If you are trying Porcupine for the first time, follow the [local quickstart](../README.md#quickstart). It starts an instance, sends a test event, and queries it.
+
+If your team already has an instance, [connect your tools](connect-tools.md), then [query your events](query-events.md). You need the instance URL and access from its administrator.
+
+To let an agent guide you, give it the [agent guide](https://olup.github.io/porcupine/llms.txt) and tell it whether you want to deploy an instance or connect to an existing one. Every guide also has a **View Markdown** link.
+
+## Collect and use data
+
+| Task | Guide |
 | --- | --- |
-| Self-host | [Deployment options](hosting.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0) · [Architecture](architecture.md) |
-| Give someone access | [Team setup](connect-your-team.md) · [Human accounts](email-accounts.md) · [Email delivery](email-transport.md) · [Interactive OAuth and OIDC](mcp-interactive-oauth.md) |
-| Connect a service or shared agent | [Service keys](service-keys.md) · [OAuth resources and scopes](oauth.md) · [Authorization boundaries](security-and-interfaces.md) |
-| Capture or identify | [Tested PostHog SDK profiles](compatibility.md) · [Native and Segment inputs](native-and-segment-ingestion.md) · [Cookieless and identified capture](data-and-identity.md) |
-| Import historical events | [Resumable PostHog uploads](posthog-import.md) · [Supported file formats](posthog-import-format.md) |
-| Answer a product question | [Schema discovery and SQL examples](analytics.md) · [MCP tools](mcp.md) · [CLI usage](../cli/README.md) |
-| Manage projects and events | [Management API, rename and delete](management-api.md#operations) · [Event corrections and deletion](events.md) |
-| Send data elsewhere | [One-off SQL exports](exports.md) · [Webhooks and scheduled S3 pipelines](pipelines.md) |
-| Operate and recover | [Queryable cold storage](storage.md) · [Durability and limits](reliability.md) · [Deduplication receipts](receipts.md) · [Online backups](online-backup.md) · [Recovery drills](restore.md) |
-| Size a deployment | [Benchmark results](benchmarks.md) · [Run a load test](load-testing.md) |
+| Send events from a browser or backend | [Choose an input](collect-events.md) |
+| Keep using a PostHog SDK | [Configure PostHog capture](compatibility.md) |
+| Link anonymous activity to a signed-in user | [Users, identity, and sessions](data-and-identity.md) |
+| Bring your existing PostHog history | [Import files with resume](posthog-import.md) |
+| Discover events and answer a question | [Query your events](query-events.md) |
+| Download a large query result | [Export query results](exports.md) |
+| Deliver events or scheduled query results elsewhere | [Webhooks and S3 pipelines](pipelines.md) |
+| Fix or remove stored events | [Event correction and deletion](events.md) |
 
-The running instance serves its HTTP contract at `/openapi.json`. MCP clients discover the operations available to their credential with `porcupine_docs`.
+## Run an instance
+
+Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
+
+The deployment operator configures [S3 cold storage](storage.md) and [backups](online-backup.md). These settings apply to the deployment and are separate from project permissions.
+
+## Look up a contract
+
+Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.
+
+For deployment constraints and design decisions, read the [architecture](architecture.md), [durability contract](reliability.md), and [current scope](roadmap.md).

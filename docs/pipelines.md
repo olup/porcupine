@@ -2,6 +2,16 @@
 
 Pipelines send project data to a webhook or an S3-compatible destination. They run in the existing Go process with durable SQLite state. They require explicit egress permissions and an operator encryption key; neither Redis nor a message broker is required.
 
+## Choose a delivery mode
+
+- Use a [webhook](#webhook-event-and-batch-modes) to send matching original events as they arrive, individually or in time-based batches.
+- Use an [S3 query pipeline](#scheduled-s3-query-windows) to run SQL over scheduled time windows and publish files in a destination bucket.
+- For a single download, use a [one-off query export](exports.md).
+
+The instance operator first [enables the runtime](#enable-the-runtime). Then use an agent with `pipelines:write` and `events:read` for the project, or run `porcupine create-pipeline --id PROJECT_ID --body @pipeline.json`. The webhook and S3 sections below contain request examples for `pipeline.json`.
+
+After creation, inspect the pipeline and its runs. [Pause, change credentials, or retry](#inspect-pause-replace-credentials-and-retry) through the same API, CLI, or MCP connection.
+
 ## Separate storage and delivery products
 
 | Capability | Purpose | Configuration | Query or delivery model |

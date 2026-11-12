@@ -23,12 +23,14 @@
           <summary>Browse guides</summary>
           <nav aria-label="Documentation">
             {% for section in nav %}
-            <div class="nav-group">
-              <p class="nav-title">{{ section.title }}</p>
+            <details class="nav-group"{% if section.active or loop.first %} open{% endif %}>
+              <summary>{{ section.title }}</summary>
+              <div class="nav-links">
               {% for item in section.children %}
               <a href="{{ item.url | url }}"{% if item.active %} aria-current="page"{% endif %}>{{ item.title }}</a>
               {% endfor %}
-            </div>
+              </div>
+            </details>
             {% endfor %}
           </nav>
         </details>
