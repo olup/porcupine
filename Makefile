@@ -63,3 +63,11 @@ cli-check:
 	go run ./internal/cmd/gencli -check
 	cd cli && go vet ./... && go test ./...
 	@test -z "$$(gofmt -l cli/cmd)" || (echo 'Run make fmt'; exit 1)
+
+.PHONY: docs
+docs:
+	python3 scripts/build_docs.py
+
+.PHONY: docs-preview
+docs-preview: docs
+	python3 scripts/serve_docs.py

@@ -1,0 +1,55 @@
+site_name: Porcupine
+site_url: https://olup.github.io/porcupine/docs/
+docs_dir: docs
+site_dir: bin/docs-web/porcupine/docs
+use_directory_urls: true
+theme:
+  name: null
+  custom_dir: docs-theme
+plugins: []
+hooks:
+  - docs-theme/hooks.py
+markdown_extensions:
+  - tables
+  - fenced_code
+  - toc:
+      permalink: "#"
+nav:
+  - Start here:
+      - Overview: README.md
+      - Quickstart: quickstart.md
+      - Connect your team: connect-your-team.md
+      - CLI: cli.md
+  - Capture:
+      - PostHog SDKs: compatibility.md
+      - Native and Segment: native-and-segment-ingestion.md
+      - Identity: data-and-identity.md
+      - PostHog imports: posthog-import.md
+      - Import file format: posthog-import-format.md
+  - Query and deliver:
+      - SQL and discovery: analytics.md
+      - Event corrections: events.md
+      - Pipelines: pipelines.md
+      - Query exports: exports.md
+      - Export design: export-design.md
+  - Access:
+      - MCP: mcp.md
+      - API reference: management-api.md
+      - OAuth: oauth.md
+      - Human accounts: email-accounts.md
+      - Email delivery: email-transport.md
+      - Service keys: service-keys.md
+      - Interactive OAuth: mcp-interactive-oauth.md
+      - Security boundaries: security-and-interfaces.md
+  - Operate:
+      - Hosting: hosting.md
+      - Architecture: architecture.md
+      - Storage: storage.md
+      - Reliability: reliability.md
+      - Deduplication: receipts.md
+      - Backups: online-backup.md
+      - Backup deployment: backup-compose.md
+      - Restore: restore.md
+      - Benchmarks: benchmarks.md
+      - Load testing: load-testing.md
+      - Roadmap: roadmap.md

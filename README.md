@@ -22,22 +22,27 @@ Paste this into your coding agent:
 
 ### Local setup
 
-The example runs Porcupine and ClickHouse on your laptop. You’ll need Git, curl, Python 3 and Docker Compose 2.24.4 or newer. Run this in a POSIX shell.
+The example runs Porcupine and ClickHouse on your laptop. You’ll need Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or newer. Install the [standalone CLI](cli/README.md) and run this in a POSIX shell.
 
 ```sh
-git clone --branch v0.9.0 https://github.com/olup/porcupine.git
+git clone https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
-python3 - <<'PY'
-import secrets
-with open(".env", "x") as env:
-    for key in ("PORCUPINE_BOOTSTRAP_TOKEN", "PORCUPINE_CLICKHOUSE_PASSWORD"):
-        print(key + "=" + secrets.token_hex(32), file=env)
-    print("PORCUPINE_OAUTH_ISSUER=http://localhost:8080", file=env)
-PY
+(
+    set -eu
+    umask 077
+    set -C
+    bootstrap_token=$(openssl rand -hex 32)
+    clickhouse_password=$(openssl rand -hex 32)
+    cat > .env <<EOF
+PORCUPINE_BOOTSTRAP_TOKEN=$bootstrap_token
+PORCUPINE_CLICKHOUSE_PASSWORD=$clickhouse_password
+PORCUPINE_OAUTH_ISSUER=http://localhost:8080
+EOF
+)
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
 curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
-python3 examples/hello.py
+sh examples/hello.sh
 ```
 
 The script creates a project, sends one event called `hello`, and polls ClickHouse until it can count it.
@@ -67,5 +72,7 @@ make integration-s3     # ClickHouse and local S3-compatible storage
 make compat-install
 make compat             # pinned PostHog SDKs
 ```
+
+For the local documentation preview, install `docs-requirements.txt` in a Python virtual environment and run `make docs-preview`. The preview is available at `http://127.0.0.1:8787/porcupine/docs/`.
 
 [Architecture](docs/architecture.md) · [Benchmark workloads and results](docs/benchmarks.md) · [MIT license](LICENSE)
