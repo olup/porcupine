@@ -10,9 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATED = {"quickstart.md": "README.md", "cli.md": "cli/README.md"}
 
 
+def generated_content(target, source):
+    markdown = (ROOT / source).read_text()
+    if target == "quickstart.md":
+        _, heading, section = markdown.partition("\n## Quickstart\n")
+        if not heading:
+            raise ValueError("README.md is missing its Quickstart section")
+        section = section.split("\n## ", 1)[0]
+        markdown = "# Quickstart\n" + section.replace("\n### ", "\n## ")
+    return markdown
+
+
 def on_files(files, config):
     for target, source in GENERATED.items():
-        files.append(File.generated(config, target, content=(ROOT / source).read_text()))
+        files.append(File.generated(config, target, content=generated_content(target, source)))
     return files
 
 
@@ -53,7 +64,7 @@ def on_post_build(config):
     for source in (ROOT / "docs").glob("*.md"):
         (output / source.name).write_bytes(source.read_bytes())
     for name, source in GENERATED.items():
-        (output / name).write_text(rewrite_links((ROOT / source).read_text(), name))
+        (output / name).write_text(rewrite_links(generated_content(name, source), name))
     # Preserve relative links in raw Markdown as well.
     (output.parent / "README.md").write_bytes((ROOT / "README.md").read_bytes())
     (output.parent / "cli").mkdir(exist_ok=True)
