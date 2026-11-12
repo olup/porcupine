@@ -1,5 +1,7 @@
 # Event correction and deletion API
 
+To change an event, read it with `get-event`, then submit `edit-event` or `delete-event` with its current revision and an idempotency key. Poll `get-event-mutation` until the change is applied. These operation names work as CLI commands and through the MCP call tool.
+
 Event mutations use project-scoped permissions and durable SQLite acceptance. ClickHouse projection is asynchronous. A `202` response means the mutation is queued, not that analytical results have changed.
 
 ## Operations

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <meta name="description" content="{{ page.title }} — Porcupine documentation">
+  <title>{{ page.title }} · Porcupine</title>
+  <link rel="icon" href="{{ '/porcupine/assets/favicon.svg' }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ 'docs.css' | url }}">
+  <script src="{{ 'docs.js' | url }}" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/porcupine/"><img src="/porcupine/assets/favicon.svg" width="28" height="28" alt="">porcupine</a>
+      <span class="header-label">Documentation</span>
+      <a class="repo" href="https://github.com/olup/porcupine">GitHub ↗</a>
+    </header>
+    <div class="layout">
+      <aside class="sidebar">
+        <details class="navigation" open>
+          <summary>Browse guides</summary>
+          <nav aria-label="Documentation">
+            {% for section in nav %}
+            <details class="nav-group"{% if section.active or loop.first %} open{% endif %}>
+              <summary>{{ section.title }}</summary>
+              <div class="nav-links">
+              {% for item in section.children %}
+              <a href="{{ item.url | url }}"{% if item.active %} aria-current="page"{% endif %}>{{ item.title }}</a>
+              {% endfor %}
+              </div>
+            </details>
+            {% endfor %}
+          </nav>
+        </details>
+      </aside>
+      <main id="content" tabindex="-1">
+        <div class="page-tools">
+          <span>Porcupine v0.9.0</span>
+          <a href="{{ raw_url }}">View Markdown ↗</a>
+        </div>
+        <article>{{ page.content }}</article>
+        <div class="page-bottom">
+          {% if page.previous_page %}<a href="{{ page.previous_page.url | url }}">← {{ page.previous_page.title }}</a>{% else %}<span></span>{% endif %}
+          {% if page.next_page %}<a href="{{ page.next_page.url | url }}">{{ page.next_page.title }} →</a>{% endif %}
+        </div>
+      </main>
+      <aside class="contents">
+        <p class="nav-title">On this page</p>
+        <nav aria-label="On this page">
+          {% for item in page.toc %}
+          {% if item.children %}
+          {% for child in item.children %}
+          <a href="{{ child.url }}">{{ child.title }}</a>
+          {% endfor %}
+          {% else %}
+          <a href="{{ item.url }}">{{ item.title }}</a>
+          {% endif %}
+          {% endfor %}
+        </nav>
+      </aside>
+    </div>
+    <footer><a href="/porcupine/">Home</a><a href="/porcupine/llms.txt">Agent guide</a><span>HTML and Markdown from the same source.</span></footer>
+  </div>
+</body>
+</html>

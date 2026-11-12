@@ -8,24 +8,30 @@ The [v0.9.0 release](https://github.com/olup/porcupine/releases/tag/v0.9.0) cont
 
 ## Laptop with Docker Compose
 
-Install Git, curl, Python 3, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies Docker and Compose on macOS and Windows. Use a POSIX shell for the commands below, such as a WSL shell with Docker integration on Windows. Start in the directory where you want to clone Porcupine.
+Install the [standalone CLI](../cli/README.md), Git, curl, OpenSSL, jq, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies Docker and Compose on macOS and Windows. Use a POSIX shell for the commands below, such as a WSL shell with Docker integration on Windows. Start in the directory where you want to clone Porcupine.
 
 ```sh
-git clone --branch v0.9.0 https://github.com/olup/porcupine.git
+git clone https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
-python3 - <<'PY'
-from pathlib import Path
-import secrets
-with Path('.env').open('x') as env:
-    env.write('PORCUPINE_BOOTSTRAP_TOKEN=' + secrets.token_hex(32) + '\n')
-    env.write('PORCUPINE_CLICKHOUSE_PASSWORD=' + secrets.token_hex(32) + '\n')
-    env.write('PORCUPINE_OAUTH_ISSUER=http://localhost:8080\n')
-PY
+(
+    set -eu
+    umask 077
+    set -C
+    bootstrap_token=$(openssl rand -hex 32)
+    clickhouse_password=$(openssl rand -hex 32)
+    cat > .env <<EOF
+PORCUPINE_BOOTSTRAP_TOKEN=$bootstrap_token
+PORCUPINE_CLICKHOUSE_PASSWORD=$clickhouse_password
+PORCUPINE_OAUTH_ISSUER=http://localhost:8080
+EOF
+)
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
 curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
-python3 examples/hello.py
+sh examples/hello.sh
 ```
+
+The checkout provides the current guides and shell examples. The release overlay pins the server to v0.9.0.
 
 The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Each run creates another project. An instance administrator can remove the example with the printed project ID using the [project management API](management-api.md#operations).
 
@@ -54,20 +60,12 @@ PORCUPINE_RELEASE_ARCHIVE="porcupine-0.9.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
 PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.9.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
-python3 - "$PORCUPINE_RELEASE_ARCHIVE" <<'PY'
-from pathlib import Path
-import hashlib, sys
-archive = Path(sys.argv[1])
-expected = {line.split()[1].lstrip('*'): line.split()[0]
-            for line in Path('SHA256SUMS').read_text().splitlines() if line.strip()}
-digest = hashlib.sha256()
-with archive.open('rb') as source:
-    for block in iter(lambda: source.read(1024 * 1024), b''):
-        digest.update(block)
-if digest.hexdigest() != expected[archive.name]:
-    raise SystemExit('Archive checksum mismatch')
-print('Archive checksum matches')
-PY
+expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
+actual=$(openssl dgst -sha256 "$PORCUPINE_RELEASE_ARCHIVE" | awk '{ print $NF }')
+test -n "$expected" && test "$actual" = "$expected" || {
+    echo 'Archive checksum mismatch' >&2
+    exit 1
+}
 docker load -i "$PORCUPINE_RELEASE_ARCHIVE"
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
 ```
@@ -144,7 +142,7 @@ curl --fail https://analytics.example.com/readyz
 curl --fail https://analytics.example.com/.well-known/oauth-authorization-server
 ```
 
-Replace the example hostname in the checks. Keep Caddy's volumes across restarts so certificate state persists. The laptop-only `hello.py` deliberately refuses a public issuer; use the [OAuth](oauth.md) and [analytics](analytics.md) requests for remote setup and verification.
+Replace the example hostname in the checks. Keep Caddy's volumes across restarts so certificate state persists. The laptop-only `hello.sh` deliberately refuses a public issuer; use the [OAuth](oauth.md) and [analytics](analytics.md) requests for remote setup and verification.
 
 ## Application container with a separate ClickHouse service
 
@@ -154,14 +152,17 @@ The following runnable example starts a separate ClickHouse container on a priva
 
 ```sh
 umask 077
-python3 - <<'PY'
-from pathlib import Path
-config = dict(line.split('=', 1) for line in Path('.env').read_text().splitlines())
-with Path('.env.warehouse').open('x') as env:
-    env.write('CLICKHOUSE_USER=porcupine_admin\n')
-    env.write('CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1\n')
-    env.write('CLICKHOUSE_PASSWORD=' + config['PORCUPINE_CLICKHOUSE_PASSWORD'] + '\n')
-PY
+(
+    set -eu
+    umask 077
+    set -C
+    . ./.env
+    cat > .env.warehouse <<EOF
+CLICKHOUSE_USER=porcupine_admin
+CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+CLICKHOUSE_PASSWORD=$PORCUPINE_CLICKHOUSE_PASSWORD
+EOF
+)
 docker network create porcupine-private
 docker volume create porcupine-warehouse-data
 docker volume create porcupine-standalone-data
@@ -180,7 +181,7 @@ docker run -d --name porcupine-app --restart unless-stopped \
   --mount type=volume,source=porcupine-standalone-data,target=/data \
   "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.9.0}"
 curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
-python3 examples/hello.py
+sh examples/hello.sh
 ```
 
 For an existing remote warehouse, omit the example ClickHouse container and set `PORCUPINE_CLICKHOUSE_URL` to its reachable private address or trusted HTTPS endpoint. Set its database, username, and private password separately. Do not publish ClickHouse to the internet to make this work. A remote deployment still needs network policy and TLS appropriate to that connection.
@@ -233,6 +234,6 @@ If only the container changed and storage remains compatible, an earlier image m
 
 ## Verification of these recipes
 
-Local checks exercised the release overlay with a source-built image override, the documented Compose/OAuth flow and `hello.py`, restart persistence, and a standalone image with private ClickHouse 26.8.36.3. A Caddy reverse-proxy check verified TLS using a local test CA, fixed issuer metadata, capture and SQL, and MCP initialization. Its proxy used the same fixed trusted address and upstream Host configuration.
+Local checks exercised the release overlay with a source-built image override, the documented Compose/OAuth flow and `hello.sh`, restart persistence, and a standalone image with private ClickHouse 26.8.36.3. A Caddy reverse-proxy check verified TLS using a local test CA, fixed issuer metadata, capture and SQL, and MCP initialization. Its proxy used the same fixed trusted address and upstream Host configuration.
 
 The v0.9.0 release was also deployed on a single AWS Lightsail VM with an existing ClickHouse and HTTPS proxy. The published CLI renamed a synthetic project and an MCP client deleted it. The final project inventory matched its pre-upgrade contents. The [release workflow](https://github.com/olup/porcupine/actions/runs/42829136190) built the server images, packaged both CLI architectures for each OS, and ran the native CLI on each OS.

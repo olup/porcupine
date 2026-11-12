@@ -1,0 +1,62 @@
+site_name: Porcupine
+site_url: https://olup.github.io/porcupine/docs/
+docs_dir: docs
+site_dir: bin/docs-web/porcupine/docs
+use_directory_urls: true
+theme:
+  name: null
+  custom_dir: docs-theme
+plugins: []
+hooks:
+  - docs-theme/hooks.py
+markdown_extensions:
+  - tables
+  - fenced_code
+  - toc:
+      permalink: "#"
+nav:
+  - Get started:
+      - Overview: README.md
+      - Quickstart: quickstart.md
+      - Connect your tools: connect-tools.md
+      - Install and use the CLI: cli.md
+  - Collect events:
+      - Choose an input: collect-events.md
+      - PostHog SDKs: compatibility.md
+      - Native and Segment: native-and-segment-ingestion.md
+      - Users and sessions: data-and-identity.md
+      - Import from PostHog: posthog-import.md
+  - Analyze and deliver:
+      - Query your events: query-events.md
+      - Export query results: exports.md
+      - Webhooks and S3 pipelines: pipelines.md
+      - Correct or delete events: events.md
+  - Projects and access:
+      - Manage projects: projects.md
+      - Invite and manage people: email-accounts.md
+      - Create service keys: service-keys.md
+      - Permissions: security-and-interfaces.md
+  - Deploy and operate:
+      - Hosting: hosting.md
+      - Set up team sign-in: connect-your-team.md
+      - Configure email delivery: email-transport.md
+      - Store older data on S3: storage.md
+      - Back up and restore: online-backup.md
+      - Compose backup setup: backup-compose.md
+      - Test disaster recovery: restore.md
+  - API reference:
+      - HTTP management API: management-api.md
+      - SQL and discovery: analytics.md
+      - MCP tools: mcp.md
+      - Machine OAuth: oauth.md
+      - OIDC configuration: mcp-interactive-oauth.md
+      - Import file format: posthog-import-format.md
+  - How Porcupine works:
+      - Architecture: architecture.md
+      - Durability and recovery: reliability.md
+      - Deduplication: receipts.md
+      - Export internals: export-design.md
+      - SDK compatibility tests: sdk-compatibility-tests.md
+      - Benchmarks: benchmarks.md
+      - Load testing: load-testing.md
+      - Roadmap: roadmap.md

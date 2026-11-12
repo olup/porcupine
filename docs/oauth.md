@@ -66,7 +66,7 @@ user = "CLIENT_ID:CLIENT_SECRET"
 
 For bootstrap, use `bootstrap` in place of `CLIENT_ID` and its original secret. Do not put the secret in a URL, request body, process argument, shell history, or committed configuration.
 
-With `OAUTH_CLIENT_CONFIG` pointing to that file, request an API token and save
+With jq installed and `OAUTH_CLIENT_CONFIG` pointing to that file, request an API token and save
 the response privately. For initial bootstrap administration, replace the example
 read scope with `instance:admin` before creating projects or clients:
 
@@ -78,7 +78,7 @@ curl --fail-with-body --config "$OAUTH_CLIENT_CONFIG" "$PORCUPINE_URL/oauth/toke
 	--data-urlencode 'grant_type=client_credentials' \
 	--data-urlencode 'scope=events:read management:read' \
 	--data-urlencode "resource=$PORCUPINE_URL/api/v1" > "$TOKEN_RESPONSE_FILE"
-ACCESS_TOKEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["access_token"])' "$TOKEN_RESPONSE_FILE")"
+ACCESS_TOKEN="$(jq -er '.access_token' "$TOKEN_RESPONSE_FILE")"
 ```
 
 `PORCUPINE_URL` must equal the configured issuer in this example. The response contains `access_token`, `token_type: "Bearer"`, `expires_in`, normalized `scope`, and `resource`. It is not cacheable. No refresh token is returned. Obtain another access token before expiry; applications should reuse a valid token rather than exchange credentials for every API call.

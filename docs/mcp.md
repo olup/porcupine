@@ -1,5 +1,7 @@
 # MCP reference
 
+To connect a client, follow [Connect your tools](connect-tools.md). This reference describes the two MCP tools, their request shapes, and their responses.
+
 Porcupine exposes two tools over stateless Streamable HTTP at `/mcp`. The
 implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 v1.8.0 in the existing Go process. It requires no additional service.
