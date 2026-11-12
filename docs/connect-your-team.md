@@ -1,4 +1,6 @@
-# Connect a team to Porcupine
+# Set up team sign-in
+
+This guide is for the instance operator. If you have already been invited and want to connect an agent or the CLI, use [Connect your tools](connect-tools.md).
 
 A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Enable [SMTP delivery](email-transport.md) and set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. The server sends an invitation notice when an administrator grants access and a verification code when the person starts a login.
 

@@ -1,8 +1,8 @@
-# Invite a person to Porcupine
+# Invite and manage people
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-## Invite and manage people
+## Invite a person
 
 Use an instance-admin credential for the appropriate resource. In MCP, use `porcupine_docs` to discover the operation and `porcupine_call` to invoke it. The HTTP API and CLI use the API audience. After `porcupine login --admin`, the standalone CLI accepts each operation name below as a command. Save the example grant in `member.json` and run `porcupine invite-human --body @member.json`.
 
@@ -27,6 +27,10 @@ For example, authorize Léa to query project A and import historical events into
 
 Use the same `grants` field for updates, omitting `email`. When all assigned projects have identical permissions, the alternative body shape is `{"email":"lea@example.org","projects":["PROJECT_A","PROJECT_B"],"permissions":["events:read"]}`. Choose one shape per request. The `grants` field in the response gives the authoritative per-project rights. The `projects` and `permissions` fields summarize the union of project IDs and permissions, respectively.
 
+Send the person your instance URL and the [tool connection guide](connect-tools.md). They request a fresh code from their own inbox when connecting each tool.
+
+## Add another administrator
+
 To invite another instance administrator, call `invite-human` with:
 
 ```json
@@ -34,6 +38,14 @@ To invite another instance administrator, call `invite-human` with:
 ```
 
 Only an authenticated instance administrator can grant this role. Use this exact grant by itself. The recipient signs in with their own mailbox on the dedicated admin OAuth client and consents to administration of all projects. For an existing member, call `update-human` with the same grant and their ID. Replacing it with explicit project grants removes admin access and invalidates previous connections. The `deployment_admin` field identifies the original deployment seed; the effective administrator permission is `instance:admin`.
+
+## Change or revoke access
+
+Use `list-humans` to find a person's ID. Use `update-human` to replace their grants, or `revoke-human` to disable the account. Both changes invalidate that person's existing OAuth connections. Revoking a human does not revoke service accounts they configured.
+
+To disconnect only one tool, use `list-oauth-grants` and `revoke-oauth-grant`. The other connections retain their access.
+
+## Invitation and sign-in behavior
 
 Project member invitations require explicit project IDs. Email domains are case-insensitive; Porcupine preserves the case of the mailbox before `@` and recognizes an exact ASCII mailbox address. Provide the invited address when signing in.
 
