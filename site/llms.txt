@@ -89,4 +89,6 @@ For deployment-wide storage retention, use the operator's [ClickHouse storage gu
 
 ## Documentation routes
 
+Development builds expose `get-instance-status` through HTTP, CLI, and MCP for credentials with `management:read`. It reports live SQLite and ClickHouse probes separately from optional service configuration. Discover its contract before calling it; v0.9.0 does not include this operation. Read [instance status](https://olup.github.io/porcupine/docs/instance-status.md) for probe limits and interpretation. The report contains no project data and does not replace project permission checks.
+
 For step-by-step user guides, start with [connecting tools](https://olup.github.io/porcupine/docs/connect-tools.md), [choosing an ingestion input](https://olup.github.io/porcupine/docs/collect-events.md), [querying events](https://olup.github.io/porcupine/docs/query-events.md), or [managing projects](https://olup.github.io/porcupine/docs/projects.md). Request fields and limits are in the [HTTP reference](https://olup.github.io/porcupine/docs/management-api.md), [SQL reference](https://olup.github.io/porcupine/docs/analytics.md), and [MCP reference](https://olup.github.io/porcupine/docs/mcp.md). Each Markdown URL has a corresponding HTML guide linked from the [documentation overview](https://olup.github.io/porcupine/docs/).

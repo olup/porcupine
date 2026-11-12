@@ -209,6 +209,10 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-instance-status", Method: "GET", Path: "/api/v1/status",
+		Summary: "Read instance version, bounded SQLite and ClickHouse health checks, and optional service configuration without secrets or project data",
+	},
+	{
 		ID: "get-pipeline", Method: "GET", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}",
 		Summary: "Read project pipeline metadata",
 		Params: []parameter{

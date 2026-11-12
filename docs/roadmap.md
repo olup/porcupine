@@ -10,6 +10,8 @@
 
 ## Areas for future work
 
+Development builds add an authenticated [instance status report](instance-status.md) through HTTP, CLI, and MCP. This operation is not included in v0.9.0.
+
 Agents currently write the SQL for each question. Named metrics, a saved and parameterized query catalog, built-in session definitions and live-presence rules are candidates for future work. Funnels and retention can already be expressed in the supported SQL dialect when the events carry the identities and timestamps the analysis needs.
 
 A replicated queue and multiple ingestion workers would change the failure model and deployment requirements. The current architecture targets a single application process with local durable storage.

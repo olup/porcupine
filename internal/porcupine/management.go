@@ -218,6 +218,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			MaxBodyBytes: maxBodyBytes, Security: security,
 			Metadata: map[string]any{"access": access}, Responses: responses}
 	}
+	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded SQLite and ClickHouse health checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
 	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key", operationAccess{Permission: "management:write", InstancePermissions: []string{"management:write", "events:write"}}, 201), s.managementCreateProject)
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)

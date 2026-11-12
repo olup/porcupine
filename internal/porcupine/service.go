@@ -64,6 +64,7 @@ type Service struct {
 	captureSlots    chan struct{}
 	importSlots     chan struct{}
 	tokenSlots      chan struct{}
+	statusSlots     chan struct{}
 	querySecret     []byte
 	queryCacheEpoch string
 	mutationMu      sync.Mutex
@@ -166,6 +167,7 @@ func Open(c Config) (*Service, error) {
 	s.captureSlots = make(chan struct{}, 32)
 	s.importSlots = make(chan struct{}, 2)
 	s.tokenSlots = make(chan struct{}, 8)
+	s.statusSlots = make(chan struct{}, 1)
 	fail := func(err error) (*Service, error) {
 		if exports != nil {
 			exports.store.Close()

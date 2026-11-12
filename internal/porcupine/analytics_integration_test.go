@@ -280,6 +280,10 @@ func TestClickHouseIntegrationOutageAndRestart(t *testing.T) {
 	}
 	s := open()
 	a, ingest := project(t, s)
+	instance := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
+	if instance["status"] != "degraded" || instance["checks"].(map[string]any)["clickhouse"] != "unavailable" {
+		t.Fatal("instance status did not detect the ClickHouse outage")
+	}
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "outage-a"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "outage-b"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "outage-c"), 503)
@@ -301,6 +305,10 @@ func TestClickHouseIntegrationOutageAndRestart(t *testing.T) {
 			t.Fatal("delivery did not recover after transport became available")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	instance = request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
+	if instance["status"] != "ok" || instance["checks"].(map[string]any)["clickhouse"] != "ok" {
+		t.Fatal("instance status did not recover with ClickHouse")
 	}
 	_, account, password, err := s.analyticsReader(context.Background(), a)
 	if err != nil {
