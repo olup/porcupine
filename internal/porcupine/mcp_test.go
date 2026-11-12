@@ -100,7 +100,7 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				t.Fatal("catalog must contain a bounded first page of summaries")
 			}
 			tail := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20, Offset: 20}, false)
-			if len(tail["operations"].([]any)) != 17 || tail["next_offset"] != nil {
+			if len(tail["operations"].([]any)) != 18 || tail["next_offset"] != nil {
 				t.Fatal("full catalog pagination failed")
 			}
 			allOperations := append(catalog["operations"].([]any), tail["operations"].([]any)...)
@@ -171,7 +171,7 @@ func TestMCPProjectIsolationAndEscalation(t *testing.T) {
 	for _, item := range catalog["operations"].([]any) {
 		names = append(names, item.(map[string]any)["operation_id"].(string))
 	}
-	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-event", "get-event-catalog", "get-event-export", "get-event-mutation", "get-event-schema", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events"}) {
+	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-event", "get-event-catalog", "get-event-export", "get-event-mutation", "get-event-schema", "get-instance-status", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events"}) {
 		t.Fatalf("discovery exceeded reader permissions: %v", names)
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "porcupine_docs", Arguments: mcpDocsInput{OperationID: "create-project"}})

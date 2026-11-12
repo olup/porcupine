@@ -20,6 +20,8 @@ porcupine list-projects
 porcupine query-events --id PROJECT_ID --body '{"sql":"SELECT count() FROM events"}'
 ```
 
+Development builds also provide `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. The v0.9.0 release does not include that command. See [instance status](../docs/instance-status.md). The existing `status` command remains the public readiness check.
+
 On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"`. You can also pass the origin before a command with `porcupine --url URL ...`.
 
 On an email-enabled instance, login opens the browser for approval using OAuth with PKCE. The default client requests event and management read access. An instance administrator can run `porcupine login --admin` to authorize administration. Login needs the local callback port 43179. The latest login replaces the previous session for that origin. Tokens are refreshed on demand and stored in the user's configuration directory under `porcupine/credentials`.

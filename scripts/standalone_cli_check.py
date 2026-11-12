@@ -93,6 +93,10 @@ def check(directory, binary, origin, bootstrap):
     assert b"ready" in cli("--url", origin, "status")
     admin_key = service_key("project provisioner", ["*"],
                             ["management:read", "management:write", "events:write"])["token"]
+    status = json.loads(cli("get-instance-status", key=admin_key))
+    assert status["status"] == "ok" and status["checks"] == {
+        "sqlite": "ok", "clickhouse": "not_configured"}
+    assert not any(status["configuration"].values()), "unexpected optional services"
     cli("create-project", "--body", '{"name":"   "}', key=admin_key, denied=400,
         message="name must contain 1 to 200 UTF-8 bytes")
     cli("create-project", "--body", '{"name":', key=admin_key, denied=400,
@@ -117,6 +121,9 @@ def check(directory, binary, origin, bootstrap):
     key = scoped["token"]
     projects = json.loads(cli("list-projects", key=key))["projects"]
     assert [p["id"] for p in projects] == [ids[0]]
+    scoped_status = json.loads(cli("get-instance-status", key=key))
+    assert scoped_status["checks"] == status["checks"]
+    assert not any(project_id in json.dumps(scoped_status) for project_id in ids)
     cli("get-event-schema", "--id", ids[1], key=key, denied=403)
 
     data = ('{"uuid":"cli-demo","event":"Café","distinct_id":"cli",'
@@ -142,6 +149,7 @@ def check(directory, binary, origin, bootstrap):
     assert finished["state"] == "completed"
     setup("DELETE", "/access-keys/" + scoped["id"])
     cli("list-projects", key=key, denied=401)
+    cli("get-instance-status", key=key, denied=401)
     cli("delete-project", "--id", ids[0], key=admin)
     cli("delete-project", "--id", ids[0], key=admin)
     remaining = json.loads(cli("list-projects", key=admin_key))["projects"]
@@ -158,7 +166,7 @@ def main():
         bootstrap = secrets.token_urlsafe(32)
         with local_server(directory, bootstrap) as origin:
             check(directory, binary, origin, bootstrap)
-    print("Standalone CLI passed status, project rename and deletion, isolation, binary upload/retry, and key revocation.")
+    print("Standalone CLI passed readiness and instance status, API errors, project rename and deletion, isolation, binary upload/retry, and key revocation.")
 
 
 if __name__ == "__main__":

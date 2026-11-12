@@ -34,6 +34,7 @@ for mutation invalidation and delivery consistency.
 
 | Operation | Required authority | Success |
 | --- | --- | --- |
+| `GET /api/v1/status` (development builds) | `management:read`; no project data or secrets in the [instance report](instance-status.md) | `200`, including a degraded report |
 | `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |
 | `POST /api/v1/projects` | `management:write` and `events:write`, both with `*` scope | `201` |
 | `PATCH /api/v1/projects/{id}` | `management:write` for this project | `200` with the updated project |
