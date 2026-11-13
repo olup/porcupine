@@ -63,7 +63,12 @@ func lakeMaintenanceQuery(t *testing.T, s *Service, project, sql string, paramet
 	}
 }
 
-func lakeMaintenanceLifecycle(t *testing.T, s *Service, project, ingest, prefix string) [2]map[string]any {
+type maintenanceLifecycleState struct {
+	prefix, revision string
+	receipts         [2]map[string]any
+}
+
+func lakeMaintenanceLifecycle(t *testing.T, s *Service, project, ingest, prefix string, verifyNow bool) maintenanceLifecycleState {
 	t.Helper()
 	h := s.Handler()
 	page := lakeMaintenancePages(prefix)
@@ -105,24 +110,33 @@ func lakeMaintenanceLifecycle(t *testing.T, s *Service, project, ingest, prefix 
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+	state := maintenanceLifecycleState{prefix: prefix, revision: editResponse.Revision, receipts: [2]map[string]any{editReceipt, deleteReceipt}}
+	retry := nativeRequest(t, s, ingest, page, 200)
+	if retry["duplicates"] != float64(2) || receiptFrom(t, retry, 0)["event_id"] != editReceipt["event_id"] || receiptFrom(t, retry, 1)["event_id"] != deleteReceipt["event_id"] {
+		t.Fatal("concurrent retry changed receipt IDs")
+	}
+	if verifyNow {
+		lakeMaintenanceVerify(t, s, project, state)
+	}
+	return state
+}
+
+func lakeMaintenanceVerify(t *testing.T, s *Service, project string, state maintenanceLifecycleState) {
+	t.Helper()
+	prefix, editReceipt, deleteReceipt := state.prefix, state.receipts[0], state.receipts[1]
 	rows := lakeMaintenanceQuery(t, s, project, "SELECT event_id,event,revision,person_id,person_properties,properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": editReceipt["uuid"].(string)})
 	if len(rows) != 1 {
 		t.Fatal("concurrent correction missing")
 	}
 	row := rows[0].(map[string]any)
 	var traits, properties map[string]any
-	if json.Unmarshal([]byte(row["person_properties"].(string)), &traits) != nil || json.Unmarshal([]byte(row["properties"].(string)), &properties) != nil || properties["amount"] != float64(42) || row["event_id"] != editReceipt["event_id"] || row["event"] != "lifecycle-corrected" || row["revision"] != editResponse.Revision || row["person_id"] != prefix+"-person" || traits["plan"] != "team" {
+	if json.Unmarshal([]byte(row["person_properties"].(string)), &traits) != nil || json.Unmarshal([]byte(row["properties"].(string)), &properties) != nil || properties["amount"] != float64(42) || row["event_id"] != editReceipt["event_id"] || row["event"] != "lifecycle-corrected" || row["revision"] != state.revision || row["person_id"] != prefix+"-person" || traits["plan"] != "team" {
 		t.Fatalf("concurrent identity/edit changed: %v", row)
 	}
 	deleted := lakeMaintenanceQuery(t, s, project, "SELECT count(*) AS total FROM events WHERE uuid=$uuid", map[string]string{"uuid": deleteReceipt["uuid"].(string)})
 	if deleted[0].(map[string]any)["total"] != "0" {
 		t.Fatal("concurrent deletion still visible")
 	}
-	retry := nativeRequest(t, s, ingest, page, 200)
-	if retry["duplicates"] != float64(2) || receiptFrom(t, retry, 0)["event_id"] != editReceipt["event_id"] || receiptFrom(t, retry, 1)["event_id"] != deleteReceipt["event_id"] {
-		t.Fatal("concurrent retry changed receipt IDs")
-	}
-	return [2]map[string]any{editReceipt, deleteReceipt}
 }
 
 // A long run is opt-in; the ordinary native race suite exercises the same
@@ -170,7 +184,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	if err := p.db.QueryRow("SELECT version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	architectureEmit("soak_environment", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "native_version": version, "engine_memory_mib": store.config.MemoryLimitMB, "engine_threads": store.config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "initial_active_event_files": initialFiles})
+	architectureEmit("soak_environment", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "native_version": version, "engine_memory_mib": store.config.MemoryLimitMB, "engine_threads": store.config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "initial_active_event_files": initialFiles})
 	other, otherIngest := project(t, s)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"foreign","actor_id":"foreign","name":"foreign"}`, 200)
 	if s.deliveryCancel == nil {
@@ -186,6 +200,8 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	var queries, accepts []time.Duration
 	codes := map[int]int{}
 	passes, completed, failed, progress, lifecycle := 0, 0, 0, int64(0), 0
+	var lifecycleResults []maintenanceLifecycleState
+	verifyDuringLoad := os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1"
 	var maxHold float64
 	for reader := range 2 {
 		wg.Add(1)
@@ -249,9 +265,10 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 				return
 			case <-time.After(time.Duration(max(1, seconds/8)) * time.Second):
 			}
-			lakeMaintenanceLifecycle(t, s, projectID, ingest, fmt.Sprintf("soak-cycle-%d", cycle))
+			result := lakeMaintenanceLifecycle(t, s, projectID, ingest, fmt.Sprintf("soak-cycle-%d", cycle), verifyDuringLoad)
 			mu.Lock()
 			lifecycle++
+			lifecycleResults = append(lifecycleResults, result)
 			mu.Unlock()
 		}
 	}()
@@ -308,6 +325,11 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	arrival := time.Since(start)
 	cancel()
 	wg.Wait()
+	if !verifyDuringLoad {
+		for _, state := range lifecycleResults {
+			lakeMaintenanceVerify(t, s, projectID, state)
+		}
+	}
 	remaining := architectureDrain(t, s, 60*time.Second)
 	if remaining != 0 {
 		t.Fatalf("soak did not drain: %d", remaining)
@@ -365,7 +387,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	if completed < 3 || progress == 0 || lifecycle != 6 || codes[200] != len(queries) || arrival > time.Duration(seconds)*time.Second+time.Second || maxPending > int64(2*rate) || maxOldestMS > 3000 || finalFiles > initialFiles+128 {
 		verdict = "NOT VERIFIED"
 	}
-	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
+	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
 }
 
 func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
@@ -415,9 +437,9 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	var first [2]map[string]any
 	for cycle := 0; cycle < 8; cycle++ {
-		receipts := lakeMaintenanceLifecycle(t, s, a, ingest, fmt.Sprintf("concurrent-%d", cycle))
+		receipts := lakeMaintenanceLifecycle(t, s, a, ingest, fmt.Sprintf("concurrent-%d", cycle), true)
 		if cycle == 0 {
-			first = receipts
+			first = receipts.receipts
 		}
 	}
 	cancel()
@@ -451,4 +473,44 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 		t.Fatal("restart lost correction or identity")
 	}
 	architectureEmit("concurrent_lifecycle", "ducklake", map[string]any{"cycles": 8, "files_processed": progress, "verdict": "VERIFIED"})
+}
+
+func TestDuckLakeMaintenanceDoesNotTakeProjectionLock(t *testing.T) {
+	s := openLakeStorageTest(t, t.TempDir(), 1)
+	for batch := 0; batch < 20; batch++ {
+		var projections []eventProjection
+		for row := 0; row < 25; row++ {
+			i := batch*25 + row
+			projections = append(projections, lakeStorageProjection(t, "unlocked", fmt.Sprintf("unlocked-%d", i), int64(i+1)))
+		}
+		if err := s.Apply(context.Background(), projections); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, release, err := s.leaseProject(context.Background(), "unlocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	before, err := lakeMaintenanceFileCount(context.Background(), p, "current_events")
+	if err != nil || before < 2 {
+		t.Fatalf("missing compaction fixture %d %v", before, err)
+	}
+	if err := p.write.Lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer p.write.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Maintain(ctx); err != nil {
+		t.Fatalf("maintenance blocked by projection lock: %v", err)
+	}
+	after, err := lakeMaintenanceFileCount(ctx, p, "current_events")
+	if err != nil || after >= before {
+		t.Fatalf("default maintenance made no progress: %d -> %d %v", before, after, err)
+	}
+	var count int
+	if err := p.db.QueryRowContext(ctx, "SELECT count(*) FROM events").Scan(&count); err != nil || count != 500 {
+		t.Fatalf("maintenance changed rows: %d %v", count, err)
+	}
 }

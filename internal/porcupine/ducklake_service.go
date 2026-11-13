@@ -38,7 +38,7 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 
 func (s *Service) startLakeMaintenance(interval time.Duration) {
 	if interval == 0 {
-		interval = 5 * time.Minute
+		interval = 2 * time.Second
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.lakeMaintenanceCancel, s.lakeMaintenanceDone = cancel, make(chan struct{})
