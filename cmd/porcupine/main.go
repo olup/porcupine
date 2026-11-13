@@ -60,32 +60,10 @@ func main() {
 	if raw := os.Getenv("PORCUPINE_TRUSTED_PROXIES"); raw != "" {
 		trustedProxies = strings.Split(raw, ",")
 	}
-	var clickHouse *porcupine.ClickHouseConfig
-	var duckLake *porcupine.DuckLakeConfig
-	if directory := os.Getenv("PORCUPINE_DUCKLAKE_DIR"); directory != "" {
-		duckLake = &porcupine.DuckLakeConfig{Directory: directory}
-		if raw := os.Getenv("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL"); raw != "" {
-			interval, err := time.ParseDuration(raw)
-			if err != nil || interval < time.Second || interval > 24*time.Hour {
-				slog.Error("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL must be between 1s and 24h")
-				os.Exit(1)
-			}
-			duckLake.MaintenanceInterval = interval
-		}
-	}
-	if endpoint := os.Getenv("PORCUPINE_CLICKHOUSE_URL"); endpoint != "" {
-		hotDays := 0
-		if raw := os.Getenv("PORCUPINE_HOT_STORAGE_DAYS"); raw != "" {
-			parsed, err := strconv.Atoi(raw)
-			if err != nil || parsed < 1 || parsed > 36500 {
-				slog.Error("PORCUPINE_HOT_STORAGE_DAYS must be between 1 and 36500")
-				os.Exit(1)
-			}
-			hotDays = parsed
-		}
-		clickHouse = &porcupine.ClickHouseConfig{URL: endpoint, Database: os.Getenv("PORCUPINE_CLICKHOUSE_DATABASE"),
-			User: os.Getenv("PORCUPINE_CLICKHOUSE_USER"), Password: os.Getenv("PORCUPINE_CLICKHOUSE_PASSWORD"),
-			StoragePolicy: os.Getenv("PORCUPINE_CLICKHOUSE_STORAGE_POLICY"), HotStorageDays: hotDays, ColdVolume: os.Getenv("PORCUPINE_CLICKHOUSE_COLD_VOLUME")}
+	clickHouse, duckLake, err := analyticsConfiguration()
+	if err != nil {
+		slog.Error("analytics configuration", "error", err)
+		os.Exit(1)
 	}
 	exportConfig, err := exportConfiguration()
 	if err != nil {
