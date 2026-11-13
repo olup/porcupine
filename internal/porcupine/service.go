@@ -36,46 +36,60 @@ type Config struct {
 	TrustedProxies  []string
 	Clock           func() time.Time
 	ClickHouse      *ClickHouseConfig
+	DuckLake        *DuckLakeConfig
 	Pipelines       *PipelineConfig
 	Exports         *ExportConfig
 	OAuth           *OAuthConfig
 }
 
 type Service struct {
-	activity        projectActivity
-	catalogMu       sync.RWMutex
-	deletionMu      contextMutex
-	deletionCancel  context.CancelFunc
-	deletionDone    chan struct{}
-	db              *sql.DB
-	queueMax        int
-	queueMaxBytes   int64
-	hotReceiptLimit int64
-	receiptSlots    chan struct{}
-	allowedOrigins  map[string]bool
-	trustedProxies  []netip.Prefix
-	clock           func() time.Time
-	ch              *clickHouse
-	deliveryCancel  context.CancelFunc
-	deliveryDone    chan struct{}
-	queryMu         contextMutex
-	queryReady      map[string]bool
-	querySlots      chan struct{}
-	captureSlots    chan struct{}
-	importSlots     chan struct{}
-	tokenSlots      chan struct{}
-	statusSlots     chan struct{}
-	querySecret     []byte
-	queryCacheEpoch string
-	mutationMu      sync.Mutex
-	pipelines       *pipelineRuntime
-	batchSlot       chan struct{}
-	exports         *exportRuntime
-	oauth           *oauthRuntime
-	projectionGuard *projectionGuard
+	activity              projectActivity
+	catalogMu             sync.RWMutex
+	deletionMu            contextMutex
+	deletionCancel        context.CancelFunc
+	deletionDone          chan struct{}
+	db                    *sql.DB
+	queueMax              int
+	queueMaxBytes         int64
+	hotReceiptLimit       int64
+	receiptSlots          chan struct{}
+	allowedOrigins        map[string]bool
+	trustedProxies        []netip.Prefix
+	clock                 func() time.Time
+	ch                    *clickHouse
+	lake                  lakeStore
+	lakeMemoryMB          int
+	lakeMaintenanceCancel context.CancelFunc
+	lakeMaintenanceDone   chan struct{}
+	deliveryCancel        context.CancelFunc
+	deliveryDone          chan struct{}
+	queryMu               contextMutex
+	queryReady            map[string]bool
+	querySlots            chan struct{}
+	captureSlots          chan struct{}
+	importSlots           chan struct{}
+	tokenSlots            chan struct{}
+	statusSlots           chan struct{}
+	querySecret           []byte
+	queryCacheEpoch       string
+	mutationMu            sync.Mutex
+	pipelines             *pipelineRuntime
+	batchSlot             chan struct{}
+	exports               *exportRuntime
+	oauth                 *oauthRuntime
+	projectionGuard       *projectionGuard
 }
 
 func Open(c Config) (*Service, error) {
+	if c.DuckLake != nil && c.ClickHouse != nil {
+		return nil, errors.New("choose one analytical store: DuckLake or ClickHouse")
+	}
+	if c.DuckLake != nil && (c.HotReceiptLimit != 0 || c.Exports != nil) {
+		return nil, errors.New("the DuckLake experiment does not support finite receipt history or query exports")
+	}
+	if c.DuckLake != nil && c.DuckLake.MaintenanceInterval < 0 {
+		return nil, errors.New("DuckLake maintenance interval must be nonnegative")
+	}
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
 	}
@@ -169,6 +183,9 @@ func Open(c Config) (*Service, error) {
 	s.tokenSlots = make(chan struct{}, 8)
 	s.statusSlots = make(chan struct{}, 1)
 	fail := func(err error) (*Service, error) {
+		if s.lake != nil {
+			s.lake.Close()
+		}
 		if exports != nil {
 			exports.store.Close()
 		}
@@ -182,6 +199,16 @@ func Open(c Config) (*Service, error) {
 	}
 	if ch != nil {
 		ch.projectionGuard = s.projectionGuard
+	}
+	if c.DuckLake != nil {
+		s.lake, err = newDuckLake(*c.DuckLake)
+		if err != nil {
+			return fail(err)
+		}
+		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
+		if s.lakeMemoryMB == 0 {
+			s.lakeMemoryMB = 256
+		}
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
 CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
@@ -293,13 +320,19 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeBackupGuard(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializeLakeSource(context.Background()); err != nil {
+		return fail(err)
+	}
 	if err := s.initializePipelines(context.Background()); err != nil {
 		return fail(err)
 	}
 	s.startDeletionRecovery()
 	s.startPipelines()
-	if ch != nil {
+	if ch != nil || s.lake != nil {
 		s.startDelivery()
+	}
+	if s.lake != nil {
+		s.startLakeMaintenance(c.DuckLake.MaintenanceInterval)
 	}
 	if exports != nil {
 		s.startExports()
@@ -308,6 +341,10 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 }
 
 func (s *Service) Close() error {
+	if s.lakeMaintenanceCancel != nil {
+		s.lakeMaintenanceCancel()
+		<-s.lakeMaintenanceDone
+	}
 	s.deletionCancel()
 	<-s.deletionDone
 	s.stopPipelines()
@@ -324,7 +361,11 @@ func (s *Service) Close() error {
 	if s.ch != nil {
 		s.ch.client.CloseIdleConnections()
 	}
-	return errors.Join(s.db.Close(), s.projectionGuard.close())
+	var lakeErr error
+	if s.lake != nil {
+		lakeErr = s.lake.Close()
+	}
+	return errors.Join(lakeErr, s.db.Close(), s.projectionGuard.close())
 }
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 func newID() string {

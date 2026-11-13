@@ -16,6 +16,9 @@ func projectNamespace(database, projectID string) string {
 // deleteProjectClickHouse runs after the deletion fence has stopped admission
 // and drained in-flight work. A repeated call resumes a partial cleanup.
 func (s *Service) deleteProjectClickHouse(ctx context.Context, projectID string) error {
+	if s.lake != nil {
+		return s.lake.DeleteProject(ctx, projectID)
+	}
 	if s.ch == nil {
 		var previouslyConfigured bool
 		if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='query_master_key')").Scan(&previouslyConfigured); err != nil {

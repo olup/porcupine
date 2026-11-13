@@ -6,6 +6,7 @@ Agents connecting to a running instance should start with the
 [agent guide](https://olup.github.io/porcupine/llms.txt).
 
 - Use Go and Git. Keep the server and standalone CLI builds CGO-free and their dependencies small.
+- The `experiment/ducklake` branch has an opt-in `ducklake` native build tag using the official DuckDB driver. This experimental server build requires CGO. Keep normal server and standalone CLI builds CGO-free, and do not describe the experiment as released or deploy it automatically.
 - Register management operations with Huma. Set the operation ID and authorization
   metadata so HTTP and MCP share their contract. After an API change, run
   `make cli-generate` and commit the generated standalone CLI catalog.

@@ -61,6 +61,18 @@ func main() {
 		trustedProxies = strings.Split(raw, ",")
 	}
 	var clickHouse *porcupine.ClickHouseConfig
+	var duckLake *porcupine.DuckLakeConfig
+	if directory := os.Getenv("PORCUPINE_DUCKLAKE_DIR"); directory != "" {
+		duckLake = &porcupine.DuckLakeConfig{Directory: directory}
+		if raw := os.Getenv("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL"); raw != "" {
+			interval, err := time.ParseDuration(raw)
+			if err != nil || interval < time.Second || interval > 24*time.Hour {
+				slog.Error("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL must be between 1s and 24h")
+				os.Exit(1)
+			}
+			duckLake.MaintenanceInterval = interval
+		}
+	}
 	if endpoint := os.Getenv("PORCUPINE_CLICKHOUSE_URL"); endpoint != "" {
 		hotDays := 0
 		if raw := os.Getenv("PORCUPINE_HOT_STORAGE_DAYS"); raw != "" {
@@ -90,7 +102,7 @@ func main() {
 		slog.Error("OAuth configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig})
+	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)

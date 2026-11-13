@@ -218,7 +218,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			MaxBodyBytes: maxBodyBytes, Security: security,
 			Metadata: map[string]any{"access": access}, Responses: responses}
 	}
-	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded SQLite and ClickHouse health checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
+	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
 	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key", operationAccess{Permission: "management:write", InstancePermissions: []string{"management:write", "events:write"}}, 201), s.managementCreateProject)
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
@@ -228,11 +228,15 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke a key; the last active administrator is protected", operationAccess{Permission: "instance:admin"}, 204), s.managementRevokeKey)
 	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
-	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only ClickHouse SQL against this project's events", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
-	queryOperation.Description = `Agents write the SQL. First discover the table, allowed functions and limits with get-event-schema, then inspect observed names and properties with get-event-catalog.
+	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
+	queryOperation.Description = `Agents write the SQL. First discover the dialect, table, allowed functions, cache support and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. The experimental DuckLake engine uses DuckDB SQL, $name bound parameters and fresh reads; do not send ClickHouse SQL to it.
 
-Example counting conversations by day and a custom client property:
+ClickHouse example counting conversations by day and a custom client property:
 SELECT toDate(event_time) AS day, JSONExtractString(properties,'client_id') AS client, count() AS conversations FROM events WHERE event={event:String} GROUP BY day,client ORDER BY day,client
+Parameters: {"event":"conversation_started"}.
+
+DuckDB equivalent:
+SELECT CAST(event_time AS DATE) AS day, json_extract_string(properties,'$.client_id') AS client, count(*) AS conversations FROM events WHERE event=$event GROUP BY day,client ORDER BY day,client
 Parameters: {"event":"conversation_started"}.
 
 Example inspecting the latest event pointer returned by the event catalog:

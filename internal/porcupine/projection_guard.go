@@ -112,6 +112,9 @@ func (s *Service) initializeBackupGuard(ctx context.Context) error {
 }
 
 func (s *Service) initializeDelivery(ctx context.Context) error {
+	if s.lake != nil {
+		return s.initializeLakeSource(ctx)
+	}
 	if s.ch.projectionGuard == nil {
 		return s.ch.initialize(ctx)
 	}

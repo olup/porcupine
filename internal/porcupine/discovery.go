@@ -85,6 +85,9 @@ func (s *Service) eventCatalog(ctx context.Context, input *EventCatalogInput) (*
 	if err := s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
+	if s.lake != nil {
+		return s.lakeEventCatalog(ctx, input.ID, input.Event, limit, input.Offset)
+	}
 	if s.ch == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}

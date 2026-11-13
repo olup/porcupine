@@ -19,6 +19,7 @@ const (
 
 type InstanceChecks struct {
 	SQLite     DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
+	DuckLake   DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Experimental local archive identity check, bounded to one second."`
 	ClickHouse DependencyStatus `json:"clickhouse" enum:"ok,unavailable,not_configured" doc:"Authenticated SELECT 1 in the configured database, bounded to one second. Does not validate every table or project reader."`
 }
 
@@ -51,7 +52,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 
 	result := InstanceStatus{
 		Status: "ok", Version: Version, CheckedAt: time.Now().UTC().Format(time.RFC3339),
-		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured},
+		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
 			QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && s.ch != nil,
@@ -75,6 +76,16 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		result.Checks.ClickHouse = dependencyOK
 		if err != nil || strings.TrimSpace(string(data)) != "1" {
 			result.Checks.ClickHouse = dependencyUnavailable
+			result.Status = "degraded"
+		}
+	}
+	if s.lake != nil {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		_, err := s.lake.SourceID(probe)
+		cancel()
+		result.Checks.DuckLake = dependencyOK
+		if err != nil {
+			result.Checks.DuckLake = dependencyUnavailable
 			result.Status = "degraded"
 		}
 	}

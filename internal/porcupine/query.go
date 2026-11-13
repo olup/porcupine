@@ -41,9 +41,9 @@ type AnalyticsLimits struct {
 	MaxResultBytes        int `json:"max_result_bytes"`
 	MaxExecutionSeconds   int `json:"max_execution_seconds"`
 	RequestTimeoutSeconds int `json:"request_timeout_seconds"`
-	MaxMemoryBytes        int `json:"max_memory_bytes"`
-	MaxReadRows           int `json:"max_read_rows"`
-	MaxReadBytes          int `json:"max_read_bytes"`
+	MaxMemoryBytes        int `json:"max_memory_bytes" doc:"Engine memory budget. Native DuckDB allocations can exceed this; it is not a hard process RSS ceiling."`
+	MaxReadRows           int `json:"max_read_rows" doc:"Physical row scan quota; zero means unavailable for this engine."`
+	MaxReadBytes          int `json:"max_read_bytes" doc:"Physical byte scan quota; zero means unavailable for this engine."`
 	MaxConcurrentQueries  int `json:"max_concurrent_queries" doc:"Instance-wide query concurrency limit"`
 }
 
@@ -58,6 +58,8 @@ type AnalyticsSchema struct {
 type AnalyticsSchemaOutput struct{ Body AnalyticsSchema }
 
 type AnalyticsSQL struct {
+	Dialect     string   `json:"dialect,omitempty" doc:"SQL dialect selected by this deployment."`
+	ResultCache bool     `json:"result_cache" doc:"Whether this engine supports the documented result cache."`
 	Functions   []string `json:"functions"`
 	Features    []string `json:"features"`
 	Unsupported []string `json:"unsupported"`
@@ -67,8 +69,8 @@ type AnalyticsQueryInput struct {
 	ID   string `path:"id" doc:"Project identifier"`
 	Body struct {
 		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden."`
-		Parameters map[string]string `json:"parameters,omitempty" doc:"Typed ClickHouse placeholders such as {event:String}. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
-		UseCache   *bool             `json:"use_cache,omitempty" doc:"Omitted or true allows a 60-second ClickHouse result cache. False bypasses cache reads and writes and reads currently projected data. Caching is bypassed while edits or deletions await projection."`
+		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound scalar parameters. Discover the deployment dialect with get-event-schema: ClickHouse uses {event:String}, experimental DuckDB uses $event and optional SQL casts. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
+		UseCache   *bool             `json:"use_cache,omitempty" doc:"Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The DuckLake experiment always executes fresh."`
 	}
 }
 
@@ -83,7 +85,7 @@ type AnalyticsStatistics struct {
 
 type AnalyticsResult struct {
 	Meta                   []AnalyticsResultColumn      `json:"meta"`
-	Data                   []map[string]json.RawMessage `json:"data" doc:"Typed ClickHouse JSON values. 64-bit integers are represented as strings to preserve precision."`
+	Data                   []map[string]json.RawMessage `json:"data" doc:"Typed SQL JSON values. 64-bit integers are represented as strings to preserve precision."`
 	Rows                   uint64                       `json:"rows"`
 	Statistics             AnalyticsStatistics          `json:"statistics"`
 	RowsBeforeLimitAtLeast *uint64                      `json:"rows_before_limit_at_least,omitempty"`
@@ -119,6 +121,9 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	if err := s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
+	if s.lake != nil {
+		return s.lakeAnalyticsSchema(ctx, input.ID)
+	}
 	delivery, err := s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
@@ -150,7 +155,7 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	return &AnalyticsSchemaOutput{Body: AnalyticsSchema{
 		Enabled: s.ch != nil, Tables: []AnalyticsTable{{Name: "events", Columns: columns}},
 		Limits: analyticsLimits(), Delivery: delivery,
-		SQL: AnalyticsSQL{Functions: functions,
+		SQL: AnalyticsSQL{Dialect: "clickhouse", ResultCache: true, Functions: functions,
 			Features:    []string{"SELECT", "WHERE", "GROUP BY", "HAVING", "ORDER BY", "LIMIT", "sequential CTEs", "subqueries", "joins", "UNION", "typed scalar parameters"},
 			Unsupported: []string{"writes", "qualified tables", "external sources", "table functions", "system metadata", "FORMAT", "SETTINGS", "windows", "lambdas", "CAST", "recursive CTEs"}},
 	}}, nil
@@ -162,6 +167,9 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	}
 	if err := validateQueryParameters(input.Body.Parameters); err != nil {
 		return nil, err
+	}
+	if s.lake != nil {
+		return s.lakeAnalyticsQuery(ctx, input)
 	}
 	if err := validateSQLParameters(input.Body.SQL, input.Body.Parameters); err != nil {
 		return nil, apiError(400, "invalid analytics query parameters")

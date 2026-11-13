@@ -74,8 +74,8 @@ func (s *Service) startDelivery() {
 }
 
 func (s *Service) flushDelivery(ctx context.Context) error {
-	if s.ch == nil {
-		return errors.New("ClickHouse delivery is disabled")
+	if s.ch == nil && s.lake == nil {
+		return errors.New("analytical delivery is disabled")
 	}
 	err := s.initializeDelivery(ctx)
 	if err == nil {
@@ -196,14 +196,18 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 
 func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 	if deliveryErr != nil {
-		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error','ClickHouse delivery failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+		message := "ClickHouse delivery failed"
+		if s.lake != nil {
+			message = "DuckLake delivery failed"
+		}
+		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, message)
 		return
 	}
 	s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key='last_delivery_error'`)
 }
 
 func (s *Service) deliveryStatus(ctx context.Context, projectID string) (DeliveryStatus, error) {
-	status := DeliveryStatus{Enabled: s.ch != nil}
+	status := DeliveryStatus{Enabled: s.ch != nil || s.lake != nil}
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*), COALESCE((SELECT received_at FROM events WHERE project_id=? AND delivered=0 ORDER BY id LIMIT 1),'') FROM events WHERE project_id=? AND delivered=0`, projectID, projectID).Scan(&status.Pending, &status.OldestPendingReceivedAt); err != nil {
 		return status, err
 	}
