@@ -9,6 +9,10 @@ trap cleanup EXIT INT TERM
 printf 'Linux architecture: '; uname -m
 cat /go-version.txt
 clickhouse --version
+if [ -n "${PORCUPINE_ARCH_PHASE:-}" ] && [ "$PORCUPINE_ARCH_ENGINE" = ducklake ]; then
+    /analytics-bench -test.run='^TestAnalyticsArchitectureExperiment$' -test.v -test.timeout=15m
+    exit
+fi
 if [ -n "${PORCUPINE_BENCH_BATCHING:-}" ]; then
     pattern='^BenchmarkDuckLakeBatchWindows$'
     windows=5
@@ -19,8 +23,10 @@ if [ -n "${PORCUPINE_BENCH_BATCHING:-}" ]; then
     /analytics-bench -test.run='^$' -test.bench="$pattern" -test.benchtime="${windows}x" -test.count="$repetitions" -test.timeout=15m
     exit
 fi
-printf '\nDuckLake, ClickHouse stopped, 30 iterations, three repetitions\n'
-PORCUPINE_BENCH_ENGINE=ducklake /analytics-bench -test.run='^$' -test.bench='^BenchmarkAnalyticsComparison$' -test.benchtime=30x -test.count=3 -test.timeout=15m
+if [ -z "${PORCUPINE_ARCH_PHASE:-}" ]; then
+    printf '\nDuckLake, ClickHouse stopped, 30 iterations, three repetitions\n'
+    PORCUPINE_BENCH_ENGINE=ducklake /analytics-bench -test.run='^$' -test.bench='^BenchmarkAnalyticsComparison$' -test.benchtime=30x -test.count=3 -test.timeout=15m
+fi
 mkdir -p /etc/clickhouse-server/config.d
 cat > /etc/clickhouse-server/config.d/zz-benchmark.xml <<'XML'
 <clickhouse>
@@ -48,5 +54,9 @@ for attempt in $(seq 1 60); do
     sleep 1
 done
 if [ "$ready" != true ]; then cat /benchmark-data/clickhouse-startup.log; tail -40 /var/log/clickhouse-server/clickhouse-server.err.log; exit 1; fi
+if [ -n "${PORCUPINE_ARCH_PHASE:-}" ]; then
+    /analytics-bench -test.run='^TestAnalyticsArchitectureExperiment$' -test.v -test.timeout=15m
+    exit
+fi
 printf '\nClickHouse, same container budget, 30 iterations, three repetitions\n'
 PORCUPINE_BENCH_ENGINE=clickhouse /analytics-bench -test.run='^$' -test.bench='^BenchmarkAnalyticsComparison$' -test.benchtime=30x -test.count=3 -test.timeout=15m

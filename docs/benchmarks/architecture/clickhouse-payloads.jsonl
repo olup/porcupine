@@ -1,0 +1,5 @@
+{"accepted":1000,"elapsed_seconds":1.158442126,"engine":"clickhouse","padding_bytes":0,"phase":"payloads","projected":1000,"remaining":0,"time":"2026-11-13T14:10:29Z","verdict":"VERIFIED"}
+{"accepted":1000,"elapsed_seconds":1.129379917,"engine":"clickhouse","padding_bytes":2048,"phase":"payloads","projected":1000,"remaining":0,"time":"2026-11-13T14:10:30Z","verdict":"VERIFIED"}
+{"accepted":1000,"elapsed_seconds":1.628412709,"engine":"clickhouse","padding_bytes":16384,"phase":"payloads","projected":1000,"remaining":0,"time":"2026-11-13T14:10:31Z","verdict":"VERIFIED"}
+{"accepted":1000,"elapsed_seconds":3.284465294,"engine":"clickhouse","padding_bytes":65536,"phase":"payloads","projected":1000,"remaining":0,"time":"2026-11-13T14:10:35Z","verdict":"VERIFIED"}
+{"cpu.stat":"usage_usec 8621426\nuser_usec 6268566\nsystem_usec 2352859\nnr_periods 87\nnr_throttled 8\nthrottled_usec 507656\nnr_bursts 0\nburst_usec 0","engine":"clickhouse","managed_disk_bytes":80891893,"managed_files":2680,"memory.current":"428118016","memory.events":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0","memory.peak":"452055040","phase":"resources","time":"2026-11-13T14:10:35Z"}

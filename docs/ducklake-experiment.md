@@ -2,6 +2,8 @@
 
 This branch is an experiment. Released Porcupine still uses ClickHouse. The preserved reference is `reference/clickhouse-before-ducklake`, commit `d869fd6`.
 
+The [product analytics validation report](ducklake-validation.md) records the larger-history, concurrent ingestion/query, project-scope and process-recovery tests. It includes the missed load and maintenance targets as well as successful checks.
+
 ## Work checklist
 
 - [x] Ground the current ingestion, projection, query, mutation, and identity paths.

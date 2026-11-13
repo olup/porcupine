@@ -1,0 +1,3 @@
+{"elapsed_seconds":2.959491293,"engine":"clickhouse","from":0,"phase":"seed","time":"2026-11-13T14:01:49Z","to":1000000,"verdict":"VERIFIED"}
+{"engine":"clickhouse","phase":"guard","query_seconds":5.019753502,"query_status":429,"recovery_query_seconds":0.087309375,"time":"2026-11-13T14:01:54Z","verdict":"VERIFIED"}
+{"cpu.stat":"usage_usec 13350710\nuser_usec 8979112\nsystem_usec 4371597\nnr_periods 95\nnr_throttled 29\nthrottled_usec 1352462\nnr_bursts 0\nburst_usec 0","engine":"clickhouse","managed_disk_bytes":245192064,"managed_files":2859,"memory.current":"496836608","memory.events":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0","memory.peak":"649670656","phase":"resources","time":"2026-11-13T14:01:54Z"}

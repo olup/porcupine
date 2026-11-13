@@ -61,4 +61,5 @@ nav:
       - Benchmarks: benchmarks.md
       - Load testing: load-testing.md
       - DuckLake experiment: ducklake-experiment.md
+      - DuckLake validation: ducklake-validation.md
       - Roadmap: roadmap.md
