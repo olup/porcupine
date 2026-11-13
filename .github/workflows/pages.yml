@@ -36,7 +36,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  released-version:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - name: Publish only an existing stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.error, urllib.request
+          from pathlib import Path
+          tag = 'v' + Path('VERSION').read_text().strip()
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+              raise SystemExit('Invalid VERSION')
+          url = os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GITHUB_REPOSITORY'] + '/releases/tags/' + tag
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  release = json.load(response)
+              published = not release['draft'] and not release['prerelease']
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise SystemExit('Cannot check release publication: HTTP ' + str(error.code))
+              published = False
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('published=' + str(published).lower() + '\n')
+          if not published:
+              print(tag + ' is not published; keeping the existing website until release publication.')
+          PY
   build:
+    needs: released-version
+    if: needs.released-version.outputs.published == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
