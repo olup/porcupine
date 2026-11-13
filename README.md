@@ -12,9 +12,9 @@ Existing option where big inspirations - posthog, openpanel, pug - but no one of
 
 The rest of this readme is LLM generated.
 
-[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.12.0)
+[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.12.1)
 
-Version 0.12.0 embeds DuckDB and DuckLake in the server. The default setup stores analytical data on the local SSD. S3 query destinations are supported; analytical S3 offload remains available only with the optional ClickHouse backend. [Storage options](docs/storage.md)
+Version 0.12.1 embeds DuckDB and DuckLake in the server. The default setup stores analytical data on the local SSD. S3 query destinations are supported; analytical S3 offload remains available only with the optional ClickHouse backend. [Storage options](docs/storage.md)
 
 ## Quickstart
 
