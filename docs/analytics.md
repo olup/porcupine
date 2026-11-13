@@ -51,7 +51,7 @@ Catalog parameters are:
 | `property_limit` | `20` | `1` through `100` properties per page |
 | `property_cursor` | Omitted | Returned `next_property_cursor`, reused with the same project, event, prefix and kind |
 
-Property filters, cursor pagination and structured DuckDB errors on this page are unreleased changes after v0.11.0.
+Property filters, cursor pagination and structured DuckDB errors require v0.12.0 or later.
 
 `events` lists names by latest durable event ID. Each item contains `event`, decimal-string `count`, `first_received_at`, `last_received_at`, `latest_event_uuid`, and `latest_event_timestamp`. Counts cover delivered logical events. First and last receipt times come from the lowest and highest durable IDs. `next_offset` appears when another supported page exists.
 

@@ -1,6 +1,6 @@
 # Scope and roadmap
 
-## Available in v0.11.0
+## Available in v0.12.0
 
 - **Capture.** Send events through the [native or Segment interfaces](native-and-segment-ingestion.md), or point a supported [PostHog SDK profile](compatibility.md) at Porcupine. Stable producer IDs support retries. Historical PostHog events and persons can be [imported from JSONL](posthog-import.md).
 - **Analytics.** Discover event names, observed properties and the latest example UUID. Run read-only DuckDB SQL with bound parameters by default. The [query reference](analytics.md) describes the supported grammar, limits, and optional ClickHouse dialect. [Identified capture](data-and-identity.md) links anonymous activity to a user. Cookieless capture estimates daily visitors.
@@ -8,7 +8,7 @@
 - **Management.** Manage projects, including rename and deletion, through [HTTP](management-api.md), the [CLI](../cli/README.md) or [MCP](mcp.md). Humans can authorize tools using email verification or configured OIDC. Service accounts can use scoped credentials.
 - **Operations.** Inspect the [instance status](instance-status.md) through HTTP, CLI, or MCP. The single-host deployment uses [bounded durable queues](reliability.md), local DuckLake files, and a [stopped-volume backup procedure](restore.md). Optional ClickHouse deployments retain their separate cold-storage and online-checkpoint tools.
 
-## Unreleased improvements
+## Added in v0.12.0
 
 - Structured DuckDB query errors with recovery hints.
 - Property discovery filters and cursor pagination, independent of event-name pagination.

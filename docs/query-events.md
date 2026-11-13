@@ -38,7 +38,7 @@ porcupine get-event-catalog --id "$PROJECT_ID" --event article_published
 
 Replace `article_published` with a name from your project. The schema and catalog contain the field names an agent needs to build a query.
 
-After v0.11.0, property discovery also supports `--property-kind custom`, `--property-prefix thread`, `--property-limit 10` and `--property-cursor CURSOR`. Read `next_property_cursor` and keep the same filters for the next page. Event-name pagination uses separate `--limit` and `--offset` flags.
+In v0.12.0 and later, property discovery also supports `--property-kind custom`, `--property-prefix thread`, `--property-limit 10` and `--property-cursor CURSOR`. Read `next_property_cursor` and keep the same filters for the next page. Event-name pagination uses separate `--limit` and `--offset` flags.
 
 ## Run a query
 
