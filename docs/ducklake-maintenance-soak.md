@@ -4,7 +4,7 @@ This investigation follows the [single-pass maintenance measurements](ducklake-m
 
 ## Workload and checks
 
-Each controlled run starts with one million synthetic product events. A synchronous in-process HTTP producer schedules 100-event native batches every 100 ms for 180 seconds, while the real SQLite delivery worker projects them. Two closed-loop API readers run session and ordered-funnel queries, pausing 100 ms between requests. Six additional lifecycle rounds send pages and identify controls, correct one event, delete another, and retry the originals.
+Each controlled run starts with one million synthetic product events. A synchronous in-process HTTP producer plans 1,800 requests of 100 native events at 100 ms intervals, intending to submit 180,000 events over 180 seconds. Slow calls or status samples can make it fall behind and finish later; actual submission duration is recorded. The real SQLite delivery worker projects the accepted events. Two closed-loop API readers run session and ordered-funnel queries, pausing 100 ms between requests. Six additional lifecycle rounds send pages and identify controls, correct one event, delete another, and retry the originals.
 
 The workload uses two CPU cores and 2 GiB container RAM, 512 MiB per native engine, two native threads, a 1,000-event projection cap and a conservative 4 MiB projection byte budget. These are explicit test settings. The projection cap is not a promise that each write contains 1,000 events.
 
@@ -12,7 +12,7 @@ The checks compare every accepted live event's message ID and durable event ID a
 
 Queue depth and oldest pending receipt age are sampled after each ingest request. Current-snapshot event and head data-file entries are sampled every ten seconds. Maintenance reports flush/compaction durations, write-mutex time, success and input/output file counts. These counters sum native maintenance work across tables; they are not a count of files scanned by analytical queries.
 
-The predeclared performance predicate requires arrival time within one second of the 180-second schedule, no reader failures, at least three successful maintenance passes with actual compaction progress, all six lifecycle rounds, a peak queue of at most 2,000 events, oldest sampled pending receipt age at most three seconds, and final event-file entries no more than 128 above the initial count. Integrity failure is a test failure regardless of those budgets.
+The predeclared performance predicate requires arrival time within one second of the 180-second schedule, no reader failures, at least three completed maintenance passes and positive aggregate compaction progress, all six lifecycle rounds, a peak queue of at most 2,000 events, oldest sampled pending receipt age at most three seconds, and final event-file entries no more than 128 above the initial count. Integrity failure is a test failure regardless of those budgets.
 
 ## Why a size filter is needed
 
@@ -68,10 +68,32 @@ The selected release defaults are now a 512 MiB native engine budget and a 1,000
 
 A final run uses `Open` with those actual release delivery defaults, an explicit 512 MiB native memory budget matching the Lightsail deployment and native default, and a lower offered rate of 500 events/s. It replaces only Open's maintenance timer with the measured scheduler using the same native policy; it keeps Open's real delivery worker and its row/byte limits. Lifecycle controls and mutations run during ingestion, with their view assertions after the two readers stop. This avoids adding a third analytical API caller. Reader results are checked against known session/funnel totals and failed query bodies are recorded. This is a different profile and cannot replace either failed 1,000-events/s capacity verdict above.
 
-Results for that configured profile are pending at this checkpoint.
+The configured release profile passed its integrity checks: all 90,000 live IDs matched, all six lifecycle rounds completed, the other project remained unchanged, and the queue drained. All 291 reader responses returned HTTP 200 with the expected session/funnel totals. The recorded query-failure map was empty. Maintenance completed 58 passes, processed 443 input files across tables, and reported no error. The application write-mutex hold remained zero. Current event-file entries changed from 100 to 135, with 23 final head-file entries. Peak container memory was 976 MiB, with no recorded OOM.
+
+The strict capacity predicate still failed. Submitting 90,000 live events took 189.01 seconds instead of the planned 180 seconds, approximately 476 events/s. Peak pending originals reached 6,197 against a 1,000-event budget, and the oldest sampled receipt age reached 15.37 seconds against a three-second budget. Pooled reader p95 was 1,621 ms. This supports the tested correctness and progress of the release defaults; it does not establish comfortable 500-events/s freshness under this heavy two-reader workload, or a 1,000-events/s hosting promise.
+
+This final image used source `3206b75`, including the shared 512 MiB default, native 1,000-event/4 MiB delivery defaults, the release query/export path, and the two-second completion-gap scheduler. Its `Open` fixture kept those actual delivery defaults. The explicit 512 MiB setting therefore matches both the chosen native default and the Lightsail deployment. [Final observations](benchmarks/maintenance/soak/release-open-500-amd64.jsonl) and [full log](benchmarks/maintenance/soak/release-open-500-amd64.log).
+
+Reproduce the controlled policies and then the separate release profile in fresh run directories:
+
+```sh
+PORCUPINE_ARCH_ENGINES=ducklake PORCUPINE_ARCH_PHASES=maintenance-soak \
+PORCUPINE_MAINT_POLICY=locked-small make ducklake-architecture-test
+
+PORCUPINE_ARCH_ENGINES=ducklake PORCUPINE_ARCH_PHASES=maintenance-soak \
+PORCUPINE_MAINT_POLICY=concurrent-small make ducklake-architecture-test
+
+PORCUPINE_ARCH_ENGINES=ducklake PORCUPINE_ARCH_PHASES=maintenance-soak \
+PORCUPINE_MAINT_POLICY=concurrent-small PORCUPINE_SOAK_OPEN_DEFAULTS=1 \
+PORCUPINE_SOAK_RATE=500 make ducklake-architecture-test
+```
+
+The script returns a failure when a recorded performance predicate is `NOT VERIFIED`, even if the Go integrity test passes. To run only the native regressions, use `CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLakeMaintenance' -count=1`.
 
 ## Limits
 
+The configured `Open` resource walk includes overlapping queue/archive directories, so its `managed_disk_bytes` and `managed_files` counters double-count archive entries and are not used for storage conclusions. Memory, native current-file counts and exact-event checks are independent of that walk.
+
 Current-snapshot file entries do not measure physical storage reclamation. Older snapshots and files remain until separate expiration, rewrite and cleanup policies run. This experiment does not establish a physical-deletion deadline or bounded long-term disk use.
 
-Oldest queued receipt age is sampled, not a per-event visibility-latency histogram. The two analytical readers are closed-loop; their completed query counts can differ between policies. HTTP calls run in-process and omit network/TLS latency. Three-minute runs do not establish hosted capacity or indefinite steady state.
+Oldest queued receipt age is sampled, not a per-event visibility-latency histogram. The two analytical readers are closed-loop; their completed query counts can differ between policies. HTTP calls run in-process and omit network/TLS latency. These short single runs do not establish hosted capacity or indefinite steady state.
