@@ -430,9 +430,21 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 	if engine != "ducklake" && engine != "clickhouse" {
 		t.Fatal("invalid experiment engine")
 	}
-	s, project, token := comparisonServiceMemory(t, engine, 512)
+	var s *Service
+	var project, token string
+	openDefaults := phase == "maintenance-soak" && os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1"
+	if openDefaults {
+		if engine != "ducklake" {
+			t.Fatal("Open defaults experiment requires DuckLake")
+		}
+		s, project, token = maintenanceOpenService(t)
+	} else {
+		s, project, token = comparisonServiceMemory(t, engine, 512)
+	}
 	s.queueMax, s.queueMaxBytes = 100000, 256<<20
-	s.deliveryMaxEvents, s.deliveryMaxBytes = 1000, 4<<20
+	if !openDefaults {
+		s.deliveryMaxEvents, s.deliveryMaxBytes = 1000, 4<<20
+	}
 	h := s.Handler()
 	if s.ch != nil {
 		_, _, _, err := s.analyticsReaderForCache(context.Background(), project, false)

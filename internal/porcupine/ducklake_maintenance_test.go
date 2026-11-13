@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,26 @@ func lakeMaintenanceFileCount(ctx context.Context, p *projectLake, table string)
 	var count int
 	err := p.db.QueryRowContext(ctx, "SELECT count(*) FROM ducklake_list_files('lake',?)", table).Scan(&count)
 	return count, err
+}
+
+func maintenanceOpenService(t *testing.T) (*Service, string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	s, err := Open(Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 100000, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 512, MaintenanceInterval: 24 * time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// Measure the same native policy explicitly below. Keep Open's actual
+	// delivery worker and row/byte defaults; only its timer is replaced.
+	s.lakeMaintenanceCancel()
+	<-s.lakeMaintenanceDone
+	p, ingest := project(t, s)
+	return s, p, ingest
 }
 
 func lakeMaintenancePages(prefix string) string {
@@ -117,6 +138,14 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		maxFileSize = 1 << 20
 	}
 	seconds := 180
+	rate := 1000
+	if value := os.Getenv("PORCUPINE_SOAK_RATE"); value != "" {
+		var err error
+		rate, err = strconv.Atoi(value)
+		if err != nil || rate < 100 || rate > 3000 || rate%100 != 0 {
+			t.Fatal("invalid soak event rate")
+		}
+	}
 	if value := os.Getenv("PORCUPINE_SOAK_SECONDS"); value != "" {
 		var err error
 		seconds, err = strconv.Atoi(value)
@@ -141,10 +170,12 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	if err := p.db.QueryRow("SELECT version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	architectureEmit("soak_environment", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "native_version": version, "engine_memory_mib": store.config.MemoryLimitMB, "engine_threads": store.config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "initial_active_event_files": initialFiles})
+	architectureEmit("soak_environment", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "native_version": version, "engine_memory_mib": store.config.MemoryLimitMB, "engine_threads": store.config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "initial_active_event_files": initialFiles})
 	other, otherIngest := project(t, s)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"foreign","actor_id":"foreign","name":"foreign"}`, 200)
-	s.startDelivery()
+	if s.deliveryCancel == nil {
+		s.startDelivery()
+	}
 	if architectureDrain(t, s, 30*time.Second) != 0 {
 		t.Fatal("initial foreign event did not settle")
 	}
@@ -224,13 +255,14 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 			mu.Unlock()
 		}
 	}()
-	expected := make(map[string]string, seconds*1000)
+	expected := make(map[string]string, seconds*rate)
 	maxPending, maxOldestMS := int64(0), int64(0)
 	maxFiles := initialFiles
 	start := time.Now()
 	lastSample := start
-	for batch := 0; batch < seconds*10; batch++ {
-		if delay := time.Until(start.Add(time.Duration(batch) * 100 * time.Millisecond)); delay > 0 {
+	requests := seconds * rate / 100
+	for batch := 0; batch < requests; batch++ {
+		if delay := time.Until(start.Add(time.Duration(batch) * 100 * time.Second / time.Duration(rate))); delay > 0 {
 			time.Sleep(delay)
 		}
 		code, raw, elapsed := architectureHTTP(s.Handler(), "POST", "/ingest/v1/events", ingest, architectureLivePayload(batch*100, 100, 0), true)
@@ -280,7 +312,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	if remaining != 0 {
 		t.Fatalf("soak did not drain: %d", remaining)
 	}
-	for _, offset := range []int{0, (seconds*10 - 1) * 100} {
+	for _, offset := range []int{0, (requests - 1) * 100} {
 		retry := nativeRequest(t, s, ingest, string(architectureLivePayload(offset, 100, 0)), 200)
 		if retry["duplicates"] != float64(100) || retry["accepted"] != float64(0) {
 			t.Fatal("soak retry changed acceptance")
@@ -313,7 +345,13 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		t.Fatalf("missing live events: %d %v", len(expected), err)
 	}
 	if architectureCount(t, s.Handler(), other) != 1 {
-		t.Fatal("concurrency crossed projectID boundary")
+		t.Fatal("concurrency crossed project boundary")
+	}
+	for i, expected := range []string{`"333334"`, `"10000"`} {
+		code, result, _ := architectureRunQuery(s.Handler(), adminToken, projectID, architectureQueries[i+2].duckdb)
+		if code != 200 || len(result.Data) != 1 || string(result.Data[0]["total"]) != expected {
+			t.Fatalf("final known analytics result changed: query=%s HTTP%d result=%v", architectureQueries[i+2].name, code, result.Data)
+		}
 	}
 	finalFiles, err := lakeMaintenanceFileCount(context.Background(), p, "current_events")
 	if err != nil {
@@ -324,10 +362,10 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		t.Fatal(err)
 	}
 	verdict := "VERIFIED"
-	if completed < 3 || progress == 0 || lifecycle != 6 || codes[200] != len(queries) || arrival > time.Duration(seconds)*time.Second+time.Second || maxPending > 2000 || maxOldestMS > 3000 || finalFiles > initialFiles+128 {
+	if completed < 3 || progress == 0 || lifecycle != 6 || codes[200] != len(queries) || arrival > time.Duration(seconds)*time.Second+time.Second || maxPending > int64(2*rate) || maxOldestMS > 3000 || finalFiles > initialFiles+128 {
 		verdict = "NOT VERIFIED"
 	}
-	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
+	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
 }
 
 func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
