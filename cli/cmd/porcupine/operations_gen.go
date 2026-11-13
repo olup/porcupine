@@ -177,12 +177,16 @@ var operations = []operation{
 	},
 	{
 		ID: "get-event-catalog", Method: "GET", Path: "/api/v1/projects/{id}/catalog",
-		Summary: "Discover observed event names, property types and latest-event UUID pointers; property discovery is sampled",
+		Summary: "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 			{Name: "event", In: "query", Type: "string", Description: "Optional exact event name. Supplying it also discovers sampled top-level property keys.", Required: false},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
 			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+			{Name: "property_cursor", In: "query", Type: "string", Description: "Opaque next_property_cursor from the preceding page. Keep the same project, event, prefix and kind.", Required: false},
+			{Name: "property_kind", In: "query", Type: "string", Description: "custom excludes keys starting with $; reserved includes only those keys. Requires event when filtering. (server default: all)", Required: false},
+			{Name: "property_limit", In: "query", Type: "integer", Description: "Maximum property keys per page, independent of event-name pagination. (server default: 20)", Required: false},
+			{Name: "property_prefix", In: "query", Type: "string", Description: "Literal, case-sensitive property-key prefix. Requires event.", Required: false},
 		},
 	},
 	{
@@ -356,9 +360,9 @@ var operations = []operation{
 		},
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
-			"parameters (object) Bound scalar parameters. Discover the deployment dialect with get-event-schema: ClickHouse uses {event:String}, experimental DuckDB uses $event and optional SQL casts. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
+			"parameters (object) Bound scalar parameters. Discover the deployment dialect with get-event-schema: DuckDB uses $event; optional ClickHouse uses {event:String} with explicit casts when needed. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
 			"sql (string, required) One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
-			"use_cache (boolean) Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The DuckLake experiment always executes fresh.",
+			"use_cache (boolean) Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The default DuckLake backend always executes fresh.",
 		},
 	},
 	{

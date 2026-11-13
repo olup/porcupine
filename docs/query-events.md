@@ -38,6 +38,8 @@ porcupine get-event-catalog --id "$PROJECT_ID" --event article_published
 
 Replace `article_published` with a name from your project. The schema and catalog contain the field names an agent needs to build a query.
 
+In v0.12.0 and later, property discovery also supports `--property-kind custom`, `--property-prefix thread`, `--property-limit 10` and `--property-cursor CURSOR`. Read `next_property_cursor` and keep the same filters for the next page. Event-name pagination uses separate `--limit` and `--offset` flags.
+
 ## Run a query
 
 This query counts each event by UTC day:
@@ -64,6 +66,8 @@ porcupine query-events --id "$PROJECT_ID" --body @query.json
 ```
 
 Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](analytics.md) lists supported syntax, bindings, and fixed execution limits.
+
+Use the [DuckDB SQL recipes](duckdb-recipes.md) for trends, sessions, funnels, retention and percentiles. They state their metric definitions and are tested against a known fixture through MCP.
 
 For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. Through MCP, call `query-events` with `path: {"id": "PROJECT_ID"}` and the JSON as `body`. See the [MCP request examples](mcp.md#execution-with-porcupine_call).
 

@@ -73,6 +73,8 @@ func TestCommandAPIErrorMessages(t *testing.T) {
 		name, contentType, body, message string
 	}{
 		{"porcupine", "application/json; charset=utf-8", `{"error":"name must contain 1 to 200 UTF-8 bytes"}`, "name must contain 1 to 200 UTF-8 bytes"},
+		{"query recovery", "application/json", `{"error":"Unknown column","code":"unknown_column","field":"missing","hint":"Read get-event-schema."}`, "Unknown column [unknown_column] field: missing. Read get-event-schema."},
+		{"safe recovery fields", "application/json", `{"error":"Rejected","code":"bad\u001b","field":"private-test-credential","hint":"Retry\nprivate-test-credential","token":"do not display"}`, "Rejected [bad ] field: [redacted]. Retry [redacted]"},
 		{"problem", "application/problem+json", `{"title":"Invalid request","detail":"name is required"}`, "name is required"},
 		{"problem title", "application/problem+json", `{"title":"Invalid request"}`, "Invalid request"},
 		{"unicode", "application/json", `{"error":"Projet introuvable — Café"}`, "Projet introuvable — Café"},

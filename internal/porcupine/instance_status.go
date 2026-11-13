@@ -19,7 +19,7 @@ const (
 
 type InstanceChecks struct {
 	SQLite     DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
-	DuckLake   DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Experimental local archive identity check, bounded to one second."`
+	DuckLake   DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Local DuckLake registry identity check, bounded to one second."`
 	ClickHouse DependencyStatus `json:"clickhouse" enum:"ok,unavailable,not_configured" doc:"Authenticated SELECT 1 in the configured database, bounded to one second. Does not validate every table or project reader."`
 }
 

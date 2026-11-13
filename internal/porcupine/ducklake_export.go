@@ -58,7 +58,7 @@ func (s *duckLakeStore) ValidateExport(ctx context.Context, project, raw string,
 	}
 	canonical, _, err := validateDuckLakeSQL(ctx, p.db, raw, bindings)
 	if err != nil {
-		return "", apiError(400, "unsupported DuckDB SQL or parameters")
+		return "", duckLakeValidationError(ctx, err)
 	}
 	return canonical, nil
 }
@@ -200,12 +200,18 @@ func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, canonical string
 			seen[name] = true
 			typeName := rows.(driver.RowsColumnTypeDatabaseTypeName).ColumnTypeDatabaseTypeName(i)
 			info, err := statement.ColumnTypeInfo(i)
-			// A bare bound parameter has a VARCHAR result but the prepared
-			// statement can retain INVALID as its pre-binding logical type.
-			if err != nil && typeName == "VARCHAR" {
-				info, err = duckdb.NewTypeInfo(duckdb.TYPE_VARCHAR)
+			// Parameter-dependent overloads can leave prepared metadata INVALID.
+			// The executed zero-row result has resolved scalar types. Complex
+			// types still require complete native metadata, never guessed details.
+			if err != nil {
+				if scalar, ok := duckLakeScalarResultTypes[typeName]; ok {
+					info, err = duckdb.NewTypeInfo(scalar)
+				}
 			}
 			if err != nil {
+				if len(args) > 0 {
+					return analyticsError(400, "unresolved_parameter_type", "Could not resolve the parameter-dependent result type", "Add explicit casts to bound parameters or result expressions so their types are known before execution.", "")
+				}
 				return err
 			}
 			types = append(types, info)
@@ -214,6 +220,18 @@ func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, canonical string
 		return nil
 	})
 	return columns, types, err
+}
+
+var duckLakeScalarResultTypes = map[string]duckdb.Type{
+	"BOOLEAN": duckdb.TYPE_BOOLEAN, "TINYINT": duckdb.TYPE_TINYINT, "SMALLINT": duckdb.TYPE_SMALLINT,
+	"INTEGER": duckdb.TYPE_INTEGER, "BIGINT": duckdb.TYPE_BIGINT, "HUGEINT": duckdb.TYPE_HUGEINT,
+	"UTINYINT": duckdb.TYPE_UTINYINT, "USMALLINT": duckdb.TYPE_USMALLINT, "UINTEGER": duckdb.TYPE_UINTEGER,
+	"UBIGINT": duckdb.TYPE_UBIGINT, "UHUGEINT": duckdb.TYPE_UHUGEINT,
+	"FLOAT": duckdb.TYPE_FLOAT, "DOUBLE": duckdb.TYPE_DOUBLE, "VARCHAR": duckdb.TYPE_VARCHAR,
+	"DATE": duckdb.TYPE_DATE, "TIME": duckdb.TYPE_TIME, "TIMETZ": duckdb.TYPE_TIME_TZ,
+	"TIMESTAMP": duckdb.TYPE_TIMESTAMP, "TIMESTAMP_S": duckdb.TYPE_TIMESTAMP_S,
+	"TIMESTAMP_MS": duckdb.TYPE_TIMESTAMP_MS, "TIMESTAMP_NS": duckdb.TYPE_TIMESTAMP_NS,
+	"TIMESTAMPTZ": duckdb.TYPE_TIMESTAMP_TZ, "TIMESTAMP WITH TIME ZONE": duckdb.TYPE_TIMESTAMP_TZ,
 }
 
 func duckLakeResultValue(raw json.RawMessage, info duckdb.TypeInfo, depth int) (json.RawMessage, error) {

@@ -155,8 +155,8 @@ func runOperation(ctx context.Context, c *cli.Command, op operation, authenticat
 	return err
 }
 
-// responseError reads only the API's message field. Response headers, HTML
-// gateway pages and other JSON fields can contain credentials or large payloads.
+// responseError reads the API message and its documented recovery fields.
+// Headers, HTML pages and other JSON fields can contain credentials or payloads.
 func responseError(op operation, resp *http.Response, authorization string) error {
 	status := fmt.Sprintf("%s %s returned HTTP %d (%s)", op.Method, op.Path, resp.StatusCode, http.StatusText(resp.StatusCode))
 	fallback := fmt.Errorf("%s", status)
@@ -173,6 +173,9 @@ func responseError(op operation, resp *http.Response, authorization string) erro
 		Error  string `json:"error"`
 		Detail string `json:"detail"`
 		Title  string `json:"title"`
+		Code   string `json:"code"`
+		Hint   string `json:"hint"`
+		Field  string `json:"field"`
 	}
 	if json.Unmarshal(raw, &body) != nil {
 		return fallback
@@ -182,6 +185,17 @@ func responseError(op operation, resp *http.Response, authorization string) erro
 		message = body.Detail
 		if message == "" {
 			message = body.Title
+		}
+	}
+	if strings.TrimSpace(message) != "" {
+		if body.Code != "" {
+			message += " [" + body.Code + "]"
+		}
+		if body.Field != "" {
+			message += " field: " + body.Field
+		}
+		if body.Hint != "" {
+			message += ". " + body.Hint
 		}
 	}
 	if credential := strings.TrimPrefix(authorization, "Bearer "); credential != "" {

@@ -1,6 +1,6 @@
 # DuckLake experiment
 
-These are historical design and experiment notes. For the current v0.11.0 service, use [hosting](hosting.md), [architecture](architecture.md), and the [analytics reference](analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
+These are historical design and experiment notes. For the released service, use [hosting](hosting.md), [architecture](architecture.md), and the [analytics reference](analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
 
 This branch is an experiment. Released Porcupine still uses ClickHouse. The preserved reference is `reference/clickhouse-before-ducklake`, commit `d869fd6`.
 

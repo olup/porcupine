@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 		if ctx.Err() != nil {
 			return AnalyticsResult{}, apiError(429, "analytics execution time limit reached")
 		}
-		return AnalyticsResult{}, apiError(400, "unsupported DuckDB SQL or parameters")
+		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
 	start := time.Now()
 	conn, err := p.db.Conn(ctx)
@@ -63,14 +64,14 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 	bytes := len(metadata) + 256
 	for rows.Next() {
 		if len(result.Data) >= analyticsMaxRows {
-			return AnalyticsResult{}, apiError(429, "analytics result row limit reached")
+			return AnalyticsResult{}, analyticsError(429, "result_row_limit", "analytics result row limit reached", "Reduce the result or use create-event-export for a larger CSV or JSONL export.", "")
 		}
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
 			return AnalyticsResult{}, duckLakeQueryError(ctx, err)
 		}
 		if len(raw) > analyticsMaxBytes-bytes {
-			return AnalyticsResult{}, apiError(429, "analytics result byte limit reached")
+			return AnalyticsResult{}, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 		}
 		fields, err := exportJSONObject([]byte(raw))
 		if err != nil {
@@ -96,7 +97,7 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 		}
 		bytes += len(encoded) + 1
 		if bytes > analyticsMaxBytes {
-			return AnalyticsResult{}, apiError(429, "analytics result byte limit reached")
+			return AnalyticsResult{}, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 		}
 		result.Data = append(result.Data, row)
 	}
@@ -108,30 +109,64 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 	return result, nil
 }
 
+func duckLakeValidationError(ctx context.Context, err error) error {
+	var managed *managementError
+	if errors.As(err, &managed) {
+		return managed
+	}
+	if ctx.Err() != nil {
+		return duckLakeQueryError(ctx, err)
+	}
+	return analyticsError(400, "unsupported_sql", "Unsupported DuckDB SQL", "Use one SELECT against events. Read get-event-schema for supported sources, expressions and functions.", "")
+}
+
+var duckLakeUnknownColumn = regexp.MustCompile(`Referenced column "([A-Za-z_][A-Za-z0-9_]{0,63})" not found`)
+
 func duckLakeQueryError(ctx context.Context, err error) error {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return apiError(429, "analytics execution time limit reached")
+	}
+	var managed *managementError
+	if errors.As(err, &managed) {
+		return managed
 	}
 	var failure *duckdb.Error
 	if errors.As(err, &failure) {
 		switch failure.Type {
 		case duckdb.ErrorTypeOutOfMemory, duckdb.ErrorTypeInterrupt:
 			return apiError(429, "analytics resource limit reached")
-		case duckdb.ErrorTypeParser, duckdb.ErrorTypeBinder, duckdb.ErrorTypeCatalog,
-			duckdb.ErrorTypeConversion, duckdb.ErrorTypeOutOfRange, duckdb.ErrorTypeInvalidInput,
-			duckdb.ErrorTypeNotImplemented, duckdb.ErrorTypeInvalidType, duckdb.ErrorTypeMismatchType,
-			duckdb.ErrorTypeParameterNotAllowed, duckdb.ErrorTypeParameterNotResolved,
-			duckdb.ErrorTypeDivideByZero:
-			return apiError(400, "invalid DuckDB analytics query")
+		case duckdb.ErrorTypeBinder:
+			firstLine := strings.SplitN(failure.Msg, "\n", 2)[0]
+			if strings.Contains(firstLine, "Referenced column") && strings.Contains(firstLine, "not found") {
+				field := ""
+				if match := duckLakeUnknownColumn.FindStringSubmatch(firstLine); match != nil {
+					field = match[1]
+				}
+				return analyticsError(400, "unknown_column", "Unknown column in analytics query", "Read get-event-schema for columns. Custom properties use json_extract_string(properties,'$.key'). Check CTE and alias names as well.", field)
+			}
+			return analyticsError(400, "type_mismatch", "Invalid argument types or query binding", "Check function argument types, casts, aliases and GROUP BY expressions. Read get-event-schema for column types.", "")
+		case duckdb.ErrorTypeConversion, duckdb.ErrorTypeOutOfRange:
+			return analyticsError(400, "invalid_value", "Value cannot be converted to the requested type", "Check property values and casts. TRY_CAST returns NULL for values that cannot be converted.", "")
+		case duckdb.ErrorTypeDivideByZero:
+			return analyticsError(400, "division_by_zero", "Division by zero in analytics query", "Use nullif(denominator,0) before division.", "")
+		case duckdb.ErrorTypeParser:
+			return analyticsError(400, "invalid_sql", "Invalid DuckDB SQL syntax", "Use one SELECT and DuckDB $name placeholders; inspect the query against get-event-schema.", "")
+		case duckdb.ErrorTypeCatalog:
+			return analyticsError(400, "unknown_reference", "Unknown analytics reference", "Read get-event-schema for the events table and allowed functions. Check CTE and alias names.", "")
+		case duckdb.ErrorTypeInvalidInput, duckdb.ErrorTypeNotImplemented, duckdb.ErrorTypeInvalidType, duckdb.ErrorTypeMismatchType,
+			duckdb.ErrorTypeParameterNotAllowed, duckdb.ErrorTypeParameterNotResolved:
+			return analyticsError(400, "invalid_query", "Invalid DuckDB analytics query", "Check function arguments, parameter values and casts against get-event-schema.", "")
 		}
 	}
 	return apiError(503, "DuckLake query unavailable")
 }
 
-func (s *duckLakeStore) Catalog(ctx context.Context, project, event string, limit, offset int) (EventCatalog, error) {
-	if limit < 1 || limit > 100 || offset < 0 || offset > 10000 || len(event) > 500 {
-		return EventCatalog{}, apiError(400, "invalid event catalog parameters")
+func (s *duckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (EventCatalog, error) {
+	input, err := normalizeCatalogInput(input)
+	if err != nil {
+		return EventCatalog{}, err
 	}
+	project, event, limit, offset := input.ID, input.Event, input.Limit, input.Offset
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	p, release, err := s.leaseProject(ctx, project)
@@ -152,7 +187,7 @@ func (s *duckLakeStore) Catalog(ctx context.Context, project, event string, limi
 		return EventCatalog{}, duckLakeQueryError(ctx, err)
 	}
 	result := EventCatalog{Events: []EventCatalogEvent{}, Properties: []EventCatalogProperty{}, Sampling: EventCatalogSampling{
-		PropertiesRequested: event != "", SampleEventLimit: 1000, KeysPerEventLimit: 200, MaxPropertyNameBytes: 200, PropertyLimit: 100,
+		PropertiesRequested: event != "", SampleEventLimit: 1000, KeysPerEventLimit: 200, MaxPropertyNameBytes: 200, PropertyLimit: input.PropertyLimit,
 	}}
 	for rows.Next() {
 		var item EventCatalogEvent
@@ -202,7 +237,7 @@ func (s *duckLakeStore) Catalog(ctx context.Context, project, event string, limi
 		}
 		keys := make([]string, 0, len(object))
 		for key := range object {
-			if len(key) <= 200 {
+			if catalogPropertyEligible(input, key) {
 				keys = append(keys, key)
 			}
 		}
@@ -213,8 +248,7 @@ func (s *duckLakeStore) Catalog(ctx context.Context, project, event string, limi
 		for _, key := range keys {
 			sample := properties[key]
 			if sample == nil {
-				if len(properties) >= 100 {
-					result.Sampling.PropertiesTruncated = true
+				if len(properties) >= input.PropertyLimit+1 {
 					maximum := ""
 					for candidate := range properties {
 						if candidate > maximum {
@@ -250,6 +284,7 @@ func (s *duckLakeStore) Catalog(ctx context.Context, project, event string, limi
 		sort.Strings(types)
 		result.Properties = append(result.Properties, EventCatalogProperty{Key: key, Types: types, SampleOccurrences: strconv.Itoa(sample.count), LatestEventUUID: sample.uuid, LastReceivedAt: sample.at})
 	}
+	finishCatalogProperties(&result, input)
 	return result, nil
 }
 

@@ -26,7 +26,7 @@ An example response is:
 ```json
 {
 	"status": "ok",
-	"version": "0.11.0",
+	"version": "0.12.0",
 	"checked_at": "2026-11-12T12:00:00Z",
 	"checks": {
 		"sqlite": "ok",

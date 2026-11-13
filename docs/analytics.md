@@ -46,10 +46,20 @@ Catalog parameters are:
 | `event` | Omitted | Exact event name, at most 500 bytes |
 | `limit` | `20` | `1` through `100` event names |
 | `offset` | `0` | `0` through `10000` |
+| `property_prefix` | Omitted | Literal, case-sensitive key prefix, at most 200 bytes; requires `event` |
+| `property_kind` | `all` | `custom` excludes `$` keys; `reserved` includes only `$` keys; a filtered kind requires `event` |
+| `property_limit` | `20` | `1` through `100` properties per page |
+| `property_cursor` | Omitted | Returned `next_property_cursor`, reused with the same project, event, prefix and kind |
+
+Property filters, cursor pagination and structured DuckDB errors require v0.12.0 or later.
 
 `events` lists names by latest durable event ID. Each item contains `event`, decimal-string `count`, `first_received_at`, `last_received_at`, `latest_event_uuid`, and `latest_event_timestamp`. Counts cover delivered logical events. First and last receipt times come from the lowest and highest durable IDs. `next_offset` appears when another supported page exists.
 
-Supplying `event` also returns sampled `properties`. Discovery examines at most the latest 1,000 matching events, 200 top-level keys per event, and keys of at most 200 bytes. It returns at most 100 properties in key order.
+Supplying `event` also returns sampled `properties`. Discovery examines at most the latest 1,000 matching events, 200 eligible top-level keys per event per request, and keys of at most 200 bytes. Filters and the cursor apply before the per-event key bound, so reserved SDK keys do not consume a custom-key page. Each page contains up to `property_limit` keys in lexical order, independently of event-name `limit` and `offset`.
+
+Follow `next_property_cursor` until it is absent. Keep the project, event, prefix and kind unchanged. The cursor is an opaque continuation, not an authorization token or pinned snapshot. Each request samples current delivered data; concurrent ingestion can change observed keys and counts between pages. A missing historical key is not proof that no event ever contained it.
+
+For example, request `event=page_viewed&property_kind=custom&property_prefix=thread&property_limit=10` to find matching business keys. If you need to inspect a pointer while discovery is incomplete, query `SELECT json_keys(properties) AS keys FROM events WHERE uuid=$uuid LIMIT 1`. One example still does not define a complete historical schema.
 
 Each property contains `key`, observed JSON `types`, decimal-string `sample_occurrences`, `latest_event_uuid`, and `last_received_at`. Raw property values are excluded. The UUID points to the latest sampled event containing that key and can be used in a project-scoped query.
 
@@ -101,6 +111,8 @@ Neither backend waits for queued originals or corrections. Inspect delivery stat
 
 For Paris calendar days, use `CAST(timezone('Europe/Paris', event_time) AS DATE)`. The running schema lists allowed date, JSON, aggregate, and window functions. Funnels and retention can be expressed with joins, CTEs, and window functions. ClickHouse-specific `windowFunnel` and `retention` calls require different SQL on DuckDB.
 
+The [DuckDB recipes](duckdb-recipes.md) cover trends, sessions, custom dimensions, percentiles, ordered funnels, retention and moving averages. Their SQL is exercised through the real MCP client tests.
+
 ### Inspect a latest-event UUID pointer
 
 ```json
@@ -151,3 +163,20 @@ Successful schema, catalog, and query responses include project-scoped delivery 
 Results are eventually consistent. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
+
+DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MCP and CLI receive the same envelope. For example:
+
+```json
+{"error":"Missing bound query parameter","code":"missing_parameter","hint":"Supply this key in parameters; use $name placeholders for DuckDB.","field":"event"}
+```
+
+| Code | Recovery |
+| --- | --- |
+| `missing_parameter`, `unused_parameter`, `invalid_parameter` | Match the supplied string map to the `$name` bindings |
+| `unsupported_function`, `unsupported_sql`, `invalid_sql` | Read the discovered dialect and allowlist; correct the SQL |
+| `unknown_column`, `unknown_reference` | Check schema columns, JSON paths, CTEs and aliases |
+| `type_mismatch`, `invalid_value`, `invalid_query`, `unresolved_parameter_type` | Check argument types and property values; use explicit casts or `TRY_CAST` |
+| `division_by_zero` | Use `nullif(denominator,0)` |
+| `result_row_limit`, `result_byte_limit` | Reduce the result or call `create-event-export` |
+
+Native engine errors are classified without returning their raw text, candidate lists, stored values, filesystem paths or internal SQL. Other errors and backends may return only `error`; clients must keep that fallback.

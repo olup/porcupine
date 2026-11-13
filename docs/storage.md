@@ -2,7 +2,7 @@
 
 ## Default DuckLake storage
 
-Porcupine 0.11.0 embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
+Porcupine 0.12.0 embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
 
 This release does not expose analytical S3 storage or automatic SSD-to-S3 tiering for DuckLake. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
 

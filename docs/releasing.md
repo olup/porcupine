@@ -17,6 +17,8 @@ The release workflow rejects a tag that differs from `VERSION` or current instal
 
 The release workflow publishes the tested server images and CLI archives, then calls the Pages workflow with that exact tag. A Pages failure fails the release workflow even if the GitHub release has already been created. Fix and republish the site without replacing released binaries.
 
+Pages checks that `VERSION` has a published stable GitHub release. A preparation commit for an unpublished version leaves the current site online. The release workflow publishes that version's site after its assets are available, so the landing does not advertise unfinished downloads.
+
 If the `github-pages` environment restricts deployments, allow the `main` branch and version tags matching `v*.*.*`. Otherwise, GitHub blocks site publication from a release tag.
 
 Confirm the release assets, the landing release link, a documentation badge, and the agent guide after publication. For a documentation-only correction, merge it to `main`; the normal Pages workflow publishes that change. To retry publication manually, run the Pages workflow from the intended branch or tag.
