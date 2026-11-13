@@ -1,8 +1,16 @@
 """Regression coverage for stale site versions and release documentation pointers."""
 from pathlib import Path
+from contextlib import redirect_stdout
+import io
+import json
+import os
+import re
 import shutil
 import tempfile
+import textwrap
 import unittest
+from unittest import mock
+import urllib.error
 
 from release_version import ROOT, check_built_site, check_release, release_version
 
@@ -59,6 +67,37 @@ class ReleaseVersionTests(unittest.TestCase):
         badge.write_text('<span>Porcupine v0.10.0</span>')
         with self.assertRaisesRegex(ValueError, "badge"):
             check_built_site(output, "1.2.3")
+
+    def test_pages_waits_for_a_published_stable_release(self):
+        workflow = (ROOT / '.github/workflows/pages.yml').read_text()
+        script = textwrap.dedent(re.search(r"python3 - <<'PY'\n(.*?)\n\s+PY\n", workflow, re.S).group(1))
+        version = release_version(self.root)
+        for status, draft, prerelease, expected in [
+            (200, False, False, 'true'), (200, True, False, 'false'),
+            (200, False, True, 'false'), (404, False, False, 'false'),
+            (503, False, False, None),
+        ]:
+            with self.subTest(status=status, draft=draft, prerelease=prerelease):
+                output = self.root / 'github-output'
+                if output.exists():
+                    output.unlink()
+                response = io.StringIO(json.dumps({'draft': draft, 'prerelease': prerelease}))
+                failure = urllib.error.HTTPError('https://example.invalid', status, '', None, None)
+                previous = Path.cwd()
+                try:
+                    os.chdir(self.root)
+                    with mock.patch.dict(os.environ, {'GH_TOKEN': 'test-token', 'GITHUB_API_URL': 'https://api.github.com', 'GITHUB_REPOSITORY': 'olup/porcupine', 'GITHUB_OUTPUT': str(output)}), \
+                         mock.patch('urllib.request.urlopen', return_value=response, side_effect=failure if status != 200 else None) as request, redirect_stdout(io.StringIO()):
+                        if expected is None:
+                            with self.assertRaisesRegex(SystemExit, 'Cannot check release publication'):
+                                exec(compile(script, 'pages-release-check', 'exec'), {})
+                            self.assertFalse(output.exists())
+                        else:
+                            exec(compile(script, 'pages-release-check', 'exec'), {})
+                            self.assertEqual(output.read_text(), 'published=' + expected + '\n')
+                        self.assertEqual(request.call_args.args[0].full_url, 'https://api.github.com/repos/olup/porcupine/releases/tags/v' + version)
+                finally:
+                    os.chdir(previous)
 
 
 if __name__ == "__main__":
