@@ -2,7 +2,7 @@
 
 To change an event, read it with `get-event`, then submit `edit-event` or `delete-event` with its current revision and an idempotency key. Poll `get-event-mutation` until the change is applied. These operation names work as CLI commands and through the MCP call tool.
 
-Event mutations use project-scoped permissions and durable SQLite acceptance. ClickHouse projection is asynchronous. A `202` response means the mutation is queued, not that analytical results have changed.
+Event mutations use project-scoped permissions and durable SQLite acceptance. Analytical projection is asynchronous. A `202` response means the mutation is queued, not that analytical results have changed.
 
 ## Operations
 
@@ -19,11 +19,11 @@ Use a [service key](service-keys.md) or [OAuth token](oauth.md) with the require
 
 `get-event` returns `event`, `revision`, and `pending`. Private `$identify` and `$set` control records are excluded from event reads and cannot be changed through event mutation endpoints. See [identity](data-and-identity.md) for how to query the resulting profile. The event contains its durable ID, project, UUID, event name, distinct ID, properties, timestamp, and receipt metadata. `revision` is a decimal string; the original revision is `"0"`. Later revisions are positive SQLite mutation audit sequence numbers and can have gaps for an individual event.
 
-`pending: true` means the current mutation awaits ClickHouse acknowledgment. This endpoint reflects an accepted pending correction immediately. The initial ingestion queue's delivery state is separate. A deleted event returns `410`, including while its tombstone is pending. Unknown events return `404`.
+`pending: true` means the current mutation awaits analytical acknowledgment. This endpoint reflects an accepted pending correction immediately. The initial ingestion queue's delivery state is separate. A deleted event returns `410`, including while its tombstone is pending. Unknown events return `404`.
 
-SQL and catalog discovery read the latest projected ClickHouse state. They can therefore return an older revision until mutation delivery completes. Delivery status adds `pending_mutations` alongside `pending` original events. No cross-database snapshot joins these states.
+SQL and catalog discovery read the latest projected analytical state. They can therefore return an older revision until mutation delivery completes. Delivery status adds `pending_mutations` alongside `pending` original events. No cross-database snapshot joins these states.
 
-Interactive SQL bypasses its result cache while any project mutation is pending. After projection is acknowledged, caching resumes with a new generation, so earlier cached revisions are not reused. `get-event` always reads accepted state without this cache. For explicit fresh reads of projected data, pass `"use_cache": false` to `query-events`. See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
+DuckLake has no result cache in this release. On the optional ClickHouse backend, interactive SQL bypasses its result cache while any project mutation is pending. After projection is acknowledged, caching resumes with a new generation, so earlier cached revisions are not reused. `get-event` always reads accepted state without this cache. For explicit fresh reads of projected data, pass `"use_cache": false` to `query-events`. See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
 
 ## Full event replacement
 
@@ -46,7 +46,7 @@ Interactive SQL bypasses its result cache while any project mutation is pending.
 
 Edits preserve the private original accepted snapshot. Readers cannot select it through SQL or discover it in the schema. Corrections do not create identified-person links. A cookieless event's resolved distinct ID cannot change; server-owned cookieless markers and identity day remain enforced, and the usual cookieless property removal still applies. Other events cannot acquire those markers through an edit. The `token` property is removed.
 
-Mutations require configured ClickHouse delivery. A disabled delivery configuration returns `503`. Availability also depends on the event being recoverable from the local queue or ClickHouse.
+Mutations require a configured analytical backend. Disabled delivery returns `503`. The event must be recoverable from the local queue or analytical store.
 
 ## Deletion
 
@@ -61,7 +61,7 @@ Mutations require configured ClickHouse delivery. A disabled delivery configurat
 
 The supplied revision must come from the current event; `"1"` is illustrative. Deletion queues a higher-revision tombstone with blank current and original payloads. It preserves project, UUID, durable event ID, original receipt metadata, and revision. If the original event is still queued, the acceptance transaction removes its SQLite payload and records a receipt atomically. A later revision-zero delivery cannot resurrect the tombstoned event.
 
-After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. Old ClickHouse parts, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads until their own asynchronous cleanup or retention processes complete. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
+After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. DuckLake historical snapshots, old ClickHouse parts, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads. This release does not schedule DuckLake snapshot expiration or physical-file cleanup and does not promise physical erasure within 30 days. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
 
 ## Idempotency, concurrency, and audit
 
@@ -71,6 +71,6 @@ An idempotency key contains 1 through 200 bytes and cannot be blank. Its scope i
 
 The mutation outbox is bounded instance-wide by the smaller of the ingestion queue event limit and 1,000 entries, plus a 64 MiB payload budget. A full outbox returns `503`. Ordinary request bodies and edited snapshots remain subject to the 1 MiB limit.
 
-Mutation responses and `get-event-mutation` contain `mutation_id`, `project_id`, `uuid`, decimal-string `revision`, `operation`, `state`, `created_at`, and optional `applied_at`. State is `pending` or `applied`. Applied means ClickHouse acknowledged projection. A lost acknowledgment can leave a visible correction marked pending until retry succeeds.
+Mutation responses and `get-event-mutation` contain `mutation_id`, `project_id`, `uuid`, decimal-string `revision`, `operation`, `state`, `created_at`, and optional `applied_at`. State is `pending` or `applied`. Applied means analytical storage acknowledged projection. A lost acknowledgment can leave a visible correction marked pending until retry succeeds.
 
-The audit retains actor, operation, revision, time, idempotency hash, request digest, and status metadata. It retains no before-and-after values. Full pending projection payloads leave the SQLite outbox after ClickHouse acknowledgment in the same transaction that marks the mutation applied. The separate private original snapshot remains in ClickHouse through corrections and is blanked by deletion's newest projection.
+The audit retains actor, operation, revision, time, idempotency hash, request digest, and status metadata. It retains no before-and-after values. Full pending projection payloads leave the SQLite outbox after analytical acknowledgment in the same transaction that marks the mutation applied. The separate private original snapshot remains in analytical storage through corrections and is blanked by deletion's newest projection.

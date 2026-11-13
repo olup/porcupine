@@ -43,7 +43,7 @@ def wait_for(call, ready):
             if isinstance(error, urllib.error.HTTPError) and error.code != 503:
                 raise
         time.sleep(1)
-    raise SystemExit("Timed out: inspect docker compose logs porcupine clickhouse")
+    raise SystemExit("Timed out: inspect docker compose logs porcupine")
 
 wait_for(lambda: request("/readyz"), lambda value: True)
 basic = base64.b64encode(("bootstrap:" + config["PORCUPINE_BOOTSTRAP_TOKEN"]).encode()).decode()
@@ -59,8 +59,13 @@ request("/capture/", {
     "event": "hello", "distinct_id": "$posthog_cookieless",
     "properties": {"source": "quickstart"},
 })
+schema = request("/api/v1/projects/" + project_id + "/schema", authorization=auth)
+dialect = schema["sql"]["dialect"]
+if dialect not in ("duckdb", "clickhouse"):
+    raise SystemExit("Unsupported SQL dialect")
+marker = "$name" if dialect == "duckdb" else "{name:String}"
 result = wait_for(lambda: request("/api/v1/projects/" + project_id + "/query", {
-    "sql": "SELECT event, count() AS total FROM events WHERE event = {name:String} GROUP BY event",
+    "sql": "SELECT event, count(*) AS total FROM events WHERE event = " + marker + " GROUP BY event",
     "parameters": {"name": "hello"},
     "use_cache": False,
 }, auth), lambda value: bool(value["result"]["data"]))

@@ -1,5 +1,7 @@
 # Local benchmark reference
 
+This historical reference measures the optional ClickHouse backend. For the default native architecture, read [DuckLake validation](ducklake-validation.md) and [maintenance measurements](ducklake-maintenance.md).
+
 A synthetic ten-minute run accepted and reconciled 120,000 events at 200 events/s.
 It reported zero ingestion errors and zero skipped request slots. Hot receipts
 stayed within the configured 1,000-row limit in every successful sample.

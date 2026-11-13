@@ -16,11 +16,11 @@ After creation, inspect the pipeline and its runs. [Pause, change credentials, o
 
 | Capability | Purpose | Configuration | Query or delivery model |
 | --- | --- | --- | --- |
-| [Native cold storage](storage.md) | Move ClickHouse parts to S3 while retaining analytical history | Deployment operator | Same `events` table and queries; MOVE TTL |
+| [ClickHouse-only cold storage](storage.md) | Move ClickHouse parts to S3 while retaining analytical history | Deployment operator | Same `events` table and queries; MOVE TTL |
 | [One-off SQL export](exports.md) | Download the result of a particular SQL query | Operator export storage; authorized client submits SQL | Asynchronous private gzip files and expiring download links |
 | Project pipeline | Deliver data repeatedly to a destination | Project-scoped pipeline writer; operator enables and bounds runtime | Webhook delivery or scheduled S3 runs with persisted progress |
 
-A pipeline is not a backup or a way to change the instance's ClickHouse storage policy. Destination credentials are write-only API inputs. Reads return metadata and nonsecret rules without destination endpoint URLs,
+A pipeline is not a backup or a way to change the instance's analytical storage policy. Destination credentials are write-only API inputs. Reads return metadata and nonsecret rules without destination endpoint URLs,
 credentials, or event payloads. S3 rules include their SQL and destination
 bucket, region, prefix, and addressing mode, so authorized readers can inspect
 what a scheduled run does.
@@ -79,7 +79,7 @@ The credential-replacement endpoint accepts `{"credentials":{...}}` without retu
 ## Webhook event and batch modes
 
 Webhooks deliver newly accepted original events after cookieless identity
-resolution, without waiting for ClickHouse projection. Private identity controls are excluded. A scheduled S3 query can select `person_id` and `person_properties` on ordinary events after identity projection. Batch mode groups those
+resolution, without waiting for analytical projection. Private identity controls are excluded. A scheduled S3 query can select `person_id` and `person_properties` on ordinary events after identity projection. Batch mode groups those
 raw accepted events; it does not execute an analytical SQL query. They do not backfill older events or emit a correction stream.
 `include_events` and `exclude_events` match exact event names, with exclusions
 taking precedence. Each list accepts up to 100 names. An empty inclusion list
@@ -216,7 +216,7 @@ The service restricts every `events` source, including nested queries and joins,
 to `received_at_ms >= window_start` and `< window_end`. This is deliberate
 windowing, unlike a one-off export that runs the submitted query without adding
 window filters. Event timestamps do not choose the delivery window. SQL can
-reference `{window_start:Int64}` and `{window_end:Int64}`, but callers cannot
+reference `$window_start` and `$window_end` on DuckDB. These values are receipt-time Unix milliseconds; use `CAST($window_start AS BIGINT)` when a numeric type is needed. Optional ClickHouse uses `{window_start:Int64}` and `{window_end:Int64}`. Callers cannot
 supply those names in `parameters`; the scheduler binds them.
 
 Create a scheduled query with this body, replacing the bucket, credentials, and
@@ -227,7 +227,7 @@ Create a scheduled query with this body, replacing the bucket, credentials, and
 	"name": "Hourly conversation totals",
 	"kind": "s3",
 	"s3": {
-		"sql": "SELECT {window_start:Int64} AS window_start_ms, event, count() AS total FROM events WHERE event={event:String} GROUP BY event ORDER BY event",
+		"sql": "SELECT CAST($window_start AS BIGINT) AS window_start_ms, event, count(*) AS total FROM events WHERE event=$event GROUP BY event ORDER BY event",
 		"parameters": {"event": "conversation_started"},
 		"format": "jsonl",
 		"interval_seconds": 3600,
@@ -255,7 +255,7 @@ overlap native ClickHouse objects or one-off exports.
 
 Data uses the same gzip JSONL or CSV encoding as [one-off exports](exports.md).
 Default chunk size is 256 MiB decoded with sequential 8 MiB multipart uploads.
-The runtime validates the complete ClickHouse stream before publishing a
+The runtime validates the complete query result before publishing a
 manifest. A partial collection of data objects is not a completed run.
 
 Object paths under the configured prefix follow this layout:
@@ -298,16 +298,14 @@ unavailable. Successfully committed destination files are not deleted.
 ### Admission, budgets, and destination permissions
 
 Scheduled work waits for its recorded original-event and mutation delivery
-barriers and healthy ClickHouse delivery. This reduces delivery lag; it is not a
+barriers and healthy analytical delivery. This reduces delivery lag; it is not a
 transactional snapshot. S3 pipelines and one-off exports share one heavy-query
 slot, leaving the other interactive slot available. Work starts only while the
 interactive pool is idle and pending input is at or below the operator threshold.
 It yields if delivery fails or input grows beyond four times that threshold.
 
 The resource-related `PORCUPINE_EXPORT_*` settings also bound scheduled S3 work.
-Defaults are one ClickHouse thread, 512 MiB query memory, 5 MiB/s bandwidth,
-24 hours per attempt, 1 TiB reads and output, 1 GiB temporary disk, and an
-8 MiB source-row bound. These are operator controls, not pipeline request
+Both backends apply 5 MiB/s sink bandwidth, 24 hours per attempt, a 1 TiB decoded-output limit, and an 8 MiB row bound by default. Native jobs share the project engine's configured memory and temporary directory; they have no per-query physical read-byte or temporary-disk quota. Optional ClickHouse jobs additionally use one thread, 512 MiB query memory, a 1 TiB read budget, and 1 GiB temporary disk. These are operator controls, not pipeline request
 fields. The one-off export bucket, job queue, retention, and presigned-link
 settings do not become the scheduled destination or its retention policy.
 
@@ -383,7 +381,7 @@ A restored checkpoint can precede a webhook acknowledgment or an S3 write that a
 
 ## Testing a destination
 
-Run `make integration-s3` to exercise a scheduled query against ClickHouse and an
+Run `make ducklake-test` for native export, window isolation, and cancellation checks. The optional ClickHouse path uses `make integration-s3` to exercise a scheduled query against ClickHouse and an
 isolated S3-compatible store. The test downloads the compressed files listed in
 the manifest, verifies their hashes and checks the rows across two projects and
 multiple windows.

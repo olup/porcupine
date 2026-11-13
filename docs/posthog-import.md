@@ -22,7 +22,7 @@ Prefix each path in the table with `/api/v1/projects/{project_id}`. Use the API 
 
 Upload files in the order returned by the server. Persons files come first. For each chunk, send at most 256 KiB and at most 1,000 line endings. Keep a stable event UUID across live capture and import and select the same logical source. A lost response can be recovered by repeating the last identical chunk or checking the job's offset. Each committed chunk advances the cursor in the same SQLite transaction as accepting its rows. A final digest mismatch fails the job; earlier committed rows are retained. An import consumes the same bounded queue as live ingestion. Retry backpressure responses without advancing the offset.
 
-The server stages at most a partial 1 MiB row per active job. ClickHouse storage is separate: with a hot-to-S3 policy based on receipt time, historical rows initially consume hot storage and become eligible to move according to the configured policy. Budget hot space or import smaller date ranges on a constrained host.
+The server stages at most a partial 1 MiB row per active job. Analytical storage is separate from uploaded import files. DuckLake writes imported history to local SSD storage, so budget space for the resulting catalog and Parquet data. Optional ClickHouse deployments can use a hot-to-S3 policy. See [storage](storage.md).
 
 ## Upload a chunk from the CLI
 

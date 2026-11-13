@@ -2,9 +2,9 @@
 
 Use an export when a query result is too large for an interactive response. For recurring delivery to a customer's bucket or webhook, use a [pipeline](pipelines.md).
 
-Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same SQL grammar, parameters, row policies, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets. Select `person_id` to include the resolved user and `person_properties` for the latest projected profile.
+Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same project SQL grammar, parameters, isolation, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets. Select `person_id` to include the resolved user and `person_properties` for the latest projected profile.
 
-Native [ClickHouse S3 cold storage](storage.md) and result exports are separate. Export objects use their own private prefix and credentials. Recurring [project pipelines](pipelines.md) configure their own scoped
+Analytical storage and result exports are separate. The default DuckLake backend uses local files; optional [ClickHouse cold storage](storage.md) can use S3. Export objects use their own private prefix and credentials. Recurring [project pipelines](pipelines.md) configure their own scoped
 destination and schedule. This one-off export API still has no caller-selected
 destination and does not create a recurring job.
 
@@ -50,13 +50,13 @@ Save this request as `export.json`:
 ```json
 {
 	"idempotency_key": "nov-export-1",
-	"sql": "SELECT toDate(event_time) AS day, JSONExtractString(properties,'client') AS client, count() AS conversations FROM events WHERE event={event:String} AND JSONExtractString(properties,'client')={client:String} GROUP BY day, client ORDER BY day, client",
+	"sql": "SELECT CAST(event_time AS DATE) AS day, json_extract_string(properties,'$.client') AS client, count(*) AS conversations FROM events WHERE event=$event AND json_extract_string(properties,'$.client')=$client GROUP BY day, client ORDER BY day, client",
 	"parameters": {"event": "conversation_started", "client": "acme"},
 	"format": "jsonl"
 }
 ```
 
-`format` is `jsonl` by default, or `csv`. SQL remains limited to 16 KiB and the existing typed scalar parameter contract. No implicit SQL `LIMIT`, pagination, or query splitting changes the result. Use `ORDER BY` when output order matters.
+`format` is `jsonl` by default, or `csv`. SQL remains limited to 16 KiB and the running backend's bound parameter contract. No implicit SQL `LIMIT`, pagination, or query splitting changes the result. Use `ORDER BY` when output order matters.
 
 Submit and inspect the returned job ID:
 
@@ -73,7 +73,7 @@ The examples assume `PORCUPINE_URL`, an authorized `ACCESS_TOKEN`, an existing `
 
 An idempotency key contains 1 through 200 bytes and cannot be blank. Its scope is project and creator credential. An exact canonical SQL, parameters, and format retry returns the same job, including after terminal completion. Reusing the key for a different request returns `409`. SQLite retains the key hash, not the raw key.
 
-Job metadata includes `id`, `project_id`, `state`, `format`, row and byte progress, `file_count`, `attempts`, timestamps, optional generic `error`, `columns`, and `consistency`. It never returns SQL, parameters, actor IDs, internal object keys, or credentials. Columns describe result names and ClickHouse types. Optional `totals`, `extremes`, and `rows_before_limit_at_least` describe supported result extras without adding them to exported data rows.
+Job metadata includes `id`, `project_id`, `state`, `format`, row and byte progress, `file_count`, `attempts`, timestamps, optional generic `error`, `columns`, and `consistency`. It never returns SQL, parameters, actor IDs, internal object keys, or credentials. Columns describe result names and database types. Optional `totals`, `extremes`, and `rows_before_limit_at_least` describe supported result extras without adding them to exported data rows.
 
 ### Download or cancel
 
@@ -107,7 +107,7 @@ Use `porcupine_docs` with an operation ID to obtain its contract. All five expor
 	"path": {"id": "PROJECT_ID"},
 	"body": {
 		"idempotency_key": "agent-export-2026-11-08-1",
-		"sql": "SELECT uuid, event, event_time, properties FROM events WHERE event={event:String} ORDER BY id",
+		"sql": "SELECT uuid, event, event_time, properties FROM events WHERE event=$event ORDER BY id",
 		"parameters": {"event": "conversation_started"},
 		"format": "csv"
 	}
@@ -130,11 +130,11 @@ Poll or cancel with the returned ID:
 
 Files are gzip-compressed JSONL or CSV, split on row boundaries at a default 256 MiB of decoded output. A single encoded row or header can exceed a configured chunk target. The row-value and total-output budgets still apply. Multipart uploads are sequential with 8 MiB parts. At most 10,000 files are produced for one attempt.
 
-JSONL contains one object per result row, with column names as keys and raw ClickHouse JSON values. A String `properties` column remains a JSON-encoded string, rather than an expanded object. Quoted 64-bit integers remain strings. Duplicate result column names fail validation.
+JSONL contains one object per result row, with column names as keys and the backend's JSON values. A String `properties` column remains a JSON-encoded string, rather than an expanded object. Quoted 64-bit integers remain strings. Duplicate result column names fail validation.
 
 Each CSV file repeats its header. String cells are decoded; other values use their JSON representation. A null becomes an empty CSV cell, so null and an empty string are not distinguishable in that format. Nested values remain JSON text within a cell. CSV quoting preserves cell content rather than applying spreadsheet formula sanitization.
 
-The service streams ClickHouse `JSONCompact` without buffering the full result. It validates column metadata, row widths and counts, supported extras, and complete end-of-stream. A late ClickHouse error, malformed envelope, oversized row, failed compression, or incomplete upload prevents success. Earlier chunk objects may already exist privately, but the API publishes no URLs until the entire attempt is validated and committed as succeeded.
+The service streams native DuckDB rows without buffering the full result. The optional ClickHouse backend streams validated `JSONCompact`. A query error, malformed stream, oversized row, failed compression, or incomplete upload prevents success. Earlier chunk objects may already exist privately, but the API publishes no URLs until the entire attempt is validated and committed as succeeded.
 
 ## Consistency, retries, and revocation
 
@@ -146,11 +146,11 @@ One export runs at a time. It starts only while delivery is healthy, total pendi
 
 Creator authorization is checked before execution, polled every second while running, and checked again in the transaction that publishes success. Revocation or loss of project read authority stops publication. Cancellation and authorization checks do not revoke links already issued for a prior successful job.
 
-After interruption or process restart, incomplete attempt objects are cleaned up and the whole query reruns, with at most three attempts. The worker does not resume at a row offset or combine files from different attempts. SQL and parameters leave job metadata after terminal completion; rows are streamed to S3, not retained as a local export file. SQLite holds job and file metadata. ClickHouse can spill bounded aggregation or sort work to its own local disk.
+After interruption or process restart, incomplete attempt objects are cleaned up and the whole query reruns, with at most three attempts. The worker does not resume at a row offset or combine files from different attempts. SQL and parameters leave job metadata after terminal completion; rows are streamed to S3, not retained as a local export file. SQLite holds job and file metadata. Native work shares the project engine's configured memory and temporary storage. ClickHouse applies its separate per-export spill settings.
 
 ## Operator configuration
 
-Exports require configured ClickHouse and S3 storage. Use [compose.exports.yaml](../compose.exports.yaml) alongside the base Compose file and private environment values. It can coexist with the cold-storage override. Export credentials go to the Go process; native ClickHouse disk credentials remain separate. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
+Exports require a configured analytical backend and S3 result storage. Use [compose.exports.yaml](../compose.exports.yaml) alongside the base Compose file and private environment values. Optional ClickHouse deployments can also add their cold-storage override. Export credentials go to the Go process; native ClickHouse disk credentials remain separate. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
@@ -163,18 +163,20 @@ Exports require configured ClickHouse and S3 storage. Use [compose.exports.yaml]
 | `PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY` | Credential provider chain | Required with a static access key |
 | `PORCUPINE_EXPORT_S3_SESSION_TOKEN` | Empty | Optional token for static temporary credentials |
 | `PORCUPINE_EXPORT_MAX_EXECUTION_SECONDS` | `86400` | Whole-job execution deadline, 1 through 604,800 seconds |
-| `PORCUPINE_EXPORT_MAX_READ_BYTES` | `1099511627776` | ClickHouse read budget, 1 byte through 1 PiB |
+| `PORCUPINE_EXPORT_MAX_READ_BYTES` | `1099511627776` | ClickHouse-only read budget, 1 byte through 1 PiB |
 | `PORCUPINE_EXPORT_MAX_OUTPUT_BYTES` | `1099511627776` | Decoded output budget including CSV headers, 1 byte through 1 PiB |
 | `PORCUPINE_EXPORT_FILE_BYTES` | `268435456` | Decoded chunk target, 1 KiB through 1 GiB |
 | `PORCUPINE_EXPORT_MAX_ROW_BYTES` | `8388608` | Source JSON row-value bound, 1 KiB through 64 MiB |
-| `PORCUPINE_EXPORT_MEMORY_BYTES` | `536870912` | ClickHouse query memory, 64 MiB through 2 GiB |
+| `PORCUPINE_EXPORT_MEMORY_BYTES` | `536870912` | ClickHouse-only per-query memory, 64 MiB through 2 GiB |
 | `PORCUPINE_EXPORT_BANDWIDTH_BYTES_PER_SECOND` | `5242880` | Query and compressed upload bandwidth, 64 KiB/s through 100 MiB/s |
-| `PORCUPINE_EXPORT_TEMPORARY_BYTES` | `1073741824` | ClickHouse temporary-disk budget, 1 MiB through 10 GiB |
+| `PORCUPINE_EXPORT_TEMPORARY_BYTES` | `1073741824` | ClickHouse-only per-query temporary-disk budget, 1 MiB through 10 GiB |
 | `PORCUPINE_EXPORT_QUEUE_THRESHOLD` | `1000` | Start threshold for total pending work, 1 through 100,000 |
 | `PORCUPINE_EXPORT_MAX_QUEUED_JOBS` | `100` | Maximum queued and running jobs combined, 1 through 100 |
 | `PORCUPINE_EXPORT_RETENTION_HOURS` | `168` | Availability after success, 1 through 720 hours |
 
-The export reader uses one ClickHouse thread, fixed read-only settings, project row policies, and column grants excluding private originals and tombstone internals. Default budgets are 512 MiB memory, 5 MiB/s bandwidth, 24 hours execution, 1 TiB read and decoded output, and 1 GiB temporary disk. Interactive query limits remain unchanged. Client SQL cannot raise either set of limits.
+Native exports use the project's isolated engine and public view with the same AST guard as interactive queries. They share its configured memory and fixed temporary directory budget. DuckLake does not enforce the ClickHouse-only physical read-byte or per-query temporary-disk settings; its effective limits report `max_read_bytes: 0` and `temporary_bytes: 0`. The reported `memory_bytes` is the shared engine setting, not a per-job or process RSS cap.
+
+Both backends enforce the job deadline, single shared background-query slot, pressure checks, row and output limits, file limits, and sink bandwidth. Default sink bandwidth is 5 MiB/s, execution deadline is 24 hours, decoded output limit is 1 TiB, and per-row bound is 8 MiB. Optional ClickHouse exports additionally use one thread, 512 MiB per-query memory, a 1 TiB read budget, and 1 GiB temporary-disk budget. Clients cannot raise these settings through SQL.
 
 The S3 endpoint cannot contain credentials, query parameters, a fragment, or a bucket path. Public endpoints require HTTPS; HTTP is limited to supported local or private destinations. Prefixes contain safe path segments and must not overlap the native ClickHouse disk prefix. Endpoint and credential configuration never appear in job metadata. Download URLs necessarily identify their destination and carry signed authorization parameters.
 
@@ -192,4 +194,4 @@ Lifecycle age starts at object or multipart creation, not job success. A strict 
 
 ## Verification status
 
-Run `make integration-s3` to exercise multipart upload and download, multi-file exports, typed parameters, cold data and mutations against disposable ClickHouse and S3-compatible services. The suite also downloads a signed export URL, deletes its project and checks that the same URL returns HTTP 404.
+Run `make ducklake-test` for native storage and export boundaries. The optional ClickHouse path uses `make integration-s3` to exercise multipart upload and download, multi-file exports, typed parameters, cold data and mutations against disposable ClickHouse and S3-compatible services. The suite also downloads a signed export URL, deletes its project and checks that the same URL returns HTTP 404.

@@ -91,7 +91,7 @@ the request and the API rechecks the credential and project access. The
 adapter rejects unknown operations, unknown path or query parameters, and path
 traversal. The adapter dispatches locally without an arbitrary URL or shell
 command. Calling `query-events` executes validated SQL through the analytics
-handler and its project-specific ClickHouse reader.
+handler and its project-isolated analytical backend.
 
 An agent can discover `rename-project` or `delete-project` with `porcupine_docs` and call either through `porcupine_call`. For example:
 
@@ -124,7 +124,7 @@ clients; server-side token scopes and project grants enforce access independentl
 
 The available operations include project and key management, queue inspection,
 SQL schema discovery, observed event and property discovery, read-only
-ClickHouse SQL, current-event reads, corrections, deletions, and mutation status.
+SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
 operations to the same discovery catalog; the tool count remains two. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
 operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical PostHog imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
@@ -136,10 +136,7 @@ property values. Its latest-event UUID pointers can be inspected through a
 parameterized SQL query. See [the analytics API examples](analytics.md).
 
 The `query-events` body accepts the same optional `use_cache` Boolean as HTTP.
-Omitting it or setting it to `true` allows a 60-second ClickHouse result cache.
-Set it to `false` to bypass cache reads and writes and read currently projected
-data. Fresh queries do not wait for delivery. Pending edits and deletions
-automatically bypass caching; applied mutations use a new cache generation.
+The default DuckLake backend always executes fresh queries and advertises `sql.result_cache: false`. Optional ClickHouse deployments can reuse results for 60 seconds when the field is omitted or true. A false value bypasses that cache. Fresh queries do not wait for delivery. ClickHouse pending mutations bypass caching and applied mutations use a new generation.
 See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
 
 SQL is written by the agent. There are no named prebuilt metrics or saved SQL
@@ -150,7 +147,7 @@ because delivery is eventual. `get-event` reflects pending accepted corrections;
 SQL and catalog results show projected state. Read the [mutation contract](events.md)
 before calling `edit-event` or `delete-event`.
 
-Native ClickHouse S3 tiering, its bucket endpoint and AWS credentials, and hot
+Optional ClickHouse S3 tiering, its bucket endpoint and AWS credentials, and hot
 duration have no MCP operations. They are operator deployment configuration.
 Project delivery pipelines use separate scoped destination inputs. Administrator
 access tokens still execute read-only SQL and cannot change storage through it.

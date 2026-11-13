@@ -1,49 +1,41 @@
 # Analytics API reference
 
-For a first query with your agent or CLI, follow [Query your events](query-events.md). This page describes the schema, discovery fields, SQL grammar, cache behavior, and execution limits.
+For a first query with your agent or CLI, follow [Query your events](query-events.md). This reference describes the default DuckDB dialect. Optional ClickHouse deployments report `sql.dialect: "clickhouse"` and use ClickHouse syntax instead. Always inspect the running instance's schema before generating SQL.
 
-Porcupine exposes delivered events through project-scoped ClickHouse SQL. Clients and agents write SQL for their question. There are no named prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
-
-Every request targets one project and requires `events:read`. For HTTP, send an API-audience [service key](service-keys.md) or [OAuth token](oauth.md) as a bearer credential. The CLI uses the HTTP API. On MCP, use a credential for the MCP resource. [MCP reference](mcp.md)
+Every request targets one project and requires `events:read`. HTTP and the CLI accept an API-audience service key or OAuth token. MCP requires an MCP-audience credential. There are no prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
 ## Operations
 
 | Operation ID | HTTP endpoint | Response |
 | --- | --- | --- |
 | `get-event-schema` | `GET /api/v1/projects/{id}/schema` | SQL columns, functions, features, limits, and delivery status |
-| `get-event-catalog` | `GET /api/v1/projects/{id}/catalog` | Observed event names, optional sampled property types, UUID pointers, and delivery status |
-| `query-events` | `POST /api/v1/projects/{id}/query` | Typed ClickHouse JSON result and delivery status |
+| `get-event-catalog` | `GET /api/v1/projects/{id}/catalog` | Observed event names, sampled property types, UUID pointers, and delivery status |
+| `query-events` | `POST /api/v1/projects/{id}/query` | Typed result and delivery status |
 
-Schema discovery returns `enabled: false` when ClickHouse is not configured. Catalog and SQL queries then return `503`. The separate `/api/v1/projects/{id}/events` endpoint inspects the pending SQLite queue. Delivered payloads leave that queue and remain available in ClickHouse.
+Schema discovery returns `enabled: false` when no analytical backend is configured. Catalog and SQL requests then return `503`. The separate pending-event endpoint inspects SQLite, not delivered history.
 
 ## Event schema
 
-Schema discovery returns `tables`, `sql`, `limits`, and `delivery`. `sql.functions` is the exact function allowlist; `sql.features` and `sql.unsupported` describe the accepted grammar. The queryable table is named `events`.
+The queryable table is `events`. Schema discovery returns exact `tables`, `sql`, `limits`, and `delivery` fields. `sql.functions` is the function allowlist. `sql.features` and `sql.unsupported` describe the running backend.
 
-| Column | ClickHouse type | Meaning |
+| Column | DuckDB type | Meaning |
 | --- | --- | --- |
-| `id` | `UInt64` | Durable SQLite event ID |
-| `event_id` | `UInt64` | Same durable ID as `id`, stable across producer retries with a stable message ID |
-| `is_imported` | `UInt8` | `1` for historical imports, `0` for live capture |
-| `source_id` | `String` | Credential-bound logical producer or the adapter default |
-| `message_id` | `String` | Original producer message ID, or the generated ID when absent |
-| `event_type` | `String` | Normalized category of the visible row, `pageview` or `track` |
-| `context` | `String` | Capture context encoded as a JSON object, with absent fields omitted |
-| `revision` | `UInt64` | Latest projected revision, returned as a decimal string |
-| `project_id` | `String` | Project enforced by the reader and row policy |
-| `uuid` | `String` | Event UUID, unique within the project |
-| `event` | `String` | Event name |
-| `distinct_id` | `String` | Accepted event identity; cookieless IDs rotate daily |
-| `person_id` | `String` | Project-local current person ID, falling back to the event distinct ID |
-| `person_properties` | `String` | Current delivered profile traits encoded as a JSON object; `{}` if unknown |
-| `properties` | `String` | JSON object encoded as a string |
-| `timestamp` | `String` | Client event timestamp, normalized to UTC RFC3339 |
-| `timestamp_ms` | `Int64` | Client event timestamp in Unix milliseconds |
-| `event_time` | `DateTime64(3, 'UTC')` | Client event timestamp for SQL time operations |
-| `received_at` | `String` | Server request arrival time in UTC RFC3339 |
-| `received_at_ms` | `Int64` | Server request arrival time in Unix milliseconds |
+| `id`, `event_id` | `BIGINT` | Durable event ID, stable across retries with a stable producer message ID |
+| `uuid` | `VARCHAR` | Stable event identifier within the project |
+| `project_id` | `VARCHAR` | Owning project |
+| `source_id`, `message_id` | `VARCHAR` | Authenticated producer namespace and original producer message ID |
+| `event`, `event_type` | `VARCHAR` | Event name and normalized category |
+| `distinct_id` | `VARCHAR` | Actor recorded at capture |
+| `person_id` | `VARCHAR` | Current resolved project-local person |
+| `person_properties` | `VARCHAR` | Current traits encoded as JSON |
+| `properties`, `context` | `VARCHAR` | Custom properties and normalized context encoded as JSON |
+| `timestamp`, `received_at` | `VARCHAR` | Original occurrence and server receipt times in UTC RFC3339 |
+| `event_time` | `TIMESTAMP WITH TIME ZONE` | Occurrence time for temporal SQL |
+| `timestamp_ms`, `received_at_ms` | `BIGINT` | Occurrence and receipt times in Unix milliseconds |
+| `revision` | `UBIGINT` | Current revision for compare-and-swap mutations |
+| `is_imported` | `UTINYINT` | `1` for historical imports, `0` for live ingestion |
 
-`JSONExtractString`, `JSONExtractInt`, and related allowed functions read custom properties. `event_time` and receipt time answer different questions. Client timestamps can be older or newer than their arrival time.
+Use `json_extract_string(properties, '$.category')` for a custom string property. Cast a numeric extraction when needed. Occurrence time and receipt time answer different questions; client timestamps can be older or newer than receipt.
 
 ## Observed event and property discovery
 
@@ -55,45 +47,34 @@ Catalog parameters are:
 | `limit` | `20` | `1` through `100` event names |
 | `offset` | `0` | `0` through `10000` |
 
-`events` lists names by latest durable event ID. Each item contains `event`, a decimal-string logical `count`, `first_received_at`, `last_received_at`, `latest_event_uuid`, and `latest_event_timestamp`. Counts cover delivered logical events with that name. First and last receipt times come from the lowest and highest durable event IDs, rather than minimum and maximum client timestamps. `next_offset` is present when another supported page exists.
+`events` lists names by latest durable event ID. Each item contains `event`, decimal-string `count`, `first_received_at`, `last_received_at`, `latest_event_uuid`, and `latest_event_timestamp`. Counts cover delivered logical events. First and last receipt times come from the lowest and highest durable IDs. `next_offset` appears when another supported page exists.
 
-Supplying `event` also returns `properties`. Discovery examines at most the latest 1,000 delivered matching events by durable ID. For each event it considers up to 200 top-level keys whose names contain at most 200 bytes. It returns at most 100 properties in key order.
+Supplying `event` also returns sampled `properties`. Discovery examines at most the latest 1,000 matching events, 200 top-level keys per event, and keys of at most 200 bytes. It returns at most 100 properties in key order.
 
-Each property has `key`, observed JSON `types`, decimal-string `sample_occurrences`, `latest_event_uuid`, and `last_received_at`. It returns no raw property values. The UUID points to the latest sampled event containing that key. A query can inspect the corresponding event within the same project.
+Each property contains `key`, observed JSON `types`, decimal-string `sample_occurrences`, `latest_event_uuid`, and `last_received_at`. Raw property values are excluded. The UUID points to the latest sampled event containing that key and can be used in a project-scoped query.
 
-`sampling` reports the bounds above, `properties_requested`, `properties_truncated`, `pagination_truncated`, and `historical_properties_complete`. Historical completeness is always false. Missing keys may be older than the sample, exceed key limits, or have names too long for discovery.
-
-Example discovery requests:
-
-```sh
-curl --fail-with-body "$PORCUPINE_URL/api/v1/projects/$PROJECT_ID/schema" \
-	-H "Authorization: Bearer $ACCESS_TOKEN"
-
-curl --fail-with-body --get "$PORCUPINE_URL/api/v1/projects/$PROJECT_ID/catalog" \
-	-H "Authorization: Bearer $ACCESS_TOKEN" \
-	--data-urlencode 'event=conversation_started' --data-urlencode 'limit=20'
-```
-
-The examples use `PORCUPINE_URL=http://127.0.0.1:8080`, an existing `PROJECT_ID`, and an authorized `ACCESS_TOKEN`.
+`sampling` reports the bounds, `properties_requested`, `properties_truncated`, `pagination_truncated`, and `historical_properties_complete`. Historical completeness is always false. Missing keys may be outside the sample or exceed its bounds.
 
 ## SQL request and result
 
-A query body contains `sql`, an optional `parameters` string map, and an optional `use_cache` Boolean:
+A body contains `sql`, an optional `parameters` string map, and optional `use_cache`:
 
 ```json
 {
-	"sql": "SELECT event, count() AS total FROM events WHERE event={event:String} GROUP BY event",
-	"parameters": {"event": "conversation_started"}
+	"sql": "SELECT event, count(*) AS total FROM events WHERE event=$event GROUP BY event",
+	"parameters": {"event": "article_published"}
 }
 ```
 
-The response has this shape:
+Rows appear under `result.data`, with column metadata under `result.meta`. The result preserves 64-bit integers as decimal strings to avoid client precision loss. `result.statistics.elapsed` reports query duration. Physical scan counts and bytes are not returned.
+
+For example:
 
 ```json
 {
 	"result": {
-		"meta": [{"name": "event", "type": "String"}, {"name": "total", "type": "UInt64"}],
-		"data": [{"event": "conversation_started", "total": "12"}],
+		"meta": [{"name": "event", "type": "VARCHAR"}, {"name": "total", "type": "BIGINT"}],
+		"data": [{"event": "article_published", "total": "12"}],
 		"rows": 1,
 		"statistics": {"elapsed": 0.002}
 	},
@@ -101,127 +82,72 @@ The response has this shape:
 }
 ```
 
-Values in `data` retain ClickHouse JSON types. In particular, 64-bit integers are strings to preserve precision. `result.rows_before_limit_at_least` may also appear. Public statistics expose elapsed time only; physical scan counts and bytes are omitted.
-
 ### Cached and fresh queries
 
-Omitting `use_cache` or setting it to `true` allows ClickHouse's native result cache with a 60-second TTL. The cache separates projects, typed parameter values, and mutation generations. Newly projected original events can take up to 60 seconds to appear in an existing cached result. Caching is best effort: server capacity, entry size, and nondeterministic functions such as `now()` can prevent a result from being cached.
+The default DuckLake backend reports `sql.result_cache: false`. Every query executes against delivered data. `use_cache` remains accepted for a common API contract; setting it to `false` explicitly requests a fresh execution.
 
-Set `use_cache` to `false` to bypass both cache reads and cache writes:
+The optional ClickHouse backend can reuse a result for up to 60 seconds when `use_cache` is omitted or true. Its cache separates projects, parameter values, and mutation generations. Pending mutations bypass cache use. A false value bypasses cache reads and writes. This cache is best effort and is separate from the engine's internal page and file buffers.
+
+Neither backend waits for queued originals or corrections. Inspect delivery status before checking a recent capture.
+
+### Group a custom property by day
 
 ```json
 {
-	"sql": "SELECT uuid, event, revision FROM events WHERE uuid={uuid:String}",
-	"parameters": {"uuid": "EVENT_UUID"},
+	"sql": "SELECT CAST(event_time AS DATE) AS day, json_extract_string(properties, '$.category') AS category, count(*) AS total FROM events WHERE event=$name GROUP BY day, category ORDER BY day, category LIMIT 100",
+	"parameters": {"name": "article_published"}
+}
+```
+
+For Paris calendar days, use `CAST(timezone('Europe/Paris', event_time) AS DATE)`. The running schema lists allowed date, JSON, aggregate, and window functions. Funnels and retention can be expressed with joins, CTEs, and window functions. ClickHouse-specific `windowFunnel` and `retention` calls require different SQL on DuckDB.
+
+### Inspect a latest-event UUID pointer
+
+```json
+{
+	"sql": "SELECT uuid, event, timestamp, received_at, properties FROM events WHERE uuid=$uuid LIMIT 1",
+	"parameters": {"uuid": "UUID_FROM_CATALOG"},
 	"use_cache": false
 }
 ```
 
-A fresh query reads currently projected ClickHouse data. It does not wait for queued originals or mutations. Delivery status is read separately and remains current even when the SQL result comes from cache.
-
-Accepted edits and deletions immediately change the project's durable cache generation. While any mutation is pending, all interactive queries for that project bypass caching. After projection is acknowledged, caching resumes under the new generation, so pre-edit entries cannot reappear. A cached read that races mutation acceptance is retried through the fresh reader. Process restarts use a new cache namespace, including after restore. Authorization is checked for every HTTP or MCP request before any cached result is read.
-
-Each project's cached reader has a maximum of 64 entries and 8 MiB of cache storage, subject to the server's global limits. Cached entries are never shared between ClickHouse users. Reader permissions, execution limits, and output limits remain fixed. Schema and catalog discovery, current-event reads, exports, and scheduled pipeline queries do not use this result cache.
-
-### Conversations by custom client and day
-
-This example assumes `conversation_started` events contain custom `client` and `conversation_id` properties. It counts distinct conversation IDs per UTC event day for one client. Those properties are application-defined, not built-in Porcupine fields.
-
-Save this JSON as `query.json`:
-
-```json
-{
-	"sql": "SELECT toDate(event_time) AS day, JSONExtractString(properties,'client') AS client, uniqExact(JSONExtractString(properties,'conversation_id')) AS conversations FROM events WHERE event={event:String} AND event_time >= {since:DateTime} AND event_time < {until:DateTime} AND JSONExtractString(properties,'client')={client:String} AND JSONHas(properties,'conversation_id') GROUP BY day, client ORDER BY day, client LIMIT 1000",
-	"parameters": {
-		"event": "conversation_started",
-		"client": "acme",
-		"since": "2026-11-01 00:00:00",
-		"until": "2026-11-08 00:00:00"
-	}
-}
-```
-
-Submit the request:
-
-```sh
-curl --fail-with-body "$PORCUPINE_URL/api/v1/projects/$PROJECT_ID/query" \
-	-H "Authorization: Bearer $ACCESS_TOKEN" \
-	-H 'Content-Type: application/json' --data-binary @query.json
-```
-
-Changing the grouping or filters changes the analytical definition. Counting daily cookieless IDs across several days does not produce exact distinct-person counts. See [the identity contract](data-and-identity.md#cookieless-by-default).
-
-### Inspect a latest-event UUID pointer
-
-Use `latest_event_uuid` from an event or property catalog item as a bound value:
-
-```json
-{
-	"sql": "SELECT uuid, event, timestamp, received_at, properties FROM events WHERE uuid={uuid:String} LIMIT 1",
-	"parameters": {"uuid": "UUID_FROM_CATALOG"}
-}
-```
-
-The same query through MCP uses:
-
-```json
-{
-	"operation_id": "query-events",
-	"path": {"id": "PROJECT_ID"},
-	"body": {
-		"sql": "SELECT uuid, event, properties FROM events WHERE uuid={uuid:String} LIMIT 1",
-		"parameters": {"uuid": "UUID_FROM_CATALOG"},
-		"use_cache": false
-	}
-}
-```
+Through MCP, pass this body to `porcupine_call` with `operation_id: "query-events"` and `path: {"id": "PROJECT_ID"}`.
 
 ## Supported SQL and parameters
 
-One statement is allowed, with at most 16 KiB of SQL. Supported forms include `SELECT`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, sequential CTEs, subqueries, joins, and `UNION`. Sources are `events` and local CTEs. Supported aggregate functions include percentiles, `windowFunnel`, and `retention`; the schema response lists exact names.
+One statement is allowed, with at most 16 KiB of SQL. Native validation supports `SELECT`, grouping, sequential CTEs, subqueries, joins, `UNION`, window functions, and scalar casts. Sources are `events` and local CTEs. Exact supported functions come from schema discovery.
 
-Writes, qualified source tables, table functions, external sources, system metadata, `FORMAT`, `SETTINGS`, windows, lambdas, `CAST`, and recursive CTEs are excluded. Unknown syntax and functions fail validation. Named scalar conversion functions such as `toUInt64` are available when included in the schema allowlist.
+Writes, qualified tables, private columns, external sources, table functions, recursive CTEs, time travel, configuration changes, and unknown functions are rejected. The native DuckDB AST is checked before execution. An allowed outer function does not make an unsafe nested expression acceptable.
 
-Typed placeholders use ClickHouse syntax such as `{client:String}`. Parameters support scalar string, Boolean, UUID, date, date-time, integer, and floating-point types. There are at most 32 names. Names contain at most 64 ASCII letters, digits, or underscores, starting with a letter or underscore. Each value is a string of at most 4,096 bytes. Supplied names must exactly match the placeholders, with no missing or extra values. One name cannot declare conflicting types. Values stay separate from SQL.
+DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 64 ASCII letters, digits, or underscores and starting with a letter or underscore. Each supplied value is a string of at most 4,096 bytes. Names must exactly match the query, with no missing or extra values. Use an explicit cast when SQL requires a numeric or temporal type. Values are bound separately from SQL.
+
+ClickHouse uses typed placeholders such as `{name:String}` instead. Do not mix dialects in one query.
 
 ## Large result exports
 
-[SQL result exports](exports.md) run the same validated project query grammar
-with a separate restricted reader and operator budgets. They provide durable
-job creation, polling, cancellation, and private gzip CSV or JSONL downloads.
-They do not raise interactive `query-events` limits or rewrite SQL into pages.
-All five export operations require project-scoped `events:read`; cancellation
-also requires the creator credential or instance administration.
+[SQL result exports](exports.md) use the project's validated dialect with background admission, operator budgets, durable job state, cancellation, and private gzip CSV or JSONL downloads. They do not raise interactive output limits or rewrite SQL into pages. All export operations require project-scoped `events:read`; cancellation also requires the creator credential or instance administration.
 
-An accepted-work delivery barrier waits for original events and mutations
-through the job's recorded watermarks. It does not create a snapshot or exclude
-subsequent writes. Download URLs appear only after full stream validation and
-success. Read the export reference for formats, retries, expiring links,
-revocation limits, and required bucket lifecycle settings.
+A delivery barrier waits for accepted originals and mutations through the job's watermarks. It does not exclude later writes. URLs appear only after the whole attempt succeeds.
 
 ## Fixed query limits
 
-| Limit | Value |
+| Limit | DuckLake value |
 | --- | --- |
-| ClickHouse execution time | 5 seconds |
-| API request timeout | 10 seconds |
-| ClickHouse memory | 256 MiB |
-| Scanned rows | 5,000,000 |
-| Read bytes | 1 GiB |
+| Execution time | 5 seconds |
 | Result rows | 1,000 |
 | Result bytes | 1 MiB |
 | Concurrent analytical requests | 2, instance-wide |
+| Engine memory | Configured per project and shared by its work |
+| Physical scanned-row or read-byte quota | Not implemented |
 
-Catalog requests share the same concurrency pool and analytical limits. Readers have fixed read-only settings. Result overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result.
+Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
+
+The optional ClickHouse reader additionally applies a 256 MiB per-query memory setting, five-million-row scan limit, and 1 GiB read-byte limit. Read the running schema rather than assuming those apply to DuckLake.
 
 ## Delivery consistency and errors
 
-Every successful schema, catalog, or query response includes project-scoped delivery status. `pending` counts queued original events and `pending_mutations` counts queued corrections and deletions; `last_success` is optional. `oldest_pending_received_at` gives the server receipt time of the earliest pending original in acceptance order, including quarantined originals, and is absent when that project has none. A generic `error` appears only while that project has either kind of pending work. It does not disclose other projects' queue state.
+Successful schema, catalog, and query responses include project-scoped delivery state. `pending` counts queued originals; `pending_mutations` counts corrections and deletions. `last_success` is optional. `oldest_pending_received_at` identifies the earliest pending original by acceptance order. A generic `error` appears only when the project has pending work.
 
-Results are eventually consistent. Fresh queries show the latest projected event revision and exclude projected deletion tombstones. Cached queries can also lag new original events by up to 60 seconds, as described above. A pending event or correction can already be visible after a lost ClickHouse acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than SQL. Private original snapshots and tombstone internals are excluded from SQL schema and reader grants. Native [S3 tiering](storage.md) keeps the same table and queries across hot and cold parts. SQL results and delivery status have no cross-database snapshot. Catalog event and property queries also run separately. An empty catalog therefore does not prove that no events were accepted.
+Results are eventually consistent. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
 
-Invalid or unsupported SQL and invalid parameter bindings return `400`. Missing or invalid credentials return `401`; missing authority returns `403`. Concurrency and database resource limits return `429`. Unconfigured or unavailable storage, reader provisioning failures, and invalid storage responses return `503`. Request schema validation uses the generated OpenAPI error contract. ClickHouse server messages, SQL text, and credentials are not exposed in storage errors.
-
-If a reader account or project database disappears, its failed query can return
-`503` while invalidating the cached reader setup. A subsequent request attempts
-to provision it again.
+Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.

@@ -53,7 +53,12 @@ def main():
     check('ingestion', request('POST', '/capture/', ev)[0] == 200)
     check('duplicate accepted idempotently', request('POST', '/capture/', ev)[0] == 200)
     check('invalid ingestion token denied', request('POST', '/capture/', {**ev, 'api_key': 'invalid'})[0] in (401, 403))
-    query = {'sql': 'SELECT count() AS total FROM events WHERE uuid={uuid:String}', 'parameters': {'uuid': run}, 'use_cache': False}
+    status, schema = request('GET', path+'/schema', key=read_token())
+    check('schema discovery', status == 200 and schema.get('enabled') is True)
+    dialect = schema['sql']['dialect']
+    check('supported SQL dialect', dialect in ('duckdb', 'clickhouse'))
+    marker = '$uuid' if dialect == 'duckdb' else '{uuid:String}'
+    query = {'sql': 'SELECT count(*) AS total FROM events WHERE uuid='+marker, 'parameters': {'uuid': run}, 'use_cache': False}
     for _ in range(60):
         status, response = request('POST', path + '/query', query, read_token())
         if status == 200 and response['result']['data'][0]['total'] == '1' and response['delivery']['pending'] == 0:
@@ -62,7 +67,6 @@ def main():
     else:
         raise RuntimeError('Delivery or analytical query unavailable')
     check('durable delivery and logical deduplication', True)
-    check('schema discovery', request('GET', path+'/schema', key=read_token())[0] == 200)
     status, catalog = request('GET', path+'/catalog?event=deployment_check', key=read_token())
     check('event and property discovery', status == 200 and any(p['key'] == 'run_id' for p in catalog['properties']))
     check('unsafe SQL rejected', request('POST', path+'/query', {'sql': 'SELECT * FROM system.users'}, read_token())[0] == 400)

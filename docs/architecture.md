@@ -1,32 +1,39 @@
 # Architecture
 
-A Porcupine deployment runs one Go server and one ClickHouse server. The Go server embeds SQLite and serves ingestion, the management API and MCP. The standalone CLI is an HTTP client. The [local benchmark](benchmarks.md) reports throughput and resource limits for a specific workload.
+The default Porcupine deployment runs one Go server with embedded SQLite, DuckDB, and DuckLake. The server serves ingestion, the management API, and MCP. The standalone CLI is an HTTP client and needs no local database.
 
-## From capture to query
+## From capture to a query
 
-1. A producer sends a native, PostHog or Segment event. Its credential identifies the project and, optionally, the logical source.
-2. Porcupine validates the request and commits the accepted batch to SQLite before acknowledging it. Stable producer message IDs allow a client to retry a lost response. SQLite also holds project grants, identity links, import offsets, export jobs and pipeline delivery state.
-3. A worker projects accepted events into ClickHouse. After ClickHouse acknowledges a batch, the worker records receipts and removes the delivered payloads in one SQLite transaction. During an outage, capture can continue while queue capacity and the configured receipt policy allow it. See [durability](reliability.md) and [deduplication](receipts.md).
-4. An agent discovers event names and properties, then runs a validated SQL query against the project's `events` table. Cached queries can reuse a result for up to 60 seconds. Set `use_cache: false` to read the latest projected rows. The query response reports pending delivery. See [analytics](analytics.md).
+1. An input adapter validates and normalizes a native, PostHog, or Segment event. Credentials select the project.
+2. SQLite commits the accepted event, its identity changes, and any webhook work before the server acknowledges capture. The queue has event-count and byte limits.
+3. A worker projects accepted events into the project's DuckLake catalog. After the analytical transaction commits, a SQLite transaction records receipts and removes delivered queue payloads.
+4. DuckDB executes validated read-only SQL against that project's public `events` view. Private originals, revision heads, and deletion tombstones remain inaccessible to client SQL.
 
-The SQLite queue runs on the same persistent volume as the control data. This keeps a single-host deployment independent of a separate broker. Deploy one application process per SQLite database. When ClickHouse is disabled, the HTTP queue inspector can show accepted events, and SQL analytics require enabling ClickHouse.
+Each project has its own local DuckLake catalog and Parquet directory. A bounded number of project engines can be resident at once. DuckLake manages transactional file replacement and snapshots. Porcupine schedules native maintenance and preserves its own stable-ID, identity, and event-revision rules.
 
-## Project and query boundaries
+SQLite remains authoritative for projects, grants, OAuth state, receipts, pending events, mutations, and destination jobs. DuckLake stores analytical history. Both are needed for recovery.
 
-Huma registers the management operations and their permissions. The HTTP API, standalone CLI and MCP use that contract. The MCP server exposes two tools for authorized operation discovery and calls by operation ID. Each call invokes the same HTTP handler with the caller's credential. See [access and interfaces](security-and-interfaces.md).
+## Deployment and isolation
 
-Each project has a restricted ClickHouse reader and an invoker-security view. Row policies on the physical table also enforce project scope. Interactive reads have fixed limits. One-time exports and scheduled S3 runs use separate reader settings and share a background execution slot.
+Run one application process per SQLite database and DuckLake directory. Keep the full `/data` volume on persistent local storage. A second writer, a replicated broker, and automatic host failover are outside this deployment model.
 
-The physical event table uses `ReplacingMergeTree(revision,is_deleted)`. An original row starts at revision zero. Corrections and deletion tombstones get higher revisions. The view uses `FINAL` so queries see the latest projected live row before background merges. Identity fields are resolved at read time. [Event mutations](events.md) and [identity resolution](data-and-identity.md) explain these operations.
+Project isolation applies to HTTP, CLI, MCP, interactive queries, exports, and destination pipelines. Native SQL validation rejects external sources, table functions, private tables, writes, and configuration changes. Each engine is restricted to its managed directory. Output, time, and concurrency limits also apply. DuckDB's memory setting is a shared engine budget, not a hard process-memory limit; use a container limit for containment.
 
-Renaming a project preserves its ID and grants. Deleting a project drains its work, removes its local state and checkpoints external cleanup. The server can resume deletion after a restart. See the [management API](management-api.md#operations).
+## Background work
 
-## Where S3 fits
-
-| Use | Data | Who configures it |
+| Work | Data source | Control |
 | --- | --- | --- |
-| [Cold storage](storage.md) | ClickHouse moves eligible parts to a cold volume. SQL continues to read them. The default hot period when enabled is 30 days. | Deployment operator |
-| [One-time exports](exports.md) | A project reader requests a SQL result and receives temporary download links to private gzip files. | The operator configures the export store. The reader supplies the query. |
-| [Destination pipelines](pipelines.md) | A scheduled SQL query writes a manifest and files for each time window. Webhooks can also send individual events or batches. | A caller with project pipeline permissions supplies the destination. |
+| Event projection | Durable SQLite queue | Server worker |
+| Identify, edits, and deletion | Accepted versioned changes | Server worker |
+| Native file maintenance | Project DuckLake files | Server worker |
+| Webhook delivery | Accepted original-event outbox | Project pipeline |
+| One-time SQL export | Validated project SQL | Project export job |
+| Scheduled S3 delivery | Closed receipt-time query windows | Project pipeline |
 
-The [hosting guide](hosting.md) covers the Compose services, persistent volumes and optional object storage. The [backup guide](online-backup.md) describes how to capture a consistent recovery point across SQLite and ClickHouse.
+Webhooks and S3 destinations keep their own retry and publication state. Destination delivery does not change analytical storage retention. [Pipeline contract](pipelines.md)
+
+## Storage and recovery
+
+The default backend uses local SSD storage. This release does not provide analytical S3 tiering, remote DuckLake catalogs, online DuckLake checkpoints, or a physical-erasure deadline for historical snapshots. Use a [coordinated stopped-volume backup](restore.md). Query-result exports are separate from backups.
+
+The optional ClickHouse backend uses a private ClickHouse service instead of embedded analytics. Enable it with `compose.clickhouse.yaml`; its SQL dialect, native cold-storage configuration, and online backup tools differ. The [storage guide](storage.md) identifies the supported paths. The pre-migration reference remains on `reference/clickhouse-before-ducklake`.

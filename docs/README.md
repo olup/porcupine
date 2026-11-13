@@ -1,6 +1,6 @@
 # Porcupine documentation
 
-Porcupine collects product events and makes them queryable through ClickHouse SQL. Connect an agent through MCP, use the standalone CLI, or call the HTTP API. Your agent generates the analysis and charts. Porcupine has no analytics dashboard.
+Porcupine collects product events and makes them queryable through DuckDB SQL by default. Connect an agent through MCP, use the standalone CLI, or call the HTTP API. Your agent generates the analysis and charts. Porcupine has no analytics dashboard.
 
 ## Start here
 
@@ -27,7 +27,7 @@ To let an agent guide you, give it the [agent guide](https://olup.github.io/porc
 
 Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
 
-The deployment operator configures [S3 cold storage](storage.md) and [backups](online-backup.md). These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md).
+The deployment operator chooses [storage](storage.md) and configures [backups](restore.md). DuckLake uses local SSD storage in this release. ClickHouse-only cold storage and online checkpoint tools are documented separately. These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md).
 
 ## Look up a contract
 

@@ -12,9 +12,9 @@ Existing option where big inspirations - posthog, openpanel, pug - but no one of
 
 The rest of this readme is LLM generated.
 
-[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.10.0)
+[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.11.0)
 
-This branch also contains an opt-in [local DuckLake experiment](docs/ducklake-experiment.md). The released service and the quickstart below use ClickHouse.
+Version 0.11.0 embeds DuckDB and DuckLake in the server. The default setup stores analytical data on the local SSD. S3 query destinations are supported; analytical S3 offload remains available only with the optional ClickHouse backend. [Storage options](docs/storage.md)
 
 ## Quickstart
 
@@ -24,7 +24,7 @@ Paste this into your coding agent:
 
 ### Local setup
 
-The example runs Porcupine and ClickHouse on your laptop. You’ll need Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or newer. Install the [standalone CLI](cli/README.md) and run this in a POSIX shell.
+The example runs one Porcupine server with embedded DuckDB and DuckLake on your laptop. You’ll need Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or newer. Install the [standalone CLI](cli/README.md) and run this in a POSIX shell.
 
 ```sh
 git clone https://github.com/olup/porcupine.git
@@ -35,10 +35,8 @@ umask 077
     umask 077
     set -C
     bootstrap_token=$(openssl rand -hex 32)
-    clickhouse_password=$(openssl rand -hex 32)
     cat > .env <<EOF
 PORCUPINE_BOOTSTRAP_TOKEN=$bootstrap_token
-PORCUPINE_CLICKHOUSE_PASSWORD=$clickhouse_password
 PORCUPINE_OAUTH_ISSUER=http://localhost:8080
 EOF
 )
@@ -47,17 +45,17 @@ curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 
 sh examples/hello.sh
 ```
 
-The script creates a project, sends one event called `hello`, and polls ClickHouse until it can count it.
+The script creates a project, sends one event called `hello`, and waits until DuckLake can count it.
 
 ```json
 [{"event": "hello", "total": "1"}]
 ```
 
-Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml down` to stop both containers. The data stays in the volumes. [Hosting guide](docs/hosting.md)
+Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml down` to stop the server. The data stays in the volumes. [Hosting guide](docs/hosting.md)
 
 ## What runs on the server?
 
-One Go service takes the events over HTTP. SQLite holds them on disk until they reach ClickHouse. Older ClickHouse data can live on S3 and still turn up in the same queries. [Storage](docs/storage.md) · [Recovery](docs/online-backup.md)
+One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/restore.md)
 
 I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. There’s also an uploader for historical PostHog events. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) · [Imports](docs/posthog-import.md)
 
@@ -65,11 +63,12 @@ For a customer who wants a file every morning, I can save a SQL query in a pipel
 
 ## Development
 
-`make build` builds the server. `make cli` builds the standalone client. You can also download the CLI for macOS, Linux or Windows. [CLI guide](cli/README.md)
+`make build` builds the native server with CGO and a C/C++ toolchain. `make cli` builds the standalone client. You can also download the CLI for macOS, Linux or Windows. [CLI guide](cli/README.md)
 
 ```sh
 make check              # Go tests, vet, formatting and generated CLI catalog
-make integration        # local ClickHouse
+make ducklake-test      # native storage, queries and lifecycle tests
+make integration        # optional ClickHouse backend
 make integration-s3     # ClickHouse and local S3-compatible storage
 make compat-install
 make compat             # pinned PostHog SDKs

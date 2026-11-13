@@ -1,6 +1,60 @@
 # Durability and recovery
 
-Porcupine durably accepts events into SQLite, then delivers them to ClickHouse at least once. This contract depends on the deployment's storage honoring sync operations. A single local disk provides no replication or host-loss recovery.
+The default Porcupine server durably accepts events into SQLite, then projects them into local DuckLake transactions. The storage device must honor sync operations. A single local disk provides no replication or automatic host-loss recovery.
+
+## Acceptance and queue limits
+
+SQLite uses WAL mode and `synchronous=FULL`. The server acknowledges capture only after the acceptance transaction commits. A batch validates and commits atomically. Queue event-count and payload-byte budgets are separate from the request-size limit. A full queue rejects new capture rather than discarding accepted work.
+
+Retries need a stable PostHog UUID or native/Segment producer message ID in the same project and source. A repeat returns the original event ID and preserves the original accepted payload. Without a stable producer ID, separate submissions can create separate events. [Receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources)
+
+## Analytical delivery
+
+The worker projects bounded batches into DuckLake. A transaction maintains current events and monotonic revision heads. Only after that transaction commits does SQLite atomically record receipts, remove delivered queue payloads, and record delivery success.
+
+A process can stop after the analytical commit and before SQLite acknowledgment. The queued batch retries after restart with the same IDs and revisions. Projection rejects stale revisions and preserves one logical current event. This is at-least-once processing with idempotent projection, not a distributed exactly-once transaction.
+
+SQLite keeps project-and-UUID receipts indefinitely. DuckLake does not support finite receipt eviction in this release. Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have their own storage costs.
+
+The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](ducklake-maintenance.md)
+
+## Identity, edits, and deletion
+
+Supported identity controls commit authoritative SQLite changes and their queued projections in the capture transaction. Analytical views resolve project-local identities and profile versions after projection. A capture acknowledgment can precede identity visibility in SQL. [Identity contract](data-and-identity.md)
+
+Edits and deletions commit a revision head, audit metadata, and pending projection before returning `202`. Revision checks prevent lost updates, and each event can have one pending mutation. The bounded mutation outbox retains its exact payload until analytical acknowledgment, then removes it in the transaction that marks the audit applied. Audit metadata retains no before-and-after values.
+
+A deleted event returns `410` from the current-event API after acceptance. SQL excludes it after its tombstone projects. A late original or stale correction cannot resurrect it. Tombstones remain for retry protection. This is logical deletion: historical DuckLake snapshots, SQLite free pages or WAL, backups, and external copies can retain old payloads. Porcupine does not schedule native snapshot expiration or promise physical erasure within 30 days in this release. [Mutation API](events.md) · [Storage](storage.md)
+
+## Whole-project deletion
+
+Instance administrators can delete a project through HTTP, CLI, or MCP. Porcupine cancels its active work, removes its SQLite state, and checkpoints cleanup of its managed analytical directory and export objects. A storage outage can leave cleanup pending after the project disappears from listings. Startup and periodic work retry cleanup. Repeating deletion returns `204` once cleanup finishes. Other projects remain separate.
+
+Backups and copies already delivered to external destinations have their own retention. [Project management](projects.md)
+
+## Status and recovery
+
+`/healthz` checks process liveness. `/readyz` checks SQLite readiness. Neither proves every project catalog is healthy or delivery is caught up. Inspect [instance status](instance-status.md), the project's pending original-event age, pending mutations, and generic delivery error. Use synthetic capture and SQL checks when validating a deployment.
+
+Back up the complete SQLite and DuckLake state from one stopped writer. Both stores are authoritative for different parts of recovery; neither reconstructs the other. Keep the same internal paths, software version, configuration, and encryption keys. A live file copy or export of query results is not a consistent instance backup. [Stopped-volume procedure](restore.md)
+
+Manual full-volume restoration also restores credentials and destination state. Isolate the recovered instance, pause destination egress, reconcile later revocations and deletions, and verify the checkpoint before allowing clients. No server-side restore API or online DuckLake checkpoint tool is provided.
+
+## Destination delivery
+
+Webhook enqueueing commits with event acceptance. A lost receiver acknowledgment can redeliver the same stable delivery ID, so receivers must deduplicate before applying side effects. Batch retries preserve each attempted payload.
+
+Scheduled S3 queries publish a conditional manifest after every output file succeeds. SQLite advances the window cursor only after reading that manifest back. Interrupted attempts can rerun a whole query. A conflicting commit marker fails closed. Successful files are independent external copies and do not change after source edits or deletions. [Pipeline contract](pipelines.md)
+
+## Verification
+
+`make ducklake-test` exercises real native storage, query restrictions, HTTP and MCP journeys, identity, revisions, retries, project isolation, cancellation, and restart under the race detector. The stopped-volume restore test covers matching paths and queued work. `make ducklake-smoke` runs the compiled native server and standalone CLI. Capacity measurements and their limits are linked from the [DuckLake validation report](ducklake-validation.md).
+
+`make check` exercises the Go contracts without starting analytical containers. The optional ClickHouse integration suites below remain separate from native validation.
+
+## Optional ClickHouse implementation
+
+The remainder records the ClickHouse backend's delivery, quarantine, cold-storage, and online-checkpoint behavior. Enable that backend explicitly with `compose.clickhouse.yaml`. Its physical row model and resource settings do not describe DuckLake.
 
 ## Acceptance and queue limits
 
@@ -8,7 +62,7 @@ SQLite uses WAL mode and `synchronous=FULL`. A successful ingestion response fol
 
 For PostHog capture, retry with the same project and event UUID. For native or Segment capture, send the same producer message ID from the same project and source. A repeat returns the original event ID and keeps the original payload. When the producer omits a stable ID, separate submissions can produce separate events. See the [receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources).
 
-## Delivery and acknowledgments
+### Delivery and acknowledgments
 
 The worker selects at most 100 queued events per batch. Its estimated encoding budget is 4 MiB, with a single large event allowed to exceed that soft bound so size alone cannot block the queue. It sends synchronous `JSONEachRow` inserts with asynchronous insertion disabled. Newly created ClickHouse tables enable `fsync_after_insert` and `fsync_part_directory`. Startup uses `CREATE TABLE IF NOT EXISTS`; it does not alter an existing table to add those settings. Operators reusing a table must check its settings.
 
@@ -27,7 +81,7 @@ and partition. A late original cannot replace a newer correction or tombstone.
 By default SQLite keeps a minimal project-and-UUID receipt forever after delivery. [Bounded receipt mode](receipts.md) lets the operator cap this ledger while preserving exact duplicate recognition through authoritative ClickHouse history. Deleted payloads free SQLite pages for reuse; the database file does not automatically shrink. There is no receipt expiry or automatic history deletion. Optional S3 tiering
 uses a MOVE TTL, never a DELETE TTL.
 
-## Quarantined original events
+### Quarantined original events
 
 The original-event worker isolates two narrowly classified ClickHouse failures:
 `321` (`VALUE_IS_OUT_OF_RANGE_OF_DATA_TYPE`) and `469`
@@ -73,7 +127,7 @@ An accepted deletion removes the queued original through the existing deletion
 transaction. Both paths clear derived quarantine/index metadata. Stable positive
 revisions prevent a late revision-zero delivery from replacing either result.
 
-### Inspect and retry a retained original
+#### Inspect and retry a retained original
 
 First diagnose and fix the rejecting constraint or deployment configuration. If
 the accepted event itself needs correction or deletion, use the
@@ -122,7 +176,7 @@ classified rejection quarantines the same original again. A network failure
 retains it for normal retry. Successful delivery frees its payload capacity and
 preserves its UUID for deduplication. Retrying does not change or delete the payload.
 
-## Mutation acceptance and cleanup
+### Mutation acceptance and cleanup
 
 [Corrections and deletions](events.md) commit a mutation head, audit metadata, and
 projection payload to SQLite before returning `202`. Acceptance uses expected
@@ -141,11 +195,11 @@ indefinitely and `FINAL CLEANUP` is not used. Old parts, S3 versions, SQLite WAL
 and free pages, and backups clean up separately. Logical deletion is not an
 immediate physical-erasure guarantee.
 
-## Whole-project deletion
+### Whole-project deletion
 
 An instance administrator can delete a project through HTTP, CLI or MCP. Porcupine drains its active work, removes its SQLite state and checkpoints cleanup of managed export objects and ClickHouse data. A storage outage can leave cleanup pending after the project disappears from the catalog. The server retries on startup and every minute. Repeating the deletion for the same ID returns `204` once cleanup finishes. [Management API](management-api.md#operations)
 
-## Visibility and delivery status
+### Visibility and delivery status
 
 Schema, catalog, and query responses include project delivery state: `enabled`, `pending`, `quarantined`, `pending_mutations`, optional `last_success`, and an
 optional generic worker error. The error appears only while the requested project
@@ -155,7 +209,7 @@ Delivery is eventual. An event can already be queryable after a lost acknowledgm
 
 `/healthz` checks the process and `/readyz` checks SQLite. Neither proves that ClickHouse is healthy or that delivery is caught up. Use the project's `oldest_pending_received_at` to measure the age of the oldest queued original. Check `pending_mutations` separately.
 
-## Storage and backups
+### Storage and backups
 
 SQLite contains authoritative credentials, projects, daily cookieless keys, the query-reader derivation secret, receipts, mutation heads and audit, pending payloads, and delivery metadata. ClickHouse facts cannot reconstruct that state. Back up SQLite through a supported online backup method or a coordinated stopped copy. Copying only the database file while WAL writes continue is not a complete backup method.
 
@@ -167,7 +221,7 @@ metadata and configuration. S3 objects alone do not establish a restore
 procedure, and neither cold storage nor an export is a SQLite backup.
 See [storage](storage.md) for migration, MOVE TTL changes, and recovery boundaries.
 
-## Verification
+### Verification
 
 `make integration-s3` adds isolated native ClickHouse S3 storage with MinIO and
 mutation tests across hot and cold parts. It is opt-in and does not contact AWS.
@@ -181,7 +235,7 @@ A test forces SQLite to return SQLITE_FULL and checks batch rollback, preservati
 Pipeline failure and receiver-idempotence checks are described in
 [the delivery contract](pipelines.md). The [benchmark report](benchmarks.md) includes workload, hardware, latency and queue measurements.
 
-## Pipelines and identity
+### Pipelines and identity
 
 [Webhook and scheduled S3 pipelines](pipelines.md) persist queued work and
 checkpoints in SQLite. Webhook capture and enqueueing commit together. A lost

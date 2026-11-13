@@ -1,10 +1,22 @@
-# ClickHouse hot and cold storage
+# Storage
 
-S3 tiering is a global deployment setting controlled by the operator. ClickHouse moves eligible table parts onto its native S3 disk. Query cold and hot parts with the same SQL through the API, CLI, or MCP. To send a copy to a customer, use a [destination pipeline](pipelines.md). To recover the instance, take a [paired checkpoint](online-backup.md).
+## Default DuckLake storage
+
+Porcupine 0.11.0 embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
+
+This release does not expose analytical S3 storage or automatic SSD-to-S3 tiering for DuckLake. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
+
+DuckLake snapshots can retain older event payloads after logical edits or deletion. Native snapshot expiration and physical-file cleanup are not yet scheduled by Porcupine, so this release does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory. Backups and external copies have their own retention rules.
+
+For recovery, use a [coordinated stopped-volume backup](restore.md). Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
+
+## ClickHouse hot and cold storage
+
+The following sections apply only to the optional ClickHouse backend. S3 tiering is a global deployment setting controlled by the operator. ClickHouse moves eligible table parts onto its native S3 disk. Query cold and hot parts with the same SQL through the API, CLI, or MCP. To send a copy to a customer, use a [destination pipeline](pipelines.md). To recover the instance, take a [paired checkpoint](online-backup.md).
 
 Project credentials and agents cannot inspect or change storage policy, hot duration, bucket endpoint, region, or AWS credentials through HTTP or MCP. Even instance API administration does not expose deployment storage controls.
 
-## Deployment settings
+### Deployment settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -18,7 +30,7 @@ The [Compose override](../compose.s3.yaml) selects `hot_cold`. Its mounted [Clic
 
 The override passes `PORCUPINE_S3_ENDPOINT`, `AWS_REGION`, and optional `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` only to ClickHouse. They are not passed to the Go process or exposed to agents. The endpoint is a full bucket-and-prefix URL. Use a distinct prefix for each ClickHouse deployment. Credentials can come from the deployment's IAM provider chain or a secret manager.
 
-## Enable S3 tiering
+### Enable S3 tiering
 
 Use an existing bucket and credentials authorized for that deployment's prefix. Bucket creation and AWS deployment are outside Porcupine. Back up both databases before changing an existing deployment.
 
@@ -28,12 +40,12 @@ Use an existing bucket and credentials authorized for that deployment's prefix. 
 
 ```sh
 docker compose --env-file .env --env-file .env.s3 \
-	-f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.s3.yaml up -d
+	-f compose.yaml -f compose.clickhouse.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.s3.yaml up -d
 ```
 
 For an AWS Paris bucket, the endpoint has the form `https://YOUR_BUCKET.s3.eu-west-3.amazonaws.com/UNIQUE_PREFIX/` with `AWS_REGION=eu-west-3`. The endpoint must match the bucket's actual region. No bucket is created by this command.
 
-## Movement and policy changes
+### Movement and policy changes
 
 The MOVE TTL uses original server receipt time, not a mutable client timestamp. ClickHouse moves parts asynchronously after all rows in a part meet the TTL condition. Thirty days is an eligibility rule, not a promise that each event moves exactly on day 30. Corrections retain original receipt metadata and the same logical event identity.
 

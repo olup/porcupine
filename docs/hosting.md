@@ -1,14 +1,12 @@
-# Host Porcupine 0.10.0
+# Host Porcupine 0.11.0
 
-The server runs one Go process with a persistent SQLite volume. ClickHouse stores analytical history on a private network. Start with Docker Compose on a laptop, add HTTPS on a single VM, or connect the application to an existing ClickHouse server.
+The default server embeds DuckDB and DuckLake. One container holds the Go service, SQLite acceptance database, project catalogs, and Parquet data. No separate analytical database is required. Use persistent local storage and one application writer per data directory.
 
-Use one application writer per SQLite database on local persistent storage. Multiple projects share that instance. Host failure requires restoring a checkpoint or recovering the host.
-
-The [v0.10.0 release](https://github.com/olup/porcupine/releases/tag/v0.10.0) contains two Linux server image archives and six standalone CLI archives for macOS, Linux, and Windows on amd64 and arm64. Install the [CLI](../cli/README.md) on the machine that will call the HTTP API. Use the server image for the deployment.
+The [v0.11.0 release](https://github.com/olup/porcupine/releases/tag/v0.11.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake extension. The CLI is a separate executable and needs no native database libraries.
 
 ## Laptop with Docker Compose
 
-Install the [standalone CLI](../cli/README.md), Git, curl, OpenSSL, jq, Docker, and Docker Compose 2.24.4 or newer. Docker Desktop supplies Docker and Compose on macOS and Windows. Use a POSIX shell for the commands below, such as a WSL shell with Docker integration on Windows. Start in the directory where you want to clone Porcupine.
+Install Git, curl, OpenSSL, jq, the [standalone CLI](../cli/README.md), Docker, and Docker Compose 2.24.4 or newer. Use a POSIX shell, such as WSL on Windows.
 
 ```sh
 git clone https://github.com/olup/porcupine.git
@@ -16,13 +14,10 @@ cd porcupine
 umask 077
 (
     set -eu
-    umask 077
     set -C
     bootstrap_token=$(openssl rand -hex 32)
-    clickhouse_password=$(openssl rand -hex 32)
     cat > .env <<EOF
 PORCUPINE_BOOTSTRAP_TOKEN=$bootstrap_token
-PORCUPINE_CLICKHOUSE_PASSWORD=$clickhouse_password
 PORCUPINE_OAUTH_ISSUER=http://localhost:8080
 EOF
 )
@@ -31,24 +26,22 @@ curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 
 sh examples/hello.sh
 ```
 
-The checkout provides the current guides and shell examples. The release overlay pins the server to v0.10.0.
+The setup refuses to overwrite `.env`. Preserve that file privately. The example creates a project, sends a synthetic `hello` event, and waits until SQL counts it. Each run creates another project. [Project management](projects.md)
 
-The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Each run creates another project. An instance administrator can remove the example with the printed project ID using the [project management API](management-api.md#operations).
+The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.11.0`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
 
-`compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.10.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
-
-Only `127.0.0.1:8080` is published. ClickHouse has no host port. Named volumes preserve `/data/porcupine.db` and `/var/lib/clickhouse` through container replacement:
+Only `127.0.0.1:8080` is published. The `porcupine-data` named volume contains the complete `/data` directory, including SQLite and DuckLake. Keep the same Compose project name and volume when replacing a container.
 
 ```sh
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml ps
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml stop
 ```
 
-`stop` keeps containers and volumes. `down` also keeps volumes unless `--volumes` is added. Do not use `--volumes` on data you intend to retain. Keep the same Compose project name and directory when returning to an existing deployment.
+`stop` and `down` preserve named volumes unless `--volumes` is added. Do not remove a volume containing data you intend to retain.
 
-### Load a release image without registry access
+### Load an image without registry access
 
-Select the Docker server's architecture. Download the `porcupine-0.10.0-linux-*` archive for that architecture, verify its checksum, then load it.
+Choose the Docker server's architecture and verify the archive before loading it:
 
 ```sh
 case "$(docker info --format '{{.Architecture}}')" in
@@ -56,8 +49,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.10.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.10.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.11.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.11.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -70,7 +63,7 @@ docker load -i "$PORCUPINE_RELEASE_ARCHIVE"
 docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
 ```
 
-The archive retains the release tag, so the same overlay uses it. [Docker load](https://docs.docker.com/reference/cli/docker/image/load/) accepts compressed archives and restores image tags. A fully offline host also needs the pinned ClickHouse image and any optional proxy images transferred separately.
+The server image includes its native extension. An offline host also needs any optional proxy image transferred separately.
 
 ## Single Linux VM with HTTPS
 
@@ -144,96 +137,61 @@ curl --fail https://analytics.example.com/.well-known/oauth-authorization-server
 
 Replace the example hostname in the checks. Keep Caddy's volumes across restarts so certificate state persists. The laptop-only `hello.sh` deliberately refuses a public issuer; use the [OAuth](oauth.md) and [analytics](analytics.md) requests for remote setup and verification.
 
-## Application container with a separate ClickHouse service
+## Persistent storage and resources
 
-Use this instead of the base Compose application when ClickHouse has a separate lifecycle. Keep one application container attached to its SQLite volume. The dedicated ClickHouse provisioning user inserts events and manages the database objects, users, grants, views, and row policies used for project isolation. Project deletion also needs permission to inspect and mutate the shared event table, terminate the project's active reader queries, and drop its readers, policies and namespace. Application OAuth clients do not receive those database credentials.
+The image runs as UID/GID 65532. Named volumes initialize from its writable `/data` directory. A bind-mounted directory needs ownership and permissions that let this user write. Keep SQLite, the DuckLake registry, catalogs, and data files together. Do not share them between simultaneous writers or use a network filesystem as the local catalog directory.
 
-The following runnable example starts a separate ClickHouse container on a private Docker network. It assumes the laptop `.env` already exists and port 8080 is free. Its volumes are distinct from the Compose volumes:
+The default Compose server has a 2 GiB container memory limit. Two CPU cores and 2 GiB are the resource budget used for local architecture tests, not a hosted capacity guarantee. Leave additional memory for the operating system, Docker, and a proxy. A 4 GiB VM provides more headroom for a small deployment. Measure your event sizes, active projects, concurrent queries, and maintenance before choosing capacity.
 
-```sh
-umask 077
-(
-    set -eu
-    umask 077
-    set -C
-    . ./.env
-    cat > .env.warehouse <<EOF
-CLICKHOUSE_USER=porcupine_admin
-CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
-CLICKHOUSE_PASSWORD=$PORCUPINE_CLICKHOUSE_PASSWORD
-EOF
-)
-docker network create porcupine-private
-docker volume create porcupine-warehouse-data
-docker volume create porcupine-standalone-data
-docker run -d --name porcupine-warehouse --restart unless-stopped \
-  --network porcupine-private --network-alias warehouse \
-  --env-file .env.warehouse --memory 2g \
-  --mount type=volume,source=porcupine-warehouse-data,target=/var/lib/clickhouse \
-  clickhouse/clickhouse-server:26.8.36.3
-docker run -d --name porcupine-app --restart unless-stopped \
-  --network porcupine-private --publish 127.0.0.1:8080:8080 \
-  --env-file .env \
-  --env PORCUPINE_ADDR=0.0.0.0:8080 --env PORCUPINE_DB=/data/porcupine.db \
-  --env PORCUPINE_CLICKHOUSE_URL=http://warehouse:8123 \
-  --env PORCUPINE_CLICKHOUSE_DATABASE=porcupine \
-  --env PORCUPINE_CLICKHOUSE_USER=porcupine_admin \
-  --mount type=volume,source=porcupine-standalone-data,target=/data \
-  "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.10.0}"
-curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
-sh examples/hello.sh
-```
+DuckDB's memory setting is per resident project engine and is shared by that engine's work. It does not cap total process RSS. The number of resident project engines, their memory settings, native allocations, SQLite, and the Go heap all contribute to container memory. A container limit can terminate the process under pressure; durable accepted work retries after restart.
 
-For an existing remote warehouse, omit the example ClickHouse container and set `PORCUPINE_CLICKHOUSE_URL` to its reachable private address or trusted HTTPS endpoint. Set its database, username, and private password separately. Do not publish ClickHouse to the internet to make this work. A remote deployment still needs network policy and TLS appropriate to that connection.
+Native resource settings are deployment controls:
 
-The stock application image runs as UID/GID 65532. Named volumes initialize from its writable `/data` directory. A bind-mounted directory instead needs ownership and permissions that let that user write. Do not mount the same SQLite database into a second writer or put it on a network filesystem.
+| Setting | Accepted range |
+| --- | --- |
+| `PORCUPINE_DUCKLAKE_MEMORY_MB` | 64 through 32,768 MiB per resident project engine |
+| `PORCUPINE_DUCKLAKE_THREADS` | 1 through 4 per engine |
+| `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` | 1 through 64 resident engines |
+| `PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL` | 1 second through 24 hours |
 
-## Resource settings and scope
+These ranges validate configuration; they are not safe combined sizing recommendations. Keep the total engine budgets below the host's available memory with room for other allocations.
 
-The base Compose file caps ClickHouse at 2 GiB and leaves the Go container uncapped. For explicit limits, create `compose.resources.yaml` and include it in every deployment command:
+Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-```yaml
-services:
-  porcupine:
-    cpus: 1.0
-    mem_limit: 512m
-  clickhouse:
-    cpus: 2.0
-    mem_limit: 2g
-```
+History has no automatic age-based deletion. Full SQLite receipts are required for DuckLake; leave `PORCUPINE_HOT_RECEIPT_LIMIT=0`. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
 
-These match the container limits used by the [local reference benchmark](benchmarks.md). They are not a capacity guarantee or a minimum-memory claim. A development Docker VM needs room beyond those limits for Docker and the operating system. A small Linux VM with 4 GiB provides headroom for this example; larger queries, exports, merges, backups, and long retention need measurement on the actual host.
+`/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 
-The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are not total disk limits. SQLite overhead, WAL, receipts, mutation state, and analytical history require additional space. Default receipts persist indefinitely; [bounded receipts](receipts.md) are optional. History has no age-based DELETE TTL. Monitor free disk, queue lag, delivery errors, memory pressure, and backup duration rather than sizing only from event count.
+## Optional destinations
 
-`/readyz` checks SQLite readiness, not ClickHouse health or a drained queue. Verify capture, SQL visibility, and project delivery state before routing traffic. A ClickHouse outage can fill the bounded local queue; new capture then receives backpressure.
+| Capability | Configuration |
+| --- | --- |
+| One-time SQL downloads | Add `compose.exports.yaml` with a private export bucket and prefix |
+| Webhooks and scheduled S3 query pipelines | Set a stable `PORCUPINE_PIPELINE_KEY` or mounted key file, then create project-scoped destinations |
+| Human sign-in | Add the OAuth and email overlays with an SMTP provider and initial admin email |
 
-## Optional destinations and cold storage
+Keep the release and OAuth overlays when adding another overlay. Pipeline key files need an explicit container mount; a host pathname alone does not mount the file. Keep encryption keys privately with deployment recovery material. [Exports](exports.md) · [Pipelines](pipelines.md) · [Team sign-in](connect-your-team.md)
 
-| Capability | How to enable | What remains your responsibility |
-| --- | --- | --- |
-| Native ClickHouse cold storage | Add `compose.s3.yaml` and its operator settings | Existing bucket/prefix, credentials, local disk metadata, backups; same SQL queries |
-| One-time SQL downloads | Add `compose.exports.yaml` with a separate private export destination | Bucket policy, multipart cleanup, object lifecycle, expiring download access |
-| Webhook and scheduled S3 pipelines | Set a stable `PORCUPINE_PIPELINE_KEY` or mounted key file, then use scoped APIs | Destination credentials, receiver deduplication, bucket retention, restore review |
-
-Keep the release and OAuth overlays when adding an optional overlay. Native cold storage moves eligible parts after the default enabled 30-day hot period; it does not expire total history. One-time exports and pipelines do not change that storage policy. Keep their object prefixes separate. See [storage](storage.md), [exports](exports.md), and [pipelines](pipelines.md) for exact configuration and failure contracts. Pipeline key files need an explicit container mount; setting a host pathname alone does not mount it.
+S3 destinations store query results. They do not move DuckLake's analytical files off the SSD. Analytical S3 storage and remote DuckLake catalogs are outside this release. [Storage options](storage.md)
 
 ## Authentication, backups, and upgrades
 
-Keep the original bootstrap secret privately for recovery. Exchange it as OAuth client `bootstrap` to provision the instance. Changing `.env` on an initialized deployment leaves the original credential in effect.
+Keep the original bootstrap secret privately for recovery. Changing `.env` after initialization does not replace the stored credential. Humans authorize their CLI or MCP tools using email verification or optional upstream OIDC. Backends and shared agents can use scoped service keys or OAuth client credentials. [Connect your team](connect-your-team.md) · [Service keys](service-keys.md)
 
-For human access to the CLI or MCP, configure [email sign-in and the initial administrator](connect-your-team.md), or configure an [OIDC provider for interactive clients](mcp-interactive-oauth.md). The laptop quickstart works with machine credentials alone. A backend or shared agent can use a [project-scoped service key](service-keys.md) or exchange its own OAuth client credentials. Each bearer credential has an API or MCP audience.
+Before storing important history, exercise a [coordinated stopped-volume backup and restore](restore.md). The ClickHouse online backup script does not support DuckLake. Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
 
-For browser capture, allow the exact browser origins and issue a single-project ingestion key. For trusted backends, create a `server_only` project. See the [ingestion policy](oauth.md#project-ingestion-policy).
+Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
 
-Before storing important history, configure and exercise [paired online checkpoints](online-backup.md). The [backup Compose overlay](backup-compose.md) supplies shared SQLite lock-file mounts and a ClickHouse backup disk. Add it to the same complete overlay set used by the application. Preserve the SQLite bundle, native archive, private deployment configuration, software version, and pipeline encryption key separately off the host. A live volume copy, S3 bucket listing, or export is not that checkpoint.
+Version 0.11.0 does not automatically migrate a ClickHouse-backed SQLite database into DuckLake. Use a fresh native deployment and import events through the supported ingestion/import interfaces, or keep the optional ClickHouse backend. A changed image tag alone does not migrate stored history or convert SQL dialects.
 
-Before upgrading, take a verified checkpoint, record the current image and full overlay list, and review schema changes. Change `PORCUPINE_IMAGE` to the intended release tag or digest, pull it, and replace the single application container with that same overlay list. Do not start old and new writers together. Preserve both database volumes and proxy state. Early releases do not promise online schema upgrades or cross-version rollback.
+## Optional ClickHouse deployment
 
-If only the container changed and storage remains compatible, an earlier image may be usable after review. If schema or data changed, restore a matching checkpoint into isolated storage with its matching software version instead of assuming that changing an image tag undoes migration. Restore invalidates saved access tokens and export jobs by default and pauses all pipelines. Review checkpoint-time credentials, replay later revocations, and reconcile external delivery before explicitly resuming traffic or destinations.
+To retain a ClickHouse-backed deployment, set its provisioning password in a private `.env` and include the explicit overlay:
 
-## Verification of these recipes
+```sh
+docker compose -f compose.yaml -f compose.clickhouse.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
+```
 
-Local checks exercised the release overlay with a source-built image override, the documented Compose/OAuth flow and `hello.sh`, restart persistence, and a standalone image with private ClickHouse 26.8.36.3. A Caddy reverse-proxy check verified TLS using a local test CA, fixed issuer metadata, capture and SQL, and MCP initialization. Its proxy used the same fixed trusted address and upstream Host configuration.
+This adds the private ClickHouse service and selects it instead of DuckLake. Existing deployments must preserve their matching SQLite and ClickHouse volumes. Their schema reports the ClickHouse dialect. Do not point an existing database at a different analytical store.
 
-The v0.9.0 release was also deployed on a single AWS Lightsail VM with an existing ClickHouse and HTTPS proxy. The published CLI renamed a synthetic project and an MCP client deleted it. The final project inventory matched its pre-upgrade contents. The [release workflow](https://github.com/olup/porcupine/actions/runs/42829136190) built the server images, packaged both CLI architectures for each OS, and ran the native CLI on each OS.
+ClickHouse-only [S3 cold storage](storage.md#clickhouse-hot-and-cold-storage) and [online checkpoints](online-backup.md) remain separate operator options. Keep ClickHouse ports private. A remote ClickHouse deployment also needs a trusted private endpoint or HTTPS and its own provisioning credentials.

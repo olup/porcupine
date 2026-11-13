@@ -1,5 +1,7 @@
 # SQL export design
 
+These are historical design and experiment notes. For the current v0.11.0 service, use [hosting](hosting.md), [architecture](architecture.md), and the [analytics reference](analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
+
 Exports stream a validated query into private gzip files without staging the
 full result on the application host. See [the API and configuration](exports.md).
 
