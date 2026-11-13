@@ -14,6 +14,8 @@ The rest of this readme is LLM generated.
 
 [Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.10.0)
 
+This branch also contains an opt-in [local DuckLake experiment](docs/ducklake-experiment.md). The released service and the quickstart below use ClickHouse.
+
 ## Quickstart
 
 Paste this into your coding agent:

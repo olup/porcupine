@@ -71,3 +71,19 @@ docs:
 .PHONY: docs-preview
 docs-preview: docs
 	python3 scripts/serve_docs.py
+
+.PHONY: ducklake-build ducklake-test ducklake-smoke ducklake-bench ducklake-compare
+ducklake-build:
+	CGO_ENABLED=1 go build -tags ducklake -trimpath -o bin/porcupine-ducklake ./cmd/porcupine
+
+ducklake-test:
+	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=120s
+
+ducklake-smoke: ducklake-build cli
+	go run ./internal/cmd/ducklake-smoke -server ./bin/porcupine-ducklake -cli ./bin/cli/porcupine
+
+ducklake-bench:
+	CGO_ENABLED=1 go test -tags ducklake ./internal/porcupine -run '^$$' -bench '^BenchmarkDuckLake' -benchtime=10x -benchmem -timeout=120s
+
+ducklake-compare:
+	CGO_ENABLED=1 GOFLAGS=-tags=ducklake python3 scripts/integration.py
