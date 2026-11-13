@@ -32,6 +32,7 @@ type duckLakeStore struct {
 type projectLake struct {
 	db          *sql.DB
 	write       contextMutex
+	maintenance contextMutex
 	directory   string
 	catalogInfo os.FileInfo
 	leases      int
@@ -323,6 +324,7 @@ func (s *duckLakeStore) Maintain(ctx context.Context) error {
 }
 
 type duckLakeMaintenanceStats struct {
+	Serialized     bool    `json:"serialized"`
 	LockWaitMS     float64 `json:"lock_wait_ms"`
 	LockHeldMS     float64 `json:"lock_held_ms"`
 	FlushMS        float64 `json:"flush_ms"`
@@ -334,6 +336,10 @@ type duckLakeMaintenanceStats struct {
 }
 
 func (s *duckLakeStore) maintainMeasured(ctx context.Context, maxCompactions int) ([]duckLakeMaintenanceStats, error) {
+	return s.maintainPolicy(ctx, maxCompactions, true)
+}
+
+func (s *duckLakeStore) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool) ([]duckLakeMaintenanceStats, error) {
 	if err := s.mu.Lock(ctx); err != nil {
 		return nil, err
 	}
@@ -368,7 +374,7 @@ func (s *duckLakeStore) maintainMeasured(ctx context.Context, maxCompactions int
 	}()
 	var measurements []duckLakeMaintenanceStats
 	for _, p := range projects {
-		stats, err := p.maintainMeasured(ctx, maxCompactions)
+		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized)
 		measurements = append(measurements, stats)
 		if err != nil {
 			return measurements, err
@@ -377,15 +383,22 @@ func (s *duckLakeStore) maintainMeasured(ctx context.Context, maxCompactions int
 	return measurements, nil
 }
 
-func (p *projectLake) maintainMeasured(ctx context.Context, maxCompactions int) (stats duckLakeMaintenanceStats, err error) {
-	start := time.Now()
-	if err = p.write.Lock(ctx); err != nil {
-		stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
+func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool) (stats duckLakeMaintenanceStats, err error) {
+	stats.Serialized = serialized
+	if err = p.maintenance.Lock(ctx); err != nil {
 		return stats, err
 	}
-	stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
-	held := time.Now()
-	defer func() { stats.LockHeldMS = float64(time.Since(held)) / float64(time.Millisecond); p.write.Unlock() }()
+	defer p.maintenance.Unlock()
+	start := time.Now()
+	if serialized {
+		if err = p.write.Lock(ctx); err != nil {
+			stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
+			return stats, err
+		}
+		stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
+		held := time.Now()
+		defer func() { stats.LockHeldMS = float64(time.Since(held)) / float64(time.Millisecond); p.write.Unlock() }()
+	}
 	start = time.Now()
 	err = p.maintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &stats)
 	stats.FlushMS = float64(time.Since(start)) / float64(time.Millisecond)
