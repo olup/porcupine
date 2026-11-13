@@ -340,6 +340,10 @@ func (s *duckLakeStore) maintainMeasured(ctx context.Context, maxCompactions int
 }
 
 func (s *duckLakeStore) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool) ([]duckLakeMaintenanceStats, error) {
+	return s.maintainSized(ctx, maxCompactions, serialized, 0)
+}
+
+func (s *duckLakeStore) maintainSized(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) ([]duckLakeMaintenanceStats, error) {
 	if err := s.mu.Lock(ctx); err != nil {
 		return nil, err
 	}
@@ -374,7 +378,7 @@ func (s *duckLakeStore) maintainPolicy(ctx context.Context, maxCompactions int, 
 	}()
 	var measurements []duckLakeMaintenanceStats
 	for _, p := range projects {
-		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized)
+		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized, maxFileSize)
 		measurements = append(measurements, stats)
 		if err != nil {
 			return measurements, err
@@ -383,7 +387,7 @@ func (s *duckLakeStore) maintainPolicy(ctx context.Context, maxCompactions int, 
 	return measurements, nil
 }
 
-func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool) (stats duckLakeMaintenanceStats, err error) {
+func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) (stats duckLakeMaintenanceStats, err error) {
 	stats.Serialized = serialized
 	if err = p.maintenance.Lock(ctx); err != nil {
 		return stats, err
@@ -406,7 +410,11 @@ func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, se
 		return stats, err
 	}
 	start = time.Now()
-	err = p.maintenanceCommand(ctx, fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake', max_compacted_files => %d)", maxCompactions), &stats)
+	sizeFilter := ""
+	if maxFileSize > 0 {
+		sizeFilter = fmt.Sprintf(", max_file_size => %d", maxFileSize)
+	}
+	err = p.maintenanceCommand(ctx, fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake', max_compacted_files => %d%s)", maxCompactions, sizeFilter), &stats)
 	stats.CompactMS = float64(time.Since(start)) / float64(time.Millisecond)
 	stats.Completed = err == nil
 	return stats, err
