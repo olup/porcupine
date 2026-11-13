@@ -6,6 +6,13 @@ Porcupine exposes two tools over stateless Streamable HTTP at `/mcp`. The
 implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 v1.8.0 in the existing Go process. It requires no additional service.
 
+The server and both tools advertise the small Porcupine logo through MCP `icons`
+metadata, with 96-pixel PNG variants for light and dark backgrounds. Images are
+embedded as data URIs, so clients need no image download or additional credentials.
+Each client decides whether and where to display the icon. To regenerate the
+embedded images from `site/assets/favicon.svg`, install `rsvg-convert` and run
+`sh scripts/generate-mcp-icons.sh`.
+
 ## Connection and credentials
 
 | Setting | Value |

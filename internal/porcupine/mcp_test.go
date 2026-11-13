@@ -1,11 +1,15 @@
 package porcupine
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image/png"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -83,11 +87,19 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 			host := httptest.NewServer(s.Handler())
 			defer host.Close()
 			ctx, session := mcpTestSession(t, host.URL, adminToken, version)
+			info := session.InitializeResult().ServerInfo
+			if info.Name != "porcupine" || info.Title != "Porcupine" || info.Version != Version {
+				t.Fatalf("unexpected MCP implementation: %+v", info)
+			}
+			assertMCPIcons(t, info.Icons)
 			tools, err := session.ListTools(ctx, nil)
 			if err != nil || len(tools.Tools) != 2 {
 				t.Fatalf("expected two tools: %+v, %v", tools, err)
 			}
 			for _, tool := range tools.Tools {
+				if !reflect.DeepEqual(tool.Icons, info.Icons) {
+					t.Fatalf("tool %s does not carry the server icons", tool.Name)
+				}
 				if tool.OutputSchema == nil || tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
 					t.Fatalf("missing output schema or closed-world annotation: %+v", tool)
 				}
@@ -154,6 +166,40 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 			}
 			mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "revoke-access-key", Path: map[string]string{"id": bootstrapID}}, 409)
 		})
+	}
+}
+
+func assertMCPIcons(t *testing.T, icons []mcp.Icon) {
+	t.Helper()
+	if len(icons) != 2 {
+		t.Fatalf("expected light and dark icons, got %d", len(icons))
+	}
+	for i, theme := range []mcp.IconTheme{mcp.IconThemeLight, mcp.IconThemeDark} {
+		icon := icons[i]
+		const prefix = "data:image/png;base64,"
+		if icon.Theme != theme || icon.MIMEType != "image/png" || !slices.Equal(icon.Sizes, []string{"96x96"}) || !strings.HasPrefix(icon.Source, prefix) || len(icon.Source) > 8192 {
+			t.Fatalf("invalid %s icon metadata", theme)
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(icon.Source, prefix))
+		if err != nil {
+			t.Fatal(err)
+		}
+		image, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if image.Bounds().Dx() != 96 || image.Bounds().Dy() != 96 {
+			t.Fatalf("unexpected %s icon dimensions: %v", theme, image.Bounds())
+		}
+		_, _, _, backgroundAlpha := image.At(0, 0).RGBA()
+		r, g, b, alpha := image.At(37, 44).RGBA()
+		want := uint32(0)
+		if theme == mcp.IconThemeDark {
+			want = 0xffff
+		}
+		if backgroundAlpha != 0 || alpha != 0xffff || r != want || g != want || b != want {
+			t.Fatalf("%s icon must have a transparent background and contrasting eyes", theme)
+		}
 	}
 }
 
