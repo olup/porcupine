@@ -27,7 +27,7 @@ To let an agent guide you, give it the [agent guide](https://olup.github.io/porc
 
 Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
 
-The deployment operator configures [S3 cold storage](storage.md) and [backups](online-backup.md). These settings apply to the deployment and are separate from project permissions. Development builds also expose an authenticated [instance status report](instance-status.md).
+The deployment operator configures [S3 cold storage](storage.md) and [backups](online-backup.md). These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md).
 
 ## Look up a contract
 

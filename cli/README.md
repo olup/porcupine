@@ -20,7 +20,7 @@ porcupine list-projects
 porcupine query-events --id PROJECT_ID --body '{"sql":"SELECT count() FROM events"}'
 ```
 
-Development builds also provide `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. The v0.9.0 release does not include that command. See [instance status](../docs/instance-status.md). The existing `status` command remains the public readiness check.
+The CLI also provides `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. This command requires v0.10.0 or later on both client and server. See [instance status](../docs/instance-status.md). The existing `status` command remains the public readiness check.
 
 On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"`. You can also pass the origin before a command with `porcupine --url URL ...`.
 

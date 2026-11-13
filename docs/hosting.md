@@ -1,10 +1,10 @@
-# Host Porcupine 0.9.0
+# Host Porcupine 0.10.0
 
 The server runs one Go process with a persistent SQLite volume. ClickHouse stores analytical history on a private network. Start with Docker Compose on a laptop, add HTTPS on a single VM, or connect the application to an existing ClickHouse server.
 
 Use one application writer per SQLite database on local persistent storage. Multiple projects share that instance. Host failure requires restoring a checkpoint or recovering the host.
 
-The [v0.9.0 release](https://github.com/olup/porcupine/releases/tag/v0.9.0) contains two Linux server image archives and six standalone CLI archives for macOS, Linux, and Windows on amd64 and arm64. Install the [CLI](../cli/README.md) on the machine that will call the HTTP API. Use the server image for the deployment.
+The [v0.10.0 release](https://github.com/olup/porcupine/releases/tag/v0.10.0) contains two Linux server image archives and six standalone CLI archives for macOS, Linux, and Windows on amd64 and arm64. Install the [CLI](../cli/README.md) on the machine that will call the HTTP API. Use the server image for the deployment.
 
 ## Laptop with Docker Compose
 
@@ -31,11 +31,11 @@ curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 
 sh examples/hello.sh
 ```
 
-The checkout provides the current guides and shell examples. The release overlay pins the server to v0.9.0.
+The checkout provides the current guides and shell examples. The release overlay pins the server to v0.10.0.
 
 The setup refuses to overwrite an existing `.env`. Preserve it privately. The example exchanges the bootstrap credential, creates a project, captures a cookieless event, and waits for SQL to return `hello` with total `"1"`. Only the project ID and result are printed. Each run creates another project. An instance administrator can remove the example with the printed project ID using the [project management API](management-api.md#operations).
 
-`compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.9.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
+`compose.release.yaml` must follow the base file. It removes the source build and defaults to `ghcr.io/olup/porcupine:0.10.0`. Set `PORCUPINE_IMAGE` to another explicit tag, digest, or locally loaded image when required. The overlay pulls only when that image is missing. Its reset syntax uses [Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
 
 Only `127.0.0.1:8080` is published. ClickHouse has no host port. Named volumes preserve `/data/porcupine.db` and `/var/lib/clickhouse` through container replacement:
 
@@ -48,7 +48,7 @@ docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml sto
 
 ### Load a release image without registry access
 
-Select the Docker server's architecture. Download the `porcupine-0.9.0-linux-*` archive for that architecture, verify its checksum, then load it.
+Select the Docker server's architecture. Download the `porcupine-0.10.0-linux-*` archive for that architecture, verify its checksum, then load it.
 
 ```sh
 case "$(docker info --format '{{.Architecture}}')" in
@@ -56,8 +56,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.9.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.9.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.10.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.10.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -179,7 +179,7 @@ docker run -d --name porcupine-app --restart unless-stopped \
   --env PORCUPINE_CLICKHOUSE_DATABASE=porcupine \
   --env PORCUPINE_CLICKHOUSE_USER=porcupine_admin \
   --mount type=volume,source=porcupine-standalone-data,target=/data \
-  "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.9.0}"
+  "${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.10.0}"
 curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
 sh examples/hello.sh
 ```
