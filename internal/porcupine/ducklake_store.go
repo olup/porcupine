@@ -270,6 +270,9 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if _, err = db.ExecContext(ctx, duckLakeSchema); err != nil {
 		return fail(err)
 	}
+	if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
+		return fail(err)
+	}
 	for _, statement := range []string{
 		"SET allowed_directories=[" + lakeLiteral(directory+string(os.PathSeparator)) + "]",
 		"SET enable_external_access=false",
@@ -319,7 +322,7 @@ func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error
 }
 
 func (s *duckLakeStore) Maintain(ctx context.Context) error {
-	_, err := s.maintainMeasured(ctx, 8)
+	_, err := s.maintainSized(ctx, 1, false, 1<<20)
 	return err
 }
 
