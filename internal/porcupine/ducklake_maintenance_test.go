@@ -199,6 +199,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	var mu sync.Mutex
 	var queries, accepts []time.Duration
 	codes := map[int]int{}
+	queryFailures := map[string]int{}
 	passes, completed, failed, progress, lifecycle := 0, 0, 0, int64(0), 0
 	var lifecycleResults []maintenanceLifecycleState
 	verifyDuringLoad := os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1"
@@ -208,9 +209,23 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		go func(reader int) {
 			defer wg.Done()
 			for ctx.Err() == nil {
-				code, _, elapsed := architectureRunQuery(s.Handler(), adminToken, projectID, architectureQueries[reader+2].duckdb)
+				body, _ := json.Marshal(map[string]any{"sql": architectureQueries[reader+2].duckdb, "use_cache": false})
+				code, raw, elapsed := architectureHTTP(s.Handler(), "POST", "/api/v1/projects/"+projectID+"/query", adminToken, body, false)
+				failure := ""
+				if code == 200 {
+					var response AnalyticsQuery
+					if json.Unmarshal(raw, &response) != nil || len(response.Result.Data) != 1 || string(response.Result.Data[0]["total"]) != []string{`"333334"`, `"10000"`}[reader] {
+						code = 599
+						failure = "unexpected analytical result"
+					}
+				} else {
+					failure = fmt.Sprintf("HTTP%d %s", code, raw)
+				}
 				mu.Lock()
 				queries, codes[code] = append(queries, elapsed), codes[code]+1
+				if failure != "" {
+					queryFailures[failure]++
+				}
 				mu.Unlock()
 				select {
 				case <-ctx.Done():
@@ -387,7 +402,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 	if completed < 3 || progress == 0 || lifecycle != 6 || codes[200] != len(queries) || arrival > time.Duration(seconds)*time.Second+time.Second || maxPending > int64(2*rate) || maxOldestMS > 3000 || finalFiles > initialFiles+128 {
 		verdict = "NOT VERIFIED"
 	}
-	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
+	architectureEmit("maintenance_soak", "ducklake", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "arrival_seconds": arrival.Seconds(), "accepted": visible, "visible_exact_ids": visible, "remaining": remaining, "passes": passes, "completed_passes": completed, "failed_passes": failed, "files_processed": progress, "max_write_lock_ms": maxHold, "initial_active_event_files": initialFiles, "max_active_event_files": maxFiles, "final_active_event_files": finalFiles, "final_active_head_files": finalHeads, "max_pending": maxPending, "max_oldest_pending_ms": maxOldestMS, "query_status_counts": codes, "query_failures": queryFailures, "query_latency": architectureLatency(queries), "accept_latency": architectureLatency(accepts), "lifecycle_cycles": lifecycle, "verdict": verdict})
 }
 
 func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
