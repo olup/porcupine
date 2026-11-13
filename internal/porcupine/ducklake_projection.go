@@ -349,13 +349,14 @@ func (s *duckLakeStore) Load(ctx context.Context, project, uuid string) (eventPr
 	if deleted {
 		return eventProjection{Event: Event{ID: id, ProjectID: project, UUID: uuid, ReceivedAt: received}, Revision: revision, IsDeleted: true}, nil
 	}
-	var payload string
-	if err = tx.QueryRowContext(ctx, "SELECT payload FROM lake.current_events WHERE uuid=?", uuid).Scan(&payload); err != nil {
+	var payload, identity string
+	if err = tx.QueryRowContext(ctx, "SELECT payload,identity_snapshot FROM lake.current_events WHERE uuid=?", uuid).Scan(&payload, &identity); err != nil {
 		return eventProjection{}, err
 	}
 	var projection eventProjection
 	if json.Unmarshal([]byte(payload), &projection) != nil || projection.ProjectID != project || projection.UUID != uuid || projection.ID != id || projection.Revision != revision || projection.IsDeleted {
 		return eventProjection{}, errors.New("invalid stored DuckLake projection")
 	}
+	projection.IdentitySnapshot = identity
 	return projection, nil
 }
