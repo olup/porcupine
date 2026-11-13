@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-// DuckLakeConfig selects the local experimental analytical store. The native
+const defaultDuckLakeMemoryMB = 512
+
+// DuckLakeConfig selects the local analytical store. The native
 // engine is available only in builds made with the ducklake build tag.
 type DuckLakeConfig struct {
 	Directory           string

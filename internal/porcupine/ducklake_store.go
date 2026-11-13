@@ -44,7 +44,7 @@ func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
 		return nil, errors.New("DuckLake directory is required")
 	}
 	if config.MemoryLimitMB == 0 {
-		config.MemoryLimitMB = 256
+		config.MemoryLimitMB = defaultDuckLakeMemoryMB
 	}
 	if config.Threads == 0 {
 		config.Threads = 2
