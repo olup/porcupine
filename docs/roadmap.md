@@ -18,6 +18,11 @@
 - Property discovery filters and cursor pagination, independent of event-name pagination.
 - Updated MCP descriptions and tested DuckDB query recipes.
 
+## Unreleased reliability fixes
+
+- Maintenance keeps only its current project resident and skips candidates evicted or deleted before their turn. Idle projects remain evictable so maintenance does not exhaust the resident-engine budget when a query opens another project.
+- A fully occupied resident-engine budget returns `429` with `active_project_limit` for queries, catalog reads, and export validation. Storage failures remain `503`.
+
 ## Areas for future work
 
 Agents currently write the SQL for each question. Named metrics, a saved and parameterized query catalog, built-in session definitions and live-presence rules are candidates for future work. Funnels and retention can already be expressed in the supported SQL dialect when the events carry the identities and timestamps the analysis needs.

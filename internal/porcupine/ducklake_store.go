@@ -168,7 +168,7 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 				}
 			}
 			if oldest == "" {
-				return nil, nil, errors.New("DuckLake active project limit reached")
+				return nil, nil, analyticsError(429, "active_project_limit", "DuckLake active project limit reached", "Retry after active project work finishes. The deployment operator can adjust the resident-project limit if memory allows.", "")
 			}
 			if err := s.projects[oldest].db.Close(); err != nil {
 				return nil, nil, err
@@ -183,12 +183,14 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 		s.projects[project] = p
 	}
 	p.leases++
-	return p, func() {
-		_ = s.mu.Lock(context.Background())
-		p.leases--
-		p.lastUsed = time.Now()
-		s.mu.Unlock()
-	}, nil
+	return p, func() { s.releaseProject(p) }, nil
+}
+
+func (s *duckLakeStore) releaseProject(p *projectLake) {
+	_ = s.mu.Lock(context.Background())
+	p.leases--
+	p.lastUsed = time.Now()
+	s.mu.Unlock()
 }
 
 func lakeLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
@@ -358,36 +360,48 @@ func (s *duckLakeStore) maintainSized(ctx context.Context, maxCompactions int, s
 		s.mu.Unlock()
 		return nil, err
 	}
-	projects := make([]*projectLake, 0, len(s.projects))
-	for _, p := range s.projects {
-		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
-		if err != nil || !os.SameFile(info, p.catalogInfo) {
-			s.mu.Unlock()
-			return nil, errors.New("DuckLake project catalog changed")
-		}
-		projects = append(projects, p)
-	}
-	for _, p := range projects {
-		p.leases++
+	projects := make(map[string]*projectLake, len(s.projects))
+	for id, p := range s.projects {
+		projects[id] = p
 	}
 	s.mu.Unlock()
-	defer func() {
-		_ = s.mu.Lock(context.Background())
-		defer s.mu.Unlock()
-		for _, p := range projects {
-			p.leases--
-			p.lastUsed = time.Now()
-		}
-	}()
 	var measurements []duckLakeMaintenanceStats
-	for _, p := range projects {
+	for id, p := range projects {
+		release, err := s.leaseMaintenanceProject(ctx, id, p)
+		if err != nil {
+			return measurements, err
+		}
+		if release == nil {
+			continue
+		}
 		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized, maxFileSize)
+		release()
 		measurements = append(measurements, stats)
 		if err != nil {
 			return measurements, err
 		}
 	}
 	return measurements, nil
+}
+
+func (s *duckLakeStore) leaseMaintenanceProject(ctx context.Context, id string, expected *projectLake) (func(), error) {
+	if err := s.mu.Lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.mu.Unlock()
+	if _, err := s.sourceIDLocked(ctx); err != nil {
+		return nil, err
+	}
+	p := s.projects[id]
+	if p != expected {
+		return nil, nil
+	}
+	info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
+	if err != nil || !os.SameFile(info, p.catalogInfo) {
+		return nil, errors.New("DuckLake project catalog changed")
+	}
+	p.leases++
+	return func() { s.releaseProject(p) }, nil
 }
 
 func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) (stats duckLakeMaintenanceStats, err error) {

@@ -164,6 +164,8 @@ Results are eventually consistent. A committed analytical write can be visible b
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 
+Development builds return `429` with `code: "active_project_limit"` when every resident project engine is in use and another project cannot open within the configured count limit. Retry after active work finishes. This applies to SQL, catalog reads, and export validation. The operator can adjust `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` within the deployment's memory budget. Version v0.12.1 reports this condition as `503`.
+
 DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MCP and CLI receive the same envelope. For example:
 
 ```json
