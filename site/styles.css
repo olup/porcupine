@@ -11,7 +11,7 @@
   font-display: swap;
 }
 :root {
-  --paper: #faf9f6;
+  --paper: #f8f4ea;
   color-scheme: only light;
   background: var(--paper);
   color: #000;
