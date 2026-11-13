@@ -65,6 +65,12 @@ Each property contains `key`, observed JSON `types`, decimal-string `sample_occu
 
 `sampling` reports the bounds, `properties_requested`, `properties_truncated`, `pagination_truncated`, and `historical_properties_complete`. Historical completeness is always false. Missing keys may be outside the sample or exceed its bounds.
 
+## Event profiles, unreleased
+
+The development operation `get-event-profile` adds activity, recent examples, and property statistics for one exact event name. It is not available in v0.12.0. Discover the running contract before calling it. See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples.
+
+Profiles distinguish occurrence time from receipt time. Exact activity covers delivered logical events. Property statistics describe only a bounded recent sample. A failed storage read returns an error rather than zero activity. Edits and deletions change a profile after analytical projection, under the same delivery rules as SQL.
+
 ## SQL request and result
 
 A body contains `sql`, an optional `parameters` string map, and optional `use_cache`:

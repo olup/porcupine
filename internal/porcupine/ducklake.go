@@ -25,6 +25,7 @@ type lakeStore interface {
 	ValidateExport(context.Context, string, string, map[string]string, bool) (string, error)
 	Export(context.Context, string, string, map[string]string, *analyticalWindow, int64, exportStreamCallbacks) (exportStreamResult, error)
 	Catalog(context.Context, EventCatalogInput) (EventCatalog, error)
+	Profile(context.Context, string, eventProfileOptions, time.Time) (eventProfileRead, error)
 	DeleteProject(context.Context, string) error
 	Maintain(context.Context) error
 	Close() error

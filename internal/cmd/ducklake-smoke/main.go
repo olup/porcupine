@@ -64,7 +64,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "DuckLake smoke failed:", err)
 		os.Exit(1)
 	}
-	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/status")
+	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/profile/status")
 }
 
 func run(ctx context.Context, serverPath, cliPath string) error {
@@ -218,6 +218,28 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	}
 	if len(catalog.Properties) != 1 || catalog.Properties[0].Key != "amount_minor" || catalog.Next != "" {
 		return errors.New("compiled CLI property continuation failed")
+	}
+	var profile struct {
+		Event    string `json:"event"`
+		Activity struct {
+			Total string `json:"total"`
+		} `json:"activity"`
+		Sampling struct {
+			Profiled int `json:"profiled_events"`
+		} `json:"sampling"`
+		Properties []struct {
+			Key     string `json:"key"`
+			Present int    `json:"present"`
+		} `json:"properties"`
+		Examples []struct {
+			ID string `json:"event_id"`
+		} `json:"examples"`
+	}
+	if err := runCLI(ctx, cliPath, cliEnv, nil, &profile, "get-event-profile", "--id", created.Project.ID, "--event", "compiled-smoke", "--property-kind", "custom", "--property-prefix", "amount", "--sample-limit", "10", "--example-limit", "1", "--include-values", "true"); err != nil {
+		return err
+	}
+	if profile.Event != "compiled-smoke" || profile.Activity.Total != "1" || profile.Sampling.Profiled != 1 || len(profile.Properties) != 2 || profile.Properties[0].Key != "amount" || profile.Properties[0].Present != 1 || len(profile.Examples) != 1 || profile.Examples[0].ID != first.Receipts[0].EventID {
+		return errors.New("compiled CLI event profile lost activity, sampled properties or stable event pointer")
 	}
 	var cliSchema schemaResponse
 	if err := runCLI(ctx, cliPath, cliEnv, nil, &cliSchema, "get-event-schema", "--id", created.Project.ID); err != nil {
