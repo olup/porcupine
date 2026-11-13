@@ -1,6 +1,6 @@
 # Check instance status
 
-This operation is available in the development server and CLI. The published v0.9.0 release does not include it. Build both from the same checkout until the next release.
+Available in v0.10.0 and later on both the server and standalone CLI.
 
 Use `get-instance-status` to inspect the running server's version, dependency checks, and optional service configuration. Your credential needs `management:read`. A project-scoped management reader can use it without instance administration. The response contains no project IDs, event counts, destination URLs, or credentials.
 
@@ -21,12 +21,12 @@ curl --fail-with-body "$PORCUPINE_URL/api/v1/status" \
 	-H "Authorization: Bearer $PORCUPINE_API_KEY"
 ```
 
-An example response from a development instance is:
+An example response is:
 
 ```json
 {
 	"status": "ok",
-	"version": "dev",
+	"version": "0.10.0",
 	"checked_at": "2026-11-12T12:00:00Z",
 	"checks": {
 		"sqlite": "ok",

@@ -12,7 +12,7 @@ Existing option where big inspirations - posthog, openpanel, pug - but no one of
 
 The rest of this readme is LLM generated.
 
-[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.9.0)
+[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.10.0)
 
 ## Quickstart
 
