@@ -344,14 +344,36 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
+			maxCompactions := 8
+			policy := os.Getenv("PORCUPINE_MAINT_POLICY")
+			if os.Getenv("PORCUPINE_ARCH_PHASE") == "maintenance" {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
+				if policy == "bounded" {
+					maxCompactions = 1
+				}
+			}
 			mctx, stop := context.WithTimeout(ctx, 15*time.Second)
 			defer stop()
-			err := s.lake.Maintain(mctx)
+			steps, err := s.lake.(*duckLakeStore).maintainMeasured(mctx, maxCompactions)
 			maintenanceSuccess = err == nil
-			architectureEmit("maintenance", engine, map[string]any{"success": err == nil})
+			progress := int64(0)
+			for _, step := range steps {
+				progress += step.FilesProcessed
+			}
+			if os.Getenv("PORCUPINE_ARCH_PHASE") == "maintenance" && progress == 0 {
+				maintenanceSuccess = false
+			}
+			architectureEmit("maintenance", engine, map[string]any{"success": err == nil, "policy": policy, "steps": steps, "progress": progress})
 		}()
 	}
-	const duration = 10 * time.Second
+	duration := 10 * time.Second
+	if os.Getenv("PORCUPINE_ARCH_PHASE") == "maintenance" {
+		duration = 20 * time.Second
+	}
 	batch := 100
 	requests := rate * int(duration/time.Second) / batch
 	payloads := make([][]byte, requests)
@@ -457,6 +479,36 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		architectureProjects(t, s)
 	case "crash":
 		architectureCrash(t)
+	case "maintenance":
+		if s.lake == nil {
+			t.Fatal("native maintenance experiment requires DuckLake")
+		}
+		policy := os.Getenv("PORCUPINE_MAINT_POLICY")
+		if policy != "baseline" && policy != "bounded" {
+			t.Fatal("choose baseline or bounded maintenance policy")
+		}
+		if !architectureSeed(t, s, project, 0, 1000000) {
+			return
+		}
+		store := s.lake.(*duckLakeStore)
+		p, release, err := store.leaseProject(context.Background(), project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if policy == "bounded" {
+			_, err = p.db.Exec("CALL ducklake_set_option('lake','target_file_size','8MB')")
+		}
+		var nativeVersion string
+		if err == nil {
+			err = p.db.QueryRow("SELECT version()").Scan(&nativeVersion)
+		}
+		release()
+		if err != nil {
+			t.Fatal(err)
+		}
+		architectureEmit("maintenance_environment", engine, map[string]any{"policy": policy, "native_version": nativeVersion})
+		s.startDelivery()
+		architectureMixed(t, s, project, token, 1000, 2, 0, true)
 	case "payloads":
 		s.startDelivery()
 		for _, size := range []int{0, 2048, 16384, 65536} {

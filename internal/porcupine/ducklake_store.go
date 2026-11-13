@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,23 +318,39 @@ func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error
 }
 
 func (s *duckLakeStore) Maintain(ctx context.Context) error {
+	_, err := s.maintainMeasured(ctx, 8)
+	return err
+}
+
+type duckLakeMaintenanceStats struct {
+	LockWaitMS     float64 `json:"lock_wait_ms"`
+	LockHeldMS     float64 `json:"lock_held_ms"`
+	FlushMS        float64 `json:"flush_ms"`
+	CompactMS      float64 `json:"compact_ms"`
+	RowsFlushed    int64   `json:"rows_flushed"`
+	FilesProcessed int64   `json:"files_processed"`
+	FilesCreated   int64   `json:"files_created"`
+	Completed      bool    `json:"completed"`
+}
+
+func (s *duckLakeStore) maintainMeasured(ctx context.Context, maxCompactions int) ([]duckLakeMaintenanceStats, error) {
 	if err := s.mu.Lock(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if s.closed {
 		s.mu.Unlock()
-		return errors.New("DuckLake is closed")
+		return nil, errors.New("DuckLake is closed")
 	}
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		s.mu.Unlock()
-		return err
+		return nil, err
 	}
 	projects := make([]*projectLake, 0, len(s.projects))
 	for _, p := range s.projects {
 		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
 		if err != nil || !os.SameFile(info, p.catalogInfo) {
 			s.mu.Unlock()
-			return errors.New("DuckLake project catalog changed")
+			return nil, errors.New("DuckLake project catalog changed")
 		}
 		projects = append(projects, p)
 	}
@@ -349,17 +366,78 @@ func (s *duckLakeStore) Maintain(ctx context.Context) error {
 			p.lastUsed = time.Now()
 		}
 	}()
+	var measurements []duckLakeMaintenanceStats
 	for _, p := range projects {
-		if err := p.write.Lock(ctx); err != nil {
-			return err
-		}
-		_, err := p.db.ExecContext(ctx, "CALL ducklake_flush_inlined_data('lake'); CALL ducklake_merge_adjacent_files('lake', max_compacted_files => 8)")
-		p.write.Unlock()
+		stats, err := p.maintainMeasured(ctx, maxCompactions)
+		measurements = append(measurements, stats)
 		if err != nil {
-			return err
+			return measurements, err
 		}
 	}
-	return nil
+	return measurements, nil
+}
+
+func (p *projectLake) maintainMeasured(ctx context.Context, maxCompactions int) (stats duckLakeMaintenanceStats, err error) {
+	start := time.Now()
+	if err = p.write.Lock(ctx); err != nil {
+		stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
+		return stats, err
+	}
+	stats.LockWaitMS = float64(time.Since(start)) / float64(time.Millisecond)
+	held := time.Now()
+	defer func() { stats.LockHeldMS = float64(time.Since(held)) / float64(time.Millisecond); p.write.Unlock() }()
+	start = time.Now()
+	err = p.maintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &stats)
+	stats.FlushMS = float64(time.Since(start)) / float64(time.Millisecond)
+	if err != nil {
+		return stats, err
+	}
+	start = time.Now()
+	err = p.maintenanceCommand(ctx, fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake', max_compacted_files => %d)", maxCompactions), &stats)
+	stats.CompactMS = float64(time.Since(start)) / float64(time.Millisecond)
+	stats.Completed = err == nil
+	return stats, err
+}
+
+func (p *projectLake) maintenanceCommand(ctx context.Context, statement string, stats *duckLakeMaintenanceStats) error {
+	rows, err := p.db.QueryContext(ctx, statement)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	values, pointers := make([]any, len(columns)), make([]any, len(columns))
+	for i := range values {
+		pointers[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(pointers...); err != nil {
+			return err
+		}
+		for i, name := range columns {
+			var counter *int64
+			switch name {
+			case "rows_flushed":
+				counter = &stats.RowsFlushed
+			case "files_processed":
+				counter = &stats.FilesProcessed
+			case "files_created":
+				counter = &stats.FilesCreated
+			}
+			if counter == nil || values[i] == nil {
+				continue
+			}
+			n, err := strconv.ParseInt(fmt.Sprint(values[i]), 10, 64)
+			if err != nil {
+				return errors.New("invalid DuckLake maintenance counters")
+			}
+			*counter += n
+		}
+	}
+	return rows.Err()
 }
 
 func (s *duckLakeStore) Close() error {

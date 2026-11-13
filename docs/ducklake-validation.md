@@ -4,6 +4,8 @@ On 13 November 2026, the local DuckLake prototype passed the functional product 
 
 These results support continuing the DuckLake experiment. They do not establish a production SaaS capacity or a lower hosting bill. The main issue measured here is write delay during maintenance. No deployment or default setting changed.
 
+The [maintenance investigation](ducklake-maintenance.md) now separates flush and compaction costs, compares a smaller native pass and records direct transaction-conflict probes.
+
 ## Reproduce
 
 ```sh
