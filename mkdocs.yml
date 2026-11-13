@@ -63,3 +63,4 @@ nav:
       - DuckLake development notes: ducklake-experiment.md
       - DuckLake validation: ducklake-validation.md
       - Roadmap: roadmap.md
+      - Publish a release: releasing.md

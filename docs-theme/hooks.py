@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATED = {"quickstart.md": "README.md", "cli.md": "cli/README.md"}
 
 
+def on_config(config):
+    config.extra["release_version"] = (ROOT / "VERSION").read_text().strip()
+    return config
+
+
 def generated_content(target, source):
     markdown = (ROOT / source).read_text()
     if target == "quickstart.md":
