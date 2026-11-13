@@ -5,12 +5,12 @@ ClickHouse local version 26.8.36.3 (official build).
 DuckLake batching, 3,000-event windows, 5 iterations, 3 repetitions
 --- FAIL: BenchmarkDuckLakeBatchWindows/max3000bytes32MiB
     ducklake_batch_benchmark_test.go:47: Out of Memory Error: failed to allocate data of size 2.0 MiB (254.0 MiB/256.0 MiB used)
-        
+
         Possible solutions:
         * Reducing the number of threads (SET threads=X)
         * Disabling insertion-order preservation (SET preserve_insertion_order=false)
         * Increasing the memory limit (SET memory_limit='...GB')
-        
+
         See also https://duckdb.org/docs/current/guides/performance/how_to_tune_workloads
 --- FAIL: BenchmarkDuckLakeBatchWindows
 FAIL
