@@ -44,13 +44,13 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 	s.lakeMaintenanceCancel, s.lakeMaintenanceDone = cancel, make(chan struct{})
 	go func() {
 		defer close(s.lakeMaintenanceDone)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				maintenance, stop := context.WithTimeout(ctx, 30*time.Second)
 				err := s.lake.Maintain(maintenance)
 				stop()
@@ -62,6 +62,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 				} else {
 					s.db.ExecContext(ctx, "DELETE FROM metadata WHERE key='ducklake_maintenance_error'")
 				}
+				timer.Reset(interval)
 			}
 		}
 	}()
