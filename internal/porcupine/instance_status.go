@@ -26,7 +26,7 @@ type InstanceChecks struct {
 type InstanceConfiguration struct {
 	QueryExports     bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
 	WebhookPipelines bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
-	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and ClickHouse are configured. Each pipeline still needs destination credentials and project grants."`
+	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
 	EmailSignIn      bool `json:"email_sign_in" doc:"Email sign-in is configured. No verification email is sent."`
 	OIDCSignIn       bool `json:"oidc_sign_in" doc:"Upstream OIDC sign-in is configured. No identity-provider request is performed."`
 	S3Tiering        bool `json:"s3_tiering" doc:"A ClickHouse cold storage policy is configured. Its S3 disk and TTL progress are not probed."`
@@ -55,7 +55,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
 			QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
-			S3QueryPipelines: s.pipelines != nil && s.ch != nil,
+			S3QueryPipelines: s.pipelines != nil && (s.ch != nil || s.lake != nil),
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,
 			S3Tiering:        s.ch != nil && s.ch.config.StoragePolicy != "",

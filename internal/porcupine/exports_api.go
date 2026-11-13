@@ -41,13 +41,13 @@ type ExportLimits struct {
 	MaxConcurrentJobs       int   `json:"max_concurrent_jobs"`
 	MaxQueuedJobs           int   `json:"max_queued_jobs"`
 	MaxExecutionSeconds     int   `json:"max_execution_seconds"`
-	MaxReadBytes            int64 `json:"max_read_bytes"`
+	MaxReadBytes            int64 `json:"max_read_bytes" doc:"Physical scan byte cap. Zero means the selected engine does not enforce this cap."`
 	MaxOutputBytes          int64 `json:"max_output_bytes"`
 	FileBytes               int64 `json:"file_bytes"`
 	MaxRowBytes             int64 `json:"max_row_bytes"`
-	MemoryBytes             int64 `json:"memory_bytes"`
+	MemoryBytes             int64 `json:"memory_bytes" doc:"ClickHouse per-query memory limit, or DuckDB shared per-project engine budget. Neither is a process RSS limit."`
 	BandwidthBytesPerSecond int64 `json:"bandwidth_bytes_per_second"`
-	TemporaryBytes          int64 `json:"temporary_bytes"`
+	TemporaryBytes          int64 `json:"temporary_bytes" doc:"Per-query temporary-disk cap. Zero means the selected engine does not enforce this cap."`
 	QueueThreshold          int64 `json:"queue_threshold"`
 	RetentionHours          int   `json:"retention_hours"`
 }
@@ -100,17 +100,20 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	if err := s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
+	if s.exports == nil {
+		return nil, apiError(503, "exports are not configured")
+	}
 	if strings.TrimSpace(input.Body.IdempotencyKey) == "" || len(input.Body.IdempotencyKey) > 200 {
 		return nil, apiError(400, "idempotency_key must contain 1 to 200 characters")
 	}
 	if err := validateQueryParameters(input.Body.Parameters); err != nil {
 		return nil, err
 	}
-	if validateSQLParameters(input.Body.SQL, input.Body.Parameters) != nil {
-		return nil, apiError(400, "invalid analytics query parameters")
-	}
-	canonical, err := validateSQL(input.Body.SQL)
+	canonical, err := s.validateExportSQL(ctx, input.ID, input.Body.SQL, input.Body.Parameters)
 	if err != nil {
+		if s.lake != nil {
+			return nil, err
+		}
 		return nil, apiError(400, "unsupported analytics SQL")
 	}
 	format := input.Body.Format
@@ -119,9 +122,6 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	}
 	if format != "jsonl" && format != "csv" {
 		return nil, apiError(400, "export format must be jsonl or csv")
-	}
-	if s.exports == nil {
-		return nil, apiError(503, "exports are not configured")
 	}
 	parameters := input.Body.Parameters
 	if parameters == nil {
@@ -227,8 +227,22 @@ func (s *Service) listEventExports(ctx context.Context, input *ExportListInput) 
 	if s.exports != nil {
 		config := s.exports.config
 		result.Limits = &ExportLimits{MaxConcurrentJobs: 1, MaxQueuedJobs: exportQueueLimit(config), MaxExecutionSeconds: config.MaxExecutionSeconds, MaxReadBytes: config.MaxReadBytes, MaxOutputBytes: config.MaxOutputBytes, FileBytes: config.FileBytes, MaxRowBytes: config.MaxRowBytes, MemoryBytes: config.MemoryBytes, BandwidthBytesPerSecond: config.BandwidthBytesPerSecond, TemporaryBytes: config.TemporaryBytes, QueueThreshold: config.QueueThreshold, RetentionHours: config.RetentionHours}
+		if s.lake != nil {
+			result.Limits.MaxReadBytes, result.Limits.TemporaryBytes = 0, 0
+			result.Limits.MemoryBytes = int64(s.lakeMemoryMB) << 20
+		}
 	}
 	return &ExportListOutput{Body: result}, nil
+}
+
+func (s *Service) validateExportSQL(ctx context.Context, project, raw string, parameters map[string]string) (string, error) {
+	if s.lake != nil {
+		return s.lake.ValidateExport(ctx, project, raw, parameters, false)
+	}
+	if err := validateSQLParameters(raw, parameters); err != nil {
+		return "", err
+	}
+	return validateSQL(raw)
 }
 
 func (s *Service) getEventExport(ctx context.Context, input *ExportGetInput) (*ExportJobOutput, error) {

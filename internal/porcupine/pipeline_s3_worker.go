@@ -38,7 +38,7 @@ func (s *Service) pipelineS3CanContinue(ctx context.Context, w *s3PipelineWork) 
 	return nil
 }
 func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
-	if s.pipelines == nil || s.ch == nil {
+	if s.pipelines == nil || (s.ch == nil && s.lake == nil) {
 		return false, nil
 	}
 	release, ok := s.acquirePipelineExport(ctx)
@@ -139,14 +139,6 @@ func (s *Service) executePipelineS3(ctx context.Context, w *s3PipelineWork) (res
 	if err != nil {
 		return err
 	}
-	namespace, reader, password, err := s.exportReaderWithConfig(ctx, w.pipeline.ProjectID, s.pipelines.config.ExportLimits)
-	if err != nil {
-		return err
-	}
-	query, err := pipelineWindowSQL(w.spec.SQL, namespace)
-	if err != nil {
-		return err
-	}
 	queryID := "ps3_" + w.attemptID
 	runCtx, cancelRun := context.WithCancel(ctx)
 	monitorDone := make(chan struct{})
@@ -171,21 +163,19 @@ func (s *Service) executePipelineS3(ctx context.Context, w *s3PipelineWork) (res
 		<-monitorDone
 		killCtx, killCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer killCancel()
-		s.ch.cancelExport(killCtx, queryID)
+		if s.ch != nil {
+			s.ch.cancelExport(killCtx, queryID)
+		}
 	}()
-	response, err := s.ch.openExport(runCtx, namespace, reader, password, queryID, query, pipelineWindowParameters(w.spec, w.start, w.end))
-	if err != nil {
-		return err
-	}
-	defer response.Close()
 	sink := newPipelineS3Sink(runCtx, s, w, store)
-	_, err = streamExportJSON(runCtx, response, s.pipelines.config.ExportLimits.MaxRowBytes, exportStreamCallbacks{Columns: sink.columns, Row: sink.row})
-	closeErr := response.Close()
+	callbacks := exportStreamCallbacks{Columns: sink.columns, Row: sink.row}
+	if s.lake != nil {
+		_, err = s.lake.Export(runCtx, w.pipeline.ProjectID, w.spec.SQL, w.spec.Parameters, &analyticalWindow{StartMS: w.start, EndMS: w.end}, s.pipelines.config.ExportLimits.MaxRowBytes, callbacks)
+	} else {
+		err = s.streamClickHousePipeline(runCtx, w, queryID, callbacks)
+	}
 	if err != nil {
 		return err
-	}
-	if closeErr != nil {
-		return closeErr
 	}
 	manifest, err := sink.finish()
 	if err != nil {
@@ -258,4 +248,26 @@ func pipelineManifestBytes(m pipelineS3Manifest) int64 {
 		n += f.Bytes
 	}
 	return n
+}
+
+func (s *Service) streamClickHousePipeline(ctx context.Context, w *s3PipelineWork, queryID string, callbacks exportStreamCallbacks) error {
+	namespace, reader, password, err := s.exportReaderWithConfig(ctx, w.pipeline.ProjectID, s.pipelines.config.ExportLimits)
+	if err != nil {
+		return err
+	}
+	query, err := pipelineWindowSQL(w.spec.SQL, namespace)
+	if err != nil {
+		return err
+	}
+	response, err := s.ch.openExport(ctx, namespace, reader, password, queryID, query, pipelineWindowParameters(w.spec, w.start, w.end))
+	if err != nil {
+		return err
+	}
+	defer response.Close()
+	_, err = streamExportJSON(ctx, response, s.pipelines.config.ExportLimits.MaxRowBytes, callbacks)
+	closeErr := response.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }

@@ -6,12 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 )
@@ -32,52 +30,65 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 		return AnalyticsResult{}, apiError(400, "unsupported DuckDB SQL or parameters")
 	}
 	start := time.Now()
-	rows, err := p.db.QueryContext(ctx, "SELECT * FROM ("+canonical+") AS porcupine_query LIMIT 1001", args...)
+	conn, err := p.db.Conn(ctx)
+	if err != nil {
+		return AnalyticsResult{}, duckLakeQueryError(ctx, err)
+	}
+	defer conn.Close()
+	columns, types, err := duckLakeResultColumns(ctx, conn, canonical, args)
+	if err != nil {
+		return AnalyticsResult{}, duckLakeQueryError(ctx, err)
+	}
+	alias := "_pc_result"
+	for suffix := 0; ; suffix++ {
+		conflict := false
+		for _, column := range columns {
+			if strings.EqualFold(alias, column.Name) {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			break
+		}
+		alias = "_pc_result_" + strconv.Itoa(suffix+1)
+	}
+	rows, err := conn.QueryContext(ctx, "SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT 1001", args...)
 	if err != nil {
 		return AnalyticsResult{}, duckLakeQueryError(ctx, err)
 	}
 	defer rows.Close()
-	types, err := rows.ColumnTypes()
-	if err != nil {
-		return AnalyticsResult{}, apiError(503, "invalid DuckLake result")
-	}
-	result := AnalyticsResult{Meta: make([]AnalyticsResultColumn, len(types)), Data: []map[string]json.RawMessage{}}
-	seen := map[string]bool{}
-	for i, column := range types {
-		if seen[column.Name()] {
-			return AnalyticsResult{}, apiError(400, "analytics result columns must have unique names")
-		}
-		seen[column.Name()] = true
-		result.Meta[i] = AnalyticsResultColumn{Name: column.Name(), Type: column.DatabaseTypeName()}
-	}
+	result := AnalyticsResult{Meta: columns, Data: []map[string]json.RawMessage{}}
 	metadata, _ := json.Marshal(result.Meta)
 	bytes := len(metadata) + 256
-	values, pointers := make([]any, len(types)), make([]any, len(types))
-	for i := range values {
-		pointers[i] = &values[i]
-	}
 	for rows.Next() {
 		if len(result.Data) >= analyticsMaxRows {
 			return AnalyticsResult{}, apiError(429, "analytics result row limit reached")
 		}
-		if err := rows.Scan(pointers...); err != nil {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
 			return AnalyticsResult{}, duckLakeQueryError(ctx, err)
 		}
-		row := make(map[string]json.RawMessage, len(values))
-		rowBytes := 2
-		for i, value := range values {
-			if date, ok := value.(time.Time); ok && types[i].DatabaseTypeName() == "DATE" {
-				value = date.Format(time.DateOnly)
+		if len(raw) > analyticsMaxBytes-bytes {
+			return AnalyticsResult{}, apiError(429, "analytics result byte limit reached")
+		}
+		fields, err := exportJSONObject([]byte(raw))
+		if err != nil {
+			return AnalyticsResult{}, apiError(400, "unsupported analytics result value")
+		}
+		if len(fields) != len(columns) {
+			return AnalyticsResult{}, apiError(503, "invalid DuckLake result")
+		}
+		row := make(map[string]json.RawMessage, len(columns))
+		for i, column := range columns {
+			value, ok := fields[column.Name]
+			if !ok {
+				return AnalyticsResult{}, apiError(503, "invalid DuckLake result")
 			}
-			encoded, err := duckLakeJSONValue(value, analyticsMaxBytes-bytes-rowBytes)
+			row[column.Name], err = duckLakeResultValue(value, types[i], 0)
 			if err != nil {
-				if errors.Is(err, errDuckLakeResultLimit) {
-					return AnalyticsResult{}, apiError(429, "analytics result byte limit reached")
-				}
 				return AnalyticsResult{}, apiError(400, "unsupported analytics result value")
 			}
-			row[types[i].Name()] = encoded
-			rowBytes += len(encoded) + duckLakeJSONStringSize(types[i].Name()) + 2
 		}
 		encoded, err := json.Marshal(row)
 		if err != nil {
@@ -95,112 +106,6 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 	result.Rows = uint64(len(result.Data))
 	result.Statistics.Elapsed = time.Since(start).Seconds()
 	return result, nil
-}
-
-var errDuckLakeResultLimit = errors.New("DuckLake result exceeds byte limit")
-
-func duckLakeJSONValue(value any, budget int) (json.RawMessage, error) {
-	converted, _, err := duckLakeJSONCompatible(value, budget, 0)
-	if err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(converted)
-	if len(encoded) > budget {
-		return nil, errDuckLakeResultLimit
-	}
-	return encoded, err
-}
-
-func duckLakeJSONCompatible(value any, budget, depth int) (any, int, error) {
-	if budget < 1 || depth > 64 {
-		return nil, 0, errDuckLakeResultLimit
-	}
-	switch v := value.(type) {
-	case int64:
-		return duckLakeJSONCompatible(strconv.FormatInt(v, 10), budget, depth+1)
-	case uint64:
-		return duckLakeJSONCompatible(strconv.FormatUint(v, 10), budget, depth+1)
-	case *big.Int:
-		if v != nil {
-			return duckLakeJSONCompatible(v.String(), budget, depth+1)
-		}
-	case duckdb.Decimal:
-		return duckLakeJSONCompatible(v.String(), budget, depth+1)
-	case time.Time:
-		return duckLakeJSONCompatible(v.UTC().Format(time.RFC3339Nano), budget, depth+1)
-	case string:
-		// Check before json.Marshal duplicates the native result in Go memory.
-		if len(v) > budget {
-			return nil, 0, errDuckLakeResultLimit
-		}
-		size := duckLakeJSONStringSize(v)
-		if size > budget {
-			return nil, 0, errDuckLakeResultLimit
-		}
-		return v, size, nil
-	case []any:
-		if len(v) > budget/2 {
-			return nil, 0, errDuckLakeResultLimit
-		}
-		converted := make([]any, 0, len(v))
-		used := 2
-		for _, child := range v {
-			result, size, err := duckLakeJSONCompatible(child, budget-used, depth+1)
-			if err != nil {
-				return nil, 0, err
-			}
-			used += size + 1
-			converted = append(converted, result)
-		}
-		return converted, used, nil
-	case map[string]any:
-		if len(v) > budget/4 {
-			return nil, 0, errDuckLakeResultLimit
-		}
-		converted := make(map[string]any, len(v))
-		used := 2
-		for key, child := range v {
-			used += duckLakeJSONStringSize(key) + 2
-			result, size, err := duckLakeJSONCompatible(child, budget-used, depth+1)
-			if err != nil {
-				return nil, 0, err
-			}
-			used += size
-			converted[key] = result
-		}
-		return converted, used, nil
-	case nil, bool, int8, int16, int32, uint8, uint16, uint32, float32, float64:
-	default:
-		return nil, 0, errors.New("unsupported DuckLake result type")
-	}
-	encoded, err := json.Marshal(value)
-	if len(encoded) > budget {
-		return nil, 0, errDuckLakeResultLimit
-	}
-	return value, len(encoded), err
-}
-
-func duckLakeJSONStringSize(value string) int {
-	size := 2
-	for len(value) > 0 {
-		r, n := utf8.DecodeRuneInString(value)
-		value = value[n:]
-		switch r {
-		case '"', '\\', '\n', '\r', '\t', '\b', '\f':
-			size += 2
-		case '<', '>', '&', '\u2028', '\u2029':
-			size += 6
-		default:
-			if r < 0x20 {
-				size += 6
-			} else if r == utf8.RuneError && n == 1 {
-				size += 6
-			} else {
-				size += n
-			}
-		}
-	}
-	return size
 }
 
 func duckLakeQueryError(ctx context.Context, err error) error {

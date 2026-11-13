@@ -22,8 +22,9 @@ var duckLakeFunctionSet = func() map[string]bool {
 }()
 
 type duckLakeSQLGuard struct {
-	parameters map[string]bool
-	nodes      int
+	parameters   map[string]bool
+	eventSources int
+	nodes        int
 }
 
 // validateDuckLakeSQL uses the engine's parsed tree, never string matching, to
@@ -37,29 +38,15 @@ func validateDuckLakeSQL(ctx context.Context, db *sql.DB, raw string, parameters
 			return "", nil, errors.New("invalid DuckDB parameters")
 		}
 	}
-	var serialized string
-	if err := db.QueryRowContext(ctx, "SELECT CAST(json_serialize_sql(?) AS VARCHAR)", raw).Scan(&serialized); err != nil {
+	serialized, declared, _, err := parseDuckLakeSQL(ctx, db, raw)
+	if err != nil {
 		return "", nil, err
 	}
-	if len(serialized) > 4<<20 {
-		return "", nil, errors.New("DuckDB query tree too large")
-	}
-	var parsed struct {
-		Error      bool             `json:"error"`
-		Statements []map[string]any `json:"statements"`
-	}
-	if json.Unmarshal([]byte(serialized), &parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
-		return "", nil, errors.New("expected one DuckDB SELECT")
-	}
-	guard := duckLakeSQLGuard{parameters: map[string]bool{}}
-	if err := guard.walk(parsed.Statements[0], map[string]bool{"events": true}, 0); err != nil {
-		return "", nil, err
-	}
-	if len(guard.parameters) != len(parameters) {
+	if len(declared) != len(parameters) {
 		return "", nil, errors.New("DuckDB parameter names do not match")
 	}
 	arguments := make([]any, 0, len(parameters))
-	for name := range guard.parameters {
+	for name := range declared {
 		value, ok := parameters[name]
 		if !ok {
 			return "", nil, errors.New("missing DuckDB parameter")
@@ -71,6 +58,31 @@ func validateDuckLakeSQL(ctx context.Context, db *sql.DB, raw string, parameters
 		return "", nil, err
 	}
 	return canonical, arguments, nil
+}
+
+func parseDuckLakeSQL(ctx context.Context, db *sql.DB, raw string) (string, map[string]bool, bool, error) {
+	if len(raw) == 0 || len(raw) > maxSQLBytes {
+		return "", nil, false, errors.New("invalid DuckDB query")
+	}
+	var serialized string
+	if err := db.QueryRowContext(ctx, "SELECT CAST(json_serialize_sql(?) AS VARCHAR)", raw).Scan(&serialized); err != nil {
+		return "", nil, false, err
+	}
+	if len(serialized) > 4<<20 {
+		return "", nil, false, errors.New("DuckDB query tree too large")
+	}
+	var parsed struct {
+		Error      bool             `json:"error"`
+		Statements []map[string]any `json:"statements"`
+	}
+	if json.Unmarshal([]byte(serialized), &parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
+		return "", nil, false, errors.New("expected one DuckDB SELECT")
+	}
+	guard := duckLakeSQLGuard{parameters: map[string]bool{}}
+	if err := guard.walk(parsed.Statements[0], map[string]bool{"events": true}, 0); err != nil {
+		return "", nil, false, err
+	}
+	return serialized, guard.parameters, guard.eventSources > 0, nil
 }
 
 func (g *duckLakeSQLGuard) walk(value any, sources map[string]bool, depth int) error {
@@ -100,6 +112,9 @@ func (g *duckLakeSQLGuard) walk(value any, sources map[string]bool, depth int) e
 			case "":
 			case "BASE_TABLE":
 				name, _ := node["table_name"].(string)
+				if strings.EqualFold(name, "events") {
+					g.eventSources++
+				}
 				if !sources[strings.ToLower(name)] || !duckLakeUnqualified(node, "schema_name", "catalog_name") || node["at_clause"] != nil || node["sample"] != nil {
 					return errors.New("unsupported DuckDB source")
 				}

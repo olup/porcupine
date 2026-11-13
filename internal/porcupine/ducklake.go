@@ -20,8 +20,15 @@ type lakeStore interface {
 	Apply(context.Context, []eventProjection) error
 	Load(context.Context, string, string) (eventProjection, error)
 	Query(context.Context, string, string, map[string]string) (AnalyticsResult, error)
+	ValidateExport(context.Context, string, string, map[string]string, bool) (string, error)
+	Export(context.Context, string, string, map[string]string, *analyticalWindow, int64, exportStreamCallbacks) (exportStreamResult, error)
 	Catalog(context.Context, string, string, int, int) (EventCatalog, error)
 	DeleteProject(context.Context, string) error
 	Maintain(context.Context) error
 	Close() error
+}
+
+type analyticalWindow struct {
+	StartMS int64
+	EndMS   int64
 }
