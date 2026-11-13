@@ -25,6 +25,8 @@ for engine in ${PORCUPINE_ARCH_ENGINES:-ducklake clickhouse}; do
             --env PORCUPINE_ARCH_ENGINE="$engine" --env PORCUPINE_ARCH_PHASE="$phase" \
             --env PORCUPINE_MAINT_POLICY="${PORCUPINE_MAINT_POLICY:-}" \
             --env PORCUPINE_SOAK_SECONDS="${PORCUPINE_SOAK_SECONDS:-}" \
+            --env PORCUPINE_SOAK_RATE="${PORCUPINE_SOAK_RATE:-}" \
+            --env PORCUPINE_SOAK_OPEN_DEFAULTS="${PORCUPINE_SOAK_OPEN_DEFAULTS:-}" \
             --mount type=volume,destination=/benchmark-data porcupine-analytics-benchmark > "$log" 2>&1; then
             printf 'Exit: 0\n' >> "$log"
         else
