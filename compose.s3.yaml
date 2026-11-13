@@ -1,4 +1,4 @@
-# Operator-only override: docker compose -f compose.yaml -f compose.s3.yaml up -d
+# ClickHouse-only override: add after compose.yaml and compose.clickhouse.yaml.
 services:
   porcupine:
     environment:

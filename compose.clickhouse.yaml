@@ -1,0 +1,24 @@
+# Explicit legacy backend: add after compose.yaml, before ClickHouse storage/backup overrides.
+services:
+  porcupine:
+    environment:
+      PORCUPINE_DUCKLAKE_DIR: ""
+      PORCUPINE_CLICKHOUSE_URL: http://clickhouse:8123
+      PORCUPINE_CLICKHOUSE_DATABASE: porcupine
+      PORCUPINE_CLICKHOUSE_USER: porcupine_admin
+      PORCUPINE_CLICKHOUSE_PASSWORD: ${PORCUPINE_CLICKHOUSE_PASSWORD:?Set a private ClickHouse provisioning password}
+    depends_on:
+      - clickhouse
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.36.3
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: porcupine_admin
+      CLICKHOUSE_PASSWORD: ${PORCUPINE_CLICKHOUSE_PASSWORD:?Set a private ClickHouse provisioning password}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    mem_limit: 2g
+    stop_grace_period: 30s
+volumes:
+  clickhouse-data:

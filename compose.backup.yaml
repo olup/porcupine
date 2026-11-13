@@ -1,4 +1,4 @@
-# Use with compose.yaml. The backup operator runs only when invoked explicitly.
+# Use with compose.yaml and compose.clickhouse.yaml. Invoked explicitly only.
 services:
   clickhouse:
     volumes:

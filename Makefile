@@ -1,10 +1,14 @@
 .PHONY: build run test check fmt integration integration-s3
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o bin/porcupine ./cmd/porcupine
+	CGO_ENABLED=1 go build -tags ducklake -trimpath -o bin/porcupine ./cmd/porcupine
+
+.PHONY: build-clickhouse
+build-clickhouse:
+	CGO_ENABLED=0 go build -trimpath -o bin/porcupine-clickhouse ./cmd/porcupine
 
 run:
-	go run ./cmd/porcupine
+	CGO_ENABLED=1 go run -tags ducklake ./cmd/porcupine
 
 test:
 	go test ./...
