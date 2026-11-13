@@ -80,6 +80,10 @@ ducklake-build:
 ducklake-performance-compare:
 	sh scripts/analytics-benchmark.sh
 
+.PHONY: ducklake-batching-bench
+ducklake-batching-bench:
+	PORCUPINE_BENCH_BATCHING=1 sh scripts/analytics-benchmark.sh
+
 ducklake-test:
 	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=120s
 

@@ -88,6 +88,7 @@ make ducklake-test
 make ducklake-smoke
 make ducklake-bench
 make ducklake-performance-compare
+make ducklake-batching-bench
 ```
 
 To compare both engines on the same fixtures, install Docker and Python 3, then run `make ducklake-compare`. The existing container fixture supplies temporary ClickHouse credentials to the Go tests. It does not use a running production database.
@@ -138,6 +139,33 @@ On 13 November 2026, Linux arm64 under Docker Desktop on an Apple M1 Pro produce
 ClickHouse projected these batches about 2.2 times faster. DuckLake served these small API queries about 2.1 to 3.9 times faster. These are measurements of the current Porcupine implementations, including ClickHouse's project-view and internal HTTP overhead, not a direct engine-only benchmark. Query timing begins after fixture ingestion without waiting for ClickHouse background merges to settle. The variation between repetitions, particularly on ClickHouse counts and trends, should remain visible when reporting the result.
 
 This small fixture does not test years of data, S3 reads, mixed ingestion and query contention, many active projects, native crash containment, or sustained hosting capacity. It cannot establish which engine has lower unit costs for a hosted service.
+
+## Batching experiment
+
+`make ducklake-batching-bench` uses the same two-CPU, 2 GiB Linux container with ClickHouse stopped. Each iteration accepts 3,000 synthetic events in 30 HTTP batches of 100, then drains the SQLite queue completely. The measured window includes acceptance and analytical projection. It does not sleep for a second or implement a timer. A window must finish in under one second to keep up with a hypothetical 3,000-event burst every second under these conditions.
+
+The experiment varies the internal delivery row cap between 100, 500, 1,000 and 3,000. The existing 4 MiB conservative byte budget still applies to these four cases, so the actual chunks can be smaller. A fifth case raises the byte budget to 32 MiB and DuckDB's engine budget to 512 MiB to permit one actual 3,000-event write for these small payloads. This budget estimates worst-case JSON expansion, not raw input bytes. Production defaults remain 100 events, 4 MiB per batch and 256 MiB per engine, and there is no new public configuration or batching timer. Successful HTTP acceptance still requires a durable SQLite commit. The native HTTP request limit remains 1,000 events; a worker batch can combine several accepted requests.
+
+Each case runs five windows of 3,000 events, repeated three times with a fresh project and database. That grows each timed fixture to 15,000 events. The runner verifies the final analytical count and reports actual chunks per window and the largest chunk. This workload differs from the earlier 100-event-per-flush microbenchmark, so only compare batching variants within this experiment.
+
+The four 4 MiB cases produced these medians of three run averages on the same Linux arm64 environment as above. [Raw output](benchmarks/ducklake-batching-arm64.txt) includes the individual repetitions.
+
+| Row cap | Largest actual chunk | Writes per 3,000-event window | Window time | Event rate |
+| --- | --- | --- | --- | --- |
+| 100 | 100 | 30 | 3.410 s | 880 events/s |
+| 500 | 500 | 6 | 1.135 s | 2,644 events/s |
+| 1,000 | 743 | 5 | 1.043 s | 2,877 events/s |
+| 3,000 | 743 | 5 | 1.097 s | 2,734 events/s |
+
+Larger chunks amortize queue reconciliation, analytical transactions and SQLite acknowledgments. Increasing the row cap beyond the byte cap has no further batching benefit; the two 743-row cases perform the same five-write workload and differ within the observed run variation. None of these four cases kept up with a 3,000-event window every second. The control run overlapped local Go checks during part of its execution; these remain development measurements rather than an isolated-machine capacity result.
+
+An actual 3,000-event write with a 32 MiB byte budget [failed at the default 256 MiB engine memory limit](benchmarks/ducklake-batching-256mib-failure.txt). Raising the engine budget to 512 MiB within the same total 2 GiB container allowed it to complete. Across three five-window runs, the median was 778.77 ms per 3,000-event window, or 3,852 events/s. All fifteen measured windows finished below one second; the slowest took 874.0 ms. [Raw output](benchmarks/ducklake-batching-512mib-arm64.txt) includes the result. Run just this case with `PORCUPINE_BENCH_BATCHING=large sh scripts/analytics-benchmark.sh`.
+
+A longer run of 30 windows grew the fixture to 90,000 events. It averaged 907.82 ms per window, or 3,305 events/s. Three windows exceeded one second, with a maximum of 1,265 ms. [Raw output](benchmarks/ducklake-batching-90000-arm64.txt) is included. Reproduce it with `PORCUPINE_BENCH_BATCHING=long sh scripts/analytics-benchmark.sh`. This is a back-to-back burst test, not an arrival-paced concurrent ingestion test. Its average clears 3,000 events/s with little headroom and does not prove that 3,000 events/s is a comfortable sustained rate, particularly with concurrent analytics or larger histories.
+
+The larger-chunk result changes both batch size and the engine memory budget. It does not imply that a 3,000-row chunk fits the original 256 MiB setting. A native recovery test deliberately exhausts a 128 MiB engine with a 3,000-event write, checks that all events remain queued and none become partially visible, then lowers the batch size and verifies complete delivery and a duplicate retry.
+
+A future batching policy should flush at an event or byte threshold, or at most one second after the first waiting event. Resetting a debounce timer on every arrival could defer a continuously active stream indefinitely. Waiting before projection must not weaken SQLite's durable-acceptance contract. Larger byte budgets also need testing with large events and concurrent queries before becoming deployment defaults.
 
 ## Scope
 

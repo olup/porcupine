@@ -102,12 +102,12 @@ func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
 }
 
 func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT 100`, cursor)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT ?`, cursor, s.deliveryMaxEvents)
 	if err != nil {
 		return nil, errors.New("cannot read delivery queue")
 	}
 	defer rows.Close()
-	batch := make([]Event, 0, 100)
+	batch := make([]Event, 0, s.deliveryMaxEvents)
 	bytes := 0
 	for rows.Next() {
 		var event Event
@@ -124,7 +124,7 @@ func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event
 		size := 4*len(properties) + 2*len(event.IdentitySnapshot) + 2*len(ingestion) + 12*(len(event.ProjectID)+len(event.UUID)+len(event.Event)+len(event.DistinctID)+len(event.Timestamp)+len(event.ReceivedAt)) + 2048
 		// The byte budget is soft for one event: previously accepted JSON can grow
 		// during encoding, and a large event must not permanently block the queue.
-		if bytes+size > 4<<20 && len(batch) > 0 {
+		if bytes+size > s.deliveryMaxBytes && len(batch) > 0 {
 			break
 		}
 		batch = append(batch, event)

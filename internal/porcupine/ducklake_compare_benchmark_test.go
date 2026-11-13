@@ -90,7 +90,11 @@ func BenchmarkAnalyticsComparison(b *testing.B) {
 	})
 }
 
-func comparisonService(b *testing.B, engine string) (*Service, string, string) {
+func comparisonService(b testing.TB, engine string) (*Service, string, string) {
+	return comparisonServiceMemory(b, engine, 256)
+}
+
+func comparisonServiceMemory(b testing.TB, engine string, memoryMB int) (*Service, string, string) {
 	b.Helper()
 	s, err := Open(Config{DBPath: filepath.Join(b.TempDir(), "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 1000})
 	if err != nil {
@@ -102,7 +106,8 @@ func comparisonService(b *testing.B, engine string) (*Service, string, string) {
 		}
 	})
 	if engine == "ducklake" {
-		s.lake, err = newDuckLake(DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake")})
+		s.lake, err = newDuckLake(DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake"), MemoryLimitMB: memoryMB})
+		s.lakeMemoryMB = memoryMB
 	} else {
 		var ch *clickHouse
 		// Fixed loopback endpoint supplied only by the disposable Docker runner.
@@ -156,16 +161,9 @@ func comparisonPayloads(batches int) [][]byte {
 	return payloads
 }
 
-func comparisonCapture(b *testing.B, s *Service, handler http.Handler, token string, payload []byte) {
+func comparisonCapture(b testing.TB, s *Service, handler http.Handler, token string, payload []byte) {
 	b.Helper()
-	req := httptest.NewRequest("POST", "/ingest/v1/events", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Porcupine-Key", token)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-	if w.Code != 200 {
-		b.Fatalf("capture failed: %d %s", w.Code, w.Body.String())
-	}
+	comparisonAccept(b, handler, token, payload)
 	if err := s.flushDelivery(context.Background()); err != nil {
 		b.Fatal(err)
 	}
@@ -175,7 +173,19 @@ func comparisonCapture(b *testing.B, s *Service, handler http.Handler, token str
 	}
 }
 
-func comparisonQuery(b *testing.B, handler http.Handler, project, sql string) AnalyticsResult {
+func comparisonAccept(b testing.TB, handler http.Handler, token string, payload []byte) {
+	b.Helper()
+	req := httptest.NewRequest("POST", "/ingest/v1/events", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Porcupine-Key", token)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		b.Fatalf("capture failed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func comparisonQuery(b testing.TB, handler http.Handler, project, sql string) AnalyticsResult {
 	b.Helper()
 	body, err := json.Marshal(map[string]any{"sql": sql, "use_cache": false})
 	if err != nil {

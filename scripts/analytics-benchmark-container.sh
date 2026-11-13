@@ -9,6 +9,16 @@ trap cleanup EXIT INT TERM
 printf 'Linux architecture: '; uname -m
 cat /go-version.txt
 clickhouse --version
+if [ -n "${PORCUPINE_BENCH_BATCHING:-}" ]; then
+    pattern='^BenchmarkDuckLakeBatchWindows$'
+    windows=5
+    repetitions=3
+    if [ "$PORCUPINE_BENCH_BATCHING" = large ]; then pattern='^BenchmarkDuckLakeBatchWindows/max3000bytes32MiB$'; fi
+    if [ "$PORCUPINE_BENCH_BATCHING" = long ]; then pattern='^BenchmarkDuckLakeBatchWindows/max3000bytes32MiB$'; windows=30; repetitions=1; fi
+    printf '\nDuckLake batching, 3,000-event windows, %s iterations, %s repetitions\n' "$windows" "$repetitions"
+    /analytics-bench -test.run='^$' -test.bench="$pattern" -test.benchtime="${windows}x" -test.count="$repetitions" -test.timeout=15m
+    exit
+fi
 printf '\nDuckLake, ClickHouse stopped, 30 iterations, three repetitions\n'
 PORCUPINE_BENCH_ENGINE=ducklake /analytics-bench -test.run='^$' -test.bench='^BenchmarkAnalyticsComparison$' -test.benchtime=30x -test.count=3 -test.timeout=15m
 mkdir -p /etc/clickhouse-server/config.d

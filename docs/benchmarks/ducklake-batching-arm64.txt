@@ -1,0 +1,21 @@
+Linux architecture: aarch64
+go version go1.26.11 linux/arm64
+ClickHouse local version 26.8.36.3 (official build).
+
+DuckLake batching, 3,000-event windows, five iterations, three repetitions
+goos: linux
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+BenchmarkDuckLakeBatchWindows/max100-2         	       5	3223254501 ns/op	        30.00 chunks/window	      3000 events/op	       930.7 events/s	       100.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max100-2         	       5	3425490293 ns/op	        30.00 chunks/window	      3000 events/op	       875.8 events/s	       100.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max100-2         	       5	3409878518 ns/op	        30.00 chunks/window	      3000 events/op	       879.8 events/s	       100.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max500-2         	       5	1134844250 ns/op	         6.000 chunks/window	      3000 events/op	      2644 events/s	       500.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max500-2         	       5	1106259984 ns/op	         6.000 chunks/window	      3000 events/op	      2712 events/s	       500.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max500-2         	       5	1146574884 ns/op	         6.000 chunks/window	      3000 events/op	      2616 events/s	       500.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max1000-2        	       5	1050013626 ns/op	         5.000 chunks/window	      3000 events/op	      2857 events/s	       743.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max1000-2        	       5	1042666467 ns/op	         5.000 chunks/window	      3000 events/op	      2877 events/s	       743.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max1000-2        	       5	1032324950 ns/op	         5.000 chunks/window	      3000 events/op	      2906 events/s	       743.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max3000-2        	       5	1029753017 ns/op	         5.000 chunks/window	      3000 events/op	      2913 events/s	       743.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max3000-2        	       5	1097204242 ns/op	         5.000 chunks/window	      3000 events/op	      2734 events/s	       743.0 max_events/chunk
+BenchmarkDuckLakeBatchWindows/max3000-2        	       5	1111239634 ns/op	         5.000 chunks/window	      3000 events/op	      2700 events/s	       743.0 max_events/chunk
+PASS

@@ -1,0 +1,12 @@
+Linux architecture: aarch64
+go version go1.26.11 linux/arm64
+ClickHouse local version 26.8.36.3 (official build).
+
+DuckLake batching, 3,000-event windows, 5 iterations, 3 repetitions
+goos: linux
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+BenchmarkDuckLakeBatchWindows/max3000bytes32MiB-2         	       5	 781386975 ns/op	         1.000 chunks/window	      3000 events/op	      3839 events/s	      3000 max_events/chunk	       874.0 max_window_ms	         0 windows_over_1s
+BenchmarkDuckLakeBatchWindows/max3000bytes32MiB-2         	       5	 778767409 ns/op	         1.000 chunks/window	      3000 events/op	      3852 events/s	      3000 max_events/chunk	       830.1 max_window_ms	         0 windows_over_1s
+BenchmarkDuckLakeBatchWindows/max3000bytes32MiB-2         	       5	 776929559 ns/op	         1.000 chunks/window	      3000 events/op	      3861 events/s	      3000 max_events/chunk	       842.2 max_window_ms	         0 windows_over_1s
+PASS

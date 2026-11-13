@@ -63,6 +63,8 @@ type Service struct {
 	lakeMaintenanceDone   chan struct{}
 	deliveryCancel        context.CancelFunc
 	deliveryDone          chan struct{}
+	deliveryMaxEvents     int
+	deliveryMaxBytes      int
 	queryMu               contextMutex
 	queryReady            map[string]bool
 	querySlots            chan struct{}
@@ -179,6 +181,8 @@ func Open(c Config) (*Service, error) {
 	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
 		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
 	s.captureSlots = make(chan struct{}, 32)
+	s.deliveryMaxEvents = 100
+	s.deliveryMaxBytes = 4 << 20
 	s.importSlots = make(chan struct{}, 2)
 	s.tokenSlots = make(chan struct{}, 8)
 	s.statusSlots = make(chan struct{}, 1)

@@ -3,7 +3,9 @@ FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY internal ./internal
-RUN CGO_ENABLED=1 go test -tags ducklake -c -o /analytics-bench ./internal/porcupine && \
+RUN --mount=type=cache,id=porcupine-analytics-go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=porcupine-analytics-go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go test -tags ducklake -c -o /analytics-bench ./internal/porcupine && \
     go version > /go-version.txt && \
     cp -L "$(gcc -print-file-name=libstdc++.so.6)" /libstdc++.so.6
 FROM debian:bookworm-slim
