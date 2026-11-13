@@ -26,6 +26,15 @@ The existing API accepts resumable PostHog JSONL uploads. The CLI exposes its in
 
 The file format and the logical producer are separate concepts. Selecting PostHog or Segment determines how to parse the archive; it must not silently change the credential's `source_id` or project.
 
+### Open question: connector strategy
+
+This direction is undecided. The goal is to let people move an existing frontend or backend to Porcupine with few code changes.
+
+- [ ] Document the native ingestion and historical import contracts precisely, with examples for authors of custom adapters or import scripts.
+- [ ] Review the separation between input parsing, native event normalization, and shared ingestion and import processing. Connectors must preserve timestamps and retry identity, and use the same authorization and durable acceptance rules.
+- [ ] Compare two approaches: maintain connectors for selected SDKs and export formats in the repository, or make the native contract sufficient for external adapters. A small set of maintained connectors alongside external adapters may be enough. Do not commit to a plugin framework or compatibility with every analytics SDK.
+- [ ] Evaluate additional SDKs, such as Plausible, only after checking their transport, configuration options, and event semantics. Document required client changes and test each supported profile before claiming compatibility.
+
 ### A complete Go CLI import command
 
 The proposed user experience is one command for a file or directory. This example is a design sketch and does not run in v0.10.0:
