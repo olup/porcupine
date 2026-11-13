@@ -22,15 +22,18 @@
 
 ### Next tasks
 
-- [ ] Eliminate transient `503` responses observed when querying cold projects or switching between projects. Reproduce the failure before changing retry or engine-lifecycle behavior.
+- [ ] Complete DuckLake operations first: snapshot expiration and storage cleanup after logical deletion, automated coordinated backup and restore, then analytical S3 storage. Define and test physical-erasure guarantees before promising a deadline. Storage policy remains an operator-controlled deployment setting.
+- [ ] Validate the cold-project maintenance fix proposed in [PR #33](https://github.com/olup/porcupine/pull/33). Its regression test reproduces one cause of transient `503` responses; it does not establish the cause of every historical storage failure.
 - [ ] Check large-event projection batches against the native memory budget. A direct `Apply` fixture with roughly 15 KB of properties per event exceeded the 512 MiB engine budget with 100-row batches, before profiling ran. Ten-row batches loaded the same 1,000 events. Reproduce through the ingestion worker before selecting batch limits or adaptive behavior.
-- [ ] Add a project-scoped catalog of saved SQL queries with descriptions, declared parameters, and execution through the API, generated CLI, and MCP. Keep agents free to write SQL.
-- [ ] Complete DuckLake operations: snapshot expiration and storage cleanup after logical deletion, automated coordinated backup and restore, then analytical S3 storage. Define and test physical-erasure guarantees before promising a deadline.
 - [ ] After those tasks, make historical imports a single resumable file-or-directory command. Support native, PostHog, and Segment formats with original occurrence timestamps, stable retry IDs, progress, and a final distinction between accepted and queryable events.
 
 The tasks above remain planned. Event profiles are available in development builds as described in the unreleased section.
 
-Agents currently write the SQL for each question. Named metrics, a saved and parameterized query catalog, built-in session definitions and live-presence rules are candidates for future work. Funnels and retention can already be expressed in the supported SQL dialect when the events carry the identities and timestamps the analysis needs.
+### Deferred: saved queries and report collections
+
+Saved parameterized SQL queries and collections of queries for reusable reports are on hold. Revisit their need after the operational work. No saved-query endpoints, new permissions, report runner, or UI are being implemented for now. Agents continue to write SQL and use the tested query recipes.
+
+Named metrics, built-in session definitions and live-presence rules remain candidates for future work. Funnels and retention can already be expressed in the supported SQL dialect when the events carry the identities and timestamps the analysis needs.
 
 A replicated queue and multiple ingestion workers would change the failure model and deployment requirements. The current architecture targets a single application process with local durable storage.
 
@@ -42,4 +45,4 @@ The [compatibility matrix](../compat/matrix.json) records the supported PostHog 
 - [ ] Revisit rendering when users need images from a client without visualization support, or unattended reports that must deliver chart files. Client capabilities and display behavior vary; this decision does not assume that every LLM client can render charts.
 - [ ] If that need appears, evaluate an optional API/MCP renderer with a declarative chart specification, project authorization, and resource limits. Do not execute model-generated code on the server.
 
-For now, prioritize reliable queries, event and property discovery, SQL recipes, and imports. Rendering remains a deferred option, not a commitment to add a UI.
+For now, prioritize DuckLake operations and reliable queries, followed by simpler imports. Rendering remains a deferred option, not a commitment to add a UI.
