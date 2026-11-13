@@ -109,7 +109,7 @@ func TestEventCatalogPaginationPropertyCapsAndNoValues(t *testing.T) {
 		catalogResponse(w, []EventCatalogEvent{catalogEvent("a", "a"), catalogEvent("b", "b"), catalogEvent("c", "c")})
 	})
 	configureAnalyticsTest(s, c)
-	result, err := s.eventCatalog(context.Background(), &EventCatalogInput{ID: id, Event: "a", Limit: 2, Offset: 8})
+	result, err := s.eventCatalog(context.Background(), &EventCatalogInput{ID: id, Event: "a", Limit: 2, Offset: 8, PropertyLimit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

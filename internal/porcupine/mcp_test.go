@@ -45,6 +45,9 @@ func mcpTestTool(t *testing.T, ctx context.Context, session *mcp.ClientSession, 
 		t.Fatal(err)
 	}
 	if result.IsError != wantError {
+		if result.IsError {
+			t.Fatalf("tool %s failed: %+v", name, result.StructuredContent)
+		}
 		t.Fatalf("tool %s isError=%v, want %v: %+v", name, result.IsError, wantError, result.Content)
 	}
 	if len(result.Content) == 0 {

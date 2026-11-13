@@ -69,8 +69,8 @@ type AnalyticsQueryInput struct {
 	ID   string `path:"id" doc:"Project identifier"`
 	Body struct {
 		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden."`
-		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound scalar parameters. Discover the deployment dialect with get-event-schema: ClickHouse uses {event:String}, experimental DuckDB uses $event and optional SQL casts. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
-		UseCache   *bool             `json:"use_cache,omitempty" doc:"Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The DuckLake experiment always executes fresh."`
+		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound scalar parameters. Discover the deployment dialect with get-event-schema: DuckDB uses $event; optional ClickHouse uses {event:String} with explicit casts when needed. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
+		UseCache   *bool             `json:"use_cache,omitempty" doc:"Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The default DuckLake backend always executes fresh."`
 	}
 }
 
@@ -262,11 +262,11 @@ var analyticsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
 func validateQueryParameters(parameters map[string]string) error {
 	if len(parameters) > 32 {
-		return apiError(400, "too many analytics query parameters")
+		return analyticsError(400, "invalid_parameter", "too many analytics query parameters", "Supply at most 32 bound scalar parameters.", "")
 	}
 	for name, value := range parameters {
 		if !analyticsParameterName.MatchString(name) || len(value) > 4096 {
-			return apiError(400, "invalid analytics query parameter")
+			return analyticsError(400, "invalid_parameter", "invalid analytics query parameter", "Use identifier keys of at most 64 ASCII characters and string values of at most 4096 bytes.", "")
 		}
 	}
 	return nil

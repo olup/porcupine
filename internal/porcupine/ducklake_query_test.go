@@ -134,7 +134,7 @@ func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
 	if err != nil || string(result.Data[0]["day"]) != `"2026-11-14"` {
 		t.Fatalf("local timezone day boundary: %+v %v", result, err)
 	}
-	catalog, err := s.Catalog(context.Background(), "query-a", "purchase", 20, 0)
+	catalog, err := s.Catalog(context.Background(), EventCatalogInput{ID: "query-a", Event: "purchase", Limit: 20})
 	if err != nil || len(catalog.Events) != 1 || catalog.Events[0].Count != "1" || catalog.Events[0].LatestEventUUID != "two" || len(catalog.Properties) != 3 {
 		t.Fatalf("catalog: %+v %v", catalog, err)
 	}

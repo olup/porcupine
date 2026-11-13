@@ -23,7 +23,7 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 		{"person_id", "VARCHAR", "Current resolved project-local person."},
 		{"person_properties", "VARCHAR", "Current traits encoded as JSON."},
 		{"properties", "VARCHAR", "Custom JSON properties; use json_extract_string or JSON casts."},
-		{"context", "VARCHAR", "Canonical JSON context."},
+		{"context", "VARCHAR", "Canonical JSON context: page.url, page.referrer, browser.name, browser.version, device.type, os.name, locale and session_id when supplied. Use json_extract_string(context,'$.browser.name')."},
 		{"timestamp", "VARCHAR", "Original occurrence time in UTC RFC3339."},
 		{"event_time", "TIMESTAMP WITH TIME ZONE", "Original occurrence time for temporal SQL."},
 		{"timestamp_ms", "BIGINT", "Original occurrence time in Unix milliseconds."},
@@ -63,7 +63,7 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 	return &AnalyticsQueryOutput{Body: AnalyticsQuery{Result: result, Delivery: delivery}}, nil
 }
 
-func (s *Service) lakeEventCatalog(ctx context.Context, project, event string, limit, offset int) (*EventCatalogOutput, error) {
+func (s *Service) lakeEventCatalog(ctx context.Context, input EventCatalogInput) (*EventCatalogOutput, error) {
 	select {
 	case s.querySlots <- struct{}{}:
 		defer func() { <-s.querySlots }()
@@ -72,11 +72,11 @@ func (s *Service) lakeEventCatalog(ctx context.Context, project, event string, l
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	result, err := s.lake.Catalog(ctx, project, event, limit, offset)
+	result, err := s.lake.Catalog(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	result.Delivery, err = s.deliveryStatus(ctx, project)
+	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
 	}

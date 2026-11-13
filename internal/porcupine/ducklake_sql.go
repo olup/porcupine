@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -31,27 +32,39 @@ type duckLakeSQLGuard struct {
 // authorize every source and expression before the statement can be executed.
 func validateDuckLakeSQL(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, error) {
 	if len(raw) == 0 || len(raw) > maxSQLBytes || len(parameters) > 32 {
-		return "", nil, errors.New("invalid DuckDB query")
+		return "", nil, analyticsError(400, "invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
 	}
 	for name, value := range parameters {
 		if !duckLakeParameterName.MatchString(name) || len(value) > 4096 {
-			return "", nil, errors.New("invalid DuckDB parameters")
+			return "", nil, analyticsError(400, "invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
 		}
 	}
 	serialized, declared, _, err := parseDuckLakeSQL(ctx, db, raw)
 	if err != nil {
 		return "", nil, err
 	}
-	if len(declared) != len(parameters) {
-		return "", nil, errors.New("DuckDB parameter names do not match")
-	}
 	arguments := make([]any, 0, len(parameters))
+	names := make([]string, 0, len(declared))
 	for name := range declared {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		value, ok := parameters[name]
 		if !ok {
-			return "", nil, errors.New("missing DuckDB parameter")
+			return "", nil, analyticsError(400, "missing_parameter", "Missing bound query parameter", "Supply this key in parameters; use $name placeholders for DuckDB.", name)
 		}
 		arguments = append(arguments, sql.Named(name, value))
+	}
+	names = names[:0]
+	for name := range parameters {
+		if !declared[name] {
+			names = append(names, name)
+		}
+	}
+	if len(names) > 0 {
+		sort.Strings(names)
+		return "", nil, analyticsError(400, "unused_parameter", "Unused bound query parameter", "Remove this key or reference it with a $name placeholder.", names[0])
 	}
 	var canonical string
 	if err := db.QueryRowContext(ctx, "SELECT json_deserialize_sql(?)", serialized).Scan(&canonical); err != nil {
@@ -76,7 +89,7 @@ func parseDuckLakeSQL(ctx context.Context, db *sql.DB, raw string) (string, map[
 		Statements []map[string]any `json:"statements"`
 	}
 	if json.Unmarshal([]byte(serialized), &parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
-		return "", nil, false, errors.New("expected one DuckDB SELECT")
+		return "", nil, false, analyticsError(400, "invalid_sql", "Expected one valid DuckDB SELECT", "Use DuckDB syntax and $name parameters. Read get-event-schema for the supported dialect and functions.", "")
 	}
 	guard := duckLakeSQLGuard{parameters: map[string]bool{}}
 	if err := guard.walk(parsed.Statements[0], map[string]bool{"events": true}, 0); err != nil {
@@ -196,8 +209,15 @@ func (g *duckLakeSQLGuard) expression(node map[string]any, class string) error {
 		}
 	case "FUNCTION", "WINDOW":
 		name, _ := node["function_name"].(string)
-		if !duckLakeFunctionSet[strings.ToLower(name)] || !duckLakeUnqualified(node, "schema", "catalog") || node["export_state"] == true {
-			return errors.New("unsupported DuckDB function")
+		if !duckLakeUnqualified(node, "schema", "catalog") || node["export_state"] == true {
+			return analyticsError(400, "unsupported_sql", "Qualified functions or exported aggregate state are not allowed", "Call an allowed unqualified function from get-event-schema.", "")
+		}
+		if !duckLakeFunctionSet[strings.ToLower(name)] {
+			field := ""
+			if duckLakeParameterName.MatchString(name) {
+				field = name
+			}
+			return analyticsError(400, "unsupported_function", "Function is not allowed in analytics queries", "Read get-event-schema for allowed DuckDB functions. ClickHouse function names are not interchangeable.", field)
 		}
 	case "PARAMETER":
 		name, _ := node["identifier"].(string)

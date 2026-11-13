@@ -48,7 +48,7 @@ type captureResponse struct {
 }
 
 func main() {
-	server := flag.String("server", "./bin/porcupine-ducklake", "Compiled experimental server")
+	server := flag.String("server", "./bin/porcupine-ducklake", "Compiled native server")
 	cli := flag.String("cli", "./bin/cli/porcupine", "Compiled standalone CLI")
 	timeout := flag.Duration("timeout", 60*time.Second, "Maximum duration of the smoke check")
 	flag.Parse()
@@ -149,7 +149,7 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if created.Project.ID == "" || created.Token == "" {
 		return errors.New("project response omitted its ID or ingestion credential")
 	}
-	event := map[string]any{"type": "track", "message_id": "compiled-smoke-stable", "actor_id": "synthetic-visitor", "name": "compiled-smoke", "timestamp": "2026-11-01T12:00:00Z", "properties": map[string]any{"amount": 42}}
+	event := map[string]any{"type": "track", "message_id": "compiled-smoke-stable", "actor_id": "synthetic-visitor", "name": "compiled-smoke", "timestamp": "2026-11-01T12:00:00Z", "properties": map[string]any{"amount": 42, "amount_minor": 4200, "$sdk": "metadata"}}
 	ingestHeaders := map[string]string{"X-Porcupine-Key": created.Token}
 	var first captureResponse
 	if err := call(ctx, client, origin, http.MethodPost, "/ingest/v1/events", ingestHeaders, event, 200, &first); err != nil {
@@ -184,6 +184,13 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 		return errors.New("native retry changed the event identity")
 	}
 	cliEnv := environment(map[string]string{"PORCUPINE_API_KEY": admin, "PORCUPINE_URL": origin})
+	invalid := exec.CommandContext(ctx, cliPath, "query-events", "--id", created.Project.ID, "--body", `{"sql":"SELECT missing_column FROM events"}`)
+	invalid.Env = cliEnv
+	var diagnostic bytes.Buffer
+	invalid.Stderr = &diagnostic
+	if err := invalid.Run(); err == nil || !strings.Contains(diagnostic.String(), "unknown_column") || !strings.Contains(diagnostic.String(), "get-event-schema") || strings.Contains(diagnostic.String(), admin) {
+		return errors.New("compiled CLI did not preserve safe query recovery guidance")
+	}
 	var cliQuery queryResponse
 	if err := runCLI(ctx, cliPath, cliEnv, query, &cliQuery, "query-events", "--id", created.Project.ID, "--body", "@-"); err != nil {
 		return err
@@ -191,12 +198,33 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if !matches(cliQuery, first.Receipts[0].EventID) {
 		return errors.New("compiled CLI query returned an unexpected event")
 	}
+	var catalog struct {
+		Properties []struct {
+			Key string `json:"key"`
+		} `json:"properties"`
+		Next string `json:"next_property_cursor"`
+	}
+	if err := runCLI(ctx, cliPath, cliEnv, nil, &catalog, "get-event-catalog", "--id", created.Project.ID, "--event", "compiled-smoke", "--property-kind", "custom", "--property-prefix", "amount", "--property-limit", "1"); err != nil {
+		return err
+	}
+	if len(catalog.Properties) != 1 || catalog.Properties[0].Key != "amount" || catalog.Next == "" {
+		return errors.New("compiled CLI filtered property page failed")
+	}
+	cursor := catalog.Next
+	catalog.Properties = nil
+	catalog.Next = ""
+	if err := runCLI(ctx, cliPath, cliEnv, nil, &catalog, "get-event-catalog", "--id", created.Project.ID, "--event", "compiled-smoke", "--property-kind", "custom", "--property-prefix", "amount", "--property-limit", "1", "--property-cursor", cursor); err != nil {
+		return err
+	}
+	if len(catalog.Properties) != 1 || catalog.Properties[0].Key != "amount_minor" || catalog.Next != "" {
+		return errors.New("compiled CLI property continuation failed")
+	}
 	var cliSchema schemaResponse
 	if err := runCLI(ctx, cliPath, cliEnv, nil, &cliSchema, "get-event-schema", "--id", created.Project.ID); err != nil {
 		return err
 	}
 	if !cliSchema.Enabled || cliSchema.SQL.Dialect != "duckdb" || cliSchema.SQL.ResultCache {
-		return errors.New("compiled CLI schema did not describe the experimental DuckDB engine")
+		return errors.New("compiled CLI schema did not describe the DuckDB engine")
 	}
 	var status struct {
 		Status string `json:"status"`

@@ -101,6 +101,9 @@ type EventList struct {
 type EventListOutput struct{ Body EventList }
 type managementError struct {
 	Message string `json:"error"`
+	Code    string `json:"code,omitempty"`
+	Hint    string `json:"hint,omitempty"`
+	Field   string `json:"field,omitempty"`
 	status  int
 }
 
@@ -142,6 +145,10 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	config.Formats = map[string]huma.Format{"application/json": {
 		Marshal: func(w io.Writer, v any) error {
 			if err, ok := v.(huma.StatusError); ok {
+				var managed *managementError
+				if errors.As(err, &managed) {
+					return json.NewEncoder(w).Encode(managed)
+				}
 				return json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			}
 			return json.NewEncoder(w).Encode(v)
@@ -198,7 +205,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	})
 	op := func(id, method, path, summary string, access operationAccess, status int) huma.Operation {
 		responses := map[string]*huma.Response{}
-		errorSchema := &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"error": {Type: "string"}}, Required: []string{"error"}}
+		errorSchema := &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"error": {Type: "string"}, "code": {Type: "string", Description: "Stable error category when available."}, "hint": {Type: "string", Description: "Safe recovery guidance when available."}, "field": {Type: "string", Description: "Query identifier or parameter involved, when safe to return."}}, Required: []string{"error"}}
 		for _, code := range []int{400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503} {
 			responses[fmt.Sprint(code)] = &huma.Response{Description: http.StatusText(code), Content: map[string]*huma.MediaType{
 				"application/json": {Schema: errorSchema}, "application/problem+json": {Schema: errorSchema},
@@ -229,23 +236,24 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
 	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
-	queryOperation.Description = `Agents write the SQL. First discover the dialect, table, allowed functions, cache support and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. The experimental DuckLake engine uses DuckDB SQL, $name bound parameters and fresh reads; do not send ClickHouse SQL to it.
+	queryOperation.Description = `Agents write the SQL. First discover the dialect, table, allowed functions, cache support and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. The default DuckLake backend uses DuckDB SQL, $name bound parameters and fresh reads; do not send ClickHouse SQL to it.
 
-ClickHouse example counting conversations by day and a custom client property:
-SELECT toDate(event_time) AS day, JSONExtractString(properties,'client_id') AS client, count() AS conversations FROM events WHERE event={event:String} GROUP BY day,client ORDER BY day,client
-Parameters: {"event":"conversation_started"}.
-
-DuckDB equivalent:
+DuckDB example counting conversations by day and a custom client property:
 SELECT CAST(event_time AS DATE) AS day, json_extract_string(properties,'$.client_id') AS client, count(*) AS conversations FROM events WHERE event=$event GROUP BY day,client ORDER BY day,client
 Parameters: {"event":"conversation_started"}.
 
+Optional ClickHouse equivalent:
+SELECT toDate(event_time) AS day, JSONExtractString(properties,'client_id') AS client, count() AS conversations FROM events WHERE event={event:String} GROUP BY day,client ORDER BY day,client
+Parameters: {"event":"conversation_started"}.
+
 Example inspecting the latest event pointer returned by the event catalog:
-SELECT uuid,event,properties,timestamp FROM events WHERE uuid={uuid:String} LIMIT 1
+DuckDB: SELECT uuid,event,properties,timestamp FROM events WHERE uuid=$uuid LIMIT 1
+Optional ClickHouse: SELECT uuid,event,properties,timestamp FROM events WHERE uuid={uuid:String} LIMIT 1
 Parameters: {"uuid":"UUID_FROM_CATALOG"}.
 
-Queries see only this project's delivered logical events. event_time uses UTC milliseconds. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables, system metadata, FORMAT or SETTINGS.`
+Queries see only this project's delivered logical events. event_time uses UTC milliseconds. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. get-event-catalog supports property_prefix, property_kind (all, custom, reserved), property_limit and property_cursor. Read https://olup.github.io/porcupine/docs/duckdb-recipes.md for trends, funnels, sessions, retention and percentiles. Query failures may include code, hint and field to guide a correction; use create-event-export when interactive results exceed limits. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables, system metadata, FORMAT or SETTINGS.`
 	huma.Register(api, queryOperation, s.analyticsQuery)
-	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover observed event names, property types and latest-event UUID pointers; property discovery is sampled", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
+	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
 	huma.Register(api, op("get-event", "GET", "/api/v1/projects/{id}/events/{uuid}", "Read the current accepted event and revision, including a pending correction", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEvent)
 	huma.Register(api, op("edit-event", "PATCH", "/api/v1/projects/{id}/events/{uuid}", "Queue an audited full event correction with expected_revision and idempotency_key", operationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.editEvent)
 	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous", operationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
