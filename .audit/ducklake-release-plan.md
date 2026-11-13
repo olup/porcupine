@@ -13,4 +13,7 @@
 - Stopped full-volume restore, backend-mistake reopening and private identify-control guards passed.
 - Size-filtered concurrent maintenance preserved all 180,000 IDs and six lifecycles in each controlled comparison. Removing the maintenance projection lock did not improve overall throughput on the tested host.
 - Actual Open defaults now use 512 MiB and up to 1,000 rows / 4 MiB. The final configured run preserved all 90,000 IDs, six lifecycles and 291 exact query results and drained its queue. Both 1,000/s and 500/s performance predicates remain NOT VERIFIED; see docs/ducklake-maintenance-soak.md.
-- Production producers remain disconnected. Publication and live synthetic checks are the remaining delivery steps.
+- PR #27 merged and v0.11.0 published. Both Linux image architectures, six standalone CLI archives and their checksums were verified. Public hosting and agent docs were deployed.
+- Lightsail now runs the official v0.11.0 image. Existing access was retained and all 16,076 prior test/research events were restored with matching event/day counts. Live HTTP, published CLI and connected MCP checks passed, including native/Segment retry IDs, identity, mutations, isolation, batch webhook and S3 exports/pipelines.
+- The S3 pipeline initially failed because the test credentials lacked ListBucket for missing-manifest lookup. After granting the documented permission, retry succeeded and the downloaded three-row output matched its SHA-256. Temporary receiver removed and synthetic pipelines paused.
+- Production producers remain disconnected. Native analytical data stays on local SSD; S3 destination exports do not provide native analytical tiering. See docs/ducklake-maintenance-soak.md for the completed release checkpoint.

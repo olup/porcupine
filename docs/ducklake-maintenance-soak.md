@@ -97,3 +97,13 @@ The configured `Open` resource walk includes overlapping queue/archive directori
 Current-snapshot file entries do not measure physical storage reclamation. Older snapshots and files remain until separate expiration, rewrite and cleanup policies run. This experiment does not establish a physical-deletion deadline or bounded long-term disk use.
 
 Oldest queued receipt age is sampled, not a per-event visibility-latency histogram. The two analytical readers are closed-loop; their completed query counts can differ between policies. HTTP calls run in-process and omit network/TLS latency. These short single runs do not establish hosted capacity or indefinite steady state.
+
+## Released deployment checkpoint
+
+[v0.11.0](https://github.com/olup/porcupine/releases/tag/v0.11.0) was published and deployed to the Lightsail test instance on 2026-11-13. The release includes Linux amd64 and arm64 images, six standalone CLI archives, and verified archive checksums. The deployment uses the official image, two CPUs, a 3 GiB container memory limit and the 512 MiB shared native engine setting. These limits differ from the 2 GiB benchmark container above.
+
+The live checks passed through HTTPS, the published Linux CLI and an existing human OAuth MCP connection. They covered ingestion, native and Segment retry IDs, identity resolution, property discovery, project isolation, event edits and deletion. All 16,076 prior test and sanitized research events were restored, with counts verified by event name and UTC day. This was an operator-assisted migration, not a shipped automatic ClickHouse migration command.
+
+A webhook received a three-event batch. A one-time S3 export and a scheduled S3 query pipeline each exported the expected three rows. The scheduled pipeline initially failed because its test credentials lacked the documented `s3:ListBucket` permission needed to distinguish a missing commit manifest from access denied. After that permission was granted, retry succeeded. The remote manifest and compressed data were downloaded, and the file checksum and event IDs matched. The temporary webhook receiver was removed and both test pipelines were paused.
+
+Existing human and service access was retained. The old ClickHouse container is stopped, with its storage and an offline rollback checkpoint retained. Production producers remain disconnected. Native analytical files use local SSD; S3 destination pipelines do not enable analytical S3 tiering. These functional deployment checks do not change the failed capacity predicates above.
