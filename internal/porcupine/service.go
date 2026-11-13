@@ -86,8 +86,8 @@ func Open(c Config) (*Service, error) {
 	if c.DuckLake != nil && c.ClickHouse != nil {
 		return nil, errors.New("choose one analytical store: DuckLake or ClickHouse")
 	}
-	if c.DuckLake != nil && (c.HotReceiptLimit != 0 || c.Exports != nil) {
-		return nil, errors.New("the DuckLake experiment does not support finite receipt history or query exports")
+	if c.DuckLake != nil && c.HotReceiptLimit != 0 {
+		return nil, errors.New("DuckLake does not support finite receipt history")
 	}
 	if c.DuckLake != nil && c.DuckLake.MaintenanceInterval < 0 {
 		return nil, errors.New("DuckLake maintenance interval must be nonnegative")
@@ -129,8 +129,8 @@ func Open(c Config) (*Service, error) {
 	}
 	var exports *exportRuntime
 	if c.Exports != nil {
-		if ch == nil {
-			return nil, errors.New("exports require ClickHouse")
+		if ch == nil && c.DuckLake == nil {
+			return nil, errors.New("exports require an analytical store")
 		}
 		ec, err := normalizeExportConfig(*c.Exports)
 		if err != nil {
@@ -276,6 +276,16 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	txFail := func(err error) (*Service, error) {
 		tx.Rollback()
 		return fail(err)
+	}
+	var lakeBound, clickHouseBound bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('query_master_key','projection_table_uuid'))`).Scan(&lakeBound, &clickHouseBound); err != nil {
+		return txFail(err)
+	}
+	if lakeBound && c.DuckLake == nil {
+		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))
+	}
+	if clickHouseBound && c.DuckLake != nil {
+		return txFail(errors.New("this SQLite database is bound to ClickHouse; automatic migration is not supported"))
 	}
 	var initialized string
 	err = tx.QueryRow(`SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)

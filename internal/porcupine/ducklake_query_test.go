@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -183,18 +182,42 @@ func TestDuckLakeQueryNativeCancellationAndLimits(t *testing.T) {
 }
 
 func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
-	if _, err := duckLakeJSONValue(strings.Repeat("x", analyticsMaxBytes+1), analyticsMaxBytes); !errors.Is(err, errDuckLakeResultLimit) {
-		t.Fatalf("large scalar passed preflight: %v", err)
+	store := openLakeStorageTest(t, t.TempDir(), 1)
+	item := lakeStorageProjection(t, "json", "precise", 9007199254740993)
+	item.Properties = json.RawMessage(`{"ids":[9007199254740993,18446744073709551615]}`)
+	if err := store.Apply(context.Background(), []eventProjection{item}); err != nil {
+		t.Fatal(err)
 	}
-	value := map[string]any{"ids": []any{int64(9007199254740993), uint64(18446744073709551615)}}
-	encoded, err := duckLakeJSONValue(value, analyticsMaxBytes)
-	if err != nil || string(encoded) != `{"ids":["9007199254740993","18446744073709551615"]}` {
-		t.Fatalf("nested precision: %s %v", encoded, err)
+	result, err := store.Query(context.Background(), "json", "SELECT json_extract(properties,'$') AS document, first(events) OVER() AS row FROM events", nil)
+	if err != nil || len(result.Data) != 1 {
+		t.Fatalf("raw JSON query: %+v %v", result, err)
 	}
-	for _, value := range []string{"plain", "<>&", "a\x00b", "\n\t\"\\", "日本語", "\u2028\u2029", string([]byte{0xff})} {
-		encoded, err := json.Marshal(value)
-		if err != nil || duckLakeJSONStringSize(value) != len(encoded) {
-			t.Fatalf("incorrect encoded size for %q: %d != %d", value, duckLakeJSONStringSize(value), len(encoded))
+	if string(result.Data[0]["document"]) != `{"ids":[9007199254740993,18446744073709551615]}` {
+		t.Fatalf("JSON precision lost: %s", result.Data[0]["document"])
+	}
+	var row map[string]json.RawMessage
+	if json.Unmarshal(result.Data[0]["row"], &row) != nil || string(row["id"]) != `"9007199254740993"` {
+		t.Fatalf("typed nested integer precision: %s", result.Data[0]["row"])
+	}
+	for _, value := range []string{"plain", "<>&", "a\x00b", "\n\t\"\\", "日本語", "\u2028\u2029"} {
+		result, err := store.Query(context.Background(), "json", "SELECT $value AS value", map[string]string{"value": value})
+		encoded, _ := json.Marshal(value)
+		if err != nil || string(result.Data[0]["value"]) != string(encoded) {
+			t.Fatalf("string encoding for %q: %+v %v", value, result, err)
+		}
+	}
+}
+
+func TestDuckLakeQuerySerializationAliasesAndNonfiniteValues(t *testing.T) {
+	store := openLakeStorageTest(t, t.TempDir(), 1)
+	result, err := store.Query(context.Background(), "aliases", "SELECT 1 AS _pc_result, 2 AS _PC_RESULT_1, 3 AS porcupine_query", nil)
+	if err != nil || len(result.Data) != 1 || len(result.Data[0]) != 3 || string(result.Data[0]["porcupine_query"]) != "3" {
+		t.Fatalf("row alias collided with output column: %+v %v", result, err)
+	}
+	for _, value := range []string{"NaN", "Infinity", "-Infinity"} {
+		_, err := store.Query(context.Background(), "aliases", "SELECT CAST('"+value+"' AS DOUBLE) AS unsupported", nil)
+		if err == nil || queryStatus(err) != 400 {
+			t.Fatalf("non-finite number %s: %v", value, err)
 		}
 	}
 }
