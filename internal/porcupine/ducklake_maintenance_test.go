@@ -529,3 +529,64 @@ func TestDuckLakeMaintenanceDoesNotTakeProjectionLock(t *testing.T) {
 		t.Fatalf("maintenance changed rows: %d %v", count, err)
 	}
 }
+
+type delayedMaintenanceStore struct {
+	lakeStore
+	started, finished chan time.Time
+	release           chan struct{}
+}
+
+func (s *delayedMaintenanceStore) Maintain(ctx context.Context) error {
+	select {
+	case s.started <- time.Now():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case s.finished <- time.Now():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestDuckLakeMaintenanceWaitsBetweenCompletedPasses(t *testing.T) {
+	s := service(t, 100)
+	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := &delayedMaintenanceStore{lakeStore: lake, started: make(chan time.Time, 4), finished: make(chan time.Time, 4), release: make(chan struct{})}
+	s.lake = observed
+	interval := 20 * time.Millisecond
+	s.startLakeMaintenance(interval)
+	defer func() { s.lakeMaintenanceCancel(); <-s.lakeMaintenanceDone }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-observed.started:
+	case <-ctx.Done():
+		t.Fatal("first maintenance did not start")
+	}
+	time.Sleep(3 * interval)
+	close(observed.release)
+	var finish, next time.Time
+	select {
+	case finish = <-observed.finished:
+	case <-ctx.Done():
+		t.Fatal("first maintenance did not finish")
+	}
+	select {
+	case next = <-observed.started:
+	case <-ctx.Done():
+		t.Fatal("second maintenance did not start")
+	}
+	if next.Sub(finish) < interval {
+		t.Fatalf("maintenance had no completion gap: %s", next.Sub(finish))
+	}
+}
