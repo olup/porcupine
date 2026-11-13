@@ -17,13 +17,14 @@ failed=0
 for engine in ${PORCUPINE_ARCH_ENGINES:-ducklake clickhouse}; do
     case "$engine" in ducklake|clickhouse) ;; *) echo 'invalid engine'; exit 1;; esac
     for phase in ${PORCUPINE_ARCH_PHASES:-history mixed projects payloads guard crash}; do
-        case "$phase" in history|mixed|projects|payloads|guard|crash|maintenance) ;; *) echo 'invalid phase'; exit 1;; esac
+        case "$phase" in history|mixed|projects|payloads|guard|crash|maintenance|maintenance-soak) ;; *) echo 'invalid phase'; exit 1;; esac
         if [ "$engine" = clickhouse ] && [ "$phase" = crash ]; then continue; fi
         log="$run_dir/$engine-$phase.log"
         printf '\nRunning %s / %s\n' "$engine" "$phase"
         if docker run --rm --cpus=2 --memory=2g --memory-swap=2g \
             --env PORCUPINE_ARCH_ENGINE="$engine" --env PORCUPINE_ARCH_PHASE="$phase" \
             --env PORCUPINE_MAINT_POLICY="${PORCUPINE_MAINT_POLICY:-}" \
+            --env PORCUPINE_SOAK_SECONDS="${PORCUPINE_SOAK_SECONDS:-}" \
             --mount type=volume,destination=/benchmark-data porcupine-analytics-benchmark > "$log" 2>&1; then
             printf 'Exit: 0\n' >> "$log"
         else

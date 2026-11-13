@@ -509,6 +509,14 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		architectureEmit("maintenance_environment", engine, map[string]any{"policy": policy, "native_version": nativeVersion})
 		s.startDelivery()
 		architectureMixed(t, s, project, token, 1000, 2, 0, true)
+	case "maintenance-soak":
+		if s.lake == nil {
+			t.Fatal("native maintenance experiment requires DuckLake")
+		}
+		if !architectureSeed(t, s, project, 0, 1000000) {
+			return
+		}
+		architectureMaintenanceSoak(t, s, project, token)
 	case "payloads":
 		s.startDelivery()
 		for _, size := range []int{0, 2048, 16384, 65536} {
