@@ -24,7 +24,7 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 		return err
 	}
 	if clickHouseState {
-		return errors.New("the DuckLake experiment requires a dedicated SQLite database; migration from ClickHouse is not implemented")
+		return errors.New("DuckLake requires a dedicated SQLite database; automatic migration from ClickHouse is not implemented")
 	}
 	actual, err := s.lake.SourceID(ctx)
 	if err != nil || actual == "" || (expected != "" && expected != actual) {
