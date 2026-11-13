@@ -1,4 +1,35 @@
-# Run a coordinated backup and restore drill
+# Back up and restore an instance
+
+## Default DuckLake stopped-volume backup
+
+A DuckLake recovery point needs the complete data volume from one stopped application: SQLite, its WAL state, the DuckLake registry, every project catalog, and every managed Parquet file. Saving only SQLite or only Parquet loses part of the recovery state. The current online ClickHouse checkpoint tool does not support DuckLake.
+
+Use the same complete Compose overlay list as the live instance. The following example uses the local quickstart overlays. The archive stays on the host until you copy it to private off-host storage.
+
+```sh
+umask 077
+mkdir -p backups
+backup_name="porcupine-$(date -u +%Y%m%dT%H%M%SZ).tar"
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml stop porcupine
+container_id=$(docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml ps -a -q porcupine)
+docker cp "$container_id:/data/." - > "backups/$backup_name"
+tar -tf "backups/$backup_name" >/dev/null
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml start porcupine
+```
+
+The server must remain stopped for the entire copy. Check every command's exit status before resuming normal operation. Keep the matching image digest, private deployment configuration, encryption keys, and archive together. Protect the archive as credential-bearing data. Copy it off the host and verify that copy.
+
+### Restore into isolated storage
+
+Keep the original deployment intact. Create a fresh volume and a stopped container using the same image and the same internal `/data` paths. Extract the archive into that volume with the ownership expected by the nonroot server. Restore the matching pipeline encryption key separately.
+
+Before starting a recovered instance, block destination egress and pause all restored pipelines. Reconcile credential revocations and project deletions that happened after the checkpoint. Saved OAuth refresh tokens and API credentials in a manual full-volume copy remain part of that copy; restoring the files does not automatically revoke them. Isolate the recovered instance from the source export bucket during a drill, because pending project cleanup can remove managed objects.
+
+Start one recovered writer, then check SQLite readiness, instance status, project access, known event counts, identify results, edited and deleted events, and pending queue drainage. Retry known producer message IDs and confirm their event IDs are unchanged. Test a second project to verify isolation. Re-enable clients and destinations only after these checks pass.
+
+Keep the same internal paths. Moving DuckLake files to another data root is not a supported relocation procedure in this release. Cross-version restore and restoration of mismatched SQLite/catalog checkpoints are also outside the contract.
+
+## Optional ClickHouse restore drill
 
 For a running instance see [online backup and restore](online-backup.md).
 
@@ -12,7 +43,7 @@ Use Docker, Python 3, and the repository's Go toolchain. The drill uses the pinn
 
 Expect two passing `TestRestoreDrillFixture` runs followed by a JSON report with `"status": "passed"`. The script removes its containers, volumes, networks, private credentials, and temporary backup files on exit. The report contains no credentials or event payloads. Run the command again to repeat the complete drill with fresh state.
 
-## Create the recovery point
+### Create the recovery point
 
 The script executes these steps against its own disposable storage:
 
@@ -25,7 +56,7 @@ The script executes these steps against its own disposable storage:
 
 Keep all three copies at the same recovery point. ClickHouse's native S3 disk needs both its local metadata and its remote objects. A bucket listing or an object copy without the corresponding metadata does not establish a usable backup.
 
-## Restore into separate storage
+### Restore into separate storage
 
 The script restores the copies into a different SQLite file and fresh ClickHouse and MinIO containers. The source containers remain stopped. A separate Docker network preserves the original MinIO endpoint name as a network alias, without connecting the restored storage to the source network. Before opening restored SQLite, the script pauses every pipeline destination in one transaction. Backups without pipeline tables need no pause update.
 
@@ -45,7 +76,7 @@ The verification phase checks the following results:
 
 The fixture gates ClickHouse requests while stopping the background delivery worker. It then invokes the production flush functions explicitly. This lets the test inspect the restored pending state before replay begins.
 
-## Pause egress before starting a manual copy
+### Pause egress before starting a manual copy
 
 A manual database or full-volume restore does not run the native operator tool's safety transformations. A copied active destination can resume sending webhook or S3 requests as soon as the recovered application starts. Keep the recovered application stopped and external network access restricted until you have paused every destination and reviewed pending delivery records.
 
@@ -77,7 +108,7 @@ The lifetime lock refuses this change while a guarded application is running. Th
 
 Preserve the original pipeline encryption key outside SQLite and ClickHouse backups. Restore the same `PORCUPINE_PIPELINE_KEY` value or the secure file configured by `PORCUPINE_PIPELINE_KEY_FILE`. Review destination ownership, pending deliveries, post-checkpoint credential revocations, and possible receiver-side effects before resuming any destination. Keeping the key available does not itself authorize restored egress.
 
-## Preserve the recovery boundary
+### Preserve the recovery boundary
 
 For a live single-host instance, use the [online backup and restore procedure](online-backup.md).
 

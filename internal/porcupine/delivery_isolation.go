@@ -58,6 +58,23 @@ type deliveryIsolation struct {
 }
 
 func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool, error) {
+	if s.lake != nil {
+		projections := make([]eventProjection, 0, len(batch))
+		for _, event := range batch {
+			snapshot, err := originalSnapshot(event)
+			if err != nil {
+				return false, err
+			}
+			projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
+		}
+		if err := s.lake.Apply(ctx, projections); err != nil {
+			return false, err
+		}
+		if err := s.acknowledgeOriginals(ctx, batch); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	err := s.ch.insert(ctx, batch)
 	if err == nil {
 		if err = s.acknowledgeOriginals(ctx, batch); err != nil {

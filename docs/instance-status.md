@@ -26,11 +26,12 @@ An example response is:
 ```json
 {
 	"status": "ok",
-	"version": "0.10.0",
+	"version": "0.11.0",
 	"checked_at": "2026-11-12T12:00:00Z",
 	"checks": {
 		"sqlite": "ok",
-		"clickhouse": "ok"
+		"ducklake": "ok",
+		"clickhouse": "not_configured"
 	},
 	"configuration": {
 		"query_exports": false,
@@ -45,7 +46,7 @@ An example response is:
 
 ## Interpret the response
 
-`checks.sqlite` tests the local database connection. `checks.clickhouse` performs an authenticated `SELECT 1` in the configured database. Each probe has a one-second deadline. ClickHouse reports `not_configured` when no analytical database is configured. A successful probe does not verify every table, project reader, or delivery worker.
+`checks.sqlite` tests the local database connection. `checks.ducklake` verifies the native archive registry identity. Optional ClickHouse deployments use an authenticated `SELECT 1` for `checks.clickhouse`. Each probe has a one-second deadline. An unused backend reports `not_configured`. These checks do not verify every project catalog, maintenance progress, or a drained delivery queue.
 
 The overall `status` is `degraded` when a live check fails. The report still returns HTTP `200`, so clients must inspect the JSON status. Optional services that are not configured do not degrade the instance. Checks run afresh, and responses use `Cache-Control: no-store`. Only one report can run at a time; a concurrent request returns `429`.
 

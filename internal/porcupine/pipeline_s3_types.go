@@ -45,7 +45,7 @@ func validateS3PipelineSecret(c S3PipelineSecret) error {
 	}
 	return nil
 }
-func validateS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
+func normalizeS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
 	fail := func() (S3PipelineSpec, error) { return c, errors.New("invalid S3 pipeline specification") }
 	if c.Format == "" {
 		c.Format = "jsonl"
@@ -82,6 +82,15 @@ func validateS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
 		d.Endpoint = origin
 		d.UsePathStyle = true
 	}
+	return c, nil
+}
+
+func validateS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
+	c, err := normalizeS3PipelineSpec(c)
+	if err != nil {
+		return c, err
+	}
+	fail := func() (S3PipelineSpec, error) { return c, errors.New("invalid S3 pipeline specification") }
 	sources := map[*chsql.TableIdentifier]bool{}
 	declared := map[string]string{}
 	canonical, err := validateSQLWithReferences(c.SQL, sqlReferences{eventSources: sources, parameters: declared})
@@ -184,4 +193,16 @@ func pipelineWindowParameters(spec S3PipelineSpec, start, end int64) map[string]
 	p["window_start"] = strconv.FormatInt(start, 10)
 	p["window_end"] = strconv.FormatInt(end, 10)
 	return p
+}
+
+func (s *Service) validateS3PipelineSpec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {
+	if s.lake == nil {
+		return validateS3PipelineSpec(c)
+	}
+	c, err := normalizeS3PipelineSpec(c)
+	if err != nil {
+		return c, err
+	}
+	c.SQL, err = s.lake.ValidateExport(ctx, project, c.SQL, c.Parameters, true)
+	return c, err
 }

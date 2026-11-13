@@ -12,8 +12,8 @@ import (
 func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 	s.catalogMu.RLock()
 	defer s.catalogMu.RUnlock()
-	if s.ch == nil {
-		return false, errors.New("ClickHouse delivery is disabled")
+	if s.ch == nil && s.lake == nil {
+		return false, errors.New("analytical delivery is disabled")
 	}
 	ctx, release, err := s.projectionContext(ctx)
 	if err != nil {
@@ -56,10 +56,7 @@ func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 	if len(projections) == 0 {
 		return false, nil
 	}
-	if err := s.ch.initialize(ctx); err != nil {
-		return false, err
-	}
-	if err := s.ch.insertProjections(ctx, projections); err != nil {
+	if err := s.applyAnalyticalProjections(ctx, projections); err != nil {
 		return false, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -60,4 +60,6 @@ nav:
       - SDK compatibility tests: sdk-compatibility-tests.md
       - Benchmarks: benchmarks.md
       - Load testing: load-testing.md
+      - DuckLake development notes: ducklake-experiment.md
+      - DuckLake validation: ducklake-validation.md
       - Roadmap: roadmap.md

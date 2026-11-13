@@ -95,7 +95,7 @@ def check(directory, binary, origin, bootstrap):
                             ["management:read", "management:write", "events:write"])["token"]
     status = json.loads(cli("get-instance-status", key=admin_key))
     assert status["status"] == "ok" and status["checks"] == {
-        "sqlite": "ok", "clickhouse": "not_configured"}
+        "sqlite": "ok", "clickhouse": "not_configured", "ducklake": "not_configured"}
     assert not any(status["configuration"].values()), "unexpected optional services"
     cli("create-project", "--body", '{"name":"   "}', key=admin_key, denied=400,
         message="name must contain 1 to 200 UTF-8 bytes")

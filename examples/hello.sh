@@ -24,7 +24,12 @@ event_id=$(openssl rand -hex 16)
 payload=$(jq -nc --arg key "$ingest_key" --arg id "$event_id"     '{api_key:$key,uuid:$id,event:"hello",distinct_id:"$posthog_cookieless",properties:{source:"quickstart"}}')
 printf '%s' "$payload" |
     curl --fail --silent --show-error "$PORCUPINE_URL/capture/"         -H 'Content-Type: application/json' --data-binary @- >/dev/null
-query='{"sql":"SELECT event, count() AS total FROM events WHERE event={name:String} GROUP BY event","parameters":{"name":"hello"},"use_cache":false}'
+dialect=$(porcupine get-event-schema --id "$project_id" | jq -er '.sql.dialect')
+case "$dialect" in
+    duckdb) query='{"sql":"SELECT event, count(*) AS total FROM events WHERE event=$name GROUP BY event","parameters":{"name":"hello"},"use_cache":false}' ;;
+    clickhouse) query='{"sql":"SELECT event, count() AS total FROM events WHERE event={name:String} GROUP BY event","parameters":{"name":"hello"},"use_cache":false}' ;;
+    *) echo "Unsupported SQL dialect: $dialect" >&2; exit 1 ;;
+esac
 attempt=0
 while [ "$attempt" -lt 90 ]; do
     if result=$(porcupine query-events --id "$project_id" --body "$query") &&
@@ -36,5 +41,5 @@ while [ "$attempt" -lt 90 ]; do
     attempt=$((attempt + 1))
     sleep 1
 done
-echo "Timed out waiting for ClickHouse delivery" >&2
+echo "Timed out waiting for analytical delivery" >&2
 exit 1

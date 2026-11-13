@@ -1,5 +1,7 @@
 # Load testing
 
+The HTTP load script below currently uses ClickHouse-specific run-marker SQL. Use it on the optional ClickHouse backend. Native sustained-load scenarios are documented in the [DuckLake validation report](ducklake-validation.md) and [maintenance investigation](ducklake-maintenance.md).
+
 `scripts/load.py` uses Python's standard library to drive a configured HTTP or
 HTTPS service. It creates synthetic events in an existing project. It does not
 create projects, change storage settings, or delete the generated events.

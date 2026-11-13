@@ -27,9 +27,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
 
-`query-events` accepts an optional `use_cache` Boolean. Omitted or `true` allows
-a 60-second ClickHouse result cache. `false` bypasses both cache directions and
-reads currently projected data. See [the analytics reference](analytics.md#cached-and-fresh-queries)
+`query-events` accepts an optional `use_cache` Boolean. The default DuckLake backend always executes fresh queries and reports `sql.result_cache: false`. Optional ClickHouse deployments can use a 60-second cache when the field is omitted or true. A false value bypasses that cache. See [the analytics reference](analytics.md#cached-and-fresh-queries)
 for mutation invalidation and delivery consistency.
 
 | Operation | Required authority | Success |
@@ -152,7 +150,7 @@ for delivery returns `requeued:false`. A missing or already acknowledged origina
 returns `404`, including an event ID belonging to a different project.
 
 Retry preserves the original event ID, UUID, payload, revision, and receipt time.
-It does not acknowledge ClickHouse delivery, remove the accepted payload, or free
+It does not acknowledge analytical delivery, remove the accepted payload, or free
 queue capacity. The normal delivery worker processes the event after retry. No
 service restart or pause is needed. A remaining row-specific rejection can
 quarantine the event again. Inspect project delivery status and quarantine
@@ -207,7 +205,7 @@ with the same envelope.
 | `413` | Request body exceeds 1 MiB |
 | `415` | Unsupported body encoding or content type |
 | `422` | Request schema validation failed, including wrong types, required fields, or invalid limits |
-| `429` | Analytics concurrency or ClickHouse resource limit exceeded |
+| `429` | Analytics concurrency or database resource limit exceeded |
 | `500` | Storage or internal error |
 | `503` | Analytics storage, reader provisioning, or delivery-status storage unavailable |
 

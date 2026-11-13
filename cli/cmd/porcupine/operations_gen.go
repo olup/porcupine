@@ -210,7 +210,7 @@ var operations = []operation{
 	},
 	{
 		ID: "get-instance-status", Method: "GET", Path: "/api/v1/status",
-		Summary: "Read instance version, bounded SQLite and ClickHouse health checks, and optional service configuration without secrets or project data",
+		Summary: "Read instance version, bounded storage checks, and optional service configuration without secrets or project data",
 	},
 	{
 		ID: "get-pipeline", Method: "GET", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}",
@@ -350,15 +350,15 @@ var operations = []operation{
 	},
 	{
 		ID: "query-events", Method: "POST", Path: "/api/v1/projects/{id}/query",
-		Summary: "Execute agent-written read-only ClickHouse SQL against this project's events",
+		Summary: "Execute agent-written read-only SQL against this project's events in the discovered dialect",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 		},
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
-			"parameters (object) Typed ClickHouse placeholders such as {event:String}. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
+			"parameters (object) Bound scalar parameters. Discover the deployment dialect with get-event-schema: ClickHouse uses {event:String}, experimental DuckDB uses $event and optional SQL casts. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
 			"sql (string, required) One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
-			"use_cache (boolean) Omitted or true allows a 60-second ClickHouse result cache. False bypasses cache reads and writes and reads currently projected data. Caching is bypassed while edits or deletions await projection.",
+			"use_cache (boolean) Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The DuckLake experiment always executes fresh.",
 		},
 	},
 	{

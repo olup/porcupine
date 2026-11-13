@@ -1,0 +1,5 @@
+{"committed":false,"engine":"ducklake","native_version":"v2.0.0","operation":"delete_matched","phase":"native_conflict","platform":"darwin/arm64","rows":101,"time":"2026-11-13T14:47:12Z","verdict":"VERIFIED"}
+{"committed":true,"engine":"ducklake","native_version":"v2.0.0","operation":"delete_unmatched","phase":"native_conflict","platform":"darwin/arm64","rows":101,"time":"2026-11-13T14:47:12Z","verdict":"VERIFIED"}
+{"committed":true,"engine":"ducklake","native_version":"v2.0.0","operation":"insert_only","phase":"native_conflict","platform":"darwin/arm64","rows":102,"time":"2026-11-13T14:47:12Z","verdict":"VERIFIED"}
+{"committed":false,"engine":"ducklake","native_version":"v2.0.0","operation":"merge_unmatched","phase":"native_conflict","platform":"darwin/arm64","rows":101,"time":"2026-11-13T14:47:12Z","verdict":"VERIFIED"}
+{"committed":false,"engine":"ducklake","native_version":"v2.0.0","operation":"merge_matched","phase":"native_conflict","platform":"darwin/arm64","rows":101,"time":"2026-11-13T14:47:12Z","verdict":"VERIFIED"}

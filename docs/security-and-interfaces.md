@@ -74,7 +74,7 @@ Porcupine's own query API serves its native analytics model. HogQL compatibility
 ## Analytics and MCP
 
 [The analytics API](analytics.md) provides SQL schema discovery, observed event
-and sampled property discovery, and read-only ClickHouse queries. Every request
+and sampled property discovery, and read-only project SQL queries. Every request
 targets one project and requires `events:read`. Agents write their own SQL.
 There are no named prebuilt metrics or saved SQL catalogs. Statistical meaning
 still depends on the event model, especially for daily cookieless identities.
@@ -93,45 +93,21 @@ CORS grants do not apply to MCP.
 
 ## Restricted SQL
 
-A parser accepts one supported `SELECT` or `WITH` query against `events` and
-local CTEs. The exact function allowlist comes from `get-event-schema`. Sequential
-CTEs, joins, subqueries, `UNION`, aggregation, and typed scalar parameters are
-supported. Unsupported syntax fails closed. Writes, qualified source tables,
-system metadata, external sources, table functions, `FORMAT`, `SETTINGS`,
-windows, lambdas, `CAST`, and recursive CTEs are excluded.
+The default backend parses native DuckDB SQL and checks its AST before execution. Queries can read `events` and local CTEs using allowed functions. Aggregates, joins, subqueries, `UNION`, windows, and scalar casts are supported. Writes, qualified tables, private columns, system metadata, external sources, table functions, recursive CTEs, time travel, and configuration changes are rejected.
 
-The configured ClickHouse account provisions schema and project readers. Client
-SQL executes as a restricted project-specific account, through an invoker-security
-view with a project predicate. A physical-table row policy also restricts that
-reader to the same project. The view applies `FINAL` for latest live revision
-selection. Reader settings enforce `final=1` and disable prewhere movement for
-final reads. Column-only physical-table grants exclude private originals and
-tombstone internals. Clients do not receive those database credentials. Even
-instance administrators execute SQL through these read-only project readers.
+Each project has a separate DuckLake catalog and engine context. The public view excludes private originals and tombstone internals. The engine's filesystem permissions are restricted to its managed directory and external access is disabled after initialization. Query parameter values are bound separately, with exact name matching. Even instance administrators use these project-scoped read-only paths.
 
-Reader settings fix read-only mode and disable DDL and introspection. They
-limit execution to five seconds, memory to 256 MiB, scanned rows to five million,
-read bytes to 1 GiB, and results to 1,000 rows and 1 MiB. The request timeout is
-ten seconds, with at most two concurrent analytical requests instance-wide.
-Supplied SQL cannot change these settings. Parameters stay separate from SQL
-and require exact declared names and safe scalar types.
+Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#fixed-query-limits).
 
-Public statistics include elapsed time, not physical scan rows or bytes.
-Delivery status reports only the requested project's pending original and
-mutation counts and last success. A generic worker error appears only when that
-project has pending work. Internal ClickHouse error messages and credentials are not returned.
+The optional ClickHouse backend provisions restricted project readers, invoker-security views, physical-table row policies, and column-only grants. It applies `FINAL` for current revision selection and fixes read-only and resource settings. Its additional per-query memory, scanned-row, and read-byte limits are backend-specific.
 
-`make integration` exercises the real ClickHouse boundaries, including a direct
-physical-table read as the project reader. This complements parser restrictions;
-SQL parsing alone is not the database isolation boundary.
+Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native and ClickHouse suites test their real storage boundaries in addition to parser rejection.
 
 ## Operator storage boundary
 
-[S3 tiering](storage.md) is global deployment configuration. Bucket endpoint,
-AWS credentials, ClickHouse policy, cold volume, and hot duration have no HTTP
-or MCP management operation. S3 credentials go only to the ClickHouse container.
-Project credentials and agent clients cannot change those settings. Native cold
-storage preserves query access; it is separate from export pipelines.
+Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Native analytical S3 storage is not available in this release.
+
+Optional ClickHouse [S3 tiering](storage.md) uses operator-controlled bucket endpoints, credentials, policies, and hot duration. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
 ## Pipeline boundaries
 
@@ -151,7 +127,7 @@ private-network targets. Custom S3 endpoints require an exact origin in the
 operator allowlist. These are distinct destination controls; allowing an S3
 origin does not permit private webhook traffic.
 
-Supported restores pause every destination. A restore cannot reverse a request
+Manual full-volume restores require the operator to pause every destination before allowing egress. The optional ClickHouse operator restore tool performs that pause automatically. A restore cannot reverse a request
 or object write already accepted elsewhere. Stable delivery identifiers and
 receiver deduplication remain part of the contract. See the pipeline reference
 for limits, credential replacement, and retry behavior.

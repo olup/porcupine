@@ -1,10 +1,14 @@
 .PHONY: build run test check fmt integration integration-s3
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o bin/porcupine ./cmd/porcupine
+	CGO_ENABLED=1 go build -tags ducklake -trimpath -o bin/porcupine ./cmd/porcupine
+
+.PHONY: build-clickhouse
+build-clickhouse:
+	CGO_ENABLED=0 go build -trimpath -o bin/porcupine-clickhouse ./cmd/porcupine
 
 run:
-	go run ./cmd/porcupine
+	CGO_ENABLED=1 go run -tags ducklake ./cmd/porcupine
 
 test:
 	go test ./...
@@ -71,3 +75,31 @@ docs:
 .PHONY: docs-preview
 docs-preview: docs
 	python3 scripts/serve_docs.py
+
+.PHONY: ducklake-build ducklake-test ducklake-smoke ducklake-bench ducklake-compare
+ducklake-build:
+	CGO_ENABLED=1 go build -tags ducklake -trimpath -o bin/porcupine-ducklake ./cmd/porcupine
+
+.PHONY: ducklake-performance-compare
+ducklake-performance-compare:
+	sh scripts/analytics-benchmark.sh
+
+.PHONY: ducklake-batching-bench
+ducklake-batching-bench:
+	PORCUPINE_BENCH_BATCHING=1 sh scripts/analytics-benchmark.sh
+
+.PHONY: ducklake-architecture-test
+ducklake-architecture-test:
+	sh scripts/architecture-benchmark.sh
+
+ducklake-test:
+	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=120s
+
+ducklake-smoke: ducklake-build cli
+	go run ./internal/cmd/ducklake-smoke -server ./bin/porcupine-ducklake -cli ./bin/cli/porcupine
+
+ducklake-bench:
+	CGO_ENABLED=1 go test -tags ducklake ./internal/porcupine -run '^$$' -bench '^BenchmarkDuckLake' -benchtime=10x -benchmem -timeout=120s
+
+ducklake-compare:
+	CGO_ENABLED=1 GOFLAGS=-tags=ducklake python3 scripts/integration.py

@@ -19,7 +19,7 @@ jobs:
           - { arch: amd64, runner: ubuntu-24.04 }
           - { arch: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,7 +34,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY,,}:$version"
           # A tagged checkout must select its corresponding prebuilt image.
-          PORCUPINE_BOOTSTRAP_TOKEN=check PORCUPINE_CLICKHOUSE_PASSWORD=check \
+          PORCUPINE_BOOTSTRAP_TOKEN=check \
             docker compose -f compose.yaml -f compose.release.yaml config --images | grep -Fx "$image"
           docker build --platform "linux/$ARCH" --build-arg VERSION="$version" \
             --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
@@ -42,13 +42,57 @@ jobs:
             --label org.opencontainers.image.version="$version" \
             --label org.opencontainers.image.licenses=MIT -t "$image" .
           test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$ARCH"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "65532:65532"
           test "$(docker run --rm "$image" --version)" = "$version"
           export PORCUPINE_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
-          cid="$(docker run -d -p 127.0.0.1::8080 -e PORCUPINE_BOOTSTRAP_TOKEN "$image")"
-          trap 'docker rm -f "$cid" >/dev/null' EXIT
-          address="$(docker port "$cid" 8080/tcp)"
-          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 1 "http://$address/readyz" |
+          network="porcupine-release-$ARCH-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          server="porcupine-release-server-$ARCH-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          curl_image="curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
+          docker pull "$curl_image"
+          docker network create --internal "$network" >/dev/null
+          cid=""
+          cleanup() {
+            if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi
+            docker network rm "$network" >/dev/null
+          }
+          trap cleanup EXIT
+          # No outbound internet: the nonroot image must load its bundled extension.
+          cid="$(docker run -d --name "$server" --network "$network" --memory=2g --cpus=2 \
+            -e PORCUPINE_BOOTSTRAP_TOKEN "$image")"
+          curl() { docker run --rm --network "$network" "$curl_image" "$@"; }
+          origin="http://$server:8080"
+          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 1 "$origin/readyz" |
             jq -e '.status == "ready"'
+          created="$(curl --fail --silent --show-error "$origin/api/v1/projects" \
+            -H "Authorization: Bearer $PORCUPINE_BOOTSTRAP_TOKEN" -H 'Content-Type: application/json' \
+            --data '{"name":"release artifact smoke"}')"
+          project="$(printf '%s' "$created" | jq -er '.project.id')"
+          ingest="$(printf '%s' "$created" | jq -er '.ingest_token')"
+          payload='{"type":"track","message_id":"release-smoke-stable","actor_id":"synthetic-visitor","name":"release-smoke","timestamp":"2026-11-01T12:00:00Z","properties":{"amount":42}}'
+          first="$(curl --fail --silent --show-error "$origin/ingest/v1/events" \
+            -H "X-Porcupine-Key: $ingest" -H 'Content-Type: application/json' --data "$payload")"
+          event_id="$(printf '%s' "$first" | jq -er '.receipts[0].event_id | select(type == "string" and length > 0)')"
+          query='{"sql":"SELECT event_id,event FROM events WHERE event=$name","parameters":{"name":"release-smoke"},"use_cache":false}'
+          visible=false
+          for attempt in $(seq 1 120); do
+            if result="$(curl --fail --silent --show-error "$origin/api/v1/projects/$project/query" \
+              -H "Authorization: Bearer $PORCUPINE_BOOTSTRAP_TOKEN" -H 'Content-Type: application/json' --data "$query")"; then
+              if printf '%s' "$result" | jq -e --arg id "$event_id" \
+                '.result.rows == 1 and (.result.data | length) == 1 and .result.data[0].event_id == $id and .result.data[0].event == "release-smoke"' >/dev/null; then
+                visible=true
+                break
+              fi
+            fi
+            sleep 0.5
+          done
+          test "$visible" = true
+          retry="$(curl --fail --silent --show-error "$origin/ingest/v1/events" \
+            -H "X-Porcupine-Key: $ingest" -H 'Content-Type: application/json' --data "$payload")"
+          printf '%s' "$retry" | jq -e --arg id "$event_id" \
+            '.duplicates == 1 and .receipts[0].event_id == $id' >/dev/null
+          curl --fail --silent --show-error "$origin/api/v1/projects/$project/schema" \
+            -H "Authorization: Bearer $PORCUPINE_BOOTSTRAP_TOKEN" |
+            jq -e '.enabled == true and .sql.dialect == "duckdb"' >/dev/null
           mkdir dist
           docker save "$image" | gzip -1 > "dist/porcupine-$version-linux-$ARCH.tar.gz"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
@@ -107,7 +151,7 @@ jobs:
             jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Porcupine $GITHUB_REF_NAME" --generate-notes \
-            --notes "Self-hosted analytics for agents with PostHog-compatible capture, project-scoped SQL, webhooks and scheduled S3 delivery.
+            --notes "Headless product analytics with embedded DuckDB/DuckLake, durable ingestion, project-scoped SQL, identity resolution and editable events.
 
           Pull \`$repo:$version\` or verify the archive for your architecture against \`SHA256SUMS\` and import it with \`docker load\`. Both contain the same tested image.
 

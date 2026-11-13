@@ -99,9 +99,9 @@ For example, these three members of a Segment batch describe the same two analyt
 
 ```sql
 SELECT event_id, source_id, message_id, event_type, event, distinct_id, person_id,
-       JSONExtractString(context, 'page', 'url') AS page_url
+       json_extract_string(context, '$.page.url') AS page_url
 FROM events
-WHERE person_id = {user:String}
+WHERE person_id = $user
 ORDER BY id
 ```
 

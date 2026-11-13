@@ -43,16 +43,16 @@ Replace `article_published` with a name from your project. The schema and catalo
 This query counts each event by UTC day:
 
 ```sh
-porcupine query-events --id "$PROJECT_ID" --body '{"sql":"SELECT toDate(event_time) AS day, event, count() AS total FROM events GROUP BY day, event ORDER BY day, event LIMIT 100"}'
+porcupine query-events --id "$PROJECT_ID" --body '{"sql":"SELECT CAST(event_time AS DATE) AS day, event, count() AS total FROM events GROUP BY day, event ORDER BY day, event LIMIT 100"}'
 ```
 
-Rows appear under `result.data`. ClickHouse returns 64-bit integers, including counts, as strings to preserve precision. An empty array means the query found no delivered rows.
+Rows appear under `result.data`. Porcupine returns 64-bit integers, including counts, as strings to preserve precision. An empty array means the query found no delivered rows.
 
 For a filtered query, save the following as `query.json`:
 
 ```json
 {
-	"sql": "SELECT JSONExtractString(properties, 'category') AS category, count() AS total FROM events WHERE event={name:String} GROUP BY category ORDER BY total DESC LIMIT 100",
+	"sql": "SELECT json_extract_string(properties, '$.category') AS category, count() AS total FROM events WHERE event=$name GROUP BY category ORDER BY total DESC LIMIT 100",
 	"parameters": {"name": "article_published"}
 }
 ```
@@ -63,13 +63,13 @@ Run it with:
 porcupine query-events --id "$PROJECT_ID" --body @query.json
 ```
 
-Replace the event name and property key with values observed in your project. Typed parameters keep values separate from SQL. The [SQL reference](analytics.md) lists supported syntax, parameter types, and fixed execution limits.
+Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](analytics.md) lists supported syntax, bindings, and fixed execution limits.
 
 For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. Through MCP, call `query-events` with `path: {"id": "PROJECT_ID"}` and the JSON as `body`. See the [MCP request examples](mcp.md#execution-with-porcupine_call).
 
 ## Check a recently sent event
 
-Queries use ClickHouse's result cache by default, with a 60-second TTL. Add `"use_cache": false` to the request body to bypass cache reads and writes. Fresh queries still read only events already delivered to ClickHouse.
+DuckLake queries execute against the current delivered state. This backend does not implement a result cache; `sql.result_cache` is `false` in schema discovery. `"use_cache": false` is accepted and explicitly requests a fresh query. Optional ClickHouse deployments can use a 60-second cache. Neither mode waits for queued events to reach analytical storage.
 
 The response's `delivery.pending` and `delivery.pending_mutations` report work awaiting projection. After sending an event, allow that work to drain before checking its count. See [query consistency](analytics.md#delivery-consistency-and-errors) and [cache behavior](analytics.md#cached-and-fresh-queries).
 

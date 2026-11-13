@@ -39,9 +39,9 @@ posthog.reset()
 Once delivery catches up, the two ordinary events keep their original IDs and share a person:
 
 ```sql
-SELECT event, distinct_id, person_id, JSONExtractString(person_properties, 'plan') AS plan
+SELECT event, distinct_id, person_id, json_extract_string(person_properties, '$.plan') AS plan
 FROM events
-WHERE person_id = {user:String}
+WHERE person_id = $user
 ORDER BY received_at_ms, id
 ```
 
@@ -53,12 +53,12 @@ Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_star
 - `$identify` records the target user's ID and links a supplied `$anon_distinct_id` to that user. A call with no anonymous ID can still update the target profile. Multiple anonymous browsers may each link to the same identified user.
 - `$set_once` fills missing traits and `$set` supplies current values, including updates made by a subsequent identify on the same user. Control records travel through the durable queue and stay out of analytics event counts and webhook payloads.
 - A link belongs to one project and cannot be reassigned to another user. An already identified user cannot become another user's anonymous predecessor. Cookieless sentinels and server-generated daily cookieless IDs cannot participate. If a control has invalid traits or a conflicting link, Porcupine accepts a durable no-op and increments `identity_ignored` in the capture response. Other valid events in the batch still go through. A profile accepts up to 128 top-level traits, 200 bytes per key, and 32 KiB of encoded JSON.
-- SQLite commits identity changes and their projection records in the same capture transaction. The usual project/UUID receipt deduplicates retries. ClickHouse resolves links on reads after delivery, without rewriting historical events. A capture acknowledgment can precede the identity projection.
+- SQLite commits identity changes and their projection records in the same capture transaction. The usual project/UUID receipt deduplicates retries. The analytical view resolves links on reads after delivery, without rewriting historical events. A capture acknowledgment can precede the identity projection.
 - General aliasing, merging two identified users, unlinking, and person-profile deletion do not have API operations in this implementation. Event corrections and deletions apply to ordinary events, and supported restores include identity state. The reserved `identity:write` permission does not grant a management API.
 
 ## Session semantics
 
-For events carrying a real SDK `$session_id`, the PostHog adapter exposes it in `context.session_id`. In SQL, use `JSONExtractString(context, 'session_id')` and exclude empty values before grouping. Backend events can join the same session when the application propagates the ID. The cookieless profile strips browser session IDs.
+For events carrying a real SDK `$session_id`, the PostHog adapter exposes it in `context.session_id`. In SQL, use `json_extract_string(context, '$.session_id')` and exclude empty values before grouping. Backend events can join the same session when the application propagates the ID. The cookieless profile strips browser session IDs.
 
 The span between the first and last event measures observed activity. A quiet reader produces no new timestamp. If your product needs a live visitor count, instrument activity or heartbeats and choose an explicit time window. The [compatibility matrix](../compat/matrix.json) documents the browser session and reset behavior exercised by the SDK tests.
 

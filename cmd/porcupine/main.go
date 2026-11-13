@@ -60,20 +60,10 @@ func main() {
 	if raw := os.Getenv("PORCUPINE_TRUSTED_PROXIES"); raw != "" {
 		trustedProxies = strings.Split(raw, ",")
 	}
-	var clickHouse *porcupine.ClickHouseConfig
-	if endpoint := os.Getenv("PORCUPINE_CLICKHOUSE_URL"); endpoint != "" {
-		hotDays := 0
-		if raw := os.Getenv("PORCUPINE_HOT_STORAGE_DAYS"); raw != "" {
-			parsed, err := strconv.Atoi(raw)
-			if err != nil || parsed < 1 || parsed > 36500 {
-				slog.Error("PORCUPINE_HOT_STORAGE_DAYS must be between 1 and 36500")
-				os.Exit(1)
-			}
-			hotDays = parsed
-		}
-		clickHouse = &porcupine.ClickHouseConfig{URL: endpoint, Database: os.Getenv("PORCUPINE_CLICKHOUSE_DATABASE"),
-			User: os.Getenv("PORCUPINE_CLICKHOUSE_USER"), Password: os.Getenv("PORCUPINE_CLICKHOUSE_PASSWORD"),
-			StoragePolicy: os.Getenv("PORCUPINE_CLICKHOUSE_STORAGE_POLICY"), HotStorageDays: hotDays, ColdVolume: os.Getenv("PORCUPINE_CLICKHOUSE_COLD_VOLUME")}
+	clickHouse, duckLake, err := analyticsConfiguration()
+	if err != nil {
+		slog.Error("analytics configuration", "error", err)
+		os.Exit(1)
 	}
 	exportConfig, err := exportConfiguration()
 	if err != nil {
@@ -90,7 +80,7 @@ func main() {
 		slog.Error("OAuth configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig})
+	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)

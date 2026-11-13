@@ -1,6 +1,6 @@
 # PostHog SDK compatibility
 
-The v0.10.0 test matrix pins `posthog-js` 1.447.3 and `posthog-node` 5.63.1. Porcupine accepts event capture from these SDKs. Its query, management and MCP interfaces use Porcupine’s own contracts. [Tested behaviors and known gaps](../compat/matrix.json)
+The supported SDK test matrix pins `posthog-js` 1.447.3 and `posthog-node` 5.63.1. Porcupine accepts event capture from these SDKs. Its query, management and MCP interfaces use Porcupine’s own contracts. [Tested behaviors and known gaps](../compat/matrix.json)
 
 ## Configure browser capture
 

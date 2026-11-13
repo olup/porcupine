@@ -251,6 +251,23 @@ func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error
 }
 
 func (s *Service) executeExport(ctx context.Context, job storedExport) error {
+	if s.lake != nil {
+		if err := s.exportCanContinue(ctx, job); err != nil {
+			return err
+		}
+		sink := newExportSink(ctx, s, job)
+		result, err := s.lake.Export(ctx, job.ProjectID, job.SQL, job.Parameters, nil, s.exports.config.MaxRowBytes, exportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
+		if err != nil {
+			return err
+		}
+		if err = s.exportCanContinue(ctx, job); err != nil {
+			return err
+		}
+		if err = sink.finish(); err != nil {
+			return err
+		}
+		return s.publishExport(ctx, job, result, sink)
+	}
 	if err := validateQueryParameters(job.Parameters); err != nil {
 		return errExportStreamInvalid
 	}

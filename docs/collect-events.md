@@ -39,6 +39,6 @@ Native requests can contain one object or a batch of up to 1,000 objects, within
 
 ## Check delivery and identity
 
-A successful ingestion response means SQLite has accepted the event durably. It becomes queryable after delivery to ClickHouse. [Query your events](query-events.md) with `"use_cache": false` when checking new data.
+A successful ingestion response means SQLite has accepted the event durably. It becomes queryable after delivery to analytical storage. [Query your events](query-events.md) with `"use_cache": false` when checking new data.
 
 Choose the identity behavior your product needs. The recommended PostHog browser profile uses a daily cookieless pseudonym. The opt-in identified profile can link anonymous activity at login. See [users and sessions](data-and-identity.md) before interpreting visitor counts or retention across days.

@@ -1,5 +1,7 @@
 # Back up a live single-host instance
 
+This guide applies to the optional ClickHouse backend. For the default DuckLake backend, use the [stopped-volume backup procedure](restore.md). These online tools do not create a DuckLake checkpoint.
+
 Use `scripts/online_backup.py` to create a coordinated recovery point while ingestion continues. The operator tool takes a SQLite online snapshot and a full native ClickHouse backup. Run it on the host or in the [Compose backup container](backup-compose.md) with operator credentials and access to the SQLite volume.
 
 The tool pauses event projection, not HTTP capture, for the checkpoint operation. Capture continues to commit new events to the bounded SQLite queue. Those accepted after the SQLite snapshot are outside this recovery point. If the queue fills during the pause, capture returns its normal backpressure response.

@@ -204,13 +204,10 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 			return eventProjection{}, false, apiError(503, "event storage unavailable")
 		}
 	}
-	if s.ch == nil {
+	if s.ch == nil && s.lake == nil {
 		return eventProjection{}, false, apiError(404, "event not found")
 	}
-	if err := s.ch.initialize(ctx); err != nil {
-		return eventProjection{}, false, apiError(503, "event storage unavailable")
-	}
-	projection, err := s.ch.loadProjection(ctx, project, uuid)
+	projection, err := s.loadAnalyticalProjection(ctx, project, uuid)
 	if errors.Is(err, errEventNotFound) && revision == 0 {
 		return eventProjection{}, false, apiError(404, "event not found")
 	}
@@ -264,8 +261,8 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(503, "mutation storage unavailable")
 	}
-	if s.ch == nil {
-		return nil, apiError(503, "ClickHouse delivery is disabled")
+	if s.ch == nil && s.lake == nil {
+		return nil, apiError(503, "analytical delivery is disabled")
 	}
 	current, pending, err := s.currentEvent(ctx, project, uuid)
 	if err != nil {

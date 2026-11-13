@@ -1,0 +1,39 @@
+Linux architecture: aarch64
+go version go1.26.11 linux/arm64
+ClickHouse local version 26.8.36.3 (official build).
+
+DuckLake, ClickHouse stopped, 30 iterations, three repetitions
+goos: linux
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+BenchmarkAnalyticsComparison/ducklake/ingestion100-2         	      30	  74248511 ns/op	   0.39 MB/s	      1347 events/s
+BenchmarkAnalyticsComparison/ducklake/ingestion100-2         	      30	  65951490 ns/op	   0.44 MB/s	      1516 events/s
+BenchmarkAnalyticsComparison/ducklake/ingestion100-2         	      30	  66606854 ns/op	   0.43 MB/s	      1501 events/s
+BenchmarkAnalyticsComparison/ducklake/counts10000-2          	      30	  17125125 ns/op
+BenchmarkAnalyticsComparison/ducklake/counts10000-2          	      30	  17146988 ns/op
+BenchmarkAnalyticsComparison/ducklake/counts10000-2          	      30	  17365906 ns/op
+BenchmarkAnalyticsComparison/ducklake/trend10000-2           	      30	  19543096 ns/op
+BenchmarkAnalyticsComparison/ducklake/trend10000-2           	      30	  21101551 ns/op
+BenchmarkAnalyticsComparison/ducklake/trend10000-2           	      30	  19398086 ns/op
+BenchmarkAnalyticsComparison/ducklake/sessions10000-2        	      30	  23890929 ns/op
+BenchmarkAnalyticsComparison/ducklake/sessions10000-2        	      30	  21543376 ns/op
+BenchmarkAnalyticsComparison/ducklake/sessions10000-2        	      30	  19203282 ns/op
+PASS
+
+ClickHouse, same container budget, 30 iterations, three repetitions
+goos: linux
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+BenchmarkAnalyticsComparison/clickhouse/ingestion100-2         	      30	  30899701 ns/op	   0.93 MB/s	      3236 events/s
+BenchmarkAnalyticsComparison/clickhouse/ingestion100-2         	      30	  30533881 ns/op	   0.94 MB/s	      3275 events/s
+BenchmarkAnalyticsComparison/clickhouse/ingestion100-2         	      30	  31283364 ns/op	   0.92 MB/s	      3197 events/s
+BenchmarkAnalyticsComparison/clickhouse/counts10000-2          	      30	  69877367 ns/op
+BenchmarkAnalyticsComparison/clickhouse/counts10000-2          	      30	  66781089 ns/op
+BenchmarkAnalyticsComparison/clickhouse/counts10000-2          	      30	  45201113 ns/op
+BenchmarkAnalyticsComparison/clickhouse/trend10000-2           	      30	  49049211 ns/op
+BenchmarkAnalyticsComparison/clickhouse/trend10000-2           	      30	  40594996 ns/op
+BenchmarkAnalyticsComparison/clickhouse/trend10000-2           	      30	  35520324 ns/op
+BenchmarkAnalyticsComparison/clickhouse/sessions10000-2        	      30	  58545649 ns/op
+BenchmarkAnalyticsComparison/clickhouse/sessions10000-2        	      30	  59117521 ns/op
+BenchmarkAnalyticsComparison/clickhouse/sessions10000-2        	      30	  59173422 ns/op
+PASS

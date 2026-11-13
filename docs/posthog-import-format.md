@@ -73,7 +73,7 @@ not increase ordinary analytics event counts.
 Each upload checkpoint commits its accepted records and byte offset together.
 Status counts distinguish accepted, duplicate, ignored, invalid, and unresolved
 rows. Unresolved is an identity diagnostic and can overlap accepted or ignored.
-Accepted means durable queue acceptance, not completed ClickHouse delivery; check
+Accepted means durable queue acceptance, not completed analytical delivery; check
 the project's delivery status before querying a complete import. Cancellation or
 a failed file digest does not remove records accepted by earlier chunks. Invalid-row
 samples contain line numbers and static reasons, never row values.

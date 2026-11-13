@@ -117,7 +117,7 @@ func pipelineLookupError(err error) error {
 	return apiError(503, "pipeline storage unavailable")
 }
 
-func (s *Service) encodePipelineDestination(projectID, pipelineID, kind string, webhook *WebhookPipelineSpec, s3 *S3PipelineSpec, credentials PipelineCredentials) ([]byte, []byte, error) {
+func (s *Service) encodePipelineDestination(ctx context.Context, projectID, pipelineID, kind string, webhook *WebhookPipelineSpec, s3 *S3PipelineSpec, credentials PipelineCredentials) ([]byte, []byte, error) {
 	var config, secret []byte
 	if kind == "webhook" {
 		if webhook == nil || s3 != nil {
@@ -187,8 +187,12 @@ func (s *Service) encodePipelineDestination(projectID, pipelineID, kind string, 
 		if len(credentials.Headers) > 0 || credentials.BearerToken != "" {
 			return nil, nil, apiError(400, "unexpected webhook credentials")
 		}
-		normalized, err := validateS3PipelineSpec(*s3)
+		normalized, err := s.validateS3PipelineSpec(ctx, projectID, *s3)
 		if err != nil {
+			var status huma.StatusError
+			if errors.As(err, &status) {
+				return nil, nil, err
+			}
 			return nil, nil, apiError(400, "invalid S3 pipeline specification")
 		}
 		if s.validatePipelineS3Endpoint(normalized.Destination.Endpoint) != nil {
@@ -217,14 +221,14 @@ func (s *Service) createPipeline(ctx context.Context, input *PipelineCreateInput
 	if s.pipelines == nil {
 		return nil, apiError(503, "pipelines are not configured")
 	}
-	if input.Body.Kind == "s3" && s.ch == nil {
-		return nil, apiError(503, "S3 pipelines require ClickHouse")
+	if input.Body.Kind == "s3" && s.ch == nil && s.lake == nil {
+		return nil, apiError(503, "S3 pipelines require an analytical store")
 	}
 	if strings.TrimSpace(input.Body.Name) == "" || len(input.Body.Name) > 200 {
 		return nil, apiError(400, "invalid pipeline name")
 	}
 	p := Pipeline{ID: newID(), ProjectID: input.ID, Kind: input.Body.Kind, Name: input.Body.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
-	config, secret, err := s.encodePipelineDestination(p.ProjectID, p.ID, p.Kind, input.Body.Webhook, input.Body.S3, input.Body.Credentials)
+	config, secret, err := s.encodePipelineDestination(ctx, p.ProjectID, p.ID, p.Kind, input.Body.Webhook, input.Body.S3, input.Body.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -317,8 +321,8 @@ func (s *Service) setPipelineState(ctx context.Context, input *PipelineGetInput,
 		return nil, pipelineLookupError(err)
 	}
 	if p.Kind == "s3" && state == "active" {
-		if s.ch == nil {
-			return nil, apiError(503, "S3 pipelines require ClickHouse")
+		if s.ch == nil && s.lake == nil {
+			return nil, apiError(503, "S3 pipelines require an analytical store")
 		}
 		release, err := s.lockS3Lifecycle(p.ID)
 		if err != nil {
@@ -396,7 +400,7 @@ func (s *Service) rotatePipeline(ctx context.Context, input *PipelineRotateInput
 		}
 		input.Body.S3 = &spec
 	}
-	config, secret, err := s.encodePipelineDestination(p.ProjectID, p.ID, p.Kind, input.Body.Webhook, input.Body.S3, input.Body.Credentials)
+	config, secret, err := s.encodePipelineDestination(ctx, p.ProjectID, p.ID, p.Kind, input.Body.Webhook, input.Body.S3, input.Body.Credentials)
 	if err != nil {
 		return nil, err
 	}
