@@ -76,6 +76,10 @@ docs-preview: docs
 ducklake-build:
 	CGO_ENABLED=1 go build -tags ducklake -trimpath -o bin/porcupine-ducklake ./cmd/porcupine
 
+.PHONY: ducklake-performance-compare
+ducklake-performance-compare:
+	sh scripts/analytics-benchmark.sh
+
 ducklake-test:
 	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=120s
 

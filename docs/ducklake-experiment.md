@@ -87,13 +87,14 @@ make check
 make ducklake-test
 make ducklake-smoke
 make ducklake-bench
+make ducklake-performance-compare
 ```
 
 To compare both engines on the same fixtures, install Docker and Python 3, then run `make ducklake-compare`. The existing container fixture supplies temporary ClickHouse credentials to the Go tests. It does not use a running production database.
 
 The smoke command starts the compiled native server on loopback with a private temporary database, calls it through the compiled standalone CLI, and removes its test data when it exits. It does not connect to the existing deployment. The Go tests additionally exercise MCP, two-project scope, revocation, identity, mutations, restart, and failed acknowledgment recovery against real DuckLake.
 
-The analytical fixtures cover event counts, actors, daily grouping, sessions, median, ordered conversion, retention, and custom properties with explicit expected results. The benchmarks separate native HTTP acceptance plus projection from a warm aggregation over 10,000 synthetic rows. They exclude setup and do not establish a hosting capacity or a ClickHouse performance comparison.
+The analytical fixtures cover event counts, actors, daily grouping, sessions, median, ordered conversion, retention, and custom properties with explicit expected results. `ducklake-bench` measures the native backend alone. `ducklake-performance-compare` runs both backends successively inside a disposable Linux container with one total budget of two CPUs and 2 GiB RAM. Both commands exclude setup and do not establish a hosting capacity.
 
 The real-engine comparison passes nine scenarios on identical captured fixtures: counts and actors, event volumes, hourly trends, custom dimensions, amount and explicitly defined nearest-rank p95, sessions, an ordered funnel, next-day retention, and a Paris day boundary. It also compares the results after an edit and a deletion. Equivalent SQL is written separately for each dialect; no ClickHouse SQL translation layer is used.
 
@@ -108,9 +109,35 @@ On an Apple M1 Pro running macOS arm64, a fixed ten-iteration run reported:
 
 An earlier row-by-row projection took about 2.04 seconds per 100 events. The implementation now stages a bound batch and applies it with set-based SQL. It retains revision and event-ID checks inside the same project transaction.
 
-These are local microbenchmarks with setup excluded and ten Go logical processors available. The analytical fixture is seeded using trusted bulk SQL, so its timing does not measure ingestion. Go's allocation metrics exclude native DuckDB allocations. No equivalent ClickHouse throughput run or multi-client hosting-capacity test has been completed.
+These are local microbenchmarks with setup excluded and ten Go logical processors available. The analytical fixture is seeded using trusted bulk SQL, so its timing does not measure ingestion. Go's allocation metrics exclude native DuckDB allocations. Use the bounded Linux comparison below to compare backends under the same CPU and memory budget.
 
 The local unstripped server binaries built with `-trimpath` were approximately 106 MiB with the native tag and 37 MiB without it. The standalone CLI was about 12 MiB. These are macOS development builds, not release artifact sizes.
+
+## Bounded Linux comparison
+
+Run `make ducklake-performance-compare` with Docker. The benchmark image is separate from the released server image. It uses Go 1.26.11, DuckDB 2.0.0 with its matching DuckLake extension, and ClickHouse 26.8.36.3. It mounts a temporary Docker volume for both backends' SQLite and analytical data, publishes no ports, and removes the container and volume afterward. It does not mount credentials or existing event data.
+
+DuckLake runs first with ClickHouse stopped. ClickHouse then runs alongside the Go API process within the same total container budget. `GOMAXPROCS` is two. Interactive queries use the normal two-thread and 256 MiB engine settings. The container's 2 GiB limit includes native allocations and the ClickHouse server. ClickHouse background merge pools have four threads to fit this small container.
+
+The ingestion case sends native events in sequential batches of 100 through Porcupine's HTTP handler, then explicitly drains each batch to the analytical backend. It includes SQLite acceptance, receipt creation, projection, and verification that no events remain pending. The final analytical count must equal the accepted count. Payloads are about 300 bytes per event. This is projected throughput for this batching pattern, not the maximum HTTP acceptance rate.
+
+The query cases use the public HTTP query handler, including authentication, SQL validation, project isolation, and JSON encoding. They share a 10,000-event synthetic fixture inserted through the same ingestion path on each backend. The fixture contains three event names, 100 actors, 100 sessions, timestamps across three hours, and custom JSON properties. The SQL uses each engine's own dialect. Calls set `use_cache: false`; a warm-up runs before timing, so filesystem and engine caches remain warm. Requests use an in-process HTTP recorder; ClickHouse's internal HTTP connection remains part of its measured cost.
+
+Each case runs 30 iterations, repeated three times. Setup, schema creation, extension installation, reader provisioning, fixture ingestion for query cases, and cleanup are excluded. The runner checks analytical counts and expected query result sizes. Existing equivalence tests cover the more involved funnel, retention, mutation, and identity semantics.
+
+On 13 November 2026, Linux arm64 under Docker Desktop on an Apple M1 Pro produced the following results. The Docker VM had ten CPUs and approximately 4 GiB RAM available; the benchmark container was limited to two CPUs and 2 GiB, with no swap allowance beyond that limit. Values are the median of three run averages, followed by the observed range. They are not individual-request latency percentiles. [Raw output](benchmarks/ducklake-clickhouse-arm64.txt) is included.
+
+| Case | DuckLake | ClickHouse |
+| --- | --- | --- |
+| Accept and project 100 events | 66.61 ms, 65.95–74.25 | 30.90 ms, 30.53–31.28 |
+| Equivalent projected event rate | 1,501 events/s | 3,236 events/s |
+| Count events and unique actors, 10,000 events | 17.15 ms, 17.13–17.37 | 66.78 ms, 45.20–69.88 |
+| Hourly counts and JSON amount sums, 10,000 events | 19.54 ms, 19.40–21.10 | 40.59 ms, 35.52–49.05 |
+| Unique sessions from JSON, 10,000 events | 21.54 ms, 19.20–23.89 | 59.12 ms, 58.55–59.17 |
+
+ClickHouse projected these batches about 2.2 times faster. DuckLake served these small API queries about 2.1 to 3.9 times faster. These are measurements of the current Porcupine implementations, including ClickHouse's project-view and internal HTTP overhead, not a direct engine-only benchmark. Query timing begins after fixture ingestion without waiting for ClickHouse background merges to settle. The variation between repetitions, particularly on ClickHouse counts and trends, should remain visible when reporting the result.
+
+This small fixture does not test years of data, S3 reads, mixed ingestion and query contention, many active projects, native crash containment, or sustained hosting capacity. It cannot establish which engine has lower unit costs for a hosted service.
 
 ## Scope
 
