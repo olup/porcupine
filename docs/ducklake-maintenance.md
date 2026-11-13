@@ -1,5 +1,7 @@
 # DuckLake maintenance investigation
 
+This records the initial single-pass investigation on 13 November 2026. The [sustained follow-up](ducklake-maintenance-soak.md) tests repeated passes and concurrent lifecycle operations, and describes the maintenance policy selected for v0.11.0. Statements below about unchanged defaults refer to that earlier checkpoint.
+
 The measured delay came from file compaction while Porcupine held its project write mutex. Flushing inlined data took about 31 ms; compaction took about 7.82 seconds. Receiving events into SQLite and reading existing analytical data do not acquire that mutex. The load run accepted every event and every reader request succeeded, but its pooled timings do not establish which requests finished during the hold.
 
 A smaller native compaction policy reduced the measured mutex hold to 0.71 seconds and peak queued events from 8,100 to 2,300. It did less work in that pass and still missed the experiment's 2,000-event queue budget. This is a useful candidate, not a completed freshness fix. SQLite, the ingestion architecture, deployment and production defaults remain unchanged.
@@ -8,7 +10,7 @@ A smaller native compaction policy reduced the measured mutex hold to 0.71 secon
 
 DuckLake implements snapshots, transactional file replacement, inlining, compaction and conflict detection. Porcupine should call those operations rather than implement its own file merger. Scheduling the operations remains an application responsibility: `auto_compact` selects eligible tables when a maintenance call runs; it does not start a background compaction worker. [Native compaction documentation](https://ducklake.select/docs/stable/duckdb/maintenance/merge_adjacent_files.html).
 
-Our current pass flushes inlined data and then calls `ducklake_merge_adjacent_files` while holding the same project mutex as event projection. The mutex also protects the application's stable-ID and revision semantics. Keeping it across the whole maintenance pass is a conservative prototype choice, not a demonstrated requirement for every native compaction operation.
+The initial prototype pass flushed inlined data and then calls `ducklake_merge_adjacent_files` while holding the same project mutex as event projection. The mutex also protects the application's stable-ID and revision semantics. Keeping it across the whole maintenance pass is a conservative prototype choice, not a demonstrated requirement for every native compaction operation.
 
 The default `max_compacted_files => 8` limits candidate file groups considered per table, including candidates that cannot merge. It does not limit the number of input files or wall-clock time. In the baseline, 210 input files became only two outputs, so lowering eight to one would not by itself guarantee shorter work. Target file size matters. The native documentation describes size-based, tiered maintenance for streaming workloads. [Options and tiered compaction](https://ducklake.select/docs/stable/duckdb/maintenance/merge_adjacent_files.html).
 
@@ -33,7 +35,7 @@ Both runs used a fresh one-million-event product analytics fixture, two CPU core
 
 Both passes completed real work, all reader requests returned 200, and no input was refused. Reducing the pass size shortened the write pause; it did not make the same total compaction work eleven times faster. More passes would be needed to keep up with the full file backlog. Query latency was higher with the smaller pass, but these measurements do not isolate its cause or record the number of visible files scanned. Neither run met the strict peak-queue predicate.
 
-The measurements now record the flush and compaction durations, mutex wait and hold durations, rows flushed, input/output file counts, and completion status separately. The default `Maintain` call still considers at most eight candidate groups per table. The 8 MB / one-group policy is configured only inside the experiment.
+The measurements now record the flush and compaction durations, mutex wait and hold durations, rows flushed, input/output file counts, and completion status separately. At this checkpoint, `Maintain` still considered at most eight candidate groups per table, and the 8 MB / one-group policy was configured only inside the experiment. The sustained follow-up supersedes that policy.
 
 Raw results: [baseline](benchmarks/maintenance/baseline.jsonl), [smaller pass](benchmarks/maintenance/bounded.jsonl).
 
