@@ -1,5 +1,6 @@
 # Product analytics architecture validation
 
+This is the initial prototype validation checkpoint. Its statements about unchanged defaults and deployment apply to that checkpoint. The [sustained maintenance follow-up](ducklake-maintenance-soak.md) records the later policy selected for v0.11.0 and its release-profile checks.
 On 13 November 2026, the local DuckLake prototype passed the functional product analytics and process-recovery checks in this report. With a million-event history, its small analytical queries were faster than the current ClickHouse request path. The short 1,000-events/s mixed-load test passed. The 3,000-events/s stress target and the maintenance-under-load target did not pass.
 
 These results support continuing the DuckLake experiment. They do not establish a production SaaS capacity or a lower hosting bill. The main issue measured here is write delay during maintenance. No deployment or default setting changed.
