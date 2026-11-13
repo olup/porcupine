@@ -25,7 +25,7 @@ var sqlFunctionNames = strings.Fields(`
 		length lengthUTF8 empty notEmpty lower upper lowerUTF8 upperUTF8 trim trimBoth trimLeft trimRight
 		concat substring substringUTF8 left right startsWith endsWith position positionUTF8 replaceOne replaceAll
 		splitByChar splitByString arrayStringConcat reverse repeat
-		toDate toDate32 toDateTime toDateTime64 parseDateTimeBestEffort parseDateTimeBestEffortOrNull
+		toDate toDate32 toDateTime toDateTime64 toTimeZone parseDateTimeBestEffort parseDateTimeBestEffortOrNull
 		toStartOfDay toStartOfHour toStartOfMinute toStartOfWeek toStartOfMonth toStartOfQuarter toStartOfYear
 		toStartOfInterval toYear toQuarter toMonth toWeek toDayOfMonth toDayOfWeek toDayOfYear toHour toMinute toSecond
 		toYYYYMM toYYYYMMDD toUnixTimestamp toUnixTimestamp64Milli toUnixTimestamp64Micro toUnixTimestamp64Nano fromUnixTimestamp64Milli fromUnixTimestamp64Micro fromUnixTimestamp64Nano formatDateTime dateDiff dateAdd dateSub addDays addHours addMinutes addMonths addYears

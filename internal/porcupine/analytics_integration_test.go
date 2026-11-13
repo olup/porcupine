@@ -85,6 +85,11 @@ func TestClickHouseIntegration(t *testing.T) {
 	if grouped["result"].(map[string]any)["rows"] != float64(3) || grouped["delivery"].(map[string]any)["pending"] != float64(0) {
 		t.Fatalf("wrong grouping or delivery: %+v", grouped)
 	}
+	localDay := query(a, readerA, "SELECT toDate(toTimeZone(addHours(event_time,11),{zone:String})) AS day, toUnixTimestamp(toTimeZone(event_time,{zone:String})) = toUnixTimestamp(event_time) AS same_instant FROM events WHERE uuid='a1'", map[string]string{"zone": "Europe/Paris"}, 200)
+	localRows := localDay["result"].(map[string]any)["data"].([]any)
+	if len(localRows) != 1 || localRows[0].(map[string]any)["day"] != "2026-11-02" || localRows[0].(map[string]any)["same_instant"] != float64(1) {
+		t.Fatalf("timezone conversion changed the instant or missed the local day boundary: %+v", localRows)
+	}
 	query(b, readerA, "SELECT count() FROM events", nil, 403)
 	other := query(b, readerB, "SELECT count() AS total FROM events", nil, 200)
 	if other["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "1" {
