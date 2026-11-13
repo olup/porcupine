@@ -149,14 +149,14 @@ Native resource settings are deployment controls:
 
 | Setting | Default | Accepted range |
 | --- | --- | --- |
-| `PORCUPINE_DUCKLAKE_MEMORY_MB` | 256 MiB | 64 through 32,768 MiB per resident project engine |
+| `PORCUPINE_DUCKLAKE_MEMORY_MB` | 512 MiB | 64 through 32,768 MiB per resident project engine |
 | `PORCUPINE_DUCKLAKE_THREADS` | 2 | 1 through 4 per engine |
 | `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` | 4 | 1 through 64 resident engines |
 | `PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL` | 2 seconds | 1 second through 24 hours |
 
 These ranges validate configuration; they are not safe combined sizing recommendations. Keep the total engine budgets below the host's available memory with room for other allocations.
 
-Maintenance flushes small inlined writes and uses native size-filtered compaction. It runs concurrently with event projection; ordinary event writes remain serialized to preserve revisions and retry IDs. These short passes group small files toward an 8 MB target. They do not expire historical snapshots or guarantee a physical-erasure deadline. See the [maintenance measurements](ducklake-maintenance.md).
+Maintenance leaves a two-second gap after each pass by default. It flushes small inlined writes and uses native size-filtered compaction. It runs concurrently with event projection; ordinary event writes remain serialized to preserve revisions and retry IDs. These short passes group small files toward an 8 MB target. They do not expire historical snapshots or guarantee a physical-erasure deadline. See the [maintenance measurements](ducklake-maintenance.md).
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 

@@ -211,8 +211,9 @@ func Open(c Config) (*Service, error) {
 		}
 		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
 		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = 256
+			s.lakeMemoryMB = defaultDuckLakeMemoryMB
 		}
+		s.deliveryMaxEvents = 1000
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
 CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
