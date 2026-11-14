@@ -36,12 +36,9 @@ func runNativeRestore(ctx context.Context, input io.Reader, output io.Writer) er
 	if backup != nil {
 		backupConfig = *backup
 	}
-	clickhouse, target, err := analyticsConfiguration()
+	target, err := analyticsConfiguration()
 	if err != nil {
 		return err
-	}
-	if clickhouse != nil {
-		return errors.New("offline native restore requires DuckLake target configuration")
 	}
 	if target == nil {
 		target = &porcupine.DuckLakeConfig{}

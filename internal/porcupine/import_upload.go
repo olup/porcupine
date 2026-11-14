@@ -260,12 +260,12 @@ func scanImportFile(row interface{ Scan(...any) error }) (storedImportUploadFile
 	return file, err
 }
 
-func (s *Service) loadImportJob(ctx context.Context, project, id string) (ImportUploadJob, error) {
-	job, err := scanImportJob(s.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? AND id=?`, project, id))
+func (m *importManager) loadImportJob(ctx context.Context, project, id string) (ImportUploadJob, error) {
+	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? AND id=?`, project, id))
 	if err != nil {
 		return ImportUploadJob{}, importLookupError(err)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=? ORDER BY ordinal`, id)
+	rows, err := m.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=? ORDER BY ordinal`, id)
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
@@ -283,7 +283,7 @@ func (s *Service) loadImportJob(ctx context.Context, project, id string) (Import
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
-	samples, err := s.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=? ORDER BY file_id,row_number LIMIT ?`, id, importMaxSamples)
+	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=? ORDER BY file_id,row_number LIMIT ?`, id, importMaxSamples)
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
@@ -299,8 +299,8 @@ func (s *Service) loadImportJob(ctx context.Context, project, id string) (Import
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
 	job.Delivery = &ImportDelivery{}
-	job.Delivery.Enabled = s.ch != nil || s.lake != nil
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=? AND id<=? AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
+	job.Delivery.Enabled = m.deliveryEnabled
+	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=? AND id<=? AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
 		return ImportUploadJob{}, apiError(503, "import delivery status unavailable")
 	}
 	job.Delivery.Ready = job.State == "completed" && job.Delivery.Enabled && job.Delivery.Pending == 0
@@ -323,4 +323,4 @@ func importLookupError(err error) error {
 	return apiError(503, "import storage unavailable")
 }
 
-func (s *Service) importTime() string { return s.clock().UTC().Format(time.RFC3339Nano) }
+func (m *importManager) importTime() string { return m.rules.clock().UTC().Format(time.RFC3339Nano) }

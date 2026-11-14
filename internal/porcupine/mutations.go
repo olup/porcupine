@@ -28,7 +28,7 @@ type EventGetInput struct {
 type EventCurrent struct {
 	Event    Event  `json:"event"`
 	Revision string `json:"revision" doc:"Current revision as a decimal string. Pass this as expected_revision to edit or delete."`
-	Pending  bool   `json:"pending" doc:"True until the current mutation is acknowledged by ClickHouse."`
+	Pending  bool   `json:"pending" doc:"True until the current mutation is acknowledged by DuckLake."`
 }
 
 type EventGetOutput struct{ Body EventCurrent }
@@ -67,7 +67,7 @@ type MutationResponse struct {
 	UUID       string `json:"uuid"`
 	Revision   string `json:"revision"`
 	Operation  string `json:"operation"`
-	State      string `json:"state" doc:"pending means durably queued; applied means ClickHouse acknowledged the projection."`
+	State      string `json:"state" doc:"pending means durably queued; applied means DuckLake committed the projection."`
 	CreatedAt  string `json:"created_at"`
 	AppliedAt  string `json:"applied_at,omitempty"`
 }
@@ -204,7 +204,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 			return eventProjection{}, false, apiError(503, "event storage unavailable")
 		}
 	}
-	if s.ch == nil && s.lake == nil {
+	if s.lake == nil {
 		return eventProjection{}, false, apiError(404, "event not found")
 	}
 	projection, err := s.loadAnalyticalProjection(ctx, project, uuid)
@@ -261,7 +261,7 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(503, "mutation storage unavailable")
 	}
-	if s.ch == nil && s.lake == nil {
+	if s.lake == nil {
 		return nil, apiError(503, "analytical delivery is disabled")
 	}
 	current, pending, err := s.currentEvent(ctx, project, uuid)
@@ -358,7 +358,7 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	if count >= int64(min(s.queueMax, 1000)) {
 		return nil, apiError(503, "mutation queue is full")
 	}
-	// A restored SQLite backup may lag behind an already applied ClickHouse
+	// A restored SQLite backup may lag behind an already applied native
 	// revision. Advance from the revision we loaded and checked, never from an
 	// unchecked client claim, so the next accepted mutation still wins.
 	advanced, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='mutation_audit'`, int64(expected))
@@ -399,7 +399,7 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	if err == nil && operation == "delete" {
 		err = s.cancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID)
 		if err == nil {
-			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "", projection.ID)
+			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
 		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=? AND uuid=?`, projection.ProjectID, projection.UUID)

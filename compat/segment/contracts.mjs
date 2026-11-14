@@ -24,15 +24,15 @@ globalThis.fetch = (url, options) => {
 };
 async function management(path, body) {
   const response = await fetch(api + path, { method: body === undefined ? 'GET' : 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
-  assert.equal(response.status, body === undefined ? 200 : 201);
+  assert.equal(response.status, body === undefined || path.endsWith('/query') ? 200 : 201);
   return response.json();
 }
 try {
   directory = await mkdtemp(join(tmpdir(), 'porcupine-segment-sdk-'));
   const binary = join(directory, 'porcupine');
-  execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, env: { ...process.env, CGO_ENABLED: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, env: { ...process.env, CGO_ENABLED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   const reservation = createServer(); api = await listen(reservation); await close(reservation);
-  app = spawn(binary, [], { cwd: directory, env: { ...process.env, PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: token, PORCUPINE_OAUTH_ISSUER: '', PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS: '', PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS: '', PORCUPINE_CLICKHOUSE_URL: '' }, stdio: 'ignore' });
+  app = spawn(binary, [], { cwd: directory, env: { ...process.env, PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: token, PORCUPINE_OAUTH_ISSUER: '', PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS: '', PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS: '' }, stdio: 'ignore' });
   phase = 'Go readiness';
   for (let attempt = 0; ; attempt++) { try { if ((await fetch(api + '/readyz')).ok) break; } catch {} if (attempt === 99) throw new Error('readiness'); await delay(50); }
   const project = await management('/api/v1/projects', { name: 'Segment SDK contract' });
@@ -65,7 +65,14 @@ try {
   const replay = await response.json();
   assert.equal(replay.accepted, 0); assert.equal(replay.duplicates, 5);
   phase = 'durable canonical events and identity';
-  const events = (await management('/api/v1/projects/' + project.project.id + '/events')).events;
+  let events;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const result = await management('/api/v1/projects/' + project.project.id + '/query', { sql: 'SELECT id,uuid,event,distinct_id,properties,timestamp,source_id,message_id,event_type,context,person_properties FROM events ORDER BY id' });
+    events = result.result.data.map(row => ({ ...row, properties: JSON.parse(row.properties), context: JSON.parse(row.context), person_properties: JSON.parse(row.person_properties) }));
+    if (events.length === 3 && result.delivery.pending === 0) break;
+    if (attempt === 99) throw new Error('analytical delivery deadline');
+    await delay(50);
+  }
   assert.equal(events.length, 3, 'controls stay hidden from the ordinary event API');
   const before = events.find(event => event.message_id === 'segment-sdk-before');
   const page = events.find(event => event.message_id === 'segment-sdk-page');

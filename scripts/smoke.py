@@ -14,7 +14,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="porcupine-smoke-") as temporary:
     binary = Path(temporary) / "porcupine"
-    subprocess.run(["go", "build", "-o", str(binary), "./cmd/porcupine"], cwd=ROOT, check=True)
+    subprocess.run(["go", "build", "-o", str(binary), "./cmd/porcupine"], cwd=ROOT, check=True, env={**os.environ, "CGO_ENABLED": "1"})
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -75,8 +75,14 @@ with tempfile.TemporaryDirectory(prefix="porcupine-smoke-") as temporary:
         assert request("POST", "/capture/", event)[0] == 200
         assert request("POST", "/capture/", event)[0] == 200
         path = f"/api/v1/projects/{project}/events"
-        status, result = request("GET", path, key=token)
-        assert status == 200 and len(result["events"]) == 1
+        for _ in range(100):
+            status, result = request("POST", f"/api/v1/projects/{project}/query",
+                                     {"sql": "SELECT uuid,properties FROM events WHERE uuid=$uuid", "parameters": {"uuid": "smoke-stable-id"}}, token)
+            if status == 200 and len(result["result"]["data"]) == 1:
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError("accepted event did not become queryable")
         assert request("GET", path, key=ingest)[0] == 403
         status, reader = request("POST", "/api/v1/access-keys", {
             "name": "Reader", "permissions": ["events:read"], "projects": [project]}, token)
@@ -90,9 +96,15 @@ with tempfile.TemporaryDirectory(prefix="porcupine-smoke-") as temporary:
         process.kill()
         process.wait(timeout=10)
         process = start()
-        status, result = request("GET", path, key=token)
-        assert status == 200 and len(result["events"]) == 1
-        assert result["events"][0]["properties"]["synthetic"] is True
+        for _ in range(100):
+            status, result = request("POST", f"/api/v1/projects/{project}/query",
+                                     {"sql": "SELECT uuid,properties FROM events WHERE uuid=$uuid", "parameters": {"uuid": "smoke-stable-id"}}, token)
+            if status == 200 and len(result["result"]["data"]) == 1:
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError("accepted event did not become queryable")
+        assert json.loads(result["result"]["data"][0]["properties"])["synthetic"] is True
         status, listing = request("GET", "/api/v1/access-keys", key=token)
         assert status == 200
         assert any(k["id"] == reader["id"] and k["revoked_at"] is not None

@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (

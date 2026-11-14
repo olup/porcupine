@@ -382,9 +382,9 @@ var operations = []operation{
 		},
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
-			"parameters (object) Bound scalar parameters. Discover the deployment dialect with get-event-schema: DuckDB uses $event; optional ClickHouse uses {event:String} with explicit casts when needed. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
+			"parameters (object) Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
 			"sql (string, required) One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
-			"use_cache (boolean) Omitted or true permits result caching when supported by the discovered engine. False bypasses cache reads and writes. The default DuckLake backend always executes fresh.",
+			"use_cache (boolean) DuckDB always executes fresh queries. This preference has no effect while get-event-schema reports result_cache=false.",
 		},
 	},
 	{

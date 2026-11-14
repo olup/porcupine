@@ -1,4 +1,4 @@
-//go:build ducklake && (linux || darwin)
+//go:build linux || darwin
 
 package porcupine
 

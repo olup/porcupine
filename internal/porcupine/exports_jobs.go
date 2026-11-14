@@ -14,14 +14,14 @@ func (s *Service) initializeExports(ctx context.Context) error {
 id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), actor_id TEXT NOT NULL REFERENCES access_keys(id),
 sql TEXT NOT NULL, parameters TEXT NOT NULL, format TEXT NOT NULL,
 idempotency_hash TEXT NOT NULL, request_hash TEXT NOT NULL, state TEXT NOT NULL,
-attempt_id TEXT NOT NULL DEFAULT '', query_id TEXT NOT NULL DEFAULT '',
+attempt_id TEXT NOT NULL DEFAULT '',
 event_watermark INTEGER NOT NULL, mutation_watermark INTEGER NOT NULL,
 cancel_requested INTEGER NOT NULL DEFAULT 0,
 rows INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0, decoded_bytes INTEGER NOT NULL DEFAULT 0,
 file_count INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
 created_at TEXT NOT NULL, started_at TEXT NOT NULL DEFAULT '', completed_at TEXT NOT NULL DEFAULT '',
 expires_at TEXT NOT NULL DEFAULT '', expires_at_ms INTEGER NOT NULL DEFAULT 0,
-error TEXT NOT NULL DEFAULT '', columns_json TEXT NOT NULL DEFAULT '[]', extras_json TEXT NOT NULL DEFAULT '{}', cleanup_pending INTEGER NOT NULL DEFAULT 0,
+error TEXT NOT NULL DEFAULT '', columns_json TEXT NOT NULL DEFAULT '[]', cleanup_pending INTEGER NOT NULL DEFAULT 0,
 UNIQUE(project_id,actor_id,idempotency_hash));
 CREATE INDEX IF NOT EXISTS export_jobs_pending ON export_jobs(state,cleanup_pending);
 CREATE INDEX IF NOT EXISTS export_jobs_expiration ON export_jobs(state,expires_at_ms);
@@ -33,29 +33,20 @@ sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY(job_id,attempt_id,file_index)) WITH
 	return err
 }
 
-const exportJobColumns = `id,project_id,actor_id,sql,parameters,format,state,attempt_id,query_id,event_watermark,mutation_watermark,cancel_requested,rows,bytes,decoded_bytes,file_count,attempts,created_at,started_at,completed_at,expires_at,expires_at_ms,error,columns_json,extras_json,cleanup_pending`
+const exportJobColumns = `id,project_id,actor_id,sql,parameters,format,state,attempt_id,event_watermark,mutation_watermark,cancel_requested,rows,bytes,decoded_bytes,file_count,attempts,created_at,started_at,completed_at,expires_at,expires_at_ms,error,columns_json,cleanup_pending`
 
 type exportScanner interface{ Scan(...any) error }
 
 func scanExport(row exportScanner) (storedExport, error) {
 	var job storedExport
-	var parameters, columns, extrasJSON string
-	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SQL, &parameters, &job.Format, &job.State, &job.AttemptID, &job.QueryID, &job.EventWatermark, &job.MutationWatermark, &job.CancelRequested, &job.Rows, &job.Bytes, &job.DecodedBytes, &job.FileCount, &job.Attempts, &job.CreatedAt, &job.StartedAt, &job.CompletedAt, &job.ExpiresAt, &job.ExpiresAtMS, &job.Error, &columns, &extrasJSON, &job.CleanupPending)
+	var parameters, columns string
+	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SQL, &parameters, &job.Format, &job.State, &job.AttemptID, &job.EventWatermark, &job.MutationWatermark, &job.CancelRequested, &job.Rows, &job.Bytes, &job.DecodedBytes, &job.FileCount, &job.Attempts, &job.CreatedAt, &job.StartedAt, &job.CompletedAt, &job.ExpiresAt, &job.ExpiresAtMS, &job.Error, &columns, &job.CleanupPending)
 	if err != nil {
 		return job, err
 	}
 	if json.Unmarshal([]byte(parameters), &job.Parameters) != nil || json.Unmarshal([]byte(columns), &job.Columns) != nil {
 		return storedExport{}, errors.New("invalid stored export metadata")
 	}
-	var extras struct {
-		Totals                 json.RawMessage `json:"totals"`
-		Extremes               json.RawMessage `json:"extremes"`
-		RowsBeforeLimitAtLeast *uint64         `json:"rows_before_limit_at_least"`
-	}
-	if json.Unmarshal([]byte(extrasJSON), &extras) != nil {
-		return storedExport{}, errors.New("invalid stored export metadata")
-	}
-	job.Totals, job.Extremes, job.RowsBeforeLimitAtLeast = extras.Totals, extras.Extremes, extras.RowsBeforeLimitAtLeast
 	job.Consistency = exportConsistency
 	return job, nil
 }

@@ -45,7 +45,7 @@ WHERE person_id = $user
 ORDER BY received_at_ms, id
 ```
 
-Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_started`, whose `distinct_id` is still the anonymous browser ID. Use `uniqExactIf(person_id, person_id != '')` to count distinct resolved IDs on events that carry an actor. An unlinked event falls back to its own `distinct_id`. Queries that request identity columns (including `SELECT *`) join the project's delivered links and profiles at read time. Select explicit event-only columns to avoid those joins. Profile properties reflect the latest delivered profile; send a property on the business event itself when you need its value at the time the event occurred.
+Bind `user` to `user-42`. Both rows resolve to `user-42`, including `signup_started`, whose `distinct_id` is still the anonymous browser ID. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` to count distinct resolved IDs on events that carry an actor. An unlinked event falls back to its own `distinct_id`. Queries that request identity columns (including `SELECT *`) join the project's delivered links and profiles at read time. Select explicit event-only columns to avoid those joins. Profile properties reflect the latest delivered profile; send a property on the business event itself when you need its value at the time the event occurred.
 
 ### What capture accepts
 

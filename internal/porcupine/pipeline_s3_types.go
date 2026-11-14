@@ -6,12 +6,8 @@ import (
 	"errors"
 	"net"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
-
-	chsql "github.com/AfterShip/clickhouse-sql-parser/parser"
 )
 
 type S3PipelineSpec struct {
@@ -85,82 +81,6 @@ func normalizeS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
 	return c, nil
 }
 
-func validateS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
-	c, err := normalizeS3PipelineSpec(c)
-	if err != nil {
-		return c, err
-	}
-	fail := func() (S3PipelineSpec, error) { return c, errors.New("invalid S3 pipeline specification") }
-	sources := map[*chsql.TableIdentifier]bool{}
-	declared := map[string]string{}
-	canonical, err := validateSQLWithReferences(c.SQL, sqlReferences{eventSources: sources, parameters: declared})
-	if err != nil || len(sources) == 0 {
-		return fail()
-	}
-	c.SQL = canonical
-	if validateQueryParameters(c.Parameters) != nil {
-		return fail()
-	}
-	for _, name := range []string{"window_start", "window_end"} {
-		if _, ok := c.Parameters[name]; ok {
-			return fail()
-		}
-	}
-	bindings := map[string]string{}
-	for k, v := range c.Parameters {
-		bindings[k] = v
-	}
-	for _, name := range []string{"window_start", "window_end"} {
-		if typ, used := declared[name]; used {
-			if typ != "Int64" {
-				return fail()
-			}
-			bindings[name] = "0"
-		}
-	}
-	if matchSQLParameters(declared, bindings) != nil {
-		return fail()
-	}
-	return c, nil
-}
-
-// Every validated physical source is replaced, including sources nested in CTEs,
-// joins and set operations. Qualified columns remain bound to the same alias.
-func pipelineWindowSQL(raw, namespace string) (string, error) {
-	canonical, err := validateSQL(raw)
-	if err != nil || !clickHouseIdentifier.MatchString(namespace) {
-		return "", errors.New("invalid pipeline query")
-	}
-	sources := map[*chsql.TableIdentifier]bool{}
-	if _, err := validateSQLWithReferences(canonical, sqlReferences{eventSources: sources}); err != nil {
-		return "", err
-	}
-	type replacement struct {
-		start, end int
-		text       string
-	}
-	var edits []replacement
-	source := "(SELECT * FROM " + namespace + "." + identitySourceName(canonical) + " AS _porcupine_window WHERE _porcupine_window.received_at_ms >= {window_start:Int64} AND _porcupine_window.received_at_ms < {window_end:Int64} AND _porcupine_window.is_imported=0)"
-	for table, aliased := range sources {
-		text := source
-		if !aliased {
-			text += " AS events"
-		}
-		edits = append(edits, replacement{int(table.Pos()), int(table.End()), text})
-	}
-	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-	for _, e := range edits {
-		if e.start < 0 || e.end > len(canonical) || e.start >= e.end {
-			return "", errors.New("invalid source span")
-		}
-		canonical = canonical[:e.start] + e.text + canonical[e.end:]
-	}
-	if len(edits) == 0 {
-		return "", errors.New("pipeline requires events source")
-	}
-	return canonical, nil
-}
-
 func (s *Service) initializeS3Pipelines(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS pipeline_s3_state(
  pipeline_id TEXT PRIMARY KEY REFERENCES pipelines(id) ON DELETE CASCADE,cursor_ms INTEGER NOT NULL,last_attempt_ms INTEGER NOT NULL DEFAULT 0);
@@ -185,19 +105,9 @@ func (s *Service) createS3PipelineState(ctx context.Context, tx *sql.Tx, id stri
 	_, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_state(pipeline_id,cursor_ms) VALUES(?,?)`, id, start.UnixMilli())
 	return err
 }
-func pipelineWindowParameters(spec S3PipelineSpec, start, end int64) map[string]string {
-	p := make(map[string]string, len(spec.Parameters)+2)
-	for k, v := range spec.Parameters {
-		p[k] = v
-	}
-	p["window_start"] = strconv.FormatInt(start, 10)
-	p["window_end"] = strconv.FormatInt(end, 10)
-	return p
-}
-
 func (s *Service) validateS3PipelineSpec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {
 	if s.lake == nil {
-		return validateS3PipelineSpec(c)
+		return c, apiError(503, "analytical storage is not configured")
 	}
 	c, err := normalizeS3PipelineSpec(c)
 	if err != nil {

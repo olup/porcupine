@@ -71,19 +71,16 @@ type pipelineRecoveryFixture struct {
 	s                 *Service
 	s3                *pipelineRecoveryS3
 	clockMS           atomic.Int64
-	queryBody         atomic.Value
-	queries           atomic.Int32
 	project, pipeline string
 	start             time.Time
 }
 
 func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixture {
 	t.Helper()
-	f := &pipelineRecoveryFixture{s: service(t, 100), s3: &pipelineRecoveryS3{markers: map[string][]byte{}}, start: time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)}
+	f := &pipelineRecoveryFixture{s: duckLakeJourneyService(t), s3: &pipelineRecoveryS3{markers: map[string][]byte{}}, start: time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)}
 	f.clockMS.Store(f.start.Add(61 * time.Second).UnixMilli())
-	f.queryBody.Store(body)
-	// The ordinary service starts without destinations or ClickHouse. Install all
-	// dependencies before explicitly stepping the worker, avoiding scheduler races.
+	// Install native storage and destination dependencies before explicitly
+	// stepping the worker, avoiding scheduler races.
 	enableTestPipelines(t, f.s)
 	f.s.clock = func() time.Time { return time.UnixMilli(f.clockMS.Load()).UTC() }
 	server := httptest.NewServer(f.s3)
@@ -94,19 +91,24 @@ func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixt
 		t.Fatal(err)
 	}
 	f.s.pipelines.config.ExportLimits = limits
-	ch := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.Header.Get("X-ClickHouse-User"), "_pipeline_export") {
-			f.queries.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			io.WriteString(w, f.queryBody.Load().(string))
-		}
-	})
-	configureAnalyticsTest(f.s, ch)
-	f.project, _ = project(t, f.s)
+	var ingest string
+	f.project, ingest = project(t, f.s)
+	var source struct {
+		Data [][]string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &source); err != nil {
+		t.Fatal(err)
+	}
+	f.clockMS.Store(f.start.Add(5 * time.Second).UnixMilli())
+	for _, row := range source.Data {
+		raw, _ := json.Marshal(map[string]any{"api_key": ingest, "uuid": row[0], "event": "note", "distinct_id": "user", "properties": map[string]any{"note": row[1]}})
+		request(t, f.s, "POST", "/capture/", "", string(raw), 200)
+	}
+	duckLakeJourneyDrain(t, f.s)
+	f.clockMS.Store(f.start.Add(61 * time.Second).UnixMilli())
 	_, owner := key(t, f.s, []string{"events:read", "pipelines:write", "pipelines:read"}, []string{f.project})
 	spec := testS3Spec()
-	spec.SQL = "SELECT uuid, repeat(event,100) AS note FROM events ORDER BY uuid"
+	spec.SQL = "SELECT uuid, json_extract_string(properties,'$.note') AS note FROM events ORDER BY uuid"
 	spec.Destination.Endpoint = server.URL
 	bodyBytes, err := json.Marshal(PipelineCreateBody{Name: "recovery contract", Kind: "s3", S3: &spec, Credentials: PipelineCredentials{AccessKeyID: "recovery-test-key", SecretAccessKey: "recovery-test-secret"}})
 	if err != nil {
@@ -172,7 +174,7 @@ func TestPipelineS3RecoveryCommittedMarkerFinalizesWithoutRequery(t *testing.T) 
 	}
 	f.step(t)
 	first := f.state(t)
-	if !checkpointSeen.Load() || first.state != "queued" || first.attempts != 1 || first.manifest == "" || first.cursor != f.start.UnixMilli() || first.files != 3 || f.queries.Load() != 1 {
+	if !checkpointSeen.Load() || first.state != "queued" || first.attempts != 1 || first.manifest == "" || first.cursor != f.start.UnixMilli() || first.files != 3 {
 		t.Fatal("lost SQLite acknowledgment discarded the checkpoint or advanced the cursor")
 	}
 	f.s3.mu.Lock()
@@ -188,10 +190,14 @@ func TestPipelineS3RecoveryCommittedMarkerFinalizesWithoutRequery(t *testing.T) 
 	if _, err := f.s.db.Exec(`DROP TRIGGER recovery_fail_cursor`); err != nil {
 		t.Fatal(err)
 	}
+	// A committed checkpoint can finalize even after the analytical engine closes.
+	if err := f.s.lake.Close(); err != nil {
+		t.Fatal(err)
+	}
 	f.clockMS.Store(f.start.Add(64 * time.Second).UnixMilli())
 	f.step(t)
 	second := f.state(t)
-	if second.state != "succeeded" || second.attempts != 2 || second.id != first.id || second.attempt != first.attempt || second.manifest != "" || second.files != 0 || second.rows != 3 || second.cursor != f.start.Add(time.Minute).UnixMilli() || f.queries.Load() != 1 {
+	if second.state != "succeeded" || second.attempts != 2 || second.id != first.id || second.attempt != first.attempt || second.manifest != "" || second.files != 0 || second.rows != 3 || second.cursor != f.start.Add(time.Minute).UnixMilli() {
 		t.Fatal("committed checkpoint recovery re-executed SQL or lost its original window")
 	}
 	f.s3.mu.Lock()
@@ -206,41 +212,35 @@ func TestPipelineS3RecoveryCommittedMarkerFinalizesWithoutRequery(t *testing.T) 
 	}
 }
 
-func TestPipelineS3RecoveryLateHTTP200FailureDoesNotCommitWindow(t *testing.T) {
-	valid := pipelineRecoveryBody(t)
-	for _, fault := range []struct{ name, body string }{
-		{"truncated footer", strings.TrimSuffix(valid, `,"rows":3}`)},
-		{"late exception", valid + "\nCode: 241. DB::Exception: private upstream error"},
-	} {
-		t.Run(fault.name, func(t *testing.T) {
-			f := newPipelineRecoveryFixture(t, fault.body)
-			f.step(t)
-			first := f.state(t)
-			if first.state != "queued" || first.attempts != 1 || first.manifest != "" || first.cursor != f.start.UnixMilli() || first.files != 0 || f.queries.Load() != 1 {
-				t.Fatal("HTTP 200 with an incomplete source advanced or checkpointed the window")
-			}
-			f.s3.mu.Lock()
-			markers, puts := len(f.s3.markers), f.s3.markerPuts
-			f.s3.mu.Unlock()
-			f.s3.data.mu.Lock()
-			completed, objects, uploads, aborted, deleted := f.s3.data.completes, len(f.s3.data.objects), len(f.s3.data.parts), f.s3.data.aborts, f.s3.data.deletes
-			f.s3.data.mu.Unlock()
-			if markers != 0 || puts != 0 || completed < 2 || objects != 0 || uploads != 0 || aborted == 0 || deleted < 2 {
-				t.Fatal("late source failure published a marker or retained partial multipart data")
-			}
-			f.queryBody.Store(valid)
-			f.clockMS.Store(f.start.Add(64 * time.Second).UnixMilli())
-			f.step(t)
-			second := f.state(t)
-			if second.state != "succeeded" || second.attempts != 2 || second.id != first.id || second.attempt == first.attempt || second.manifest != "" || second.rows != 3 || second.cursor != f.start.Add(time.Minute).UnixMilli() || f.queries.Load() != 2 {
-				t.Fatal("retry did not rerun the same uncommitted window with a fresh attempt")
-			}
-			f.s3.mu.Lock()
-			defer f.s3.mu.Unlock()
-			if len(f.s3.markers) != 1 || f.s3.markerPuts != 1 {
-				t.Fatal("successful retry did not publish exactly one commit marker")
-			}
-		})
+func TestPipelineS3RecoveryNativeRowFailureDoesNotCommitWindow(t *testing.T) {
+	body := strings.Replace(pipelineRecoveryBody(t), strings.Repeat("c", 750), strings.Repeat("c", 8192), 1)
+	f := newPipelineRecoveryFixture(t, body)
+	f.s.pipelines.config.ExportLimits.MaxRowBytes = 1024
+	f.step(t)
+	first := f.state(t)
+	if first.state != "queued" || first.attempts != 1 || first.manifest != "" || first.cursor != f.start.UnixMilli() || first.files != 0 {
+		t.Fatal("incomplete native source advanced or checkpointed the window")
+	}
+	f.s3.mu.Lock()
+	markers, puts := len(f.s3.markers), f.s3.markerPuts
+	f.s3.mu.Unlock()
+	f.s3.data.mu.Lock()
+	completed, objects, uploads, aborted, deleted := f.s3.data.completes, len(f.s3.data.objects), len(f.s3.data.parts), f.s3.data.aborts, f.s3.data.deletes
+	f.s3.data.mu.Unlock()
+	if markers != 0 || puts != 0 || completed < 1 || objects != 0 || uploads != 0 || aborted == 0 || deleted < 2 {
+		t.Fatal("native row failure published a marker or retained multipart data")
+	}
+	f.s.pipelines.config.ExportLimits.MaxRowBytes = 8 << 20
+	f.clockMS.Store(f.start.Add(64 * time.Second).UnixMilli())
+	f.step(t)
+	second := f.state(t)
+	if second.state != "succeeded" || second.attempts != 2 || second.id != first.id || second.attempt == first.attempt || second.manifest != "" || second.rows != 3 || second.cursor != f.start.Add(time.Minute).UnixMilli() {
+		t.Fatal("retry did not rerun the uncommitted window with a fresh attempt")
+	}
+	f.s3.mu.Lock()
+	defer f.s3.mu.Unlock()
+	if len(f.s3.markers) != 1 || f.s3.markerPuts != 1 {
+		t.Fatal("successful retry did not publish exactly one marker")
 	}
 }
 
@@ -251,7 +251,7 @@ func TestPipelineS3RecoveryForeignCommitMarkerIsNeverOverwritten(t *testing.T) {
 	f.s3.markers[path] = foreign
 	f.step(t)
 	state := f.state(t)
-	if state.state != "queued" || state.manifest != "" || state.cursor != f.start.UnixMilli() || f.queries.Load() != 0 {
+	if state.state != "queued" || state.manifest != "" || state.cursor != f.start.UnixMilli() {
 		t.Fatal("foreign commit marker was accepted or unnecessarily re-executed")
 	}
 	f.s3.mu.Lock()

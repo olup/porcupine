@@ -13,13 +13,10 @@ import (
 type ExportConfig struct {
 	S3                      exportstore.Config
 	MaxExecutionSeconds     int
-	MaxReadBytes            int64
 	MaxOutputBytes          int64
 	FileBytes               int64
 	MaxRowBytes             int64
-	MemoryBytes             int64
 	BandwidthBytesPerSecond int64
-	TemporaryBytes          int64
 	QueueThreshold          int64
 	MaxQueuedJobs           int
 	RetentionHours          int
@@ -37,25 +34,22 @@ const (
 )
 
 type ExportJob struct {
-	ID                     string                  `json:"id"`
-	ProjectID              string                  `json:"project_id"`
-	State                  ExportState             `json:"state"`
-	Format                 string                  `json:"format"`
-	Rows                   int64                   `json:"rows"`
-	Bytes                  int64                   `json:"bytes"`
-	DecodedBytes           int64                   `json:"decoded_bytes"`
-	FileCount              int                     `json:"file_count"`
-	Attempts               int                     `json:"attempts"`
-	CreatedAt              string                  `json:"created_at"`
-	StartedAt              string                  `json:"started_at,omitempty"`
-	CompletedAt            string                  `json:"completed_at,omitempty"`
-	ExpiresAt              string                  `json:"expires_at,omitempty"`
-	Error                  string                  `json:"error,omitempty"`
-	Columns                []AnalyticsResultColumn `json:"columns,omitempty"`
-	Consistency            string                  `json:"consistency"`
-	Totals                 json.RawMessage         `json:"totals,omitempty"`
-	Extremes               json.RawMessage         `json:"extremes,omitempty"`
-	RowsBeforeLimitAtLeast *uint64                 `json:"rows_before_limit_at_least,omitempty"`
+	ID           string                  `json:"id"`
+	ProjectID    string                  `json:"project_id"`
+	State        ExportState             `json:"state"`
+	Format       string                  `json:"format"`
+	Rows         int64                   `json:"rows"`
+	Bytes        int64                   `json:"bytes"`
+	DecodedBytes int64                   `json:"decoded_bytes"`
+	FileCount    int                     `json:"file_count"`
+	Attempts     int                     `json:"attempts"`
+	CreatedAt    string                  `json:"created_at"`
+	StartedAt    string                  `json:"started_at,omitempty"`
+	CompletedAt  string                  `json:"completed_at,omitempty"`
+	ExpiresAt    string                  `json:"expires_at,omitempty"`
+	Error        string                  `json:"error,omitempty"`
+	Columns      []AnalyticsResultColumn `json:"columns,omitempty"`
+	Consistency  string                  `json:"consistency"`
 }
 
 type storedExport struct {
@@ -64,7 +58,6 @@ type storedExport struct {
 	SQL               string
 	Parameters        map[string]string
 	AttemptID         string
-	QueryID           string
 	EventWatermark    int64
 	MutationWatermark int64
 	CancelRequested   bool
@@ -106,12 +99,8 @@ type exportRuntime struct {
 }
 
 type exportStreamResult struct {
-	Columns                []AnalyticsResultColumn
-	Rows                   int64
-	Statistics             AnalyticsStatistics
-	Totals                 json.RawMessage
-	Extremes               json.RawMessage
-	RowsBeforeLimitAtLeast *uint64
+	Columns []AnalyticsResultColumn
+	Rows    int64
 }
 
 type exportStreamCallbacks struct {

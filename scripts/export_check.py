@@ -55,11 +55,11 @@ def job_wait(job_id,terminal=True):
 
 status,listing=request('GET',project+'/exports')
 assert status==200 and listing['enabled'] and listing['limits']['max_concurrent_jobs']==1
-status,source=request('POST',project+'/query',{'sql':'SELECT max(received_at_ms) AS cutoff,count() AS total FROM events WHERE event={event:String}','parameters':{'event':'porcupine_load'},'use_cache':False})
+status,source=request('POST',project+'/query',{'sql':'SELECT max(received_at_ms) AS cutoff,count() AS total FROM events WHERE event=$event','parameters':{'event':'porcupine_load'},'use_cache':False})
 assert status==200
 cutoff=source['result']['data'][0]['cutoff'];expected=int(source['result']['data'][0]['total'])
 assert expected>1000,'Seed the dedicated synthetic project before this test'
-query='SELECT uuid,event,distinct_id,properties,timestamp,received_at FROM events WHERE event={event:String} AND received_at_ms<={cutoff:Int64} ORDER BY uuid'
+query='SELECT uuid,event,distinct_id,properties,timestamp,received_at FROM events WHERE event=$event AND received_at_ms<=CAST($cutoff AS BIGINT) ORDER BY uuid'
 body={'idempotency_key':marker,'sql':query,'parameters':{'event':'porcupine_load','cutoff':str(cutoff)},'format':'jsonl'}
 started=time.monotonic(); started_at=datetime.now(timezone.utc).isoformat()
 status,job=request('POST',project+'/exports',body)

@@ -16,7 +16,6 @@ After creation, inspect the pipeline and its runs. [Pause, change credentials, o
 
 | Capability | Purpose | Configuration | Query or delivery model |
 | --- | --- | --- | --- |
-| [ClickHouse-only cold storage](storage.md) | Move ClickHouse parts to S3 while retaining analytical history | Deployment operator | Same `events` table and queries; MOVE TTL |
 | [One-off SQL export](exports.md) | Download the result of a particular SQL query | Operator export storage; authorized client submits SQL | Asynchronous private gzip files and expiring download links |
 | Project pipeline | Deliver data repeatedly to a destination | Project-scoped pipeline writer; operator enables and bounds runtime | Webhook delivery or scheduled S3 runs with persisted progress |
 
@@ -216,7 +215,7 @@ The service restricts every `events` source, including nested queries and joins,
 to `received_at_ms >= window_start` and `< window_end`. This is deliberate
 windowing, unlike a one-off export that runs the submitted query without adding
 window filters. Event timestamps do not choose the delivery window. SQL can
-reference `$window_start` and `$window_end` on DuckDB. These values are receipt-time Unix milliseconds; use `CAST($window_start AS BIGINT)` when a numeric type is needed. Optional ClickHouse uses `{window_start:Int64}` and `{window_end:Int64}`. Callers cannot
+reference `$window_start` and `$window_end` on DuckDB. These values are receipt-time Unix milliseconds; use `CAST($window_start AS BIGINT)` when a numeric type is needed. Callers cannot
 supply those names in `parameters`; the scheduler binds them.
 
 Create a scheduled query with this body, replacing the bucket, credentials, and
@@ -249,7 +248,7 @@ A session token is optional. Explicit destination access-key and secret-key
 credentials are required; a pipeline does not inherit the host's AWS role.
 For a custom endpoint, set `endpoint` to an origin on the operator's allowlist.
 Porcupine uses path-style addressing so requests stay on that origin. The prefix defaults to `porcupine`. Choose a directory that does not
-overlap native ClickHouse objects or one-off exports.
+overlap analytical data objects or one-off exports.
 
 ### Data files and committed manifests
 
@@ -305,7 +304,7 @@ interactive pool is idle and pending input is at or below the operator threshold
 It yields if delivery fails or input grows beyond four times that threshold.
 
 The resource-related `PORCUPINE_EXPORT_*` settings also bound scheduled S3 work.
-Both backends apply 5 MiB/s sink bandwidth, 24 hours per attempt, a 1 TiB decoded-output limit, and an 8 MiB row bound by default. Native jobs share the project engine's configured memory and temporary directory; they have no per-query physical read-byte or temporary-disk quota. Optional ClickHouse jobs additionally use one thread, 512 MiB query memory, a 1 TiB read budget, and 1 GiB temporary disk. These are operator controls, not pipeline request
+Pipelines apply 5 MiB/s sink bandwidth, 24 hours per attempt, a 1 TiB decoded-output limit, and an 8 MiB row bound by default. Native jobs share the project engine's configured memory and temporary directory; they have no per-query physical read-byte or temporary-disk quota. These are operator controls, not pipeline request
 fields. The one-off export bucket, job queue, retention, and presigned-link
 settings do not become the scheduled destination or its retention policy.
 
@@ -375,16 +374,13 @@ not the identity of the creator principal.
 
 ## Restore and external side effects
 
-Supported restores pause all restored destinations before the restored application can send data. Review destinations, creator grants, receiver deduplication, and stored progress, then resume explicitly. Preserve the encryption key out of band. Follow the [online restore procedure](online-backup.md); a raw database copy is not a substitute for its outbound-delivery fence.
+Supported restores pause all restored destinations before the restored application can send data. Review destinations, creator grants, receiver deduplication, and stored progress, then resume explicitly. Preserve the encryption key out of band. Follow the [offline native restore procedure](native-backup-recovery.md); a raw database copy is not a substitute for its outbound-delivery fence.
 
 A restored checkpoint can precede a webhook acknowledgment or an S3 write that already reached its destination. External effects are outside the SQLite recovery transaction. Receiver deduplication and stable object/run identifiers remain necessary, and no mode promises true exactly once. For webhook batches, retain project-and-event-UUID deduplication across replacement delivery IDs. Pausing or deleting a pipeline cannot recall a request already in flight or erase an external copy.
 
 ## Testing a destination
 
-Run `make ducklake-test` for native export, window isolation, and cancellation checks. The optional ClickHouse path uses `make integration-s3` to exercise a scheduled query against ClickHouse and an
-isolated S3-compatible store. The test downloads the compressed files listed in
-the manifest, verifies their hashes and checks the rows across two projects and
-multiple windows.
+Run `make test-race` for native export, window isolation, cancellation, and pipeline checks. `make integration-s3` uses isolated object storage to verify native S3 and recovery behavior. The native pipeline tests verify compressed files, manifest hashes, two-project isolation, multiple windows, and publication fences.
 
 Run `go test -race ./internal/porcupine -run TestPipelineBatchHTTPAndMCPContract`
 to exercise webhook setup, capture, retries, and run inspection. That test uses a

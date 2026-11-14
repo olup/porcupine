@@ -56,8 +56,8 @@ def main():
     status, schema = request('GET', path+'/schema', key=read_token())
     check('schema discovery', status == 200 and schema.get('enabled') is True)
     dialect = schema['sql']['dialect']
-    check('supported SQL dialect', dialect in ('duckdb', 'clickhouse'))
-    marker = '$uuid' if dialect == 'duckdb' else '{uuid:String}'
+    check('supported SQL dialect', dialect == 'duckdb')
+    marker = '$uuid'
     query = {'sql': 'SELECT count(*) AS total FROM events WHERE uuid='+marker, 'parameters': {'uuid': run}, 'use_cache': False}
     for _ in range(60):
         status, response = request('POST', path + '/query', query, read_token())

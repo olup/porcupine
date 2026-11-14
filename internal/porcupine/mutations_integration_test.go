@@ -5,20 +5,14 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestClickHouseIntegrationMutations(t *testing.T) {
-	config := integrationClickHouseConfig(t)
-	ch, err := newClickHouse(config)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestNativeMutationsHTTPAndMCPJourney(t *testing.T) {
 	s := service(t, 100)
-	configureAnalyticsTest(s, ch)
+	attachCoreLake(t, s)
 	oldReceipt := time.Now().UTC().Add(-45 * 24 * time.Hour)
 	s.clock = func() time.Time { return oldReceipt }
 	ctx := context.Background()
@@ -77,30 +71,24 @@ func TestClickHouseIntegrationMutations(t *testing.T) {
 	if len(data) != 1 || data[0].(map[string]any)["event"] != "corrected" || strings.Contains(data[0].(map[string]any)["properties"].(string), "must-not-persist") {
 		t.Fatal("correction was not projected safely")
 	}
-	if query("SELECT count() AS total FROM events WHERE event='original'", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
+	if query("SELECT count(*) AS total FROM events WHERE event='original'", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
 		t.Fatal("old event predicate resurrected a replaced revision")
 	}
-	private, err := ch.loadProjection(ctx, a, uuid)
+	private, err := s.lake.Load(ctx, a, uuid)
 	if err != nil || !strings.Contains(private.OriginalSnapshot, `"event":"original"`) {
 		t.Fatal("original evidence was lost")
 	}
 	if private.ID != originals[0].ID || private.ReceivedAt != originals[0].ReceivedAt {
 		t.Fatal("correction changed immutable identity or receipt")
 	}
-	if err := ch.insert(ctx, originals); err != nil {
+	if err := s.lake.Apply(ctx, duckLakeJourneyProjections(t, originals)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.flushDelivery(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if query("SELECT count() AS total FROM events WHERE event='corrected'", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "1" {
+	if query("SELECT count(*) AS total FROM events WHERE event='corrected'", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "1" {
 		t.Fatal("late original overwrote correction")
-	}
-	if config.StoragePolicy != "" {
-		disks, err := ch.admin(ctx, "SELECT disk_name,count() AS parts FROM system.parts WHERE database='"+config.Database+"' AND table='"+eventTable+"' AND active GROUP BY disk_name FORMAT JSONEachRow")
-		if err != nil || !strings.Contains(string(disks), `"disk_name":"s3"`) {
-			t.Fatalf("expired corrected parts did not reside on S3: %v", err)
-		}
 	}
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
@@ -126,124 +114,24 @@ func TestClickHouseIntegrationMutations(t *testing.T) {
 	if applied["state"] != "applied" {
 		t.Fatal("MCP deletion status not applied")
 	}
-	if query("SELECT count() AS total FROM events", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
+	if query("SELECT count(*) AS total FROM events", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
 		t.Fatal("deletion did not hide event")
 	}
-	namespace, account, password, err := s.analyticsReader(ctx, a)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ch.query(ctx, account, password, namespace, "SELECT original_snapshot FROM "+config.Database+"."+eventTable, nil); err == nil {
-		t.Fatal("reader could access private original evidence")
-	}
-	if _, err := ch.query(ctx, account, password, namespace, "SELECT event FROM events SETTINGS final=0", nil); err == nil {
-		t.Fatal("reader disabled mandatory FINAL")
-	}
+	query("SELECT original_snapshot FROM events", 400)
 	for range 2 {
-		if err := ch.insert(ctx, originals); err != nil {
+		if err := s.lake.Apply(ctx, duckLakeJourneyProjections(t, originals)); err != nil {
 			t.Fatal(err)
 		}
-		raw, err := ch.query(ctx, account, password, namespace, "SELECT count() AS total FROM "+config.Database+"."+eventTable, nil)
-		if err != nil || !strings.Contains(string(raw), `"total": "0"`) {
-			t.Fatalf("raw reader resurrected deleted history: %v", err)
-		}
-		if _, err := ch.admin(ctx, "OPTIMIZE TABLE "+config.Database+"."+eventTable+" FINAL"); err != nil {
-			t.Fatal(err)
+		if query("SELECT count(*) AS total FROM events", 200)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
+			t.Fatal("late original resurrected deleted history")
 		}
 	}
-	tombstone, err := ch.loadProjection(ctx, a, uuid)
-	if err != nil || !tombstone.IsDeleted || tombstone.Event.Event != "" || tombstone.DistinctID != "" || string(tombstone.Properties) != "{}" || tombstone.OriginalSnapshot != "" {
+
+	tombstone, err := s.lake.Load(ctx, a, uuid)
+	if err != nil || !tombstone.IsDeleted || tombstone.Event.Event != "" || tombstone.DistinctID != "" || len(tombstone.Properties) != 0 || tombstone.OriginalSnapshot != "" {
 		t.Fatal("tombstone retained payload or disappeared")
 	}
 	if tombstone.ID != originals[0].ID || tombstone.ReceivedAt != originals[0].ReceivedAt {
 		t.Fatal("deletion changed receipt partition")
-	}
-	if config.StoragePolicy != "" {
-		s.clock = time.Now
-		request(t, s, "POST", "/capture/", "", captureBody(ingest, "warm-event"), 200)
-		if err := s.flushDelivery(ctx); err != nil {
-			t.Fatal(err)
-		}
-		parts, err := ch.admin(ctx, "SELECT name FROM system.parts WHERE database='"+config.Database+"' AND table='"+eventTable+"' AND active AND disk_name='default' LIMIT 1 FORMAT JSONEachRow")
-		var part struct {
-			Name string `json:"name"`
-		}
-		if err != nil || json.Unmarshal(parts, &part) != nil || !mcpPathValue.MatchString(part.Name) {
-			t.Fatal("missing warm part before native MOVE")
-		}
-		if _, err := ch.admin(ctx, "ALTER TABLE "+config.Database+"."+eventTable+" MOVE PART '"+part.Name+"' TO VOLUME 'cold'"); err != nil {
-			t.Fatal(err)
-		}
-		mcpTestCall(t, mcpCtx, session, mcpCallInput{OperationID: "query-events", Path: map[string]string{"id": a}, Body: map[string]any{"sql": "SELECT uuid,event FROM events WHERE uuid='warm-event'"}}, 200)
-	}
-}
-
-func TestClickHouseIntegrationLegacyMigration(t *testing.T) {
-	config := integrationClickHouseConfig(t)
-	ch, err := newClickHouse(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	for _, sql := range []string{"CREATE DATABASE " + config.Database, `CREATE TABLE ` + config.Database + `.events (event_id UInt64,project_id String,uuid String,event String,distinct_id String,properties String,timestamp String,timestamp_ms Int64,received_at String,received_at_ms Int64,version UInt64) ENGINE=ReplacingMergeTree(version) PARTITION BY toYYYYMM(fromUnixTimestamp64Milli(received_at_ms,'UTC')) ORDER BY(project_id,uuid)`} {
-		if _, err := ch.admin(ctx, sql); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stamp := time.Now().UTC().Add(-45 * 24 * time.Hour)
-	projectID := newID()
-	for id := 1; id <= 2; id++ {
-		name := "original"
-		if id == 2 {
-			name = "ignored-retry"
-		}
-		sql := "INSERT INTO " + config.Database + ".events SELECT toUInt64(" + strconv.Itoa(id) + "),'" + projectID + "','legacy','" + name + "','visitor','{\"amount\":1}','" + stamp.Format(time.RFC3339Nano) + "',toInt64(" + strconv.FormatInt(stamp.UnixMilli(), 10) + "),'" + stamp.Format(time.RFC3339Nano) + "',toInt64(" + strconv.FormatInt(stamp.UnixMilli(), 10) + "),toUInt64(18446744073709551615)-toUInt64(" + strconv.Itoa(id) + ")"
-		if _, err := ch.admin(ctx, sql); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// An upgrade can encounter project views created by the previous binary.
-	if _, err := ch.admin(ctx, "CREATE VIEW "+config.Database+".legacy_project_view AS SELECT event_id,event FROM "+config.Database+".events FINAL"); err != nil {
-		t.Fatal(err)
-	}
-	oldOperator := "old_operator_" + strings.ReplaceAll(newID(), "-", "")
-	if _, err := ch.admin(ctx, "CREATE USER "+oldOperator+" HOST NONE"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ch.admin(ctx, "CREATE ROW POLICY old_operator_access ON "+config.Database+".events USING 1 TO "+oldOperator); err != nil {
-		t.Fatal(err)
-	}
-	if err := ch.initialize(ctx); err != nil {
-		t.Fatal(err)
-	}
-	projection, err := ch.loadProjection(ctx, projectID, "legacy")
-	if err != nil || projection.Event.Event != "original" || projection.ID != 1 || projection.Revision != 0 || !strings.Contains(projection.OriginalSnapshot, `"amount":1`) {
-		t.Fatal("migration lost original data or first-UUID semantics")
-	}
-	legacy, err := ch.admin(ctx, "EXISTS TABLE "+config.Database+".events")
-	if err != nil || strings.TrimSpace(string(legacy)) != "0" {
-		t.Fatal("verified legacy table was not retired")
-	}
-	projection.Revision = 1
-	projection.IsDeleted = true
-	if err := ch.insertProjections(ctx, []eventProjection{projection}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ch.initialize(ctx); err != nil {
-		t.Fatal(err)
-	}
-	projection, err = ch.loadProjection(ctx, projectID, "legacy")
-	if err != nil || !projection.IsDeleted || projection.OriginalSnapshot != "" {
-		t.Fatal("initialization resurrected migrated deleted payload")
-	}
-	if _, err := ch.admin(ctx, "CREATE TABLE "+config.Database+".events AS "+config.Database+"."+eventTable); err != nil {
-		t.Fatal(err)
-	}
-	if err := ch.initialize(ctx); err == nil {
-		t.Fatal("migration accepted unrelated recreated legacy table")
-	}
-	untouched, err := ch.admin(ctx, "EXISTS TABLE "+config.Database+".events")
-	if err != nil || strings.TrimSpace(string(untouched)) != "1" {
-		t.Fatal("migration dropped unverified legacy table")
 	}
 }

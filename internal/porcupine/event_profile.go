@@ -46,7 +46,7 @@ type EventProfileSampling struct {
 	MaxSampleBytes               int     `json:"max_sample_bytes"`
 	PropertiesTruncated          bool    `json:"properties_truncated"`
 	HistoricalPropertiesComplete bool    `json:"historical_properties_complete" doc:"Always false. This profile is a bounded sample, not a complete historical schema."`
-	SampleTruncated              bool    `json:"sample_truncated" doc:"Metadata byte limits reduced the requested candidate sample, or ClickHouse changed between activity and sampling reads."`
+	SampleTruncated              bool    `json:"sample_truncated" doc:"Metadata byte limits reduced the requested candidate sample."`
 	MaxPropertyNameBytes         int     `json:"max_property_name_bytes"`
 }
 
@@ -146,7 +146,7 @@ func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*
 	if err = s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	if s.lake == nil && s.ch == nil {
+	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
 	select {
@@ -158,12 +158,7 @@ func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	asOf := s.clock().UTC().Truncate(time.Millisecond)
-	var read eventProfileRead
-	if s.lake != nil {
-		read, err = s.lake.Profile(ctx, input.ID, options, asOf)
-	} else {
-		read, err = s.clickHouseProfile(ctx, input.ID, options, asOf)
-	}
+	read, err := s.lake.Profile(ctx, input.ID, options, asOf)
 	if err != nil {
 		return nil, err
 	}

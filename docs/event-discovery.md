@@ -59,4 +59,4 @@ Set `include_values=true` to request up to five frequent scalar values per prope
 
 Profiles read delivered logical events, using the same query concurrency and execution budgets as analytics. Inspect `delivery.pending` and `delivery.pending_mutations` when verifying recent ingestion, corrections, or deletions.
 
-A successful empty profile means no matching delivered event was found. An unavailable store or exhausted resource budget returns an error. Never interpret that error as zero activity. Native reads use one analytical transaction. Optional ClickHouse reads are fresh but do not share a transaction across activity and sample queries.
+A successful empty profile means no matching delivered event was found. An unavailable store or exhausted resource budget returns an error. Never interpret that error as zero activity. Profile reads use one analytical transaction.

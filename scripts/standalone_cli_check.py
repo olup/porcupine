@@ -21,12 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 @contextlib.contextmanager
 def local_server(directory, bootstrap):
     server = directory / "server"
-    subprocess.run(["go", "build", "-o", server, "./cmd/porcupine"], cwd=ROOT, check=True)
+    subprocess.run(["go", "build", "-o", server, "./cmd/porcupine"], cwd=ROOT, check=True, env={**os.environ, "CGO_ENABLED": "1"})
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         address = f"127.0.0.1:{sock.getsockname()[1]}"
     origin = "http://" + address
-    env = {"PORCUPINE_ADDR": address, "PORCUPINE_DB": str(directory / "test.db"),
+    env = {**{key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR") if key in os.environ}, "PORCUPINE_ADDR": address, "PORCUPINE_DB": str(directory / "test.db"),
            "PORCUPINE_BOOTSTRAP_TOKEN": bootstrap, "PORCUPINE_OAUTH_ISSUER": origin}
     with subprocess.Popen([server], cwd=directory, env=env) as process:
         try:
@@ -95,8 +95,9 @@ def check(directory, binary, origin, bootstrap):
                             ["management:read", "management:write", "events:write"])["token"]
     status = json.loads(cli("get-instance-status", key=admin_key))
     assert status["status"] == "ok" and status["checks"] == {
-        "sqlite": "ok", "clickhouse": "not_configured", "ducklake": "not_configured"}
-    assert not any(status["configuration"].values()), "unexpected optional services"
+        "sqlite": "ok", "ducklake": "ok"}
+    assert status["configuration"]["analytics"] is True
+    assert all(not value for name, value in status["configuration"].items() if name != "analytics"), "unexpected optional services"
     cli("create-project", "--body", '{"name":"   "}', key=admin_key, denied=400,
         message="name must contain 1 to 200 UTF-8 bytes")
     cli("create-project", "--body", '{"name":', key=admin_key, denied=400,

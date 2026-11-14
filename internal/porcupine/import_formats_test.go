@@ -212,7 +212,7 @@ func TestImportDeliveryCursorExcludesLaterTraffic(t *testing.T) {
 		t.Fatal("missing pending prefix")
 	}
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"later","name":"later"}`, 200)
-	after, err := s.loadImportJob(context.Background(), a, job.ID)
+	after, err := s.imports.loadImportJob(context.Background(), a, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestImportDeliveryCursorExcludesLaterTraffic(t *testing.T) {
 	if _, err = s.db.Exec(`DELETE FROM events WHERE project_id=? AND event!='later'`, a); err != nil {
 		t.Fatal(err)
 	}
-	after, err = s.loadImportJob(context.Background(), a, job.ID)
+	after, err = s.imports.loadImportJob(context.Background(), a, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,9 +25,9 @@ func TestPipelineKeyConfiguration(t *testing.T) {
 	}
 	t.Setenv("PORCUPINE_PIPELINE_KEY_FILE", path)
 	t.Setenv("PORCUPINE_PIPELINE_S3_ENDPOINTS", "https://s3.example.org")
-	t.Setenv("PORCUPINE_EXPORT_MAX_READ_BYTES", "1048576")
+	t.Setenv("PORCUPINE_EXPORT_MAX_OUTPUT_BYTES", "1048576")
 	cfg, err = pipelineConfiguration()
-	if err != nil || !bytes.Equal(cfg.Key, key) || len(cfg.AllowedS3Endpoints) != 1 || cfg.ExportLimits.MaxReadBytes != 1048576 {
+	if err != nil || !bytes.Equal(cfg.Key, key) || len(cfg.AllowedS3Endpoints) != 1 || cfg.ExportLimits.MaxOutputBytes != 1048576 {
 		t.Fatal("file config not loaded", err)
 	}
 	t.Setenv("PORCUPINE_PIPELINE_KEY", encoded)

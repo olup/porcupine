@@ -67,7 +67,7 @@ The server image includes its native extension. An offline host also needs any o
 
 ## Single Linux VM with HTTPS
 
-Use the same Compose deployment on a Linux VPS or Lightsail instance. Install Docker and Compose first. Create a DNS record for your own hostname pointing to the VM. Allow inbound TCP 80 and 443 to the proxy, restrict SSH to your administrative access, and keep API port 8080 and ClickHouse ports closed publicly.
+Use the same Compose deployment on a Linux VPS or Lightsail instance. Install Docker and Compose first. Create a DNS record for your own hostname pointing to the VM. Allow inbound TCP 80 and 443 to the proxy, restrict SSH to your administrative access, and keep API port 8080 private.
 
 Start with the private `.env` above. Change its issuer and add your hostname:
 
@@ -160,7 +160,7 @@ Maintenance leaves a two-second gap after each pass by default. It flushes small
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. Full SQLite receipts are required for DuckLake; leave `PORCUPINE_HOT_RECEIPT_LIMIT=0`. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
+Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. SQLite keeps permanent replay receipts. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
 
 `/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 
@@ -180,20 +180,8 @@ S3 destinations store query results. For analytical files, a fresh DuckLake depl
 
 Keep the original bootstrap secret privately for recovery. Changing `.env` after initialization does not replace the stored credential. Humans authorize their CLI or MCP tools using email verification or optional upstream OIDC. Backends and shared agents can use scoped service keys or OAuth client credentials. [Connect your team](connect-your-team.md) · [Service keys](service-keys.md)
 
-Before storing important history, configure [scheduled native backups](native-backups.md) or exercise a [coordinated stopped-volume backup and restore](restore.md). The ClickHouse online backup script does not support DuckLake. Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
+Before storing important history, configure [scheduled native backups](native-backups.md) or exercise a [coordinated stopped-volume backup and restore](restore.md). Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
 
 Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
 
-Version 0.12.0 does not automatically migrate a ClickHouse-backed SQLite database into DuckLake. Use a fresh native deployment and import events through the supported ingestion/import interfaces, or keep the optional ClickHouse backend. A changed image tag alone does not migrate stored history or convert SQL dialects.
-
-## Optional ClickHouse deployment
-
-To retain a ClickHouse-backed deployment, set its provisioning password in a private `.env` and include the explicit overlay:
-
-```sh
-docker compose -f compose.yaml -f compose.clickhouse.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
-```
-
-This adds the private ClickHouse service and selects it instead of DuckLake. Existing deployments must preserve their matching SQLite and ClickHouse volumes. Their schema reports the ClickHouse dialect. Do not point an existing database at a different analytical store.
-
-ClickHouse-only [S3 cold storage](storage.md#clickhouse-hot-and-cold-storage) and [online checkpoints](online-backup.md) remain separate operator options. Keep ClickHouse ports private. A remote ClickHouse deployment also needs a trusted private endpoint or HTTPS and its own provisioning credentials.
+The current development branch supports only DuckDB/DuckLake. It refuses legacy analytical configuration rather than silently creating a fresh archive. An earlier external-database deployment needs a fresh native target and an explicit export/import migration. Keep its matching backup until validation succeeds. A changed image tag alone does not convert stored history or SQL. See [storage and migration boundaries](storage.md#earlier-analytical-backends).

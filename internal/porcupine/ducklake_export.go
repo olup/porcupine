@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/nativequery"
 )
 
 func duckLakeExportBindings(ctx context.Context, p *projectLake, raw string, parameters map[string]string, window *analyticalWindow) (map[string]string, error) {
@@ -27,15 +26,15 @@ func duckLakeExportBindings(ctx context.Context, p *projectLake, raw string, par
 	if window == nil {
 		return bindings, nil
 	}
-	_, declared, hasEvents, err := parseDuckLakeSQL(ctx, p.db, raw)
-	if err != nil || !hasEvents {
+	statement, err := nativequery.Inspect(ctx, p.db, raw)
+	if err != nil || !statement.UsesEvents() {
 		return nil, errors.New("pipeline requires a validated events source")
 	}
 	for name, value := range map[string]int64{"window_start": window.StartMS, "window_end": window.EndMS} {
 		if _, exists := parameters[name]; exists {
 			return nil, errors.New("reserved pipeline parameter")
 		}
-		if declared[name] {
+		if statement.HasParameter(name) {
 			bindings[name] = strconv.FormatInt(value, 10)
 		}
 	}
@@ -56,7 +55,7 @@ func (s *duckLakeStore) ValidateExport(ctx context.Context, project, raw string,
 	if err != nil {
 		return "", apiError(400, "unsupported DuckDB SQL or parameters")
 	}
-	canonical, _, err := validateDuckLakeSQL(ctx, p.db, raw, bindings)
+	canonical, _, err := nativequery.Prepare(ctx, p.db, raw, bindings)
 	if err != nil {
 		return "", duckLakeValidationError(ctx, err)
 	}
@@ -76,7 +75,7 @@ func (s *duckLakeStore) Export(ctx context.Context, project, raw string, paramet
 	if err != nil {
 		return result, err
 	}
-	canonical, args, err := validateDuckLakeSQL(ctx, p.db, raw, bindings)
+	canonical, args, err := nativequery.Prepare(ctx, p.db, raw, bindings)
 	if err != nil {
 		return result, errExportStreamInvalid
 	}

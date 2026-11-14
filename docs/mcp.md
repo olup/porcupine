@@ -136,7 +136,7 @@ SQL schema discovery, observed event and property discovery, read-only
 SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
 operations to the same discovery catalog; the tool count remains two. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
-operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical PostHog imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
+operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
 
 For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,
 and `query-events`. Schema discovery lists supported functions and quotas. The
@@ -145,7 +145,7 @@ property values. Its latest-event UUID pointers can be inspected through a
 parameterized SQL query. See [the analytics API examples](analytics.md).
 
 The `query-events` body accepts the same optional `use_cache` Boolean as HTTP.
-The default DuckLake backend always executes fresh queries and advertises `sql.result_cache: false`. Optional ClickHouse deployments can reuse results for 60 seconds when the field is omitted or true. A false value bypasses that cache. Fresh queries do not wait for delivery. ClickHouse pending mutations bypass caching and applied mutations use a new generation.
+DuckLake executes against delivered data and advertises `sql.result_cache: false`. The optional field remains accepted but does not change execution. Queries do not wait for delivery.
 See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
 
 SQL is written by the agent. There are no named prebuilt metrics or saved SQL
@@ -156,10 +156,7 @@ because delivery is eventual. `get-event` reflects pending accepted corrections;
 SQL and catalog results show projected state. Read the [mutation contract](events.md)
 before calling `edit-event` or `delete-event`.
 
-Optional ClickHouse S3 tiering, its bucket endpoint and AWS credentials, and hot
-duration have no MCP operations. They are operator deployment configuration.
-Project delivery pipelines use separate scoped destination inputs. Administrator
-access tokens still execute read-only SQL and cannot change storage through it.
+Analytical storage, its S3 endpoint, and engine budgets are operator deployment configuration. They have no MCP management operations. Project delivery pipelines use separate scoped destination inputs. Administrator access tokens still execute read-only SQL and cannot change storage through it.
 
 ## SQL result exports
 
@@ -177,7 +174,7 @@ configuration. Export SQL remains read-only and uses the same project isolation
 as interactive analytics. The delivery barrier is not a point-in-time snapshot.
 
 The [export reference](exports.md#mcp-examples) includes create, poll, and cancel
-arguments. Run `make integration-s3` to test export objects, downloads and project cleanup against real ClickHouse and an isolated S3-compatible store.
+arguments. Run the native S3 integration target to test object-storage and recovery boundaries against isolated storage. Native export tests cover download and publication behavior.
 
 ## Delivery pipelines
 
@@ -191,7 +188,7 @@ The [pipeline reference](pipelines.md) describes creation, pause, resume,
 credential replacement, run inspection, and retry. Pausing is not a recall of
 requests already in flight. Supported restores pause destinations before any
 resumption. These calls cannot change the operator's encryption key, custom S3
-origin allowlist, native ClickHouse policy, or export resource budgets.
+origin allowlist, analytical storage configuration, or export resource budgets.
 
 ## Verification
 
@@ -201,8 +198,6 @@ over HTTP against temporary SQLite databases. The tests cover protocol versions
 project isolation, delegation, revocation, last-admin protection, invalid inputs,
 cross-origin rejection, transport limits, and bounded responses.
 
-`make integration` adds an isolated real ClickHouse test with real Go SDK MCP
-clients for analytical calls, catalog discovery, schemas, and UUID pointers.
-Ordinary `make check` does not start ClickHouse.
+Native tests exercise real DuckLake SQL, catalog discovery, schemas, UUID pointers, project isolation, and query cancellation through real HTTP and MCP clients. `make check` includes native code; `make test-race` runs the complete Go race suite.
 
 See the [OAuth reference](oauth.md#verification-status) for machine authentication tests.

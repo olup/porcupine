@@ -186,7 +186,7 @@ func (s *Service) verifyPipelineConfig(ctx context.Context) error {
 		}
 		return nil
 	}
-	if activeS3 && s.ch == nil && s.lake == nil {
+	if activeS3 && s.lake == nil {
 		return errors.New("active S3 pipelines require an analytical store")
 	}
 	if exists && previous != s.pipelines.fingerprint {
@@ -272,7 +272,7 @@ func (s *Service) startPipelines() {
 		}()
 	}
 	start("webhook", rt.webhookWake, s.stepWebhook)
-	if s.ch != nil || s.lake != nil {
+	if s.lake != nil {
 		start("s3", rt.s3Wake, s.stepPipelineS3)
 	}
 }
@@ -294,7 +294,7 @@ type pipelineAdmission struct {
 
 func (s *Service) beginCaptureReceipt(projectID string) (time.Time, func()) {
 	rt := s.pipelines
-	if rt == nil || (s.ch == nil && s.lake == nil) {
+	if rt == nil || (s.lake == nil) {
 		return s.clock().UTC(), func() {}
 	}
 	rt.admissionsMu.Lock()

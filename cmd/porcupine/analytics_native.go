@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package main
 
 import "path/filepath"

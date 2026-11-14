@@ -1,4 +1,4 @@
-# Optional SQL result exports. This bucket/prefix is separate from ClickHouse disks.
+# Optional SQL result exports. This bucket/prefix is separate from analytical data files.
 services:
   porcupine:
     environment:

@@ -46,17 +46,12 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 				w.WriteHeader(400)
 			}))
 			defer server.Close()
-			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
+			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
 			s.stopPipelines()
-			ch, err := newClickHouse(ClickHouseConfig{URL: "http://127.0.0.1:1", Database: "test_db"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			configureAnalyticsTest(s, ch)
 			a, _ := project(t, s)
 			b, _ := project(t, s)
 			_, other := key(t, s, []string{"pipelines:write", "events:read"}, []string{b})

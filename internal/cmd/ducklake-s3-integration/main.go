@@ -164,8 +164,9 @@ func run(ctx context.Context, useTLS bool) error {
 	if err := os.WriteFile(awsConfigFile, nil, 0600); err != nil {
 		return err
 	}
-	tests := exec.CommandContext(ctx, "go", "test", "-race", "-tags", "ducklake", "./internal/porcupine", "-run", "^TestDuckLakeS3", "-count=1", "-timeout=180s", "-v")
+	tests := exec.CommandContext(ctx, "go", "test", "-race", "./internal/porcupine", "-run", "^TestDuckLakeS3", "-count=1", "-timeout=180s", "-v")
 	tests.Env = environment(map[string]string{
+		"CGO_ENABLED":                                  "1",
 		"PORCUPINE_TEST_DUCKLAKE_S3_ENDPOINT":          endpoint,
 		"PORCUPINE_TEST_DUCKLAKE_S3_BUCKET":            bucket,
 		"PORCUPINE_TEST_DUCKLAKE_S3_PREFIX":            "native-tests/" + suffix,

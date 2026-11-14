@@ -1,6 +1,6 @@
 # Analytics API reference
 
-For a first query with your agent or CLI, follow [Query your events](query-events.md). This reference describes the default DuckDB dialect. Optional ClickHouse deployments report `sql.dialect: "clickhouse"` and use ClickHouse syntax instead. Always inspect the running instance's schema before generating SQL.
+For a first query with your agent or CLI, follow [Query your events](query-events.md). This reference describes the DuckDB SQL dialect. Always inspect the running instance's schema before generating SQL.
 
 Every request targets one project and requires `events:read`. HTTP and the CLI accept an API-audience service key or OAuth token. MCP requires an MCP-audience credential. There are no prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
@@ -65,9 +65,9 @@ Each property contains `key`, observed JSON `types`, decimal-string `sample_occu
 
 `sampling` reports the bounds, `properties_requested`, `properties_truncated`, `pagination_truncated`, and `historical_properties_complete`. Historical completeness is always false. Missing keys may be outside the sample or exceed its bounds.
 
-## Event profiles, unreleased
+## Event profiles
 
-The development operation `get-event-profile` adds activity, recent examples, and property statistics for one exact event name. It is not available in v0.12.0. Discover the running contract before calling it. See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples.
+Since v0.13.0, `get-event-profile` adds activity, recent examples, and property statistics for one exact event name. It is not available in v0.12.0. Discover the running contract before calling it. See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples.
 
 Profiles distinguish occurrence time from receipt time. Exact activity covers delivered logical events. Property statistics describe only a bounded recent sample. A failed storage read returns an error rather than zero activity. Edits and deletions change a profile after analytical projection, under the same delivery rules as SQL.
 
@@ -100,11 +100,9 @@ For example:
 
 ### Cached and fresh queries
 
-The default DuckLake backend reports `sql.result_cache: false`. Every query executes against delivered data. `use_cache` remains accepted for a common API contract; setting it to `false` explicitly requests a fresh execution.
+Porcupine reports `sql.result_cache: false`. Every query executes against delivered data. The optional `use_cache` field is accepted but does not change execution.
 
-The optional ClickHouse backend can reuse a result for up to 60 seconds when `use_cache` is omitted or true. Its cache separates projects, parameter values, and mutation generations. Pending mutations bypass cache use. A false value bypasses cache reads and writes. This cache is best effort and is separate from the engine's internal page and file buffers.
-
-Neither backend waits for queued originals or corrections. Inspect delivery status before checking a recent capture.
+Queries do not wait for queued originals or corrections. Inspect delivery status before checking a recent capture.
 
 ### Group a custom property by day
 
@@ -115,7 +113,7 @@ Neither backend waits for queued originals or corrections. Inspect delivery stat
 }
 ```
 
-For Paris calendar days, use `CAST(timezone('Europe/Paris', event_time) AS DATE)`. The running schema lists allowed date, JSON, aggregate, and window functions. Funnels and retention can be expressed with joins, CTEs, and window functions. ClickHouse-specific `windowFunnel` and `retention` calls require different SQL on DuckDB.
+For Paris calendar days, use `CAST(timezone('Europe/Paris', event_time) AS DATE)`. The running schema lists allowed date, JSON, aggregate, and window functions. Funnels and retention can be expressed with joins, CTEs, and window functions.
 
 The [DuckDB recipes](duckdb-recipes.md) cover trends, sessions, custom dimensions, percentiles, ordered funnels, retention and moving averages. Their SQL is exercised through the real MCP client tests.
 
@@ -139,8 +137,6 @@ Writes, qualified tables, private columns, external sources, table functions, re
 
 DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 64 ASCII letters, digits, or underscores and starting with a letter or underscore. Each supplied value is a string of at most 4,096 bytes. Names must exactly match the query, with no missing or extra values. Use an explicit cast when SQL requires a numeric or temporal type. Values are bound separately from SQL.
 
-ClickHouse uses typed placeholders such as `{name:String}` instead. Do not mix dialects in one query.
-
 ## Large result exports
 
 [SQL result exports](exports.md) use the project's validated dialect with background admission, operator budgets, durable job state, cancellation, and private gzip CSV or JSONL downloads. They do not raise interactive output limits or rewrite SQL into pages. All export operations require project-scoped `events:read`; cancellation also requires the creator credential or instance administration.
@@ -159,8 +155,6 @@ A delivery barrier waits for accepted originals and mutations through the job's 
 | Physical scanned-row or read-byte quota | Not implemented |
 
 Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
-
-The optional ClickHouse reader additionally applies a 256 MiB per-query memory setting, five-million-row scan limit, and 1 GiB read-byte limit. Read the running schema rather than assuming those apply to DuckLake.
 
 ## Delivery consistency and errors
 
@@ -187,8 +181,8 @@ DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MC
 | `division_by_zero` | Use `nullif(denominator,0)` |
 | `result_row_limit`, `result_byte_limit` | Reduce the result or call `create-event-export` |
 
-Native engine errors are classified without returning their raw text, candidate lists, stored values, filesystem paths or internal SQL. Other errors and backends may return only `error`; clients must keep that fallback.
+Native engine errors are classified without returning their raw text, candidate lists, stored values, filesystem paths or internal SQL. Other errors may return only `error`; clients must keep that fallback.
 
 ### Analytical S3 request deadlines
 
-On native S3 deployments, `limits.object_storage_request_timeout_seconds` reports the per-request object-storage timeout. Automatic native HTTP retries are disabled. Cancellation does not immediately abort every native HTTP request, so an in-flight object read can extend the SQL deadline by this interval. This field is omitted for local native storage and ClickHouse. [S3 configuration](ducklake-s3.md)
+On native S3 deployments, `limits.object_storage_request_timeout_seconds` reports the per-request object-storage timeout. Automatic native HTTP retries are disabled. Cancellation does not immediately abort every native HTTP request, so an in-flight object read can extend the SQL deadline by this interval. This field is omitted for local analytical storage. [S3 configuration](ducklake-s3.md)

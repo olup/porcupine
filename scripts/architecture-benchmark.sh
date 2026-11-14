@@ -14,32 +14,28 @@ if [ "${PORCUPINE_ARCH_SKIP_BUILD:-}" != 1 ]; then
     docker build -f scripts/analytics-benchmark.Dockerfile -t porcupine-analytics-benchmark .
 fi
 failed=0
-for engine in ${PORCUPINE_ARCH_ENGINES:-ducklake clickhouse}; do
-    case "$engine" in ducklake|clickhouse) ;; *) echo 'invalid engine'; exit 1;; esac
-    for phase in ${PORCUPINE_ARCH_PHASES:-history mixed projects payloads guard crash}; do
-        case "$phase" in history|mixed|projects|payloads|guard|crash|maintenance|maintenance-soak) ;; *) echo 'invalid phase'; exit 1;; esac
-        if [ "$engine" = clickhouse ] && [ "$phase" = crash ]; then continue; fi
-        log="$run_dir/$engine-$phase.log"
-        printf '\nRunning %s / %s\n' "$engine" "$phase"
-        if docker run --rm --cpus=2 --memory=2g --memory-swap=2g \
-            --env PORCUPINE_ARCH_ENGINE="$engine" --env PORCUPINE_ARCH_PHASE="$phase" \
-            --env PORCUPINE_MAINT_POLICY="${PORCUPINE_MAINT_POLICY:-}" \
-            --env PORCUPINE_SOAK_SECONDS="${PORCUPINE_SOAK_SECONDS:-}" \
-            --env PORCUPINE_SOAK_RATE="${PORCUPINE_SOAK_RATE:-}" \
-            --env PORCUPINE_SOAK_OPEN_DEFAULTS="${PORCUPINE_SOAK_OPEN_DEFAULTS:-}" \
-            --mount type=volume,destination=/benchmark-data porcupine-analytics-benchmark > "$log" 2>&1; then
-            printf 'Exit: 0\n' >> "$log"
-        else
-            code=$?
-            printf 'Exit: %s\n' "$code" >> "$log"
-            failed=1
-        fi
-        cat "$log"
-        sed -n 's/^ARCH_RESULT //p' "$log" > "$run_dir/$engine-$phase.jsonl"
-        if grep -q '"verdict":"NOT VERIFIED"' "$run_dir/$engine-$phase.jsonl"; then
-            printf 'Performance or setup predicate: NOT VERIFIED\n' >> "$log"
-            failed=1
-        fi
-    done
+for phase in ${PORCUPINE_ARCH_PHASES:-history mixed projects payloads guard crash}; do
+    case "$phase" in history|mixed|projects|payloads|guard|crash|maintenance|maintenance-soak) ;; *) echo 'invalid phase'; exit 1;; esac
+    log="$run_dir/ducklake-$phase.log"
+    printf '\nRunning DuckLake / %s\n' "$phase"
+    if docker run --rm --cpus=2 --memory=2g --memory-swap=2g \
+        --env PORCUPINE_ARCH_PHASE="$phase" \
+        --env PORCUPINE_MAINT_POLICY="${PORCUPINE_MAINT_POLICY:-}" \
+        --env PORCUPINE_SOAK_SECONDS="${PORCUPINE_SOAK_SECONDS:-}" \
+        --env PORCUPINE_SOAK_RATE="${PORCUPINE_SOAK_RATE:-}" \
+        --env PORCUPINE_SOAK_OPEN_DEFAULTS="${PORCUPINE_SOAK_OPEN_DEFAULTS:-}" \
+        --mount type=volume,destination=/benchmark-data porcupine-analytics-benchmark > "$log" 2>&1; then
+        printf 'Exit: 0\n' >> "$log"
+    else
+        code=$?
+        printf 'Exit: %s\n' "$code" >> "$log"
+        failed=1
+    fi
+    cat "$log"
+    sed -n 's/^ARCH_RESULT //p' "$log" > "$run_dir/ducklake-$phase.jsonl"
+    if grep -q '"verdict":"NOT VERIFIED"' "$run_dir/ducklake-$phase.jsonl"; then
+        printf 'Performance or setup predicate: NOT VERIFIED\n' >> "$log"
+        failed=1
+    fi
 done
 exit "$failed"

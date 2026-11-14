@@ -42,8 +42,6 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 			"INSERT INTO identity_profiles VALUES(?1,'user',1,'{}',1)",
 			"INSERT INTO identity_links VALUES(?1,'anon','user',1)",
 			"INSERT OR IGNORE INTO event_receipts(project_id,uuid) VALUES(?1,'stable')",
-			"INSERT OR IGNORE INTO receipt_provenance(project_id,uuid,source_uuid) VALUES(?1,'stable','source')",
-			"INSERT INTO receipt_lookup_leases VALUES('lease',?1,'stable',42)",
 			"INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES(?1,?1,'stable',?2,'edit','key','hash',1,'queued','now')",
 			"INSERT INTO mutation_outbox SELECT seq,project_id,uuid,'{}' FROM mutation_audit WHERE project_id=?1",
 			"INSERT INTO pipelines VALUES(?1,?1,?2,'webhook','hook','paused','{}',X'00',1)",
@@ -70,7 +68,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 		t.Fatal("partial purge after rollback")
 	}
 	runProjectPurge(t, s, remove, true)
-	for _, table := range []string{"projects", "events", "event_receipts", "receipt_provenance", "receipt_lookup_leases", "delivery_quarantine", "identity_profiles", "identity_links", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
+	for _, table := range []string{"projects", "events", "event_receipts", "delivery_quarantine", "identity_profiles", "identity_links", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
 		var n int
 		if err := s.db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("%s count = %d err %v", table, n, err)

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"time"
 )
 
@@ -142,12 +141,11 @@ func (s *Service) nextQueuedExport(ctx context.Context) (storedExport, bool) {
 
 func (s *Service) claimExport(ctx context.Context, job storedExport) (storedExport, error) {
 	attempt := newID()
-	queryID := "pc_export_" + attempt
 	started := job.StartedAt
 	if started == "" {
 		started = s.clock().UTC().Format(time.RFC3339Nano)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE export_jobs SET state='running',attempt_id=?,query_id=?,attempts=attempts+1,started_at=?,rows=0,bytes=0,decoded_bytes=0,file_count=0,error='' WHERE id=? AND state='queued' AND cancel_requested=0 AND cleanup_pending=0`, attempt, queryID, started, job.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE export_jobs SET state='running',attempt_id=?,attempts=attempts+1,started_at=?,rows=0,bytes=0,decoded_bytes=0,file_count=0,error='' WHERE id=? AND state='queued' AND cancel_requested=0 AND cleanup_pending=0`, attempt, started, job.ID)
 	if err != nil {
 		return storedExport{}, err
 	}
@@ -251,62 +249,16 @@ func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error
 }
 
 func (s *Service) executeExport(ctx context.Context, job storedExport) error {
-	if s.lake != nil {
-		if err := s.exportCanContinue(ctx, job); err != nil {
-			return err
-		}
-		sink := newExportSink(ctx, s, job)
-		result, err := s.lake.Export(ctx, job.ProjectID, job.SQL, job.Parameters, nil, s.exports.config.MaxRowBytes, exportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
-		if err != nil {
-			return err
-		}
-		if err = s.exportCanContinue(ctx, job); err != nil {
-			return err
-		}
-		if err = sink.finish(); err != nil {
-			return err
-		}
-		return s.publishExport(ctx, job, result, sink)
+	if s.lake == nil {
+		return errExportSink
 	}
-	if err := validateQueryParameters(job.Parameters); err != nil {
-		return errExportStreamInvalid
-	}
-	if err := validateSQLParameters(job.SQL, job.Parameters); err != nil {
-		return errExportStreamInvalid
-	}
-	canonical, err := validateSQL(job.SQL)
-	if err != nil {
-		return errExportStreamInvalid
-	}
-	if err = s.exportCanContinue(ctx, job); err != nil {
-		return err
-	}
-	namespace, reader, password, err := s.exportReader(ctx, job.ProjectID)
-	if err != nil {
-		return err
-	}
-	canonical, err = identitySQL(canonical, namespace)
-	if err != nil {
-		return errExportStreamInvalid
-	}
-	body, err := s.ch.openExport(ctx, namespace, reader, password, job.QueryID, canonical, job.Parameters)
-	if err != nil {
+	if err := s.exportCanContinue(ctx, job); err != nil {
 		return err
 	}
 	sink := newExportSink(ctx, s, job)
-	result, parseErr := streamExportJSON(ctx, body, s.exports.config.MaxRowBytes, exportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
-	closeErr := body.Close()
-	if parseErr != nil {
-		if errors.Is(parseErr, io.EOF) || errors.Is(parseErr, io.ErrUnexpectedEOF) {
-			return errExportStreamInvalid
-		}
-		return parseErr
-	}
-	if closeErr != nil {
-		return errExportStreamInvalid
-	}
-	if result.Rows != sink.rows {
-		return errExportStreamInvalid
+	result, err := s.lake.Export(ctx, job.ProjectID, job.SQL, job.Parameters, nil, s.exports.config.MaxRowBytes, exportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
+	if err != nil {
+		return err
 	}
 	if err = s.exportCanContinue(ctx, job); err != nil {
 		return err
@@ -322,14 +274,6 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 		return err
 	}
 	columns, err := json.Marshal(result.Columns)
-	if err != nil {
-		return errExportStreamInvalid
-	}
-	extras, err := json.Marshal(struct {
-		Totals                 json.RawMessage `json:"totals,omitempty"`
-		Extremes               json.RawMessage `json:"extremes,omitempty"`
-		RowsBeforeLimitAtLeast *uint64         `json:"rows_before_limit_at_least,omitempty"`
-	}{result.Totals, result.Extremes, result.RowsBeforeLimitAtLeast})
 	if err != nil {
 		return errExportStreamInvalid
 	}
@@ -353,7 +297,7 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 	}
 	completed := s.clock().UTC()
 	expires := completed.Add(time.Duration(s.exports.config.RetentionHours) * time.Hour)
-	updated, err := tx.ExecContext(ctx, `UPDATE export_jobs SET state='succeeded',sql='',parameters='{}',rows=?,bytes=?,decoded_bytes=?,file_count=?,columns_json=?,extras_json=?,completed_at=?,expires_at=?,expires_at_ms=?,error='',cleanup_pending=0 WHERE id=? AND project_id=? AND attempt_id=? AND state='running' AND cancel_requested=0`, sink.rows, sink.compressed, sink.decoded, sink.files, string(columns), string(extras), completed.Format(time.RFC3339Nano), expires.Format(time.RFC3339Nano), expires.UnixMilli(), job.ID, job.ProjectID, job.AttemptID)
+	updated, err := tx.ExecContext(ctx, `UPDATE export_jobs SET state='succeeded',sql='',parameters='{}',rows=?,bytes=?,decoded_bytes=?,file_count=?,columns_json=?,completed_at=?,expires_at=?,expires_at_ms=?,error='',cleanup_pending=0 WHERE id=? AND project_id=? AND attempt_id=? AND state='running' AND cancel_requested=0`, sink.rows, sink.compressed, sink.decoded, sink.files, string(columns), completed.Format(time.RFC3339Nano), expires.Format(time.RFC3339Nano), expires.UnixMilli(), job.ID, job.ProjectID, job.AttemptID)
 	if err != nil {
 		return errExportSink
 	}
@@ -408,9 +352,6 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 		parameters = []byte("{}")
 	}
 	s.db.ExecContext(ctx, `UPDATE export_jobs SET state=?,error=?,cleanup_pending=1,completed_at=?,sql=?,parameters=? WHERE id=? AND attempt_id=? AND state='running'`, state, code, completed, sqlKeep, string(parameters), job.ID, job.AttemptID)
-	if s.ch != nil {
-		s.ch.cancelExport(ctx, job.QueryID)
-	}
 	cleanup, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cleanupCancel()
 	if latest, err := s.loadExport(cleanup, job.ProjectID, job.ID); err == nil {
@@ -436,11 +377,6 @@ func (s *Service) nextCleanupExport(ctx context.Context) (storedExport, bool) {
 func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 	if s.exports == nil || s.exports.store == nil {
 		return errExportSink
-	}
-	if job.QueryID != "" && job.State != ExportExpired && job.State != ExportSucceeded && s.ch != nil {
-		if err := s.ch.cancelExport(ctx, job.QueryID); err != nil {
-			return err
-		}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT attempt_id,file_index,object_key,upload_id FROM export_files WHERE job_id=? ORDER BY attempt_id,file_index`, job.ID)
 	if err != nil {

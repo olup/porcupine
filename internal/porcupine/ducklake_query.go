@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/nativequery"
 )
 
 func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, parameters map[string]string) (AnalyticsResult, error) {
@@ -23,7 +22,7 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
-	canonical, args, err := validateDuckLakeSQL(ctx, p.db, rawSQL, parameters)
+	canonical, args, err := nativequery.Prepare(ctx, p.db, rawSQL, parameters)
 	if err != nil {
 		if ctx.Err() != nil {
 			return AnalyticsResult{}, apiError(429, "analytics execution time limit reached")
@@ -110,6 +109,10 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 }
 
 func duckLakeValidationError(ctx context.Context, err error) error {
+	var policy *nativequery.Error
+	if errors.As(err, &policy) {
+		return analyticsError(400, policy.Code, policy.Message, policy.Hint, policy.Field)
+	}
 	var managed *managementError
 	if errors.As(err, &managed) {
 		return managed

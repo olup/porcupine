@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -23,6 +21,8 @@ func duckLakeJourneyService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	s.lake = lake
+	s.lakeMemoryMB = defaultDuckLakeMemoryMB
+	s.imports.deliveryEnabled = true
 	return s
 }
 
@@ -92,9 +92,6 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 		t.Fatalf("missing mixed-adapter originals: %d, %v", len(originals), err)
 	}
 	duckLakeJourneyDrain(t, s)
-	if s.ch != nil {
-		t.Fatal("DuckLake journey unexpectedly configured ClickHouse")
-	}
 	after := nativeRequest(t, s, ingestA, native, 200)
 	if after["duplicates"] != float64(1) || receiptFrom(t, after, 0)["event_id"] != firstReceipt["event_id"] {
 		t.Fatal("native retry after projection changed its durable event ID")

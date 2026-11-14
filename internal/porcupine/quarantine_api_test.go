@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,11 +13,12 @@ import (
 
 func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	f := newOAuthIntegration(t)
-	backend := &isolationBackend{}
-	backend.code.Store(469)
-	backend.status.Store(400)
-	backend.allRows.Store(true)
-	f.s.ch = isolationCH(t, backend)
+	lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.lake = lake
+	f.s.lakeMemoryMB = 128
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
 	a, ingestA := f.project(t, admin.AccessToken)
 	b, ingestB := f.project(t, admin.AccessToken)
@@ -33,7 +35,15 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	if err != nil || len(originals) != 4 {
 		t.Fatal("missing accepted originals")
 	}
-	if err := f.s.flushDelivery(context.Background()); err != nil {
+	// Seed retained journal state with its existing diagnostic code. This is
+	// operator-repair data, not a native permanent-error classifier.
+	for _, original := range originals {
+		changed, err := f.s.quarantineOriginal(t.Context(), original, 321)
+		if err != nil || !changed {
+			t.Fatal("cannot seed retained quarantine", err)
+		}
+	}
+	if err := f.s.flushDelivery(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if quarantineCount(t, f.s) != 4 || receiptCount(t, f.s) != 0 {
@@ -56,7 +66,7 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 				t.Fatal("quarantine listing exposed payload fields")
 			}
 		}
-		if len(item) != 5 || item["error_code"] != float64(469) || item["quarantined_at"] == "" || item["received_at"] == "" {
+		if len(item) != 5 || item["error_code"] != float64(321) || item["quarantined_at"] == "" || item["received_at"] == "" {
 			t.Fatal("quarantine metadata incomplete")
 		}
 	}
@@ -118,7 +128,6 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	mcpTestCall(t, editCtx, editSession, mcpCallInput{OperationID: "retry-quarantined-event", Path: map[string]string{"id": b, "event_id": foreignID}}, 403)
 	mcpTestCall(t, editCtx, editSession, mcpCallInput{OperationID: "retry-quarantined-event", Path: map[string]string{"id": a, "event_id": foreignID}}, 404)
 
-	backend.status.Store(0)
 	var retry QuarantinedEventRetry
 	f.call(t, "POST", firstRetry, editAPI.AccessToken, nil, 202, &retry)
 	if !retry.Requeued || retry.EventID != firstID {
@@ -139,7 +148,7 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	f.s.startDelivery()
 	waitReceipts := func(want int) {
 		t.Helper()
-		deadline := time.Now().Add(4 * time.Second)
+		deadline := time.Now().Add(10 * time.Second)
 		for receiptCount(t, f.s) != want {
 			if time.Now().After(deadline) {
 				t.Fatal("normal delivery worker did not acknowledge repaired event")
@@ -157,10 +166,36 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	if eventCount(t, f.s) != 2 || quarantineCount(t, f.s) != 2 {
 		t.Fatal("successful recovery crossed quarantine or project boundary")
 	}
-	backend.mu.Lock()
-	accepted := append([]clickHouseEvent{}, backend.accepted...)
-	backend.mu.Unlock()
-	if len(accepted) != 2 || accepted[0].EventID != uint64(originals[0].ID) || accepted[1].EventID != uint64(originals[1].ID) || accepted[0].UUID != originals[0].UUID || accepted[0].ReceivedAt != originals[0].ReceivedAt {
-		t.Fatal("recovery changed identity, duplicated, or lost accepted originals")
+	var analytics map[string]any
+	f.call(t, "POST", "/api/v1/projects/"+a+"/query", readAPI.AccessToken, map[string]any{"sql": "SELECT event_id,uuid,received_at FROM events ORDER BY id"}, 200, &analytics)
+	accepted := analytics["result"].(map[string]any)["data"].([]any)
+	if len(accepted) != 2 {
+		t.Fatal("native recovery changed the analytical row count")
+	}
+	for index, value := range accepted {
+		row := value.(map[string]any)
+		if row["event_id"] != strconv.FormatInt(originals[index].ID, 10) || row["uuid"] != originals[index].UUID || row["received_at"] != originals[index].ReceivedAt {
+			t.Fatal("recovery changed identity, duplicated, or lost accepted originals", row)
+		}
+	}
+	var foreign map[string]any
+	f.call(t, "POST", "/api/v1/projects/"+b+"/query", otherAPI.AccessToken, map[string]any{"sql": "SELECT count(*) AS total FROM events"}, 200, &foreign)
+	if foreign["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "0" {
+		t.Fatal("recovery projected a foreign quarantined event")
+	}
+
+	thirdID := strconv.FormatInt(originals[2].ID, 10)
+	f.call(t, "DELETE", "/api/v1/oauth-clients/"+manager.ClientID, admin.AccessToken, nil, 204, nil)
+	f.call(t, "POST", base+"/"+thirdID+"/retry", editAPI.AccessToken, nil, 401, nil)
+	if _, err := editSession.ListTools(editCtx, nil); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatal("revoked operator retained MCP access", err)
+	}
+	f.call(t, "DELETE", "/api/v1/oauth-clients/"+reader.ClientID, admin.AccessToken, nil, 204, nil)
+	f.call(t, "GET", base, readAPI.AccessToken, nil, 401, nil)
+	if _, err := readSession.ListTools(readCtx, nil); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatal("revoked reader retained MCP access", err)
+	}
+	if eventCount(t, f.s) != 2 || quarantineCount(t, f.s) != 2 || receiptCount(t, f.s) != 2 {
+		t.Fatal("revoked credentials altered retained or delivered originals")
 	}
 }

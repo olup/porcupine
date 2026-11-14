@@ -6,11 +6,10 @@ import (
 )
 
 type ImportRow struct {
-	Kind         string
-	Event        Event
-	Person       ImportPerson
-	ingestion    *ingestionMetadata
-	receiptKnown bool
+	Kind      string
+	Event     Event
+	Person    ImportPerson
+	ingestion *ingestionMetadata
 }
 type ImportPerson struct {
 	InternalID     string

@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -15,14 +13,14 @@ import (
 )
 
 func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
-	s, project, token := comparisonServiceMemory(t, "ducklake", 128)
+	s, project, token := nativeBenchmarkServiceMemory(t, 128)
 	s.queueMax = 10000
 	s.deliveryMaxEvents, s.deliveryMaxBytes = 3000, 32<<20
 	handler := s.Handler()
-	comparisonQuery(t, handler, project, "SELECT count(*) AS total FROM events")
-	payloads := comparisonPayloads(30)
+	nativeBenchmarkQuery(t, handler, project, "SELECT count(*) AS total FROM events")
+	payloads := nativeBenchmarkPayloads(30)
 	for _, payload := range payloads {
-		comparisonAccept(t, handler, token, payload)
+		nativeBenchmarkAccept(t, handler, token, payload)
 	}
 	ctx := context.Background()
 	batch, err := s.deliveryBatch(ctx)
@@ -58,7 +56,7 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 	if count != 3000 {
 		t.Fatalf("failed analytical write lost queued events: %d", count)
 	}
-	result := comparisonQuery(t, handler, project, "SELECT count(*) AS total FROM events")
+	result := nativeBenchmarkQuery(t, handler, project, "SELECT count(*) AS total FROM events")
 	if len(result.Data) != 1 || string(result.Data[0]["total"]) != `"0"` {
 		t.Fatal("failed batch partially committed")
 	}
@@ -76,8 +74,8 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 	if err := s.db.QueryRow("SELECT count(*) FROM delivery_quarantine").Scan(&quarantined); err != nil || quarantined != 0 {
 		t.Fatalf("native allocation failure quarantined accepted rows: count=%d error=%v", quarantined, err)
 	}
-	comparisonAccept(t, handler, token, payloads[0])
-	result = comparisonQuery(t, handler, project, "SELECT count(*) AS total FROM events")
+	nativeBenchmarkAccept(t, handler, token, payloads[0])
+	result = nativeBenchmarkQuery(t, handler, project, "SELECT count(*) AS total FROM events")
 	if len(result.Data) != 1 || string(result.Data[0]["total"]) != `"3000"` {
 		t.Fatal("recovery or retry changed the analytical count")
 	}
@@ -110,14 +108,14 @@ func TestDuckLakeBatchNonAllocationFailureKeepsTransactionAtomic(t *testing.T) {
 }
 
 func TestDuckLakeBatchUnfitSingletonRemainsPending(t *testing.T) {
-	s, projectID, token := comparisonServiceMemory(t, "ducklake", 64)
+	s, projectID, token := nativeBenchmarkServiceMemory(t, 64)
 	s.deliveryMaxEvents = 1
 	handler := s.Handler()
-	comparisonQuery(t, handler, projectID, "SELECT count(*) AS total FROM events")
+	nativeBenchmarkQuery(t, handler, projectID, "SELECT count(*) AS total FROM events")
 	// Literal HTML fits the accepted request limit but expands during durable
 	// JSON encoding, so this also exercises the single-event soft byte budget.
 	payload := []byte(`[{"type":"track","message_id":"unfit","actor_id":"visitor","name":"large","properties":{"wide":"` + strings.Repeat("<", 200000) + `"}}]`)
-	comparisonAccept(t, handler, token, payload)
+	nativeBenchmarkAccept(t, handler, token, payload)
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := s.flushDelivery(ctx)
@@ -138,24 +136,24 @@ func TestDuckLakeBatchUnfitSingletonRemainsPending(t *testing.T) {
 		t.Fatalf("unfit singleton status=%+v error=%v", status, err)
 	}
 	otherProject, otherToken := project(t, s)
-	comparisonAccept(t, handler, otherToken, []byte(`[{"type":"track","message_id":"healthy","actor_id":"other-visitor","name":"healthy"}]`))
+	nativeBenchmarkAccept(t, handler, otherToken, []byte(`[{"type":"track","message_id":"healthy","actor_id":"other-visitor","name":"healthy"}]`))
 	if err := s.flushDelivery(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if count, _ := queueUsage(t, s); count != 1 {
 		t.Fatalf("healthy project progress changed retained singleton: queued=%d", count)
 	}
-	result := comparisonQuery(t, handler, otherProject, "SELECT count(*) AS total FROM events")
+	result := nativeBenchmarkQuery(t, handler, otherProject, "SELECT count(*) AS total FROM events")
 	if len(result.Data) != 1 || string(result.Data[0]["total"]) != `"1"` {
 		t.Fatal("unfit singleton blocked the healthy project's later event")
 	}
 }
 
 func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
-	s, project, token := comparisonServiceMemory(t, "ducklake", 128)
+	s, project, token := nativeBenchmarkServiceMemory(t, 128)
 	handler := s.Handler()
-	payload := comparisonPayloads(1)[0]
-	comparisonAccept(t, handler, token, payload)
+	payload := nativeBenchmarkPayloads(1)[0]
+	nativeBenchmarkAccept(t, handler, token, payload)
 	originals, err := s.deliveryBatch(context.Background())
 	if err != nil || len(originals) != 100 {
 		t.Fatalf("queued originals=%d error=%v", len(originals), err)
@@ -220,8 +218,8 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 	if err := s.db.QueryRow("SELECT count(*) FROM mutation_audit WHERE state='applied'").Scan(&applied); err != nil || applied != 100 {
 		t.Fatalf("automatic mutation recovery applied=%d error=%v", applied, err)
 	}
-	comparisonAccept(t, handler, token, payload)
-	result := comparisonQuery(t, handler, project, "SELECT count(*) AS total FROM events WHERE event='corrected' AND length(json_extract_string(properties,'$.wide'))=15360 AND revision>0")
+	nativeBenchmarkAccept(t, handler, token, payload)
+	result := nativeBenchmarkQuery(t, handler, project, "SELECT count(*) AS total FROM events WHERE event='corrected' AND length(json_extract_string(properties,'$.wide'))=15360 AND revision>0")
 	if len(result.Data) != 1 || string(result.Data[0]["total"]) != `"100"` {
 		t.Fatalf("mutation recovery or original retry lost wide corrections: %+v", result.Data)
 	}
@@ -233,11 +231,11 @@ func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
 		rows, bytes int
 	}{{"production", 1000, 4 << 20}, {"100_rows_8MiB", 100, 8 << 20}, {"10_rows_4MiB", 10, 4 << 20}} {
 		t.Run(candidate.name, func(t *testing.T) {
-			s, project, token := comparisonServiceMemory(t, "ducklake", 512)
+			s, project, token := nativeBenchmarkServiceMemory(t, 512)
 			s.deliveryMaxEvents, s.deliveryMaxBytes = candidate.rows, candidate.bytes
 			handler := s.Handler()
 			for offset := 0; offset < 100; offset += 10 {
-				comparisonAccept(t, handler, token, largeEventPayload(offset, 10))
+				nativeBenchmarkAccept(t, handler, token, largeEventPayload(offset, 10))
 			}
 			ctx := context.Background()
 			batch, err := s.deliveryBatch(ctx)
@@ -278,7 +276,7 @@ func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
 				}
 				pending = remaining
 			}
-			result := comparisonQuery(t, handler, project, "SELECT count(*) AS total FROM events")
+			result := nativeBenchmarkQuery(t, handler, project, "SELECT count(*) AS total FROM events")
 			if len(result.Data) != 1 || string(result.Data[0]["total"]) != `"100"` {
 				t.Fatal("raw transaction retry or adaptive delivery changed event count")
 			}

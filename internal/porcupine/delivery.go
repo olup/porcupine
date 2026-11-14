@@ -74,7 +74,7 @@ func (s *Service) startDelivery() {
 }
 
 func (s *Service) flushDelivery(ctx context.Context) error {
-	if s.ch == nil && s.lake == nil {
+	if s.lake == nil {
 		return errors.New("analytical delivery is disabled")
 	}
 	err := s.initializeDelivery(ctx)
@@ -144,9 +144,6 @@ func (s *Service) deliverBatch(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	defer release()
-	if progress, err := s.reconcileReceipts(ctx); progress || err != nil {
-		return progress, err
-	}
 	batch, err := s.deliveryBatch(ctx)
 	if err != nil || len(batch) == 0 {
 		return false, err
@@ -161,10 +158,6 @@ func (s *Service) deliverBatch(ctx context.Context) (bool, error) {
 }
 
 func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error {
-	source, err := s.receiptAcknowledgmentSource(ctx)
-	if err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.New("cannot acknowledge delivered events")
@@ -172,7 +165,7 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 	defer tx.Rollback()
 	projects := map[string]bool{}
 	for _, event := range batch {
-		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, source, event.ID); err != nil {
+		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, event.ID); err != nil {
 			return errors.New("cannot save delivery receipt")
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id=?`, event.ID); err != nil {
@@ -185,9 +178,6 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 			return errors.New("cannot record project delivery")
 		}
 	}
-	if err := s.enforceReceiptLimit(ctx, tx); err != nil {
-		return err
-	}
 	if err := tx.Commit(); err != nil {
 		return errors.New("cannot commit delivery receipts")
 	}
@@ -196,10 +186,7 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 
 func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 	if deliveryErr != nil {
-		message := "ClickHouse delivery failed"
-		if s.lake != nil {
-			message = "DuckLake delivery failed"
-		}
+		message := "DuckLake delivery failed"
 		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, message)
 		return
 	}
@@ -207,7 +194,7 @@ func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 }
 
 func (s *Service) deliveryStatus(ctx context.Context, projectID string) (DeliveryStatus, error) {
-	status := DeliveryStatus{Enabled: s.ch != nil || s.lake != nil}
+	status := DeliveryStatus{Enabled: s.lake != nil}
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*), COALESCE((SELECT received_at FROM events WHERE project_id=? AND delivered=0 ORDER BY id LIMIT 1),'') FROM events WHERE project_id=? AND delivered=0`, projectID, projectID).Scan(&status.Pending, &status.OldestPendingReceivedAt); err != nil {
 		return status, err
 	}

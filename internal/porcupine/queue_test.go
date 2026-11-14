@@ -3,7 +3,6 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -147,7 +146,7 @@ func TestQueueByteCapacityReleasedByDeliveryAndMutation(t *testing.T) {
 			request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
 			_, bytes := queueUsage(t, s)
 			s.queueMaxBytes = bytes
-			s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+			attachCoreLake(t, s)
 			if mode == "delivery" {
 				if delivered, err := s.deliverBatch(context.Background()); err != nil || !delivered {
 					t.Fatal("delivery failed", err)
@@ -255,7 +254,7 @@ func TestQueueByteAccountingDeliveryAcknowledgementRollback(t *testing.T) {
 	_, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
 	_, before := queueUsage(t, s)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	if _, err := s.db.Exec(`CREATE TRIGGER fail_queue_ack BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'test ack failure'); END`); err != nil {
 		t.Fatal(err)
 	}

@@ -50,4 +50,4 @@ Native and Segment records pass through the same historical acceptance rules as 
 
 Success means durable acceptance. `get-import` includes `delivery.enabled`, `delivery.pending`, `delivery.quarantined`, and `delivery.ready`. Pending is bounded by a stored project acceptance cursor, so continuous later ingestion does not keep an import waiting forever. It includes earlier undelivered work and quarantine. List summaries omit this detailed delivery report.
 
-The configured analytical store determines where imported data is written: local DuckLake files, [analytical S3](ducklake-s3.md), or the optional ClickHouse backend. Imports do not enqueue webhooks or enter automatic receipt-window S3 pipelines.
+The configured analytical store determines where imported data is written: local DuckLake files or [analytical S3](ducklake-s3.md). Imports do not enqueue webhooks or enter automatic receipt-window S3 pipelines.

@@ -19,12 +19,12 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 		}
 		return nil
 	}
-	var clickHouseState bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key IN ('projection_table_uuid','query_master_key'))").Scan(&clickHouseState); err != nil {
+	var foreignBackendState bool
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key IN ('projection_table_uuid','query_master_key'))").Scan(&foreignBackendState); err != nil {
 		return err
 	}
-	if clickHouseState {
-		return errors.New("DuckLake requires a dedicated SQLite database; automatic migration from ClickHouse is not implemented")
+	if foreignBackendState {
+		return errors.New("DuckLake requires a dedicated SQLite database; automatic migration from another analytical backend is not implemented")
 	}
 	actual, err := s.lake.SourceID(ctx)
 	if err != nil || actual == "" || (expected != "" && expected != actual) {
@@ -69,21 +69,14 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 }
 
 func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []eventProjection) error {
-	if s.lake != nil {
-		return s.lake.Apply(ctx, projections)
+	if s.lake == nil {
+		return errors.New("analytical delivery is disabled")
 	}
-	if err := s.ch.initialize(ctx); err != nil {
-		return err
-	}
-	return s.ch.insertProjections(ctx, projections)
+	return s.lake.Apply(ctx, projections)
 }
-
 func (s *Service) loadAnalyticalProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
-	if s.lake != nil {
-		return s.lake.Load(ctx, project, uuid)
+	if s.lake == nil {
+		return eventProjection{}, errEventNotFound
 	}
-	if err := s.ch.initialize(ctx); err != nil {
-		return eventProjection{}, err
-	}
-	return s.ch.loadProjection(ctx, project, uuid)
+	return s.lake.Load(ctx, project, uuid)
 }

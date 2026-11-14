@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -19,25 +17,18 @@ import (
 	"time"
 )
 
-type architectureQuery struct{ name, duckdb, clickhouse string }
+type architectureQuery struct{ name, sql string }
 
 var architectureQueries = []architectureQuery{
-	{"counts", "SELECT count(*) AS total,count(DISTINCT distinct_id) AS actors FROM events", "SELECT count() AS total,uniqExact(distinct_id) AS actors FROM events"},
-	{"dimensions", "SELECT CAST(event_time AS DATE) AS day,event,json_extract_string(properties,'$.country') AS country,count(*) AS total FROM events GROUP BY day,event,country ORDER BY day,event,country", "SELECT toDate(event_time) AS day,event,JSONExtractString(properties,'country') AS country,count() AS total FROM events GROUP BY day,event,country ORDER BY day,event,country"},
-	{"sessions", "SELECT count(DISTINCT json_extract_string(context,'$.session_id')) AS total FROM events", "SELECT uniqExact(JSONExtractString(context,'session_id')) AS total FROM events"},
-	{"ordered_funnel", `WITH visits AS (SELECT distinct_id,min(event_time) AS t FROM events WHERE event='page_viewed' GROUP BY distinct_id), signups AS (SELECT e.distinct_id,min(e.event_time) AS t FROM events e JOIN visits v ON e.distinct_id=v.distinct_id WHERE e.event='signup_completed' AND e.event_time>=v.t AND e.event_time<=v.t+INTERVAL '10 minutes' GROUP BY e.distinct_id), purchases AS (SELECT e.distinct_id FROM events e JOIN signups s ON e.distinct_id=s.distinct_id WHERE e.event='purchase' AND e.event_time>=s.t AND e.event_time<=s.t+INTERVAL '10 minutes' GROUP BY e.distinct_id) SELECT count(*) AS total FROM purchases`, `WITH visits AS (SELECT distinct_id,min(event_time) AS t FROM events WHERE event='page_viewed' GROUP BY distinct_id), signups AS (SELECT e.distinct_id,min(e.event_time) AS t FROM events e JOIN visits v ON e.distinct_id=v.distinct_id WHERE e.event='signup_completed' AND e.event_time>=v.t AND e.event_time<=addMinutes(v.t,10) GROUP BY e.distinct_id), purchases AS (SELECT e.distinct_id FROM events e JOIN signups s ON e.distinct_id=s.distinct_id WHERE e.event='purchase' AND e.event_time>=s.t AND e.event_time<=addMinutes(s.t,10) GROUP BY e.distinct_id) SELECT count() AS total FROM purchases`},
-	{"next_day_retention", `WITH cohort AS (SELECT distinct_id,min(CAST(event_time AS DATE)) AS first_day FROM events WHERE event='page_viewed' GROUP BY distinct_id) SELECT count(DISTINCT e.distinct_id) AS total FROM events e JOIN cohort c ON e.distinct_id=c.distinct_id WHERE e.event='page_viewed' AND CAST(e.event_time AS DATE)=c.first_day+INTERVAL '1 day'`, `WITH cohort AS (SELECT distinct_id,min(toDate(event_time)) AS first_day FROM events WHERE event='page_viewed' GROUP BY distinct_id) SELECT uniqExact(e.distinct_id) AS total FROM events e JOIN cohort c ON e.distinct_id=c.distinct_id WHERE e.event='page_viewed' AND toDate(e.event_time)=addDays(c.first_day,1)`},
+	{"counts", "SELECT count(*) AS total,count(DISTINCT distinct_id) AS actors FROM events"},
+	{"dimensions", "SELECT CAST(event_time AS DATE) AS day,event,json_extract_string(properties,'$.country') AS country,count(*) AS total FROM events GROUP BY day,event,country ORDER BY day,event,country"},
+	{"sessions", "SELECT count(DISTINCT json_extract_string(context,'$.session_id')) AS total FROM events"},
+	{"ordered_funnel", `WITH visits AS (SELECT distinct_id,min(event_time) AS t FROM events WHERE event='page_viewed' GROUP BY distinct_id), signups AS (SELECT e.distinct_id,min(e.event_time) AS t FROM events e JOIN visits v ON e.distinct_id=v.distinct_id WHERE e.event='signup_completed' AND e.event_time>=v.t AND e.event_time<=v.t+INTERVAL '10 minutes' GROUP BY e.distinct_id), purchases AS (SELECT e.distinct_id FROM events e JOIN signups s ON e.distinct_id=s.distinct_id WHERE e.event='purchase' AND e.event_time>=s.t AND e.event_time<=s.t+INTERVAL '10 minutes' GROUP BY e.distinct_id) SELECT count(*) AS total FROM purchases`},
+	{"next_day_retention", `WITH cohort AS (SELECT distinct_id,min(CAST(event_time AS DATE)) AS first_day FROM events WHERE event='page_viewed' GROUP BY distinct_id) SELECT count(DISTINCT e.distinct_id) AS total FROM events e JOIN cohort c ON e.distinct_id=c.distinct_id WHERE e.event='page_viewed' AND CAST(e.event_time AS DATE)=c.first_day+INTERVAL '1 day'`},
 }
 
-func (q architectureQuery) sql(engine string) string {
-	if engine == "clickhouse" {
-		return q.clickhouse
-	}
-	return q.duckdb
-}
-
-func architectureEmit(phase, engine string, data map[string]any) {
-	data["phase"], data["engine"] = phase, engine
+func architectureEmit(phase string, data map[string]any) {
+	data["phase"], data["engine"] = phase, "ducklake"
 	data["time"] = time.Now().UTC().Format(time.RFC3339)
 	raw, _ := json.Marshal(data)
 	fmt.Printf("ARCH_RESULT %s\n", raw)
@@ -116,28 +107,27 @@ func architectureLatency(samples []time.Duration) map[string]any {
 }
 
 // Bulk fixture setup is intentionally distinct from measured durable ingestion.
-// Both dialects synthesize the same observable event fields and properties.
+// Setup writes native historical rows; measured ingestion still uses the public API.
 func architectureSeed(t *testing.T, s *Service, project string, from, to int) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	start := time.Now()
 	var err error
-	if s.lake != nil {
-		store := s.lake.(*duckLakeStore)
-		p, release, leaseErr := store.leaseProject(ctx, project)
-		if leaseErr != nil {
-			t.Fatal(leaseErr)
+	store := s.lake.(*duckLakeStore)
+	p, release, leaseErr := store.leaseProject(ctx, project)
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	defer release()
+	for offset := from; offset < to && err == nil; offset += 10000 {
+		end := min(offset+10000, to)
+		tx, beginErr := p.db.BeginTx(ctx, nil)
+		if beginErr != nil {
+			err = beginErr
+			break
 		}
-		defer release()
-		for offset := from; offset < to && err == nil; offset += 10000 {
-			end := min(offset+10000, to)
-			tx, beginErr := p.db.BeginTx(ctx, nil)
-			if beginErr != nil {
-				err = beginErr
-				break
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO lake.current_events
+		_, err = tx.ExecContext(ctx, `INSERT INTO lake.current_events
 WITH base AS (SELECT i, TIMESTAMPTZ '2026-11-01 00:00:00+00'+i*INTERVAL '1 second' AS ts,
  CASE i%3 WHEN 0 THEN 'page_viewed' WHEN 1 THEN 'signup_completed' ELSE 'purchase' END AS ev FROM range(?,?) r(i)),
 fixture AS (SELECT *, 'fixture-'||CAST(i AS VARCHAR) AS uid,'actor-'||CAST(CAST(floor(i/3) AS BIGINT)%10000 AS VARCHAR) AS actor,
@@ -150,51 +140,27 @@ SELECT 1000000000+i,?,uid,ev,actor,props,strftime(ts,'%Y-%m-%dT%H:%M:%SZ'),epoch
  'message_id',uid,'event_type','track','context',json(context_json),'Revision',0,'IsDeleted',false,
  'OriginalSnapshot',CAST(json_object('event',ev,'distinct_id',actor,'properties',json(props),'timestamp',strftime(ts,'%Y-%m-%dT%H:%M:%SZ')) AS VARCHAR)) AS VARCHAR)
 FROM fixture`, offset, end, project, project)
-			if err == nil {
-				_, err = tx.ExecContext(ctx, `INSERT INTO lake.heads SELECT uuid,id,revision,false,received_at FROM lake.current_events WHERE id>=? AND id<?`, 1000000000+offset, 1000000000+end)
-			}
-			if err == nil {
-				err = tx.Commit()
-			} else {
-				_ = tx.Rollback()
-			}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO lake.heads SELECT uuid,id,revision,false,received_at FROM lake.current_events WHERE id>=? AND id<?`, 1000000000+offset, 1000000000+end)
 		}
-	} else {
-		// Project is a generated hex identifier, still quote it explicitly.
-		for offset := from; offset < to && err == nil; offset += 10000 {
-			sql := fmt.Sprintf(`INSERT INTO %s.%s (event_id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,received_at,received_at_ms,revision,is_deleted,original_snapshot,identity_snapshot,source_id,message_id,event_type,context,is_imported)
-WITH number+%d AS i,addSeconds(toDateTime('2026-11-01 00:00:00','UTC'),i) AS ts,
- multiIf(i%%3=0,'page_viewed',i%%3=1,'signup_completed','purchase') AS ev,
- concat('fixture-',toString(i)) AS uid,concat('actor-',toString(intDiv(i,3)%%10000)) AS actor,
- concat('{"country":"country-',toString(i%%7),'","plan":"',if(i%%2=0,'free','pro'),'","amount":49.95,"duration_ms":',toString(i%%5000),'}') AS props,
- formatDateTime(ts,'%%Y-%%m-%%dT%%H:%%i:%%SZ','UTC') AS stamp
-SELECT 1000000000+i,'%s',uid,ev,actor,props,stamp,toInt64(toUnixTimestamp(ts))*1000,stamp,toInt64(toUnixTimestamp(ts))*1000,0,0,
- concat('{"event":"',ev,'","distinct_id":"',actor,'","properties":',props,',"timestamp":"',stamp,'"}'),'',
- 'architecture-fixture',uid,'track',concat('{"session_id":"session-',toString(intDiv(i,3)),'","locale":"fr-FR"}'),1 FROM numbers(%d)
-SETTINGS max_threads=2,max_memory_usage=536870912`, s.ch.config.Database, eventTable, offset, project, min(10000, to-offset))
-			_, err = s.ch.admin(ctx, sql)
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
 		}
 	}
 	if err != nil {
-		architectureEmit("seed", architectureEngine(s), map[string]any{"from": from, "to": to, "verdict": "NOT VERIFIED", "error": err.Error(), "elapsed_seconds": time.Since(start).Seconds()})
+		architectureEmit("seed", map[string]any{"from": from, "to": to, "verdict": "NOT VERIFIED", "error": err.Error(), "elapsed_seconds": time.Since(start).Seconds()})
 		t.Error("historical fixture setup did not complete")
 		return false
 	}
-	architectureEmit("seed", architectureEngine(s), map[string]any{"from": from, "to": to, "elapsed_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
+	architectureEmit("seed", map[string]any{"from": from, "to": to, "elapsed_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
 	return true
-}
-
-func architectureEngine(s *Service) string {
-	if s.lake != nil {
-		return "ducklake"
-	}
-	return "clickhouse"
 }
 
 func architectureFixtureChecks(t *testing.T, s *Service, project string, rows int) {
 	t.Helper()
 	h := s.Handler()
-	engine := architectureEngine(s)
 	if n := architectureCount(t, h, project); n != rows {
 		t.Fatalf("fixture count %d != %d", n, rows)
 	}
@@ -203,7 +169,7 @@ func architectureFixtureChecks(t *testing.T, s *Service, project string, rows in
 		codes := map[int]int{}
 		var result AnalyticsResult
 		for range 5 {
-			code, r, elapsed := architectureRunQuery(h, adminToken, project, q.sql(engine))
+			code, r, elapsed := architectureRunQuery(h, adminToken, project, q.sql)
 			codes[code]++
 			samples = append(samples, elapsed)
 			if code == 200 {
@@ -278,7 +244,7 @@ func architectureFixtureChecks(t *testing.T, s *Service, project string, rows in
 			}
 		}
 
-		architectureEmit("history", engine, map[string]any{"history_rows": rows, "query": q.name, "status_counts": codes, "latency": architectureLatency(samples), "result_rows": result.Rows, "verdict": verdict})
+		architectureEmit("history", map[string]any{"history_rows": rows, "query": q.name, "status_counts": codes, "latency": architectureLatency(samples), "result_rows": result.Rows, "verdict": verdict})
 	}
 }
 
@@ -312,7 +278,6 @@ func architectureDrain(t *testing.T, s *Service, limit time.Duration) int {
 func architectureMixed(t *testing.T, s *Service, project, token string, rate, readers, offset int, maintenance bool) {
 	t.Helper()
 	h := s.Handler()
-	engine := architectureEngine(s)
 	before := architectureCount(t, h, project)
 	var mu sync.Mutex
 	var querySamples []time.Duration
@@ -327,7 +292,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 			defer workers.Done()
 			for ctx.Err() == nil {
 				q := architectureQueries[(worker+2)%len(architectureQueries)]
-				code, _, elapsed := architectureRunQuery(h, adminToken, project, q.sql(engine))
+				code, _, elapsed := architectureRunQuery(h, adminToken, project, q.sql)
 				mu.Lock()
 				querySamples = append(querySamples, elapsed)
 				queryCodes[code]++
@@ -340,7 +305,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 			}
 		}(worker)
 	}
-	if maintenance && s.lake != nil {
+	if maintenance {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -367,7 +332,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 			if os.Getenv("PORCUPINE_ARCH_PHASE") == "maintenance" && progress == 0 {
 				maintenanceSuccess = false
 			}
-			architectureEmit("maintenance", engine, map[string]any{"success": err == nil, "policy": policy, "steps": steps, "progress": progress})
+			architectureEmit("maintenance", map[string]any{"success": err == nil, "policy": policy, "steps": steps, "progress": progress})
 		}()
 	}
 	duration := 10 * time.Second
@@ -418,7 +383,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 	if accepted != requests*batch || rejected > 0 || duplicate > 0 || remaining > 0 || pendingAtStop > int64(2*rate) || maxPending > 2*rate || arrivalElapsed > duration+time.Second || (readers > 0 && queryCodes[200] != len(querySamples)) || !maintenanceSuccess {
 		verdict = "NOT VERIFIED"
 	}
-	architectureEmit("mixed", engine, map[string]any{"offered_rate": rate, "offered_events": requests * batch, "readers": readers, "maintenance": maintenance, "accepted": accepted, "rejected": rejected, "duplicates": duplicate, "arrival_elapsed_seconds": arrivalElapsed.Seconds(), "accept_latency": architectureLatency(acceptSamples), "query_latency": architectureLatency(querySamples), "query_status_counts": queryCodes, "max_pending": maxPending, "pending_at_stop": pendingAtStop, "remaining_after_drain": remaining, "visible": visible, "drain_seconds": time.Since(drainStart).Seconds(), "verdict": verdict})
+	architectureEmit("mixed", map[string]any{"offered_rate": rate, "offered_events": requests * batch, "readers": readers, "maintenance": maintenance, "accepted": accepted, "rejected": rejected, "duplicates": duplicate, "arrival_elapsed_seconds": arrivalElapsed.Seconds(), "accept_latency": architectureLatency(acceptSamples), "query_latency": architectureLatency(querySamples), "query_status_counts": queryCodes, "max_pending": maxPending, "pending_at_stop": pendingAtStop, "remaining_after_drain": remaining, "visible": visible, "drain_seconds": time.Since(drainStart).Seconds(), "verdict": verdict})
 }
 
 func TestAnalyticsArchitectureExperiment(t *testing.T) {
@@ -426,44 +391,24 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 	if phase == "" {
 		t.Skip("use make ducklake-architecture-test")
 	}
-	engine := os.Getenv("PORCUPINE_ARCH_ENGINE")
-	if engine != "ducklake" && engine != "clickhouse" {
-		t.Fatal("invalid experiment engine")
-	}
 	var s *Service
 	var project, token string
 	openDefaults := phase == "maintenance-soak" && os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1"
 	if openDefaults {
-		if engine != "ducklake" {
-			t.Fatal("Open defaults experiment requires DuckLake")
-		}
 		s, project, token = maintenanceOpenService(t)
 	} else {
-		s, project, token = comparisonServiceMemory(t, engine, 512)
+		s, project, token = nativeBenchmarkServiceMemory(t, 512)
 	}
 	s.queueMax, s.queueMaxBytes = 100000, 256<<20
 	if !openDefaults {
 		s.deliveryMaxEvents, s.deliveryMaxBytes = 1000, 4<<20
 	}
 	h := s.Handler()
-	if s.ch != nil {
-		_, _, _, err := s.analyticsReaderForCache(context.Background(), project, false)
-		if err != nil {
-			if failure, ok := err.(*clickHouseError); ok {
-				t.Fatalf("ClickHouse reader provisioning failed: code=%d HTTP=%d", failure.Code, failure.Status)
-			}
-			t.Fatalf("ClickHouse reader provisioning failed: %v", err)
-		}
-	}
-	comparisonQuery(t, h, project, "SELECT count(*) AS total FROM events")
+	nativeBenchmarkQuery(t, h, project, "SELECT count(*) AS total FROM events")
 	defer func() {
 		roots := []string{filepath.Dir(s.projectionGuard.path)}
-		if s.lake != nil {
-			roots = append(roots, s.lake.(*duckLakeStore).root)
-		} else {
-			roots = append(roots, "/benchmark-data/clickhouse")
-		}
-		architectureEmit("resources", engine, architectureResources(roots...))
+		roots = append(roots, s.lake.(*duckLakeStore).root)
+		architectureEmit("resources", architectureResources(roots...))
 	}()
 	switch phase {
 	case "history":
@@ -484,17 +429,12 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		architectureMixed(t, s, project, token, 1000, 0, 0, false)
 		architectureMixed(t, s, project, token, 1000, 2, 100000, false)
 		architectureMixed(t, s, project, token, 3000, 2, 200000, false)
-		if s.lake != nil {
-			architectureMixed(t, s, project, token, 1000, 2, 300000, true)
-		}
+		architectureMixed(t, s, project, token, 1000, 2, 300000, true)
 	case "projects":
 		architectureProjects(t, s)
 	case "crash":
 		architectureCrash(t)
 	case "maintenance":
-		if s.lake == nil {
-			t.Fatal("native maintenance experiment requires DuckLake")
-		}
 		policy := os.Getenv("PORCUPINE_MAINT_POLICY")
 		if policy != "baseline" && policy != "bounded" {
 			t.Fatal("choose baseline or bounded maintenance policy")
@@ -518,13 +458,10 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		architectureEmit("maintenance_environment", engine, map[string]any{"policy": policy, "native_version": nativeVersion})
+		architectureEmit("maintenance_environment", map[string]any{"policy": policy, "native_version": nativeVersion})
 		s.startDelivery()
 		architectureMixed(t, s, project, token, 1000, 2, 0, true)
 	case "maintenance-soak":
-		if s.lake == nil {
-			t.Fatal("native maintenance experiment requires DuckLake")
-		}
 		if !architectureSeed(t, s, project, 0, 1000000) {
 			return
 		}
@@ -559,16 +496,13 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 			if left != 0 {
 				verdict = "NOT VERIFIED"
 			}
-			architectureEmit("payloads", engine, map[string]any{"padding_bytes": size, "accepted": accepted, "projected": count, "remaining": left, "elapsed_seconds": time.Since(start).Seconds(), "verdict": verdict})
+			architectureEmit("payloads", map[string]any{"padding_bytes": size, "accepted": accepted, "projected": count, "remaining": left, "elapsed_seconds": time.Since(start).Seconds(), "verdict": verdict})
 		}
 	case "guard":
 		if !architectureSeed(t, s, project, 0, 1000000) {
 			return
 		}
 		sql := "SELECT sum(length(a.uuid||b.uuid)) AS total FROM events a JOIN events b ON a.event=b.event"
-		if engine == "clickhouse" {
-			sql = "SELECT sum(length(concat(a.uuid,b.uuid))) AS total FROM events a JOIN events b ON a.event=b.event"
-		}
 		code, _, elapsed := architectureRunQuery(h, adminToken, project, sql)
 		healthStart := time.Now()
 		count := architectureCount(t, h, project)
@@ -576,7 +510,7 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		if code != 429 || elapsed > 10*time.Second || count != 1000000 {
 			verdict = "NOT VERIFIED"
 		}
-		architectureEmit("guard", engine, map[string]any{"query_status": code, "query_seconds": elapsed.Seconds(), "recovery_query_seconds": time.Since(healthStart).Seconds(), "verdict": verdict})
+		architectureEmit("guard", map[string]any{"query_status": code, "query_seconds": elapsed.Seconds(), "recovery_query_seconds": time.Since(healthStart).Seconds(), "verdict": verdict})
 	default:
 		t.Fatal("unknown architecture phase")
 	}
@@ -585,7 +519,6 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 func architectureLifecycle(t *testing.T, s *Service, projectID, ingest string) {
 	t.Helper()
 	h := s.Handler()
-	engine := architectureEngine(s)
 	before := architectureCount(t, h, projectID)
 	_, manager := key(t, s, []string{"events:read", "events:edit", "events:delete"}, []string{projectID})
 	page := []map[string]any{{"uuid": "scale-page", "event": "page_viewed", "distinct_id": "scale-anon", "timestamp": "2026-11-13T00:00:00Z", "properties": map[string]any{"country": "FR"}}}
@@ -633,11 +566,10 @@ func architectureLifecycle(t *testing.T, s *Service, projectID, ingest string) {
 	if architectureCount(t, h, projectID) != before {
 		t.Fatal("deletion or late retry changed history count")
 	}
-	architectureEmit("lifecycle", engine, map[string]any{"history_rows": before, "identify_seconds": identityTime.Seconds(), "edit_seconds": editTime.Seconds(), "delete_and_retry_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
+	architectureEmit("lifecycle", map[string]any{"history_rows": before, "identify_seconds": identityTime.Seconds(), "edit_seconds": editTime.Seconds(), "delete_and_retry_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
 }
 
 func architectureProjects(t *testing.T, s *Service) {
-	engine := architectureEngine(s)
 	h := s.Handler()
 	type access struct{ project, ingest, reader string }
 	var projects []access
@@ -645,7 +577,7 @@ func architectureProjects(t *testing.T, s *Service) {
 		p, ingest := project(t, s)
 		_, reader := key(t, s, []string{"events:read"}, []string{p})
 		projects = append(projects, access{p, ingest, reader})
-		comparisonAccept(t, h, ingest, architectureLivePayload(0, 100, 0))
+		nativeBenchmarkAccept(t, h, ingest, architectureLivePayload(0, 100, 0))
 		if err := s.flushDelivery(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -661,17 +593,14 @@ func architectureProjects(t *testing.T, s *Service) {
 			}
 			samples = append(samples, elapsed)
 		}
-		resident := 0
-		if s.lake != nil {
-			store := s.lake.(*duckLakeStore)
-			_ = store.mu.Lock(context.Background())
-			resident = len(store.projects)
-			store.mu.Unlock()
-			if resident > 4 {
-				t.Fatal("resident catalog limit exceeded")
-			}
+		store := s.lake.(*duckLakeStore)
+		_ = store.mu.Lock(context.Background())
+		resident := len(store.projects)
+		store.mu.Unlock()
+		if resident > 4 {
+			t.Fatal("resident catalog limit exceeded")
 		}
-		architectureEmit("projects", engine, map[string]any{"working_set": workingSet, "resident_catalogs": resident, "latency": architectureLatency(samples), "elapsed_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
+		architectureEmit("projects", map[string]any{"working_set": workingSet, "resident_catalogs": resident, "latency": architectureLatency(samples), "elapsed_seconds": time.Since(start).Seconds(), "verdict": "VERIFIED"})
 	}
 	code, _, _ := architectureRunQuery(h, projects[0].reader, projects[1].project, "SELECT count(*) FROM events")
 	if code != 403 {

@@ -94,8 +94,8 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 	return work, nil
 }
 
-func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, lookup *receiptLookup, actor actor, complete bool) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor actor, complete bool) error {
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiError(503, "import storage unavailable")
 	}
@@ -130,14 +130,11 @@ func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, 
 	if next != file.ID {
 		return apiError(409, "upload files in the order returned by import status")
 	}
-	if err := s.validateReceiptLookup(ctx, tx, lookup); err != nil {
-		return apiError(503, "import receipt history unavailable")
-	}
 	for i, row := range work.rows {
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT import_row`); err != nil {
 			return apiError(503, "import storage unavailable")
 		}
-		result, err := s.acceptImportRowTx(ctx, tx, project, row)
+		result, err := m.rules.AcceptHistoricalTx(ctx, tx, project, row)
 		if errors.Is(err, errImportRow) {
 			if _, err := tx.ExecContext(ctx, `ROLLBACK TO import_row; RELEASE import_row`); err != nil {
 				return apiError(503, "import storage unavailable")
@@ -187,7 +184,7 @@ func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, 
 			return apiError(503, "import checkpoint unavailable")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=?,delivery_cursor=max(delivery_cursor,coalesce((SELECT max(id) FROM events WHERE project_id=?),0)) WHERE id=?`, s.importTime(), project, jobID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=?,delivery_cursor=max(delivery_cursor,coalesce((SELECT max(id) FROM events WHERE project_id=?),0)) WHERE id=?`, m.importTime(), project, jobID); err != nil {
 		return apiError(503, "import checkpoint unavailable")
 	}
 	if err := tx.Commit(); err != nil {
@@ -196,8 +193,8 @@ func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, 
 	return nil
 }
 
-func (s *Service) failImportDigest(ctx context.Context, project, jobID, fileID string, actor actor) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fileID string, actor actor) error {
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiError(503, "import storage unavailable")
 	}
@@ -219,7 +216,7 @@ func (s *Service) failImportDigest(ctx context.Context, project, jobID, fileID s
 		return apiError(409, "import is terminal")
 	}
 	code := "sha256_mismatch_partial_data_retained"
-	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET state='failed',error=?,updated_at=?,completed_at=? WHERE id=?`, code, s.importTime(), s.importTime(), jobID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET state='failed',error=?,updated_at=?,completed_at=? WHERE id=?`, code, m.importTime(), m.importTime(), jobID); err != nil {
 		return apiError(503, "import storage unavailable")
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0,error=CASE WHEN id=? THEN ? ELSE error END,state=CASE WHEN id=? THEN 'failed' ELSE state END WHERE job_id=?`, fileID, code, fileID, jobID); err != nil {
@@ -236,7 +233,7 @@ func importDigestMatches(state []byte, expected string) bool {
 	return err == nil && hex.EncodeToString(h.Sum(nil)) == expected
 }
 
-// Resolve source-scoped keys before both archive receipt lookup and acceptance.
+// Resolve source-scoped keys before transaction-local deduplication and acceptance.
 // The raw PostHog namespace is retained only for an unbound import creator.
 func prepareImportUploadSource(project, source string, rows []ImportRow) error {
 	for i := range rows {

@@ -48,7 +48,7 @@ type captureResponse struct {
 }
 
 func main() {
-	server := flag.String("server", "./bin/porcupine-ducklake", "Compiled native server")
+	server := flag.String("server", "./bin/porcupine", "Compiled native server")
 	cli := flag.String("cli", "./bin/cli/porcupine", "Compiled standalone CLI")
 	timeout := flag.Duration("timeout", 60*time.Second, "Maximum duration of the smoke check")
 	flag.Parse()
@@ -261,15 +261,14 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 		} `json:"ducklake_cleanup"`
 		Status string `json:"status"`
 		Checks struct {
-			SQLite     string `json:"sqlite"`
-			DuckLake   string `json:"ducklake"`
-			ClickHouse string `json:"clickhouse"`
+			SQLite   string `json:"sqlite"`
+			DuckLake string `json:"ducklake"`
 		} `json:"checks"`
 	}
 	if err := runCLI(ctx, cliPath, cliEnv, nil, &status, "get-instance-status"); err != nil {
 		return err
 	}
-	if status.Status != "ok" || status.Checks.SQLite != "ok" || status.Checks.DuckLake != "ok" || status.Checks.ClickHouse != "not_configured" {
+	if status.Status != "ok" || status.Checks.SQLite != "ok" || status.Checks.DuckLake != "ok" {
 		return errors.New("compiled CLI status did not report the isolated DuckLake deployment")
 	}
 	if status.Cleanup == nil || !status.Cleanup.Enabled || status.Cleanup.Retention != 7*24*3600 || status.Cleanup.Grace != 48*3600 {

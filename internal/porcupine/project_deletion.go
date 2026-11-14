@@ -144,7 +144,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	if err == nil && !completed {
 		err = s.purgeProjectExports(ctx, id)
 		if err == nil {
-			err = s.deleteProjectClickHouse(ctx, id)
+			err = s.deleteProjectArchive(ctx, id)
 		}
 		if err == nil {
 			_, err = s.db.ExecContext(ctx, `UPDATE project_deletions SET completed=1 WHERE project_id=?`, id)

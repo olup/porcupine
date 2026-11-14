@@ -4,7 +4,7 @@ This guide is for contributors who run the SDK contract suite or change a suppor
 
 ## Run the suite
 
-Requires the project's Go version, Node.js 24, npm, and Chromium for Playwright.
+Requires the project's Go version, a C/C++ toolchain for the native server, Node.js 24, npm, and Chromium for Playwright.
 Node, npm, and Chromium are development dependencies, not server dependencies.
 
 ```sh
@@ -13,7 +13,7 @@ make check
 make compat
 ```
 
-With Docker available, run `npm --prefix compat run test:identify-clickhouse` to exercise the browser and backend SDKs through to a project-scoped SQL query against a disposable ClickHouse. Its report is `compat/artifacts/identify-clickhouse.json`.
+Run `npm --prefix compat run test:identify` to exercise browser and backend SDK identity through project-scoped native SQL. Its report is `compat/artifacts/identify-native.json`.
 
 The runner builds the real Go binary, starts it with a temporary SQLite database,
 creates two projects, and loads official SDK packages. Chromium runs a local page
@@ -39,7 +39,7 @@ successful response with a 503, then observes the SDK resend the same UUID. The
 read API must show one logical event. This proves retry deduplication for that
 scenario, not exactly-once delivery under every failure.
 
-Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journey tests and optional ClickHouse integration verify SQL resolution for historical events.
+Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journeys verify SQL identity resolution for historical events.
 
 The browser tests use fetch and a bot-filter override so headless Chromium can send events. The example above restores normal SDK bot filtering for application use.
 

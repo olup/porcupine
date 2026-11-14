@@ -1,85 +1,31 @@
 # SQL export design
 
-These are historical design and experiment notes. For the released service, use [hosting](hosting.md), [architecture](architecture.md), and the [analytics reference](analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
+Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](exports.md) for requests and operator settings.
 
-Exports stream a validated query into private gzip files without staging the
-full result on the application host. See [the API and configuration](exports.md).
+## Query and publication boundaries
 
-## Usage
+The worker waits for accepted original and mutation work through its recorded watermarks. This is a delivery barrier, not an injected SQL filter or a transaction spanning SQLite and DuckLake. Execution reads the analytical state available to its native connection.
 
-`POST /api/v1/projects/{id}/exports` accepts the same authorized SELECT and typed
-parameters as interactive queries, plus `format: jsonl|csv` and an idempotency key.
-It returns a durable job. Clients poll its status and fetch paginated, temporary
-links to gzip files after success. Use the operation IDs from HTTP, the standalone CLI or MCP. The MCP client discovers the contract with `porcupine_docs` and calls it with `porcupine_call`.
+One canonical query runs once per attempt. File rotation splits output files rather than dividing SQL into pages. Rows pass through bounded row encoding, gzip, and sequential S3 multipart buffers. The full result is not staged on the application host.
 
-## Existing boundaries
+SQLite stores job, attempt, file, and multipart metadata. The worker does not hold a SQLite transaction while executing the native query or performing remote uploads. Every file remains private until the attempt finishes and publication rechecks its current identity, cancellation state, and creator authority.
 
-Huma operation metadata enforces `events:read` and project scope and also generates
-MCP discovery/dispatch. SQL validation returns one canonical SELECT. Project views
-and restricted ClickHouse readers enforce RLS, public columns and mandatory FINAL.
-Interactive HTTP buffers 2 MiB and its reader fixes 5 seconds/256 MiB/1,000 rows;
-exports must not weaken that profile. SQLite WAL/FULL uses one connection, so no
-rows or transaction may remain open across ClickHouse/S3 network work. Workers
-persist creator key IDs and reload active authorization, never persist tokens.
+Scheduled pipelines additionally restrict the connection's temporary `events` view to their closed receipt-time window and exclude historical imports. Cleanup removes that view before returning the connection. A failed cleanup discards the connection rather than exposing the restricted or stale view to another caller.
 
-## Shape
+## Recovery and cancellation
 
-`exports_types.go` defines public jobs/files, private stored jobs and deployment
-budgets. `exports_jobs.go` and `exports_api.go` own SQLite and API state transitions.
-`exports_worker.go` owns the single worker, admission, progress, cleanup and final
-publication. `export_reader.go` provisions a distinct project reader and streaming
-transport; `export_stream.go` validates the complete JSONCompact envelope.
-`internal/exportstore` owns official AWS SDK multipart IO and presigning.
+A failed or interrupted attempt cleans up its private objects and reruns the whole SQL query. It never appends rows from another attempt. Native cancellation uses the running query context. Publication remains fenced even if cancellation races a query or upload already in progress.
 
-One canonical SELECT executes once. Rows stream through bounded decoding, gzip
-and sequential 8-MiB S3 multipart buffers. File rotation divides output, never SQL.
-SQLite records attempt keys and multipart IDs. Earlier completed files stay private
-and unavailable through the API until the entire response closes successfully,
-its row footer matches, and publication commits against current creator grants,
-current attempt and cancellation state. Late HTTP-200 errors fail the whole job.
+Unknown multipart uploads in the create-before-checkpoint interval need an S3 lifecycle abort rule. Persisted attempt keys support later object cleanup. An issued presigned URL can remain valid briefly after a credential is revoked. Successful downloads and customer copies remain external effects.
 
-Jobs record a delivery watermark for accepted original and mutation events and
-wait for that prefix of the queue before execution. This is a delivery barrier,
-not an injected SQL filter or transactional snapshot. Corrected data is read using
-ClickHouse's execution-time semantics. Retries execute SQL afresh, never append
-rows from another attempt to an old result.
+## Resource scope
 
-## Streaming and recovery
+One background analytical query runs at a time, shared by one-off exports and scheduled pipelines. Admission also considers queue pressure and delivery health. Interactive queries keep their separate admission pool.
 
-Direct multipart streaming avoids requiring enough application-host SSD space
-for the full export. Local staging would simplify retries of uploads, but would
-also impose a dataset-sized disk requirement. The worker instead validates the
-complete query response and fences publication against cancellation, attempt
-identity, and current permissions.
+The worker enforces output, row, file, deadline, sink-bandwidth, pending-job, and retention budgets. Query execution shares the project's engine memory setting with its other work. This is not a per-export memory reservation or a hard process RSS limit. Physical scan quotas and per-query temporary-disk quotas are not implemented.
 
-File rotation bounds multipart part counts and individual downloads. A small
-sequence-based delivery barrier includes already accepted queued events. The
-API supports submission, listing, status, cancellation, and file links. Budgets
-and S3 configuration remain deployment-only. The worker needs no separate
-service or staging filesystem.
-
-## Limits and tradeoffs
-
-One export runs at a time and waits when ingestion is behind or delivery unhealthy.
-Its separate ClickHouse reader uses one processing thread, 512 MiB memory,
-5 MiB/s network/remote-read ceilings, bounded disk spill and a longer deadline.
-Thread limits are not strict CPU percentage isolation. Bounded Go/S3 buffers avoid
-holding the dataset on SSD or in RAM. Individual rows, total output, pending jobs,
-attempts and artifact lifetime remain bounded; crossing a limit fails explicitly.
-
-A crash can require rerunning the whole SQL query. Unknown multipart uploads in
-the narrow create-before-checkpoint window require an S3 lifecycle abort rule.
-Completed orphan objects are removed using their persisted attempt keys. Cleanup
-is durable and retries. Already issued presigned URLs remain valid briefly after
-key revocation. No query result is silently truncated and reported successful.
+Large aggregations can consume compute before producing their first output row. A longer export deadline does not provide CPU isolation from ingestion. Size the deployment and container budget for the whole workload.
 
 ## Verification
 
-Unit/race tests cover SQLite transitions, permissions, idempotency, streaming
-completion, oversized values, late errors, abort/delete and publication races.
-Real ClickHouse and MinIO checks exercise large results, types, aggregates,
-multiple files, cancellation, restart, cold data and object integrity. Use the [load-testing guide](load-testing.md) to measure ingestion and interactive latency while an export is active.
-
-Provisioning locks are context-aware. Export account/schema setup has a separate
-five-second deadline so a slow administrative request cannot hold interactive
-callers beyond their own deadline.
+Native tests cover project isolation, parameter binding, connection cleanup, streaming, cancellation, current revisions, delivery windows, permission revocation before publication, and restart. Object-storage tests cover private file integrity and cleanup. The [load-testing guide](load-testing.md) describes workload measurement; its results are specific to the tested deployment.

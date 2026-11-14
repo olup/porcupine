@@ -1,6 +1,6 @@
 # Load testing
 
-The HTTP load script below currently uses ClickHouse-specific run-marker SQL. Use it on the optional ClickHouse backend. Native sustained-load scenarios are documented in the [DuckLake validation report](ducklake-validation.md) and [maintenance investigation](ducklake-maintenance.md).
+The HTTP load script uses project-scoped DuckDB SQL to verify its generated events. Earlier sustained-load measurements are recorded in the [historical validation report](ducklake-validation.md) and [maintenance investigation](ducklake-maintenance.md).
 
 `scripts/load.py` uses Python's standard library to drive a configured HTTP or
 HTTPS service. It creates synthetic events in an existing project. It does not
@@ -58,7 +58,7 @@ on replay. `--run-id` can choose a marker, but preflight rejects an existing run
 
 A concurrent query counts only this run's `porcupine_load` events using bound SQL
 parameters and `use_cache: false`. After ingestion, the script polls until the acknowledged unique event
-count matches ClickHouse and the project's original and mutation queues are empty.
+count matches delivered native data and the project's original and mutation queues are empty.
 It requires two matching observations because query results and delivery status
 do not share one database snapshot. Use a dedicated load project so unrelated
 traffic cannot keep its queue nonempty.
