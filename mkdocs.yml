@@ -53,6 +53,7 @@ nav:
       - Test disaster recovery: restore.md
   - API reference:
       - HTTP management API: management-api.md
+      - Native event contract: native-event-contract.md
       - SQL and discovery: analytics.md
       - MCP tools: mcp.md
       - Machine OAuth: oauth.md

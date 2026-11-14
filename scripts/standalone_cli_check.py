@@ -125,6 +125,11 @@ def check(directory, binary, origin, bootstrap):
     assert scoped_status["checks"] == status["checks"]
     assert not any(project_id in json.dumps(scoped_status) for project_id in ids)
     cli("get-event-schema", "--id", ids[1], key=key, denied=403)
+    contract = json.loads(cli("get-event-input-contract", "--id", ids[0], key=key))
+    assert contract["version"] == "1" and contract["live_schema"]["type"] == "object"
+    assert contract["native_historical_import_available"] is False
+    assert contract["historical_schema_status"] == "draft"
+    cli("get-event-input-contract", "--id", ids[1], key=key, denied=403)
 
     data = ('{"uuid":"cli-demo","event":"Café","distinct_id":"cli",'
             '"timestamp":"2020-01-02T03:04:05Z","properties":{}}\n').encode()

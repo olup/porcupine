@@ -37,6 +37,7 @@ func (b *eventBatch) UnmarshalJSON(raw []byte) error {
 		return nil
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
 	token, err := d.Token()
 	if err != nil || token != json.Delim('[') {
 		return errors.New("expected event array")

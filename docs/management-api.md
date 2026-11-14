@@ -4,7 +4,9 @@ This reference lists HTTP operations, required permissions, and response codes. 
 
 The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
 
-Development builds add `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
+Development builds add `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native producer fields and labels the historical schema as a draft. [Native event contract](native-event-contract.md)
+
+Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
 
 ## Authentication and scope
 

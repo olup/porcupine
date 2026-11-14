@@ -24,6 +24,11 @@ def main():
         destination = OUTPUT / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
+    for source in (ROOT / "internal/porcupine/contracts").glob("*.schema.json"):
+        destination = OUTPUT / "schemas" / source.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    shutil.copytree(ROOT / "examples/events", OUTPUT / "examples/events", dirs_exist_ok=True)
     check_built_site(OUTPUT, version)
 
 if __name__ == "__main__":

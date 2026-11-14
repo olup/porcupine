@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://olup.github.io/porcupine/schemas/native-history-event-v1.draft.schema.json",
+  "title": "Porcupine historical event v1, draft",
+  "description": "Draft for one ordinary event in a native JSONL import. No native file-import endpoint implements this draft yet. Identity evidence and profile snapshots require separate historical rules; they must not be sent through live capture to emulate an import.",
+  "x-porcupine-status": "draft",
+  "allOf": [
+    {"$ref": "https://olup.github.io/porcupine/schemas/native-message-v1.schema.json"},
+    {"type": "object", "required": ["message_id", "timestamp"], "properties": {"type": {"enum": ["track", "pageview"]}}}
+  ]
+}
