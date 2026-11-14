@@ -48,10 +48,13 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.CapturedAt != status.LastCheckpointAt || manifest.CapturedAt == "" || manifest.SQLitePath != config.DBPath || manifest.SourceID == "" || len(manifest.Files) < 3 {
+	if manifest.CapturedAt != status.LastCheckpointAt || manifest.CapturedAt == "" || manifest.SQLitePath != "acceptance.sqlite" || manifest.SourceID == "" || len(manifest.Files) < 3 {
 		t.Fatalf("invalid native recovery manifest: %+v", manifest)
 	}
 	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
+	if admin["native_backup"].(map[string]any)["source_id"] != manifest.SourceID {
+		t.Fatal("admin missing analytical backup source identity")
+	}
 	if admin["native_backup"].(map[string]any)["state"] != "ok" {
 		t.Fatal("admin missing backup status")
 	}
@@ -212,7 +215,7 @@ type pausedCheckpointStore struct {
 	resume   chan struct{}
 }
 
-func (s *pausedCheckpointStore) stageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (string, error) {
+func (s *pausedCheckpointStore) stageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*nativeCheckpoint, error) {
 	return s.lakeStore.stageCheckpoint(ctx, func(ctx context.Context, path string) error {
 		if err := acceptance(ctx, path); err != nil {
 			return err

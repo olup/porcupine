@@ -17,12 +17,15 @@ import (
 )
 
 func main() {
+	if dispatchNativeRestore() {
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(porcupine.Version)
 		return
 	}
 	if len(os.Args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: porcupine [--version]")
+		fmt.Fprintln(os.Stderr, "usage: porcupine [--version|restore-native-backup]")
 		os.Exit(2)
 	}
 	addr := os.Getenv("PORCUPINE_ADDR")

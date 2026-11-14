@@ -21,10 +21,11 @@
 
 Large-event delivery now retries smaller native transactions when DuckDB reports a typed out-of-memory error. Healthy batches keep their existing limits. The acceptance queue retains unfinished work; resource failures do not quarantine events. The [delivery notes](ducklake-large-batches.md) explain partial analytical visibility and memory limits. This change is not included in the published v0.13.0 image.
 
+Development also adds complete S3 backups to an independent destination and offline recovery through the standalone CLI. Current catalog references and copied hashes must pass before publication or retention. Recovery reconstructs new catalogs, resets access and outbound work, and preserves event IDs, identity, corrections and tombstones. See [remote backups and recovery](native-backup-recovery.md). These changes remain outside the published v0.13.0 image.
+
 ## Next work, in order
 
-1. **Complete backup operations.** S3-aware backups and off-host replication, then an offline restore command. Retain source/project isolation, safe credential rollback and outbound-delivery controls. Never publish a metadata-only copy as a complete S3 backup.
-2. **Simpler historical imports.** One resumable file-or-directory command for native, PostHog and Segment formats, preserving occurrence times and retry identity. Show validation, upload, acceptance and actual analytical availability without requiring a custom Python script.
+1. **Simpler historical imports.** One resumable file-or-directory command for native, PostHog and Segment formats, preserving occurrence times and retry identity. Show validation, upload, acceptance and actual analytical availability without requiring a custom Python script.
 
 Before this release, the agreed sequence was analytical S3, release publication, large batches, then backup follow-ups. S3 and publication are the first milestones of that sequence; later items remain development work until released.
 
