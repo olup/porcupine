@@ -1,8 +1,10 @@
 # Back up and restore an instance
 
-For the source build's automated local bundles, see [scheduled native backups](native-backups.md). This page describes the stopped-volume alternative and the separate ClickHouse drills.
+For automated recovery bundles with local analytical data, see [scheduled native backups](native-backups.md). This page describes the stopped-volume alternative and the separate ClickHouse drills.
 
-## Default DuckLake stopped-volume backup
+## Local DuckLake stopped-volume backup
+
+This procedure includes the local data files. With [analytical S3](ducklake-s3.md), copying `/data` captures only SQLite and catalogs, not the remote objects; it is not a complete recovery point. Preserve their matching remote data through a separate consistent backup procedure.
 
 A DuckLake recovery point needs the complete data volume from one stopped application: SQLite, its WAL state, the DuckLake registry, every project catalog, and every managed Parquet file. Saving only SQLite or only Parquet loses part of the recovery state. The current online ClickHouse checkpoint tool does not support DuckLake.
 
