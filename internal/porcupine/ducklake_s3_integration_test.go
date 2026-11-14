@@ -384,10 +384,12 @@ func TestDuckLakeS3RejectsIncompleteLocalBackups(t *testing.T) {
 	service, err = Open(config)
 	s3FixtureError(t, fixture, "open S3 store without local backup", err)
 	defer service.Close()
-	_, err = service.lake.stageCheckpoint(context.Background(), func(context.Context, string) error { return nil })
-	if err == nil {
-		t.Fatal("native checkpoint silently omitted S3 analytical objects")
+	checkpoint, err := service.lake.stageCheckpoint(context.Background(), func(context.Context, string) error { return nil })
+	s3FixtureError(t, fixture, "capture empty S3 checkpoint", err)
+	if len(checkpoint.Objects) != 0 {
+		t.Fatal("empty S3 checkpoint included foreign objects")
 	}
+	s3FixtureError(t, fixture, "release empty S3 checkpoint", checkpoint.Close())
 }
 
 type pausedS3HTTPClient struct {

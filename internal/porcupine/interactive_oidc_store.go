@@ -13,6 +13,9 @@ func (s *Service) initializeOIDCHumans(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if blocked, err := s.restoredIdentityBootstrapBlocked(ctx); err != nil || blocked {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

@@ -33,3 +33,31 @@ func TestNativeBackupConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeBackupS3Configuration(t *testing.T) {
+	for _, suffix := range analyticalS3Environment {
+		t.Setenv("PORCUPINE_BACKUP_S3_"+suffix, "")
+	}
+	t.Setenv("PORCUPINE_BACKUP_DIR", "")
+	t.Setenv("PORCUPINE_BACKUP_S3_BUCKET", "backup-test")
+	if _, err := nativeBackupConfiguration(); err == nil {
+		t.Fatal("partial S3 destination accepted")
+	}
+	t.Setenv("PORCUPINE_BACKUP_S3_PREFIX", "backups")
+	t.Setenv("PORCUPINE_BACKUP_S3_REGION", "us-east-1")
+	t.Setenv("PORCUPINE_BACKUP_S3_PATH_STYLE", "true")
+	t.Setenv("PORCUPINE_BACKUP_S3_SESSION_TOKEN", "private-token")
+	config, err := nativeBackupConfiguration()
+	if err != nil || config.S3 == nil || !config.S3.UsePathStyle || config.S3.SessionToken != "private-token" {
+		t.Fatal("S3 backup configuration not parsed", err)
+	}
+	t.Setenv("PORCUPINE_BACKUP_DIR", t.TempDir())
+	if _, err := nativeBackupConfiguration(); err == nil {
+		t.Fatal("ambiguous destination accepted")
+	}
+	t.Setenv("PORCUPINE_BACKUP_DIR", "")
+	t.Setenv("PORCUPINE_BACKUP_S3_PATH_STYLE", "typo")
+	if _, err := nativeBackupConfiguration(); err == nil {
+		t.Fatal("invalid S3 boolean accepted")
+	}
+}

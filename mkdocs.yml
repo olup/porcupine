@@ -43,6 +43,7 @@ nav:
       - Check instance status: instance-status.md
       - Clean up DuckLake history: ducklake-cleanup.md
       - Schedule native backups: native-backups.md
+      - Remote backups and restore, unreleased: native-backup-recovery.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
       - Storage options: storage.md

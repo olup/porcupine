@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,7 +108,7 @@ func minimalNativeBackupBundle(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(directory, "ducklake"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := nativeBackupManifest{Format: "porcupine-native-v1", ID: "pc_backup_test", SourceID: "source", CreatedAt: now(), CapturedAt: now()}
+	manifest := nativeBackupManifest{Format: "porcupine-native-v1", ID: "pc_backup_test", SourceID: "source", SQLitePath: "acceptance.sqlite", DuckLakeDirectory: "ducklake", CreatedAt: now(), CapturedAt: now()}
 	for _, item := range []struct{ path, statement string }{
 		{"acceptance.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('ducklake_source_id','source')"},
 		{"ducklake/registry.sqlite", "CREATE TABLE source(id TEXT PRIMARY KEY);INSERT INTO source VALUES('source');CREATE TABLE catalogs(project_id TEXT PRIMARY KEY,ready INTEGER)"},
@@ -135,12 +136,15 @@ func minimalNativeBackupBundle(t *testing.T) string {
 }
 
 func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T) {
-	for _, scenario := range []string{"valid", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "missing-catalog"} {
+	for _, scenario := range []string{"valid", "valid-legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "missing-catalog"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := minimalNativeBackupBundle(t)
 			manifest := readNativeManifest(t, directory)
 			target := filepath.Join(directory, "acceptance.sqlite")
 			switch scenario {
+			case "valid-legacy-paths":
+				manifest.SQLitePath = "/original/source/queue.db"
+				manifest.DuckLakeDirectory = "/original/source/lake"
 			case "escape":
 				manifest.Files[0].Path = "../outside"
 			case "absolute":
@@ -197,10 +201,10 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 				t.Fatal(err)
 			}
 			_, err = verifyNativeBackup(context.Background(), directory)
-			if scenario == "valid" && err != nil {
+			if strings.HasPrefix(scenario, "valid") && err != nil {
 				t.Fatal(err)
 			}
-			if scenario != "valid" && err == nil {
+			if !strings.HasPrefix(scenario, "valid") && err == nil {
 				t.Fatal("unsafe or inconsistent recovery bundle accepted")
 			}
 		})
@@ -226,5 +230,82 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 	}
 	if _, err := os.Stat(filepath.Join(root, "pc_backup_previous")); !os.IsNotExist(err) {
 		t.Fatal("retention did not respect its limit", err)
+	}
+}
+
+func TestNativeBackupIndependentS3Configuration(t *testing.T) {
+	localRoot := t.TempDir()
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), &DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
+		t.Fatal("backup destination containing live SQLite accepted")
+	}
+	remote := &DuckLakeS3Config{Bucket: "backup-test", Prefix: "independent", Region: "us-east-1"}
+	root := t.TempDir()
+	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1"}}
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: remote}, filepath.Join(root, "queue.db"), lake); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"analytics", "analytics/backups"} {
+		copy := *remote
+		copy.Prefix = prefix
+		if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), lake); err == nil {
+			t.Fatal("overlapping S3 destination accepted")
+		}
+	}
+	copy := *remote
+	copy.Prefix = "analytics-parent"
+	lake.S3.Prefix = "analytics-parent/child"
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), lake); err == nil {
+		t.Fatal("ancestor S3 destination accepted")
+	}
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir(), S3: remote}, filepath.Join(root, "queue.db"), lake); err == nil {
+		t.Fatal("ambiguous destination accepted")
+	}
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, filepath.Join(root, "queue.db"), lake); err == nil {
+		t.Fatal("analytical S3 metadata-only local backup accepted")
+	}
+}
+
+func TestNativeBackupLocalOwnerExcludesRestoredWriter(t *testing.T) {
+	directory := t.TempDir()
+	source := "00000000-0000-0000-0000-000000000000"
+	if err := claimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimLocalNativeBackupOwner(directory, source, "restored-writer"); err == nil {
+		t.Fatal("restored writer claimed original local backup directory")
+	}
+}
+
+func TestNativeBackupNormalizesSourceBeforeS3OverlapCheck(t *testing.T) {
+	root := t.TempDir()
+	for _, prefix := range []string{"analytics/", "/analytics/"} {
+		lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: prefix, Region: "us-east-1"}}
+		destination := &NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics/nested", Region: "us-east-1"}}
+		if _, err := prepareNativeBackup(destination, filepath.Join(root, "queue.db"), lake); err == nil {
+			t.Fatal("raw source prefix bypassed overlap validation", prefix)
+		}
+	}
+	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "source-test", Prefix: "../invalid", Region: "us-east-1"}}
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "separate", Region: "us-east-1"}}, filepath.Join(root, "queue.db"), lake); err == nil {
+		t.Fatal("invalid source config bypassed validation")
+	}
+}
+func TestNativeBackupStorageIdentityValidation(t *testing.T) {
+	valid := []nativeBackupStorageIdentity{{Mode: "local"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "http://127.0.0.1:9000"}}
+	for _, identity := range valid {
+		if err := validateNativeBackupStorageIdentity(identity, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, identity := range []nativeBackupStorageIdentity{{}, {Mode: "local", Bucket: "backup-test"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics/", Region: "us-east-1"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "https://secret:password@example.test"}, {Mode: "unexpected"}} {
+		if err := validateNativeBackupStorageIdentity(identity, false); err == nil {
+			t.Fatalf("invalid storage identity accepted: %+v", identity)
+		}
+	}
+	if err := validateNativeBackupStorageIdentity(nativeBackupStorageIdentity{}, true); err != nil {
+		t.Fatal("legacy local v1 identity rejected", err)
 	}
 }

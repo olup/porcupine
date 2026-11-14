@@ -28,15 +28,17 @@ type backupFile struct {
 }
 
 type nativeBackupManifest struct {
-	Format            string       `json:"format"`
-	ID                string       `json:"id"`
-	Version           string       `json:"version"`
-	SourceID          string       `json:"source_id"`
-	CreatedAt         string       `json:"created_at"`
-	CapturedAt        string       `json:"captured_at"`
-	SQLitePath        string       `json:"sqlite_path"`
-	DuckLakeDirectory string       `json:"ducklake_directory"`
-	Files             []backupFile `json:"files"`
+	Format            string                      `json:"format"`
+	ID                string                      `json:"id"`
+	Version           string                      `json:"version"`
+	SourceID          string                      `json:"source_id"`
+	SourceStorage     nativeBackupStorageIdentity `json:"source_storage,omitempty"`
+	CreatedAt         string                      `json:"created_at"`
+	CapturedAt        string                      `json:"captured_at"`
+	SQLitePath        string                      `json:"sqlite_path"`
+	DuckLakeDirectory string                      `json:"ducklake_directory"`
+	Files             []backupFile                `json:"files"`
+	Catalogs          []nativeBackupCatalog       `json:"catalogs,omitempty"`
 }
 
 func hashBackupFile(ctx context.Context, path, relative string) (backupFile, error) {
@@ -211,6 +213,9 @@ func verifyNativeBackup(ctx context.Context, directory string) (nativeBackupMani
 	if manifest.Format != "porcupine-native-v1" || manifest.SourceID == "" || manifest.ID == "" {
 		return manifest, errors.New("unsupported native backup manifest")
 	}
+	if err := validateNativeBackupManifest(manifest); err != nil {
+		return manifest, err
+	}
 	expected := map[string]backupFile{}
 	for _, item := range manifest.Files {
 		relative := filepath.FromSlash(item.Path)
@@ -328,4 +333,53 @@ func removeIncompleteNativeBackups(directory string) error {
 		}
 	}
 	return nil
+}
+
+func validateNativeBackupManifest(m nativeBackupManifest) error {
+	if m.Format != "porcupine-native-v1" || !validNativeBackupID(m.ID) || m.SourceID == "" || !lakePrefixSegmentPattern.MatchString(m.SourceID) || len(m.Files) > nativeBackupFileLimit {
+		return errors.New("unsupported native backup manifest")
+	}
+	if err := validateNativeBackupStorageIdentity(m.SourceStorage, true); err != nil {
+		return err
+	}
+	files := map[string]bool{}
+	for _, f := range m.Files {
+		if !validBackupFile(f) || files[f.Path] {
+			return errors.New("unsafe backup inventory")
+		}
+		files[f.Path] = true
+	}
+	if !files["acceptance.sqlite"] || !files["ducklake/registry.sqlite"] {
+		return errors.New("incomplete backup inventory")
+	}
+	projects := map[string]bool{}
+	for _, c := range m.Catalogs {
+		digest := sha256.Sum256([]byte(c.ProjectID))
+		root := "ducklake/" + hex.EncodeToString(digest[:])
+		if c.ProjectID == "" || projects[c.ProjectID] || c.Path != root+"/catalog.ducklake" || c.DataRoot != root+"/files" || !files[c.Path] {
+			return errors.New("invalid backup catalog descriptor")
+		}
+		projects[c.ProjectID] = true
+	}
+	return nil
+}
+
+func validateNativeBackupStorageIdentity(storage nativeBackupStorageIdentity, allowLegacy bool) error {
+	switch storage.Mode {
+	case "":
+		if allowLegacy && storage == (nativeBackupStorageIdentity{}) {
+			return nil
+		}
+		return errors.New("native backup is missing its original analytical storage identity")
+	case "local":
+		if storage == (nativeBackupStorageIdentity{Mode: "local"}) {
+			return nil
+		}
+	case "s3":
+		normalized, err := normalizeDuckLakeS3(&DuckLakeS3Config{Bucket: storage.Bucket, Prefix: storage.Prefix, Region: storage.Region, Endpoint: storage.Endpoint})
+		if err == nil && normalized.Bucket == storage.Bucket && normalized.Prefix == storage.Prefix && normalized.Region == storage.Region && normalized.Endpoint == storage.Endpoint {
+			return nil
+		}
+	}
+	return errors.New("invalid native backup original analytical storage identity")
 }

@@ -29,6 +29,8 @@ Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.m
 
 The deployment operator chooses [storage](storage.md) and configures [backups](restore.md). DuckLake uses local SSD storage by default; new deployments can select [analytical S3](ducklake-s3.md) for their data files. ClickHouse-only cold storage and online checkpoint tools are documented separately. These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md). Operators can configure and monitor [DuckLake history cleanup](ducklake-cleanup.md) and [scheduled native backups](native-backups.md).
 
+The development branch adds [remote backups and offline recovery](native-backup-recovery.md). That guide labels the features that are not in the published v0.13.0 image.
+
 ## Look up a contract
 
 Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.

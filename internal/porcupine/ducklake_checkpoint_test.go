@@ -54,12 +54,15 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(stage)
+	defer stage.Close()
+	if len(stage.Catalogs) != 1 || stage.SourceID != source || stage.CapturedAt == "" {
+		t.Fatal("checkpoint omitted catalog/source metadata")
+	}
 	// Staged data survives source cleanup/project removal through immutable links.
 	if err := lake.DeleteProject(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.CopyFS(backup, os.DirFS(stage)); err != nil {
+	if err := os.CopyFS(backup, os.DirFS(stage.Directory)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -150,5 +153,58 @@ func TestDuckLakeCheckpointAbandonedStagesRemovedOnRestart(t *testing.T) {
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatal("checkpoint recovery removed unrelated directory", err)
+	}
+}
+
+func TestDuckLakeCheckpointKeepsWriterOpenDuringAcceptanceCapture(t *testing.T) {
+	lake := openLakeStorageTest(t, t.TempDir(), 1)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	injected := errors.New("acceptance snapshot interrupted")
+	done := make(chan error, 1)
+	go func() {
+		_, err := lake.stageCheckpoint(context.Background(), func(context.Context, string) error {
+			close(entered)
+			<-resume
+			return injected
+		})
+		done <- err
+	}()
+	<-entered
+	closeErr := lake.Close()
+	close(resume)
+	if err := <-done; !errors.Is(err, injected) {
+		t.Fatal("checkpoint lost its interrupted acceptance error", err)
+	}
+	if closeErr == nil {
+		t.Fatal("store closed while the acceptance checkpoint was live")
+	}
+	if _, err := lake.Query(context.Background(), "a", "SELECT count(*) FROM events", nil); err != nil {
+		t.Fatal("interrupted checkpoint retained its writer guard", err)
+	}
+}
+
+func TestDuckLakeCheckpointRejectsPendingPartialDeletion(t *testing.T) {
+	lake := openLakeStorageTest(t, t.TempDir(), 1)
+	ctx := context.Background()
+	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lake.registry.ExecContext(ctx, "INSERT INTO deleting_projects VALUES('a')"); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := lake.stageCheckpoint(ctx, func(context.Context, string) error { return nil })
+	if err == nil {
+		checkpoint.Close()
+		t.Fatal("checkpoint accepted a catalog whose deletion was already in progress")
+	}
+	stages, err := filepath.Glob(filepath.Join(lake.root, ".checkpoint-*"))
+	if err != nil || len(stages) != 0 {
+		t.Fatal("rejected partial deletion retained its checkpoint stage", err)
+	}
+	if _, err := lake.registry.ExecContext(ctx, "DELETE FROM deleting_projects"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lake.Close(); err != nil {
+		t.Fatal("rejected deletion retained its capture guard", err)
 	}
 }

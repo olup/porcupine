@@ -105,6 +105,9 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 	if err != nil || s.oauth == nil || s.oauth.config.Email == nil || s.oauth.config.Email.AdminEmail == "" {
 		return err
 	}
+	if blocked, err := s.restoredIdentityBootstrapBlocked(ctx); err != nil || blocked {
+		return err
+	}
 	address, err := normalizeEmail(s.oauth.config.Email.AdminEmail)
 	if err != nil {
 		return err

@@ -44,10 +44,12 @@ Run `porcupine --help` for the catalog or `porcupine query-events --help` for pa
 
 Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to read from stdin. The binary upload operation streams bytes from a file or stdin. See [resumable imports](../docs/posthog-import.md) for manifests, checksums and chunk offsets.
 
-Development builds also generate `get-event-profile`. Run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. This command and its server operation are not in v0.12.0. See [event profiles](../docs/event-discovery.md) for sampling and payload limits.
+Since v0.13.0, run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/event-discovery.md) for sampling and payload limits.
+
+Development after v0.13.0 adds `porcupine restore`, an offline operation that runs the matching native server image through Docker. It restores into a fresh volume, resets old access and delivery jobs, and reads the recovery secret from a private file. See [remote backups and recovery](../docs/native-backup-recovery.md). The CLI itself still has no native database dependency.
 
 ## Develop
 
 The server registers management operations with Huma. From the repository root, `make cli-generate` regenerates the command catalog, and `make cli-check` checks for drift and tests the CLI module. Commit the generated catalog with changes to the API. An operation that depends on an optional server capability appears in help even when that capability is disabled on the chosen instance.
 
-Custom commands such as `login` and `status` register alongside the generated commands in `cli/cmd/porcupine/main.go`. Both are compiled into the same executable. The CLI module builds independently using the checked-in catalog.
+Custom commands such as `login`, `status` and offline `restore` register alongside generated commands in `cli/cmd/porcupine/main.go`. They compile into the same executable. The CLI module builds independently using the checked-in catalog.

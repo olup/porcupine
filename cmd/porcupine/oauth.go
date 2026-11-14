@@ -19,7 +19,7 @@ func oauthConfiguration() (*porcupine.OAuthConfig, error) {
 	}
 	issuer := os.Getenv("PORCUPINE_OAUTH_ISSUER")
 	if issuer == "" {
-		if os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || os.Getenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" {
+		if os.Getenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || os.Getenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" || os.Getenv("PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP") != "" {
 			return nil, errors.New("PORCUPINE_OAUTH_ISSUER is required when OAuth is configured")
 		}
 		return nil, nil
@@ -38,6 +38,13 @@ func oauthConfiguration() (*porcupine.OAuthConfig, error) {
 			return nil, errors.New("invalid PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS")
 		}
 		config.AllowLegacyKeys = value
+	}
+	if raw := os.Getenv("PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP"); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, errors.New("invalid PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP")
+		}
+		config.AllowRestoredIdentityBootstrap = value
 	}
 	return config, nil
 }

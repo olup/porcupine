@@ -92,12 +92,6 @@ func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
 	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, "queue.db", &lake); err == nil {
 		t.Fatal("local-only backups accepted remote data")
 	}
-	store := openLakeStorageTest(t, t.TempDir(), 1)
-	store.config.S3 = &c
-	called := false
-	if _, err := store.stageCheckpoint(context.Background(), func(context.Context, string) error { called = true; return nil }); err == nil || called {
-		t.Fatal("remote checkpoint published an incomplete local snapshot")
-	}
 }
 
 func TestDuckLakeOpeningReservationsDoNotHoldGlobalMutex(t *testing.T) {

@@ -11,15 +11,22 @@ import (
 
 func nativeBackupConfiguration() (*porcupine.NativeBackupConfig, error) {
 	directory := os.Getenv("PORCUPINE_BACKUP_DIR")
-	if directory == "" {
+	remote, err := nativeBackupS3Configuration()
+	if err != nil {
+		return nil, err
+	}
+	if directory != "" && remote != nil {
+		return nil, errors.New("configure PORCUPINE_BACKUP_DIR or PORCUPINE_BACKUP_S3_BUCKET, not both")
+	}
+	if directory == "" && remote == nil {
 		for _, name := range []string{"PORCUPINE_BACKUP_INTERVAL", "PORCUPINE_BACKUP_TIMEOUT", "PORCUPINE_BACKUP_RETAIN"} {
 			if os.Getenv(name) != "" {
-				return nil, errors.New("configure PORCUPINE_BACKUP_DIR to enable native backups")
+				return nil, errors.New("configure PORCUPINE_BACKUP_DIR or PORCUPINE_BACKUP_S3_BUCKET to enable native backups")
 			}
 		}
 		return nil, nil
 	}
-	config := &porcupine.NativeBackupConfig{Directory: directory}
+	config := &porcupine.NativeBackupConfig{Directory: directory, S3: remote}
 	for _, field := range []struct {
 		name     string
 		target   *time.Duration
@@ -44,4 +51,32 @@ func nativeBackupConfiguration() (*porcupine.NativeBackupConfig, error) {
 		config.Retain = retain
 	}
 	return config, nil
+}
+
+func nativeBackupS3Configuration() (*porcupine.DuckLakeS3Config, error) {
+	const prefix = "PORCUPINE_BACKUP_S3_"
+	configured := false
+	for _, suffix := range analyticalS3Environment {
+		configured = configured || os.Getenv(prefix+suffix) != ""
+	}
+	if !configured {
+		return nil, nil
+	}
+	c := &porcupine.DuckLakeS3Config{Bucket: os.Getenv(prefix + "BUCKET"), Prefix: os.Getenv(prefix + "PREFIX"), Region: os.Getenv(prefix + "REGION"), Endpoint: os.Getenv(prefix + "ENDPOINT"), AccessKeyID: os.Getenv(prefix + "ACCESS_KEY_ID"), SecretAccessKey: os.Getenv(prefix + "SECRET_ACCESS_KEY"), SessionToken: os.Getenv(prefix + "SESSION_TOKEN"), CACertFile: os.Getenv(prefix + "CA_CERT_FILE")}
+	if c.Bucket == "" || c.Prefix == "" || c.Region == "" {
+		return nil, errors.New("backup S3 requires PORCUPINE_BACKUP_S3_BUCKET, PREFIX and REGION")
+	}
+	if raw := os.Getenv(prefix + "PATH_STYLE"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, errors.New("invalid PORCUPINE_BACKUP_S3_PATH_STYLE")
+		}
+		c.UsePathStyle = v
+	}
+	timeout, err := analyticsInteger(prefix+"REQUEST_TIMEOUT_SECONDS", 0, 1, 30)
+	if err != nil {
+		return nil, err
+	}
+	c.RequestTimeoutSeconds = timeout
+	return c, nil
 }
