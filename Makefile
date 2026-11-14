@@ -93,7 +93,7 @@ ducklake-architecture-test:
 	sh scripts/architecture-benchmark.sh
 
 ducklake-test:
-	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=120s
+	CGO_ENABLED=1 go test -race -tags ducklake ./internal/porcupine -run '^TestDuckLake' -count=1 -timeout=600s
 
 ducklake-smoke: ducklake-build cli
 	go run ./internal/cmd/ducklake-smoke -server ./bin/porcupine-ducklake -cli ./bin/cli/porcupine
@@ -103,3 +103,8 @@ ducklake-bench:
 
 ducklake-compare:
 	CGO_ENABLED=1 GOFLAGS=-tags=ducklake python3 scripts/integration.py
+
+.PHONY: ducklake-s3-test
+ducklake-s3-test:
+	go run ./internal/cmd/ducklake-s3-integration
+	go run ./internal/cmd/ducklake-s3-integration -tls

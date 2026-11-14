@@ -65,6 +65,12 @@ Each property contains `key`, observed JSON `types`, decimal-string `sample_occu
 
 `sampling` reports the bounds, `properties_requested`, `properties_truncated`, `pagination_truncated`, and `historical_properties_complete`. Historical completeness is always false. Missing keys may be outside the sample or exceed its bounds.
 
+## Event profiles, unreleased
+
+The development operation `get-event-profile` adds activity, recent examples, and property statistics for one exact event name. It is not available in v0.12.0. Discover the running contract before calling it. See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples.
+
+Profiles distinguish occurrence time from receipt time. Exact activity covers delivered logical events. Property statistics describe only a bounded recent sample. A failed storage read returns an error rather than zero activity. Edits and deletions change a profile after analytical projection, under the same delivery rules as SQL.
+
 ## SQL request and result
 
 A body contains `sql`, an optional `parameters` string map, and optional `use_cache`:
@@ -164,6 +170,8 @@ Results are eventually consistent. A committed analytical write can be visible b
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 
+Development builds return `429` with `code: "active_project_limit"` when every resident project engine is in use and another project cannot open within the configured count limit. Retry after active work finishes. This applies to SQL, catalog reads, and export validation. The operator can adjust `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` within the deployment's memory budget. Version v0.12.1 reports this condition as `503`.
+
 DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MCP and CLI receive the same envelope. For example:
 
 ```json
@@ -180,3 +188,7 @@ DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MC
 | `result_row_limit`, `result_byte_limit` | Reduce the result or call `create-event-export` |
 
 Native engine errors are classified without returning their raw text, candidate lists, stored values, filesystem paths or internal SQL. Other errors and backends may return only `error`; clients must keep that fallback.
+
+### Analytical S3 request deadlines
+
+On native S3 deployments, `limits.object_storage_request_timeout_seconds` reports the per-request object-storage timeout. Automatic native HTTP retries are disabled. Cancellation does not immediately abort every native HTTP request, so an in-flight object read can extend the SQL deadline by this interval. This field is omitted for local native storage and ClickHouse. [S3 configuration](ducklake-s3.md)

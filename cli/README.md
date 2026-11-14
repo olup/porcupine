@@ -44,6 +44,8 @@ Run `porcupine --help` for the catalog or `porcupine query-events --help` for pa
 
 Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to read from stdin. The binary upload operation streams bytes from a file or stdin. See [resumable imports](../docs/posthog-import.md) for manifests, checksums and chunk offsets.
 
+Development builds also generate `get-event-profile`. Run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. This command and its server operation are not in v0.12.0. See [event profiles](../docs/event-discovery.md) for sampling and payload limits.
+
 ## Develop
 
 The server registers management operations with Huma. From the repository root, `make cli-generate` regenerates the command catalog, and `make cli-check` checks for drift and tests the CLI module. Commit the generated catalog with changes to the API. An operation that depends on an optional server capability appears in help even when that capability is disabled on the chosen instance.

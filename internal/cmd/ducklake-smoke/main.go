@@ -64,7 +64,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "DuckLake smoke failed:", err)
 		os.Exit(1)
 	}
-	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/status")
+	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/profile/status, scheduled native backup")
 }
 
 func run(ctx context.Context, serverPath, cliPath string) error {
@@ -105,6 +105,7 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	server.Dir = directory
 	server.Env = environment(map[string]string{
 		"PORCUPINE_ADDR": address, "PORCUPINE_DB": filepath.Join(directory, "queue.db"),
+		"PORCUPINE_BACKUP_DIR":   filepath.Join(directory, "backups"),
 		"PORCUPINE_DUCKLAKE_DIR": filepath.Join(directory, "lake"), "PORCUPINE_BOOTSTRAP_TOKEN": admin,
 	})
 	server.Stdout, server.Stderr = io.Discard, io.Discard
@@ -219,6 +220,28 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if len(catalog.Properties) != 1 || catalog.Properties[0].Key != "amount_minor" || catalog.Next != "" {
 		return errors.New("compiled CLI property continuation failed")
 	}
+	var profile struct {
+		Event    string `json:"event"`
+		Activity struct {
+			Total string `json:"total"`
+		} `json:"activity"`
+		Sampling struct {
+			Profiled int `json:"profiled_events"`
+		} `json:"sampling"`
+		Properties []struct {
+			Key     string `json:"key"`
+			Present int    `json:"present"`
+		} `json:"properties"`
+		Examples []struct {
+			ID string `json:"event_id"`
+		} `json:"examples"`
+	}
+	if err := runCLI(ctx, cliPath, cliEnv, nil, &profile, "get-event-profile", "--id", created.Project.ID, "--event", "compiled-smoke", "--property-kind", "custom", "--property-prefix", "amount", "--sample-limit", "10", "--example-limit", "1", "--include-values", "true"); err != nil {
+		return err
+	}
+	if profile.Event != "compiled-smoke" || profile.Activity.Total != "1" || profile.Sampling.Profiled != 1 || len(profile.Properties) != 2 || profile.Properties[0].Key != "amount" || profile.Properties[0].Present != 1 || len(profile.Examples) != 1 || profile.Examples[0].ID != first.Receipts[0].EventID {
+		return errors.New("compiled CLI event profile lost activity, sampled properties or stable event pointer")
+	}
 	var cliSchema schemaResponse
 	if err := runCLI(ctx, cliPath, cliEnv, nil, &cliSchema, "get-event-schema", "--id", created.Project.ID); err != nil {
 		return err
@@ -227,6 +250,15 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 		return errors.New("compiled CLI schema did not describe the DuckDB engine")
 	}
 	var status struct {
+		Backup *struct {
+			State  string `json:"state"`
+			Latest string `json:"latest_bundle"`
+		} `json:"native_backup"`
+		Cleanup *struct {
+			Enabled   bool  `json:"enabled"`
+			Retention int64 `json:"snapshot_retention_seconds"`
+			Grace     int64 `json:"obsolete_file_grace_seconds"`
+		} `json:"ducklake_cleanup"`
 		Status string `json:"status"`
 		Checks struct {
 			SQLite     string `json:"sqlite"`
@@ -239,6 +271,23 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	}
 	if status.Status != "ok" || status.Checks.SQLite != "ok" || status.Checks.DuckLake != "ok" || status.Checks.ClickHouse != "not_configured" {
 		return errors.New("compiled CLI status did not report the isolated DuckLake deployment")
+	}
+	if status.Cleanup == nil || !status.Cleanup.Enabled || status.Cleanup.Retention != 7*24*3600 || status.Cleanup.Grace != 48*3600 {
+		return errors.New("compiled CLI did not report native cleanup defaults to the administrator")
+	}
+	if err := poll(ctx, func() (bool, error) {
+		if err := runCLI(ctx, cliPath, cliEnv, nil, &status, "get-instance-status"); err != nil {
+			return false, err
+		}
+		if status.Backup != nil && status.Backup.State == "failed" {
+			return false, errors.New("compiled server automatic backup failed")
+		}
+		return status.Backup != nil && status.Backup.State == "ok" && status.Backup.Latest != "", nil
+	}); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(directory, "backups", status.Backup.Latest, "manifest.json")); err != nil {
+		return errors.New("compiled CLI advertised a missing backup bundle")
 	}
 	return nil
 }

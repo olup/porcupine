@@ -23,7 +23,7 @@ func main() {
     db, err := sql.Open("duckdb", "")
     if err != nil { log.Fatal(err) }
     defer db.Close()
-    if _, err := db.Exec("INSTALL ducklake; LOAD ducklake"); err != nil { log.Fatal(err) }
+    if _, err := db.Exec("INSTALL ducklake; LOAD ducklake; INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws"); err != nil { log.Fatal(err) }
 }
 GO
 CGO_ENABLED=1 go run /tmp/extension.go

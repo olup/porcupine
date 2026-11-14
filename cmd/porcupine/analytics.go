@@ -11,10 +11,17 @@ import (
 
 func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeConfig, error) {
 	endpoint, directory := os.Getenv("PORCUPINE_CLICKHOUSE_URL"), os.Getenv("PORCUPINE_DUCKLAKE_DIR")
+	remote, err := duckLakeS3Configuration()
+	if err != nil {
+		return nil, nil, err
+	}
 	if endpoint != "" && directory != "" {
 		return nil, nil, errors.New("configure either PORCUPINE_DUCKLAKE_DIR or PORCUPINE_CLICKHOUSE_URL")
 	}
 	if endpoint != "" {
+		if remote != nil {
+			return nil, nil, errors.New("analytical S3 configuration requires DuckLake, not ClickHouse")
+		}
 		hotDays, err := analyticsInteger("PORCUPINE_HOT_STORAGE_DAYS", 0, 1, 36500)
 		if err != nil {
 			return nil, nil, err
@@ -28,9 +35,12 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 		directory = defaultAnalyticsDirectory(os.Getenv("PORCUPINE_DB"))
 	}
 	if directory == "" {
+		if remote != nil {
+			return nil, nil, errors.New("analytical S3 configuration requires a DuckLake directory")
+		}
 		return nil, nil, nil
 	}
-	config := &porcupine.DuckLakeConfig{Directory: directory}
+	config := &porcupine.DuckLakeConfig{Directory: directory, S3: remote}
 	for _, field := range []struct {
 		name     string
 		target   *int
@@ -52,6 +62,29 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 			return nil, nil, errors.New("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL must be between 1s and 24h")
 		}
 		config.MaintenanceInterval = interval
+	}
+	for _, field := range []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION", &config.SnapshotRetention},
+		{"PORCUPINE_DUCKLAKE_CLEANUP_GRACE", &config.CleanupGrace},
+		{"PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL", &config.CleanupInterval},
+	} {
+		if raw := os.Getenv(field.name); raw != "" {
+			duration, err := time.ParseDuration(raw)
+			if err != nil || duration < time.Second {
+				return nil, nil, errors.New(field.name + " must be a duration of at least 1s")
+			}
+			*field.target = duration
+		}
+	}
+	if raw := os.Getenv("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED"); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, nil, errors.New("invalid PORCUPINE_DUCKLAKE_CLEANUP_ENABLED")
+		}
+		config.DisableCleanup = !enabled
 	}
 	return nil, config, nil
 }

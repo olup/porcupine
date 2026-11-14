@@ -65,22 +65,37 @@ func (g *projectionGuard) shared(ctx context.Context) (context.Context, func(), 
 	if g == nil || ctx.Value(projectionGuardContextKey{}) == g {
 		return ctx, func() {}, nil
 	}
-	file, err := os.OpenFile(g.path, os.O_CREATE|os.O_RDWR, 0600)
+	release, err := lockProjectionFile(ctx, g.path, false)
 	if err != nil {
 		return ctx, nil, err
+	}
+	return context.WithValue(ctx, projectionGuardContextKey{}, g), release, nil
+}
+
+func (g *projectionGuard) exclusive(ctx context.Context) (func(), error) {
+	if g == nil {
+		return nil, errors.New("native checkpoints require a persistent projection guard")
+	}
+	return lockProjectionFile(ctx, g.path, true)
+}
+
+func lockProjectionFile(ctx context.Context, path string, exclusive bool) (func(), error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
 	}
 	for {
 		if err := ctx.Err(); err != nil {
 			file.Close()
-			return ctx, nil, err
+			return nil, err
 		}
-		err = projectionFileLock(file, false)
+		err = projectionFileLock(file, exclusive)
 		if err == nil {
-			return context.WithValue(ctx, projectionGuardContextKey{}, g), func() { file.Close() }, nil
+			return func() { file.Close() }, nil
 		}
 		if !projectionLockBusy(err) {
 			file.Close()
-			return ctx, nil, err
+			return nil, err
 		}
 		timer := time.NewTimer(10 * time.Millisecond)
 		select {

@@ -45,7 +45,7 @@ func duckLakeExportBindings(ctx context.Context, p *projectLake, raw string, par
 func (s *duckLakeStore) ValidateExport(ctx context.Context, project, raw string, parameters map[string]string, pipeline bool) (string, error) {
 	p, release, err := s.leaseProject(ctx, project)
 	if err != nil {
-		return "", apiError(503, "DuckLake storage unavailable")
+		return "", duckLakeProjectError(ctx, err)
 	}
 	defer release()
 	var window *analyticalWindow

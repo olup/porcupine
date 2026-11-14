@@ -40,46 +40,50 @@ type Config struct {
 	Pipelines       *PipelineConfig
 	Exports         *ExportConfig
 	OAuth           *OAuthConfig
+	NativeBackup    *NativeBackupConfig
 }
 
 type Service struct {
-	activity              projectActivity
-	catalogMu             sync.RWMutex
-	deletionMu            contextMutex
-	deletionCancel        context.CancelFunc
-	deletionDone          chan struct{}
-	db                    *sql.DB
-	queueMax              int
-	queueMaxBytes         int64
-	hotReceiptLimit       int64
-	receiptSlots          chan struct{}
-	allowedOrigins        map[string]bool
-	trustedProxies        []netip.Prefix
-	clock                 func() time.Time
-	ch                    *clickHouse
-	lake                  lakeStore
-	lakeMemoryMB          int
-	lakeMaintenanceCancel context.CancelFunc
-	lakeMaintenanceDone   chan struct{}
-	deliveryCancel        context.CancelFunc
-	deliveryDone          chan struct{}
-	deliveryMaxEvents     int
-	deliveryMaxBytes      int
-	queryMu               contextMutex
-	queryReady            map[string]bool
-	querySlots            chan struct{}
-	captureSlots          chan struct{}
-	importSlots           chan struct{}
-	tokenSlots            chan struct{}
-	statusSlots           chan struct{}
-	querySecret           []byte
-	queryCacheEpoch       string
-	mutationMu            sync.Mutex
-	pipelines             *pipelineRuntime
-	batchSlot             chan struct{}
-	exports               *exportRuntime
-	oauth                 *oauthRuntime
-	projectionGuard       *projectionGuard
+	lakeS3Storage               bool
+	lakeS3RequestTimeoutSeconds int
+	backups                     *nativeBackupRuntime
+	activity                    projectActivity
+	catalogMu                   sync.RWMutex
+	deletionMu                  contextMutex
+	deletionCancel              context.CancelFunc
+	deletionDone                chan struct{}
+	db                          *sql.DB
+	queueMax                    int
+	queueMaxBytes               int64
+	hotReceiptLimit             int64
+	receiptSlots                chan struct{}
+	allowedOrigins              map[string]bool
+	trustedProxies              []netip.Prefix
+	clock                       func() time.Time
+	ch                          *clickHouse
+	lake                        lakeStore
+	lakeMemoryMB                int
+	lakeMaintenanceCancel       context.CancelFunc
+	lakeMaintenanceDone         chan struct{}
+	deliveryCancel              context.CancelFunc
+	deliveryDone                chan struct{}
+	deliveryMaxEvents           int
+	deliveryMaxBytes            int
+	queryMu                     contextMutex
+	queryReady                  map[string]bool
+	querySlots                  chan struct{}
+	captureSlots                chan struct{}
+	importSlots                 chan struct{}
+	tokenSlots                  chan struct{}
+	statusSlots                 chan struct{}
+	querySecret                 []byte
+	queryCacheEpoch             string
+	mutationMu                  sync.Mutex
+	pipelines                   *pipelineRuntime
+	batchSlot                   chan struct{}
+	exports                     *exportRuntime
+	oauth                       *oauthRuntime
+	projectionGuard             *projectionGuard
 }
 
 func Open(c Config) (*Service, error) {
@@ -89,11 +93,21 @@ func Open(c Config) (*Service, error) {
 	if c.DuckLake != nil && c.HotReceiptLimit != 0 {
 		return nil, errors.New("DuckLake does not support finite receipt history")
 	}
+	if c.DuckLake != nil {
+		cleanup := *c.DuckLake
+		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
+			return nil, err
+		}
+	}
 	if c.DuckLake != nil && c.DuckLake.MaintenanceInterval < 0 {
 		return nil, errors.New("DuckLake maintenance interval must be nonnegative")
 	}
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
+	}
+	backups, err := prepareNativeBackup(c.NativeBackup, c.DBPath, c.DuckLake)
+	if err != nil {
+		return nil, err
 	}
 	if c.QueueMaxEvents <= 0 {
 		c.QueueMaxEvents = 100000
@@ -178,7 +192,7 @@ func Open(c Config) (*Service, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
+	s := &Service{db: db, backups: backups, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
 		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
@@ -208,6 +222,13 @@ func Open(c Config) (*Service, error) {
 		s.lake, err = newDuckLake(*c.DuckLake)
 		if err != nil {
 			return fail(err)
+		}
+		s.lakeS3Storage = c.DuckLake.S3 != nil
+		if s.lakeS3Storage {
+			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
+			if s.lakeS3RequestTimeoutSeconds == 0 {
+				s.lakeS3RequestTimeoutSeconds = 5
+			}
 		}
 		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
 		if s.lakeMemoryMB == 0 {
@@ -352,10 +373,14 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if exports != nil {
 		s.startExports()
 	}
+	if err := s.startNativeBackups(); err != nil {
+		return nil, errors.Join(err, s.Close())
+	}
 	return s, nil
 }
 
 func (s *Service) Close() error {
+	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
 		s.lakeMaintenanceCancel()
 		<-s.lakeMaintenanceDone

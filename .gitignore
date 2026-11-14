@@ -5,6 +5,7 @@
 .env.*
 !.env.example
 !deployment/.env.s3.example
+!deployment/.env.ducklake-s3.example
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

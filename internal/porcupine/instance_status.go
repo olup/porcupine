@@ -24,6 +24,7 @@ type InstanceChecks struct {
 }
 
 type InstanceConfiguration struct {
+	NativeS3Storage  bool `json:"native_s3_storage" doc:"DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials."`
 	QueryExports     bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
 	WebhookPipelines bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
 	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
@@ -33,11 +34,13 @@ type InstanceConfiguration struct {
 }
 
 type InstanceStatus struct {
-	Status        string                `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails. Unconfigured optional services do not degrade the instance."`
-	Version       string                `json:"version" doc:"Server build version, or dev for an unversioned build."`
-	CheckedAt     string                `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
-	Checks        InstanceChecks        `json:"checks"`
-	Configuration InstanceConfiguration `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
+	NativeBackup    *NativeBackupStatus    `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
+	DuckLakeCleanup *DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
+	Status          string                 `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
+	Version         string                 `json:"version" doc:"Server build version, or dev for an unversioned build."`
+	CheckedAt       string                 `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
+	Checks          InstanceChecks         `json:"checks"`
+	Configuration   InstanceConfiguration  `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
 }
 
 type InstanceStatusOutput struct{ Body InstanceStatus }
@@ -54,7 +57,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Status: "ok", Version: Version, CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
-			QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
+			NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && (s.ch != nil || s.lake != nil),
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,
@@ -89,5 +92,25 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			result.Status = "degraded"
 		}
 	}
+	if s.lake != nil && principal(ctx).admin() {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		status, err := s.lake.CleanupStatus(probe)
+		cancel()
+		if err == nil {
+			result.DuckLakeCleanup = &status
+			if status.FailedCatalogs > 0 {
+				result.Status = "degraded"
+			}
+		} else {
+			result.Status = "degraded"
+		}
+	}
+	if s.backups != nil && principal(ctx).admin() {
+		result.NativeBackup = s.nativeBackupStatus()
+		if result.NativeBackup != nil && (result.NativeBackup.State == "failed" || result.NativeBackup.State == "interrupted") {
+			result.Status = "degraded"
+		}
+	}
+
 	return &InstanceStatusOutput{Body: result}, nil
 }

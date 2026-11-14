@@ -1,7 +1,9 @@
 name: Check
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -62,6 +64,7 @@ jobs:
       - run: go vet -tags ducklake ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags ducklake ./...
       - run: make ducklake-smoke
+      - run: make ducklake-s3-test
       - run: make ducklake-compare
   sdk-compat:
     runs-on: ubuntu-latest

@@ -20,7 +20,7 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 	defer cancel()
 	p, release, err := s.leaseProject(ctx, project)
 	if err != nil {
-		return AnalyticsResult{}, apiError(503, "DuckLake storage unavailable")
+		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
 	canonical, args, err := validateDuckLakeSQL(ctx, p.db, rawSQL, parameters)
@@ -120,6 +120,17 @@ func duckLakeValidationError(ctx context.Context, err error) error {
 	return analyticsError(400, "unsupported_sql", "Unsupported DuckDB SQL", "Use one SELECT against events. Read get-event-schema for supported sources, expressions and functions.", "")
 }
 
+func duckLakeProjectError(ctx context.Context, err error) error {
+	var managed *managementError
+	if errors.As(err, &managed) {
+		return managed
+	}
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return duckLakeQueryError(ctx, err)
+	}
+	return apiError(503, "DuckLake storage unavailable")
+}
+
 var duckLakeUnknownColumn = regexp.MustCompile(`Referenced column "([A-Za-z_][A-Za-z0-9_]{0,63})" not found`)
 
 func duckLakeQueryError(ctx context.Context, err error) error {
@@ -171,7 +182,7 @@ func (s *duckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (E
 	defer cancel()
 	p, release, err := s.leaseProject(ctx, project)
 	if err != nil {
-		return EventCatalog{}, apiError(503, "DuckLake storage unavailable")
+		return EventCatalog{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
 	query := `SELECT event, CAST(count(*) AS VARCHAR), arg_min(received_at,id), arg_max(received_at,id), arg_max(uuid,id), arg_max(timestamp,id) FROM events`

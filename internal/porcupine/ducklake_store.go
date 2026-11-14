@@ -4,9 +4,7 @@ package porcupine
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -19,14 +17,19 @@ import (
 )
 
 type duckLakeStore struct {
-	root         string
-	config       DuckLakeConfig
-	registry     *sql.DB
-	registryInfo os.FileInfo
-	owner        *os.File
-	mu           contextMutex
-	projects     map[string]*projectLake
-	closed       bool
+	root           string
+	config         DuckLakeConfig
+	registry       *sql.DB
+	registryInfo   os.FileInfo
+	owner          *os.File
+	mu             contextMutex
+	cleanup        contextMutex
+	projects       map[string]*projectLake
+	closed         bool
+	remote         *duckLakeObjectStore
+	opening        map[string]*projectOpening
+	deletion       contextMutex
+	deletionActive bool
 }
 
 type projectLake struct {
@@ -35,11 +38,25 @@ type projectLake struct {
 	maintenance contextMutex
 	directory   string
 	catalogInfo os.FileInfo
-	leases      int
+	leases      map[*projectLease]struct{}
 	lastUsed    time.Time
 }
 
+type projectLease struct{ started time.Time }
+type projectOpening struct {
+	done chan struct{}
+	err  error
+}
+
 func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
+	remoteConfig, err := normalizeDuckLakeS3(config.S3)
+	if err != nil {
+		return nil, err
+	}
+	config.S3 = remoteConfig
+	if err := normalizeDuckLakeCleanup(&config); err != nil {
+		return nil, err
+	}
 	if config.Directory == "" {
 		return nil, errors.New("DuckLake directory is required")
 	}
@@ -84,9 +101,21 @@ func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
 		return nil, err
 	}
 	registry.SetMaxOpenConns(1)
-	s := &duckLakeStore{root: root, config: config, registry: registry, owner: owner, projects: make(map[string]*projectLake)}
-	fail := func(err error) (lakeStore, error) { registry.Close(); owner.Close(); return nil, err }
-	if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);`); err != nil {
+	s := &duckLakeStore{root: root, config: config, registry: registry, owner: owner, projects: make(map[string]*projectLake), opening: make(map[string]*projectOpening)}
+	fail := func(err error) (lakeStore, error) {
+		if s.remote != nil {
+			s.remote.transport.CloseIdleConnections()
+		}
+		registry.Close()
+		owner.Close()
+		return nil, err
+	}
+	if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS deleting_projects (project_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_attempt INTEGER NOT NULL, last_attempt INTEGER NOT NULL, last_success INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0 CHECK(failed IN (0,1)));`); err != nil {
+		return fail(err)
+	}
+	if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
 		return fail(err)
 	}
 	var count int
@@ -98,11 +127,27 @@ func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
 			return fail(err)
 		}
 	}
+	if err := pinDuckLakeStorage(context.Background(), registry, root, config.S3); err != nil {
+		return fail(err)
+	}
+	if config.S3 != nil {
+		var source string
+		if err := registry.QueryRow("SELECT id FROM source").Scan(&source); err != nil {
+			return fail(err)
+		}
+		s.remote, err = newDuckLakeObjectStore(context.Background(), *config.S3, source)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	if err = os.Chmod(registryPath, 0600); err != nil {
 		return fail(err)
 	}
 	s.registryInfo, err = os.Stat(registryPath)
 	if err != nil {
+		return fail(err)
+	}
+	if err := removeAbandonedCheckpoints(root); err != nil {
 		return fail(err)
 	}
 	return s, nil
@@ -126,14 +171,16 @@ func (s *duckLakeStore) sourceIDLocked(ctx context.Context) (string, error) {
 	}
 	var id string
 	if err := s.registry.QueryRowContext(ctx, "SELECT id FROM source").Scan(&id); err != nil || id == "" {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", errors.New("DuckLake source unavailable")
 	}
 	return id, nil
 }
 
 func (s *duckLakeStore) projectDirectory(project string) string {
-	digest := sha256.Sum256([]byte(project))
-	return filepath.Join(s.root, hex.EncodeToString(digest[:]))
+	return filepath.Join(s.root, projectLakeDigest(project))
 }
 
 func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*projectLake, func(), error) {
@@ -144,51 +191,94 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 		return nil, nil, err
 	}
 	defer s.mu.Unlock()
-	if s.closed {
-		return nil, nil, errors.New("DuckLake is closed")
-	}
+	return s.leaseProjectLocked(ctx, project)
+}
+
+// Caller holds s.mu on entry and return. Cold initialization reserves its
+// engine slot, then releases the mutex during credential/file/network work.
+func (s *duckLakeStore) leaseProjectLocked(ctx context.Context, project string) (*projectLake, func(), error) {
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	p := s.projects[project]
-	if p != nil {
+	var deleting bool
+	if err := s.registry.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deleting_projects WHERE project_id=?)", project).Scan(&deleting); err != nil {
+		return nil, nil, err
+	}
+	if deleting {
+		return nil, nil, errors.New("DuckLake project deletion is in progress")
+	}
+	if pending := s.opening[project]; pending != nil {
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-pending.done:
+		}
+		_ = s.mu.Lock(context.Background())
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if pending.err != nil {
+			return nil, nil, pending.err
+		}
+		return s.leaseProjectLocked(ctx, project)
+	}
+	if p := s.projects[project]; p != nil {
 		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
 		if err != nil || !os.SameFile(info, p.catalogInfo) {
 			return nil, nil, errors.New("DuckLake project catalog changed")
 		}
-	} else {
-		if len(s.projects) >= s.config.MaxOpenProjects {
-			var oldest string
-			for id, candidate := range s.projects {
-				if candidate.leases == 0 && (oldest == "" || candidate.lastUsed.Before(s.projects[oldest].lastUsed)) {
-					oldest = id
-				}
+		return p, s.addProjectLease(p), nil
+	}
+	if len(s.projects)+len(s.opening) >= s.config.MaxOpenProjects {
+		oldest := ""
+		for id, candidate := range s.projects {
+			if len(candidate.leases) == 0 && (oldest == "" || candidate.lastUsed.Before(s.projects[oldest].lastUsed)) {
+				oldest = id
 			}
-			if oldest == "" {
-				return nil, nil, errors.New("DuckLake active project limit reached")
-			}
-			if err := s.projects[oldest].db.Close(); err != nil {
-				return nil, nil, err
-			}
-			delete(s.projects, oldest)
 		}
-		var err error
-		p, err = s.openProject(ctx, project)
+		if oldest == "" {
+			return nil, nil, analyticsError(429, "active_project_limit", "DuckLake active project limit reached", "Retry after active project work finishes. The deployment operator can adjust the resident-project limit if memory allows.", "")
+		}
+		err := s.projects[oldest].db.Close()
+		delete(s.projects, oldest)
 		if err != nil {
 			return nil, nil, err
 		}
-		s.projects[project] = p
 	}
-	p.leases++
-	return p, func() {
+	pending := &projectOpening{done: make(chan struct{})}
+	s.opening[project] = pending
+	s.mu.Unlock()
+	p, err := s.openProject(ctx, project)
+	_ = s.mu.Lock(context.Background())
+	delete(s.opening, project)
+	pending.err = err
+	defer close(pending.done)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := s.sourceIDLocked(ctx); err != nil {
+		p.db.Close()
+		pending.err = err
+		return nil, nil, err
+	}
+	s.projects[project] = p
+	return p, s.addProjectLease(p), nil
+}
+
+// Caller holds s.mu. Each lease records its own start so continuous traffic
+// does not keep the history horizon pinned after an older reader finishes.
+func (s *duckLakeStore) addProjectLease(p *projectLake) func() {
+	lease := &projectLease{started: time.Now()}
+	p.leases[lease] = struct{}{}
+	return func() {
 		_ = s.mu.Lock(context.Background())
-		p.leases--
+		delete(p.leases, lease)
 		p.lastUsed = time.Now()
 		s.mu.Unlock()
-	}, nil
+	}
 }
 
 func lakeLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
@@ -220,11 +310,33 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	fail := func(err error) (*projectLake, error) { db.Close(); return nil, err }
+	fail := func(err error) (*projectLake, error) {
+		db.Close()
+		if s.remote != nil {
+			var configurationError *analyticalS3ConfigurationError
+			if errors.As(err, &configurationError) {
+				return nil, configurationError
+			}
+			return nil, analyticalS3Error(ctx)
+		}
+		return nil, err
+	}
 	if _, err = db.ExecContext(ctx, "LOAD ducklake"); err != nil {
 		if _, err = db.ExecContext(ctx, "INSTALL ducklake; LOAD ducklake"); err != nil {
 			return fail(errors.New("DuckLake extension is unavailable"))
 		}
+	}
+	dataPath := filepath.Join(directory, "files")
+	caFile := ""
+	if s.remote != nil {
+		if _, err := db.ExecContext(ctx, "SET allow_persistent_secrets=false"); err != nil {
+			return fail(err)
+		}
+		caFile, err = s.remote.configure(ctx, db, project)
+		if err != nil {
+			return fail(err)
+		}
+		dataPath = s.remote.projectPath(project)
 	}
 	for _, statement := range []string{
 		fmt.Sprintf("SET memory_limit='%dMiB'", s.config.MemoryLimitMB),
@@ -232,7 +344,7 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 		"SET TimeZone='UTC'",
 		"SET temp_directory=" + lakeLiteral(filepath.Join(directory, "temp")),
 		"SET max_temp_directory_size='256MiB'",
-		"ATTACH " + lakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + lakeLiteral(filepath.Join(directory, "files")) + ")",
+		"ATTACH " + lakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + lakeLiteral(dataPath) + ")",
 	} {
 		if _, err = db.ExecContext(ctx, statement); err != nil {
 			return fail(err)
@@ -273,8 +385,17 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
 		return fail(err)
 	}
+	allowedDirectories := lakeLiteral(directory + string(os.PathSeparator))
+	if s.remote != nil {
+		allowedDirectories += "," + lakeLiteral(dataPath)
+	}
+	allowedPaths := "[]"
+	if caFile != "" {
+		allowedPaths = "[" + lakeLiteral(caFile) + "]"
+	}
 	for _, statement := range []string{
-		"SET allowed_directories=[" + lakeLiteral(directory+string(os.PathSeparator)) + "]",
+		"SET allowed_directories=[" + allowedDirectories + "]",
+		"SET allowed_paths=" + allowedPaths,
 		"SET enable_external_access=false",
 		"SET autoinstall_known_extensions=false",
 		"SET autoload_known_extensions=false",
@@ -284,6 +405,7 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 			return fail(err)
 		}
 	}
+
 	if _, err = s.registry.ExecContext(ctx, "UPDATE catalogs SET ready=1 WHERE project_id=?", project); err != nil {
 		return fail(err)
 	}
@@ -291,39 +413,77 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if err != nil {
 		return fail(err)
 	}
-	return &projectLake{db: db, directory: directory, catalogInfo: info, lastUsed: time.Now()}, nil
+	return &projectLake{db: db, directory: directory, catalogInfo: info, leases: make(map[*projectLease]struct{}), lastUsed: time.Now()}, nil
 }
 
 func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error {
+	if err := s.deletion.Lock(ctx); err != nil {
+		return err
+	}
+	defer s.deletion.Unlock()
+	if err := s.mu.Lock(ctx); err != nil {
+		return err
+	}
+	if _, err := s.sourceIDLocked(ctx); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if s.opening[project] != nil {
+		s.mu.Unlock()
+		return errors.New("DuckLake project is opening")
+	}
+	if p := s.projects[project]; p != nil {
+		if len(p.leases) != 0 {
+			s.mu.Unlock()
+			return errors.New("DuckLake project is in use")
+		}
+		err := p.db.Close()
+		delete(s.projects, project)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	if _, err := s.registry.ExecContext(ctx, "INSERT OR IGNORE INTO deleting_projects(project_id) VALUES(?)", project); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.deletionActive = true
+	s.mu.Unlock()
+	defer func() { _ = s.mu.Lock(context.Background()); s.deletionActive = false; s.mu.Unlock() }()
+	// The durable fence excludes this project while remote I/O proceeds. Other
+	// projects remain available, and Close keeps the root writer lock pinned.
+	if s.remote != nil {
+		if err := s.remote.deleteProject(ctx, project); err != nil {
+			return err
+		}
+	}
 	if err := s.mu.Lock(ctx); err != nil {
 		return err
 	}
 	defer s.mu.Unlock()
-	if s.closed {
-		return errors.New("DuckLake is closed")
-	}
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		return err
-	}
-	if p := s.projects[project]; p != nil {
-		if p.leases != 0 {
-			return errors.New("DuckLake project is in use")
-		}
-		if err := p.db.Close(); err != nil {
-			return err
-		}
-		delete(s.projects, project)
 	}
 	if err := os.RemoveAll(s.projectDirectory(project)); err != nil {
 		return err
 	}
-	_, err := s.registry.ExecContext(ctx, "DELETE FROM catalogs WHERE project_id=?", project)
-	return err
+	tx, err := s.registry.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{"DELETE FROM cleanup_progress WHERE project_id=?", "DELETE FROM catalogs WHERE project_id=?", "DELETE FROM deleting_projects WHERE project_id=?"} {
+		if _, err := tx.ExecContext(ctx, statement, project); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *duckLakeStore) Maintain(ctx context.Context) error {
 	_, err := s.maintainSized(ctx, 1, false, 1<<20)
-	return err
+	return errors.Join(err, s.cleanupDue(ctx, time.Now()))
 }
 
 type duckLakeMaintenanceStats struct {
@@ -358,36 +518,47 @@ func (s *duckLakeStore) maintainSized(ctx context.Context, maxCompactions int, s
 		s.mu.Unlock()
 		return nil, err
 	}
-	projects := make([]*projectLake, 0, len(s.projects))
-	for _, p := range s.projects {
-		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
-		if err != nil || !os.SameFile(info, p.catalogInfo) {
-			s.mu.Unlock()
-			return nil, errors.New("DuckLake project catalog changed")
-		}
-		projects = append(projects, p)
-	}
-	for _, p := range projects {
-		p.leases++
+	projects := make(map[string]*projectLake, len(s.projects))
+	for id, p := range s.projects {
+		projects[id] = p
 	}
 	s.mu.Unlock()
-	defer func() {
-		_ = s.mu.Lock(context.Background())
-		defer s.mu.Unlock()
-		for _, p := range projects {
-			p.leases--
-			p.lastUsed = time.Now()
-		}
-	}()
 	var measurements []duckLakeMaintenanceStats
-	for _, p := range projects {
+	for id, p := range projects {
+		release, err := s.leaseMaintenanceProject(ctx, id, p)
+		if err != nil {
+			return measurements, err
+		}
+		if release == nil {
+			continue
+		}
 		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized, maxFileSize)
+		release()
 		measurements = append(measurements, stats)
 		if err != nil {
 			return measurements, err
 		}
 	}
 	return measurements, nil
+}
+
+func (s *duckLakeStore) leaseMaintenanceProject(ctx context.Context, id string, expected *projectLake) (func(), error) {
+	if err := s.mu.Lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.mu.Unlock()
+	if _, err := s.sourceIDLocked(ctx); err != nil {
+		return nil, err
+	}
+	p := s.projects[id]
+	if p != expected {
+		return nil, nil
+	}
+	info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
+	if err != nil || !os.SameFile(info, p.catalogInfo) {
+		return nil, errors.New("DuckLake project catalog changed")
+	}
+	return s.addProjectLease(p), nil
 }
 
 func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) (stats duckLakeMaintenanceStats, err error) {
@@ -470,8 +641,11 @@ func (s *duckLakeStore) Close() error {
 	if s.closed {
 		return nil
 	}
+	if len(s.opening) != 0 || s.deletionActive {
+		return errors.New("DuckLake is in use")
+	}
 	for _, p := range s.projects {
-		if p.leases != 0 {
+		if len(p.leases) != 0 {
 			return errors.New("DuckLake is in use")
 		}
 	}
@@ -479,6 +653,9 @@ func (s *duckLakeStore) Close() error {
 	var err error
 	for _, p := range s.projects {
 		err = errors.Join(err, p.db.Close())
+	}
+	if s.remote != nil {
+		s.remote.transport.CloseIdleConnections()
 	}
 	err = errors.Join(err, s.registry.Close(), s.owner.Close())
 	return err

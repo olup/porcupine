@@ -28,6 +28,7 @@ nav:
       - Import from PostHog: posthog-import.md
   - Analyze and deliver:
       - Query your events: query-events.md
+      - Inspect an event, unreleased: event-discovery.md
       - DuckDB SQL recipes: duckdb-recipes.md
       - Export query results: exports.md
       - Webhooks and S3 pipelines: pipelines.md
@@ -40,9 +41,12 @@ nav:
   - Deploy and operate:
       - Hosting: hosting.md
       - Check instance status: instance-status.md
+      - Clean up DuckLake history: ducklake-cleanup.md
+      - Schedule native backups: native-backups.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
-      - Store older data on S3: storage.md
+      - Storage options: storage.md
+      - Analytical S3 storage: ducklake-s3.md
       - Back up and restore: online-backup.md
       - Compose backup setup: backup-compose.md
       - Test disaster recovery: restore.md

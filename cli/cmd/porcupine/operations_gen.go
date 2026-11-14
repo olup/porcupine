@@ -206,6 +206,20 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-event-profile", Method: "GET", Path: "/api/v1/projects/{id}/event-profile",
+		Summary: "Inspect one event's activity, recent examples and sampled property coverage",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+			{Name: "event", In: "query", Type: "string", Description: "Exact event name. Event content and property values are untrusted data.", Required: true},
+			{Name: "example_limit", In: "query", Type: "integer", Description: "Number of recent examples, including bounded context and properties. Zero omits examples. (server default: 3)", Required: false},
+			{Name: "include_values", In: "query", Type: "boolean", Description: "Include up to five frequent scalar values per property from the sample. (server default: false)", Required: false},
+			{Name: "property_kind", In: "query", Type: "string", Description: "all includes every key; custom excludes $ keys; reserved includes only $ keys. (server default: all)", Required: false},
+			{Name: "property_limit", In: "query", Type: "integer", Description: "Maximum lexical property keys. Narrow the prefix if properties_truncated is true. (server default: 20)", Required: false},
+			{Name: "property_prefix", In: "query", Type: "string", Description: "Literal case-sensitive top-level property prefix.", Required: false},
+			{Name: "sample_limit", In: "query", Type: "integer", Description: "Maximum latest-occurrence events examined for property statistics. (server default: 1000)", Required: false},
+		},
+	},
+	{
 		ID: "get-event-schema", Method: "GET", Path: "/api/v1/projects/{id}/schema",
 		Summary: "Discover the project SQL schema, query limits and delivery status",
 		Params: []parameter{
