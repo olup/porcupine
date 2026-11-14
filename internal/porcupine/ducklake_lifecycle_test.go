@@ -52,7 +52,7 @@ func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 		if err := s.mu.Lock(ctx); err != nil {
 			t.Fatal(err)
 		}
-		active := a.leases + b.leases
+		active := len(a.leases) + len(b.leases)
 		s.mu.Unlock()
 		if active > 0 {
 			break

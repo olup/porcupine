@@ -6,7 +6,7 @@ Porcupine 0.12.0 embeds DuckDB and DuckLake. Each project has a local catalog an
 
 This release does not expose analytical S3 storage or automatic SSD-to-S3 tiering for DuckLake. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
 
-DuckLake snapshots can retain older event payloads after logical edits or deletion. Native snapshot expiration and physical-file cleanup are not yet scheduled by Porcupine, so this release does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory. Backups and external copies have their own retention rules.
+DuckLake snapshots can retain older event payloads after logical edits or deletion. Porcupine schedules native rewrites, snapshot expiration and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing files scheduled for deletion. Long reads and maintenance backlogs can delay reclamation. Read the [cleanup guide](ducklake-cleanup.md) for deployment settings, progress and erasure limits. This does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory. Backups and external copies have their own retention rules.
 
 For recovery, use a [coordinated stopped-volume backup](restore.md). Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
 

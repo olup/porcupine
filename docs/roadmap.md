@@ -23,13 +23,20 @@
 - Maintenance keeps only its current project resident and skips candidates evicted or deleted before their turn. Idle projects remain evictable so maintenance does not exhaust the resident-engine budget when a query opens another project.
 - A fully occupied resident-engine budget returns `429` with `active_project_limit` for queries, catalog reads, and export validation. Storage failures remain `503`.
 
+## Unreleased DuckLake operations
+
+- Scheduled native snapshot expiration, deleted-row rewrites and obsolete-file cleanup, including cold project catalogs. Policies are deployment-wide and protect active readers. [Cleanup controls](ducklake-cleanup.md)
+- Administrator-only cleanup progress through the existing status API, CLI and MCP.
+
+Next: coordinated automated backups with a restore drill, then analytical S3 storage. Saved queries and report collections remain deferred; chart rendering is not a priority.
+
 ## Areas for future work
 
 Agents currently write the SQL for each question. Named metrics, a saved and parameterized query catalog, built-in session definitions and live-presence rules are candidates for future work. Funnels and retention can already be expressed in the supported SQL dialect when the events carry the identities and timestamps the analysis needs.
 
 A replicated queue and multiple ingestion workers would change the failure model and deployment requirements. The current architecture targets a single application process with local durable storage.
 
-The [compatibility matrix](../compat/matrix.json) records the supported PostHog SDK behaviors. General aliasing, merging two identified users, unlinking identities, feature flags and replay are outside that contract. The default query API uses DuckDB SQL. Analytical S3 storage, remote DuckLake catalogs, result caching on DuckLake, finite native receipts, online native checkpoints, and automatic snapshot expiration remain outside this release.
+The [compatibility matrix](../compat/matrix.json) records the supported PostHog SDK behaviors. General aliasing, merging two identified users, unlinking identities, feature flags and replay are outside that contract. The default query API uses DuckDB SQL. Analytical S3 storage, remote DuckLake catalogs, result caching on DuckLake, finite native receipts, and online native checkpoints remain outside this release. Native snapshot and obsolete-file cleanup are described in the [operations guide](ducklake-cleanup.md).
 
 ## Open question: chart rendering for agents
 

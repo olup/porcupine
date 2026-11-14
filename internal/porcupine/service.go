@@ -89,6 +89,12 @@ func Open(c Config) (*Service, error) {
 	if c.DuckLake != nil && c.HotReceiptLimit != 0 {
 		return nil, errors.New("DuckLake does not support finite receipt history")
 	}
+	if c.DuckLake != nil {
+		cleanup := *c.DuckLake
+		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
+			return nil, err
+		}
+	}
 	if c.DuckLake != nil && c.DuckLake.MaintenanceInterval < 0 {
 		return nil, errors.New("DuckLake maintenance interval must be nonnegative")
 	}

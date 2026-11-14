@@ -227,6 +227,11 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 		return errors.New("compiled CLI schema did not describe the DuckDB engine")
 	}
 	var status struct {
+		Cleanup *struct {
+			Enabled   bool  `json:"enabled"`
+			Retention int64 `json:"snapshot_retention_seconds"`
+			Grace     int64 `json:"obsolete_file_grace_seconds"`
+		} `json:"ducklake_cleanup"`
 		Status string `json:"status"`
 		Checks struct {
 			SQLite     string `json:"sqlite"`
@@ -239,6 +244,9 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	}
 	if status.Status != "ok" || status.Checks.SQLite != "ok" || status.Checks.DuckLake != "ok" || status.Checks.ClickHouse != "not_configured" {
 		return errors.New("compiled CLI status did not report the isolated DuckLake deployment")
+	}
+	if status.Cleanup == nil || !status.Cleanup.Enabled || status.Cleanup.Retention != 7*24*3600 || status.Cleanup.Grace != 48*3600 {
+		return errors.New("compiled CLI did not report native cleanup defaults to the administrator")
 	}
 	return nil
 }

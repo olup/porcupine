@@ -53,6 +53,29 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 		}
 		config.MaintenanceInterval = interval
 	}
+	for _, field := range []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION", &config.SnapshotRetention},
+		{"PORCUPINE_DUCKLAKE_CLEANUP_GRACE", &config.CleanupGrace},
+		{"PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL", &config.CleanupInterval},
+	} {
+		if raw := os.Getenv(field.name); raw != "" {
+			duration, err := time.ParseDuration(raw)
+			if err != nil || duration < time.Second {
+				return nil, nil, errors.New(field.name + " must be a duration of at least 1s")
+			}
+			*field.target = duration
+		}
+	}
+	if raw := os.Getenv("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED"); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, nil, errors.New("invalid PORCUPINE_DUCKLAKE_CLEANUP_ENABLED")
+		}
+		config.DisableCleanup = !enabled
+	}
 	return nil, config, nil
 }
 

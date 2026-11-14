@@ -33,11 +33,12 @@ type InstanceConfiguration struct {
 }
 
 type InstanceStatus struct {
-	Status        string                `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails. Unconfigured optional services do not degrade the instance."`
-	Version       string                `json:"version" doc:"Server build version, or dev for an unversioned build."`
-	CheckedAt     string                `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
-	Checks        InstanceChecks        `json:"checks"`
-	Configuration InstanceConfiguration `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
+	DuckLakeCleanup *DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
+	Status          string                 `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
+	Version         string                 `json:"version" doc:"Server build version, or dev for an unversioned build."`
+	CheckedAt       string                 `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
+	Checks          InstanceChecks         `json:"checks"`
+	Configuration   InstanceConfiguration  `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
 }
 
 type InstanceStatusOutput struct{ Body InstanceStatus }
@@ -86,6 +87,19 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		result.Checks.DuckLake = dependencyOK
 		if err != nil {
 			result.Checks.DuckLake = dependencyUnavailable
+			result.Status = "degraded"
+		}
+	}
+	if s.lake != nil && principal(ctx).admin() {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		status, err := s.lake.CleanupStatus(probe)
+		cancel()
+		if err == nil {
+			result.DuckLakeCleanup = &status
+			if status.FailedCatalogs > 0 {
+				result.Status = "degraded"
+			}
+		} else {
 			result.Status = "degraded"
 		}
 	}

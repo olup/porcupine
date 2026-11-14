@@ -156,11 +156,11 @@ Native resource settings are deployment controls:
 
 These ranges validate configuration; they are not safe combined sizing recommendations. Keep the total engine budgets below the host's available memory with room for other allocations.
 
-Maintenance leaves a two-second gap after each pass by default. It flushes small inlined writes and uses native size-filtered compaction. It runs concurrently with event projection; ordinary event writes remain serialized to preserve revisions and retry IDs. These short passes group small files toward an 8 MB target. They do not expire historical snapshots or guarantee a physical-erasure deadline. See the [maintenance measurements](ducklake-maintenance.md).
+Maintenance leaves a two-second gap after each pass by default. It flushes small inlined writes and uses native size-filtered compaction. It runs concurrently with event projection; ordinary event writes remain serialized to preserve revisions and retry IDs. These short passes group small files toward an 8 MB target. A separate hourly cleanup cycle expires historical snapshots and reclaims obsolete files, including in cold project catalogs. See the [cleanup policy and controls](ducklake-cleanup.md) and [maintenance measurements](ducklake-maintenance.md).
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-History has no automatic age-based deletion. Full SQLite receipts are required for DuckLake; leave `PORCUPINE_HOT_RECEIPT_LIMIT=0`. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
+Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. Full SQLite receipts are required for DuckLake; leave `PORCUPINE_HOT_RECEIPT_LIMIT=0`. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
 
 `/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 

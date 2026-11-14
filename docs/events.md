@@ -74,3 +74,7 @@ The mutation outbox is bounded instance-wide by the smaller of the ingestion que
 Mutation responses and `get-event-mutation` contain `mutation_id`, `project_id`, `uuid`, decimal-string `revision`, `operation`, `state`, `created_at`, and optional `applied_at`. State is `pending` or `applied`. Applied means analytical storage acknowledged projection. A lost acknowledgment can leave a visible correction marked pending until retry succeeds.
 
 The audit retains actor, operation, revision, time, idempotency hash, request digest, and status metadata. It retains no before-and-after values. Full pending projection payloads leave the SQLite outbox after analytical acknowledgment in the same transaction that marks the mutation applied. The separate private original snapshot remains in analytical storage through corrections and is blanked by deletion's newest projection.
+
+## Reclaim historical storage
+
+After mutation delivery, current analytics reflect the deletion. DuckLake can retain the old payload in historical snapshots and obsolete files. Porcupine schedules [native cleanup](ducklake-cleanup.md), with deployment-wide retention and reader protection. That cleanup is separate from removing the event from current queries, and from retention of backups or external copies.

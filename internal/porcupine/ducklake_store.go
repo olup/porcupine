@@ -25,6 +25,7 @@ type duckLakeStore struct {
 	registryInfo os.FileInfo
 	owner        *os.File
 	mu           contextMutex
+	cleanup      contextMutex
 	projects     map[string]*projectLake
 	closed       bool
 }
@@ -35,11 +36,16 @@ type projectLake struct {
 	maintenance contextMutex
 	directory   string
 	catalogInfo os.FileInfo
-	leases      int
+	leases      map[*projectLease]struct{}
 	lastUsed    time.Time
 }
 
+type projectLease struct{ started time.Time }
+
 func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
+	if err := normalizeDuckLakeCleanup(&config); err != nil {
+		return nil, err
+	}
 	if config.Directory == "" {
 		return nil, errors.New("DuckLake directory is required")
 	}
@@ -86,7 +92,11 @@ func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
 	registry.SetMaxOpenConns(1)
 	s := &duckLakeStore{root: root, config: config, registry: registry, owner: owner, projects: make(map[string]*projectLake)}
 	fail := func(err error) (lakeStore, error) { registry.Close(); owner.Close(); return nil, err }
-	if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);`); err != nil {
+	if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_attempt INTEGER NOT NULL, last_attempt INTEGER NOT NULL, last_success INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0 CHECK(failed IN (0,1)));`); err != nil {
+		return fail(err)
+	}
+	if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
 		return fail(err)
 	}
 	var count int
@@ -144,6 +154,11 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 		return nil, nil, err
 	}
 	defer s.mu.Unlock()
+	return s.leaseProjectLocked(ctx, project)
+}
+
+// Caller holds s.mu, including the registry check when opening a cold catalog.
+func (s *duckLakeStore) leaseProjectLocked(ctx context.Context, project string) (*projectLake, func(), error) {
 	if s.closed {
 		return nil, nil, errors.New("DuckLake is closed")
 	}
@@ -163,7 +178,7 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 		if len(s.projects) >= s.config.MaxOpenProjects {
 			var oldest string
 			for id, candidate := range s.projects {
-				if candidate.leases == 0 && (oldest == "" || candidate.lastUsed.Before(s.projects[oldest].lastUsed)) {
+				if len(candidate.leases) == 0 && (oldest == "" || candidate.lastUsed.Before(s.projects[oldest].lastUsed)) {
 					oldest = id
 				}
 			}
@@ -182,15 +197,20 @@ func (s *duckLakeStore) leaseProject(ctx context.Context, project string) (*proj
 		}
 		s.projects[project] = p
 	}
-	p.leases++
-	return p, func() { s.releaseProject(p) }, nil
+	return p, s.addProjectLease(p), nil
 }
 
-func (s *duckLakeStore) releaseProject(p *projectLake) {
-	_ = s.mu.Lock(context.Background())
-	p.leases--
-	p.lastUsed = time.Now()
-	s.mu.Unlock()
+// Caller holds s.mu. Each lease records its own start so continuous traffic
+// does not keep the history horizon pinned after an older reader finishes.
+func (s *duckLakeStore) addProjectLease(p *projectLake) func() {
+	lease := &projectLease{started: time.Now()}
+	p.leases[lease] = struct{}{}
+	return func() {
+		_ = s.mu.Lock(context.Background())
+		delete(p.leases, lease)
+		p.lastUsed = time.Now()
+		s.mu.Unlock()
+	}
 }
 
 func lakeLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
@@ -293,7 +313,7 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if err != nil {
 		return fail(err)
 	}
-	return &projectLake{db: db, directory: directory, catalogInfo: info, lastUsed: time.Now()}, nil
+	return &projectLake{db: db, directory: directory, catalogInfo: info, leases: make(map[*projectLease]struct{}), lastUsed: time.Now()}, nil
 }
 
 func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error {
@@ -308,7 +328,7 @@ func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error
 		return err
 	}
 	if p := s.projects[project]; p != nil {
-		if p.leases != 0 {
+		if len(p.leases) != 0 {
 			return errors.New("DuckLake project is in use")
 		}
 		if err := p.db.Close(); err != nil {
@@ -319,13 +339,17 @@ func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error
 	if err := os.RemoveAll(s.projectDirectory(project)); err != nil {
 		return err
 	}
-	_, err := s.registry.ExecContext(ctx, "DELETE FROM catalogs WHERE project_id=?", project)
+	_, err := s.registry.ExecContext(ctx, "DELETE FROM cleanup_progress WHERE project_id=?", project)
+	if err != nil {
+		return err
+	}
+	_, err = s.registry.ExecContext(ctx, "DELETE FROM catalogs WHERE project_id=?", project)
 	return err
 }
 
 func (s *duckLakeStore) Maintain(ctx context.Context) error {
 	_, err := s.maintainSized(ctx, 1, false, 1<<20)
-	return err
+	return errors.Join(err, s.cleanupDue(ctx, time.Now()))
 }
 
 type duckLakeMaintenanceStats struct {
@@ -400,8 +424,7 @@ func (s *duckLakeStore) leaseMaintenanceProject(ctx context.Context, id string, 
 	if err != nil || !os.SameFile(info, p.catalogInfo) {
 		return nil, errors.New("DuckLake project catalog changed")
 	}
-	p.leases++
-	return func() { s.releaseProject(p) }, nil
+	return s.addProjectLease(p), nil
 }
 
 func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) (stats duckLakeMaintenanceStats, err error) {
@@ -485,7 +508,7 @@ func (s *duckLakeStore) Close() error {
 		return nil
 	}
 	for _, p := range s.projects {
-		if p.leases != 0 {
+		if len(p.leases) != 0 {
 			return errors.New("DuckLake is in use")
 		}
 	}
