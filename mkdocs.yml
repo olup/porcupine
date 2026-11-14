@@ -28,7 +28,7 @@ nav:
       - Import from PostHog: posthog-import.md
   - Analyze and deliver:
       - Query your events: query-events.md
-      - Inspect an event, unreleased: event-discovery.md
+      - Inspect an event: event-discovery.md
       - DuckDB SQL recipes: duckdb-recipes.md
       - Export query results: exports.md
       - Webhooks and S3 pipelines: pipelines.md
@@ -67,5 +67,6 @@ nav:
       - Load testing: load-testing.md
       - DuckLake development notes: ducklake-experiment.md
       - DuckLake validation: ducklake-validation.md
+      - Large-event delivery, unreleased: ducklake-large-batches.md
       - Roadmap: roadmap.md
       - Publish a release: releasing.md
