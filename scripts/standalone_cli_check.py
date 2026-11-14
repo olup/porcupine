@@ -88,7 +88,7 @@ def check(directory, binary, origin, bootstrap):
             assert not result.stdout, "error body written to stdout"
         return result.stdout
 
-    assert b"--x-chunk-sha256" in cli("upload-posthog-import-chunk", "--help")
+    assert b"--x-chunk-sha256" in cli("upload-import-chunk", "--help")
     assert b"login" in cli("login", "--help").lower()
     assert b"ready" in cli("--url", origin, "status")
     admin_key = service_key("project provisioner", ["*"],
@@ -127,8 +127,8 @@ def check(directory, binary, origin, bootstrap):
     cli("get-event-schema", "--id", ids[1], key=key, denied=403)
     contract = json.loads(cli("get-event-input-contract", "--id", ids[0], key=key))
     assert contract["version"] == "1" and contract["live_schema"]["type"] == "object"
-    assert contract["native_historical_import_available"] is False
-    assert contract["historical_schema_status"] == "draft"
+    assert contract["native_historical_import_available"] is True
+    assert contract["historical_schema_status"] == "stable"
     cli("get-event-input-contract", "--id", ids[1], key=key, denied=403)
 
     data = ('{"uuid":"cli-demo","event":"Café","distinct_id":"cli",'
@@ -139,18 +139,18 @@ def check(directory, binary, origin, bootstrap):
     manifest = {"idempotency_key": "cli-import", "files": [{"kind": "events", "path": file.name,
                 "size_bytes": len(data), "sha256": digest}]}
     project_args = ["--id", ids[0]]
-    job = json.loads(cli("create-posthog-import", *project_args, "--body", "@-",
+    job = json.loads(cli("create-import", *project_args, "--body", "@-",
                          stdin=json.dumps(manifest).encode(), key=key))
     job_args = [*project_args, "--import-id", job["id"]]
     file_args = [*job_args, "--file-id", job["files"][0]["id"]]
     for source in ("@" + str(file), "@-"):
-        uploaded = json.loads(cli("upload-posthog-import-chunk", *file_args,
+        uploaded = json.loads(cli("upload-import-chunk", *file_args,
                               "--upload-offset", "0", "--x-chunk-sha256", digest, "--body", source,
                               stdin=data if source == "@-" else None, key=key))
         assert uploaded["files"][0]["offset_bytes"] == len(data)
         assert uploaded["counts"]["accepted"] == 1
-    cli("complete-posthog-import-file", *file_args, key=key)
-    finished = json.loads(cli("complete-posthog-import", *job_args, key=key))
+    cli("complete-import-file", *file_args, key=key)
+    finished = json.loads(cli("complete-import", *job_args, key=key))
     assert finished["state"] == "completed"
     setup("DELETE", "/access-keys/" + scoped["id"])
     cli("list-projects", key=key, denied=401)

@@ -12,7 +12,7 @@ var operations = []operation{
 		},
 	},
 	{
-		ID: "cancel-posthog-import", Method: "DELETE", Path: "/api/v1/projects/{id}/imports/{import_id}",
+		ID: "cancel-import", Method: "DELETE", Path: "/api/v1/projects/{id}/imports/{import_id}",
 		Summary: "Cancel future upload acceptance and clear private partial rows; already accepted records remain",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
@@ -20,7 +20,7 @@ var operations = []operation{
 		},
 	},
 	{
-		ID: "complete-posthog-import", Method: "POST", Path: "/api/v1/projects/{id}/imports/{import_id}/complete",
+		ID: "complete-import", Method: "POST", Path: "/api/v1/projects/{id}/imports/{import_id}/complete",
 		Summary: "Complete an import after every file completes; downstream delivery remains asynchronous",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
@@ -28,7 +28,7 @@ var operations = []operation{
 		},
 	},
 	{
-		ID: "complete-posthog-import-file", Method: "POST", Path: "/api/v1/projects/{id}/imports/{import_id}/files/{file_id}/complete",
+		ID: "complete-import-file", Method: "POST", Path: "/api/v1/projects/{id}/imports/{import_id}/files/{file_id}/complete",
 		Summary: "Validate final file SHA-256 and process the final JSONL row",
 		Params: []parameter{
 			{Name: "file_id", In: "path", Type: "string", Description: "", Required: true},
@@ -62,6 +62,19 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "create-import", Method: "POST", Path: "/api/v1/projects/{id}/imports",
+		Summary: "Create a resumable native, PostHog or Segment JSONL import; persons files precede events",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"files (array of object, required)",
+			"format (string) [native posthog segment]",
+			"idempotency_key (string, required)",
+		},
+	},
+	{
 		ID: "create-oauth-client", Method: "POST", Path: "/api/v1/oauth-clients",
 		Summary:     "Create a scoped machine OAuth client and return its secret once",
 		ContentType: "application/json", BodyRequired: true,
@@ -88,18 +101,6 @@ var operations = []operation{
 			"name (string, required)",
 			"s3 (object)",
 			"webhook (object)",
-		},
-	},
-	{
-		ID: "create-posthog-import", Method: "POST", Path: "/api/v1/projects/{id}/imports",
-		Summary: "Create a resumable PostHog JSONL import manifest; persons files precede events",
-		Params: []parameter{
-			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
-		},
-		ContentType: "application/json", BodyRequired: true,
-		BodyFields: []string{
-			"files (array of object, required)",
-			"idempotency_key (string, required)",
 		},
 	},
 	{
@@ -199,7 +200,7 @@ var operations = []operation{
 	},
 	{
 		ID: "get-event-input-contract", Method: "GET", Path: "/api/v1/projects/{id}/input-contract",
-		Summary: "Discover native producer schemas, trusted server fields, and the draft historical format; native file import is not implemented",
+		Summary: "Discover native live and historical schemas, trusted server fields and import semantics",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 		},
@@ -234,6 +235,14 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-import", Method: "GET", Path: "/api/v1/projects/{id}/imports/{import_id}",
+		Summary: "Read authoritative per-file byte offsets, counts and safe row samples",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "import_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
 		ID: "get-instance-status", Method: "GET", Path: "/api/v1/status",
 		Summary: "Read instance version, bounded storage checks, and optional service configuration without secrets or project data",
 	},
@@ -252,14 +261,6 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "pipeline_id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "run_id", In: "path", Type: "string", Description: "", Required: true},
-		},
-	},
-	{
-		ID: "get-posthog-import", Method: "GET", Path: "/api/v1/projects/{id}/imports/{import_id}",
-		Summary: "Read authoritative per-file byte offsets, counts and safe row samples",
-		Params: []parameter{
-			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
-			{Name: "import_id", In: "path", Type: "string", Description: "", Required: true},
 		},
 	},
 	{
@@ -305,6 +306,15 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "list-imports", Method: "GET", Path: "/api/v1/projects/{id}/imports",
+		Summary: "List bounded project import progress summaries",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+		},
+	},
+	{
 		ID: "list-oauth-clients", Method: "GET", Path: "/api/v1/oauth-clients",
 		Summary: "List in-scope OAuth client metadata without secrets",
 	},
@@ -329,15 +339,6 @@ var operations = []operation{
 	{
 		ID: "list-pipelines", Method: "GET", Path: "/api/v1/projects/{id}/pipelines",
 		Summary: "List project pipeline metadata without destination URLs or credentials",
-		Params: []parameter{
-			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
-			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
-			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
-		},
-	},
-	{
-		ID: "list-posthog-imports", Method: "GET", Path: "/api/v1/projects/{id}/imports",
-		Summary: "List bounded project import progress summaries",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
@@ -478,7 +479,7 @@ var operations = []operation{
 		},
 	},
 	{
-		ID: "upload-posthog-import-chunk", Method: "PUT", Path: "/api/v1/projects/{id}/imports/{import_id}/files/{file_id}",
+		ID: "upload-import-chunk", Method: "PUT", Path: "/api/v1/projects/{id}/imports/{import_id}/files/{file_id}",
 		Summary: "Upload raw JSONL bytes with exact byte offset and SHA-256; cursor and accepted rows commit atomically",
 		Params: []parameter{
 			{Name: "Upload-Offset", In: "header", Type: "string", Description: "", Required: true},

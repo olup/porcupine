@@ -73,7 +73,16 @@ type ImportUploadFile struct {
 	Error       string       `json:"error,omitempty"`
 }
 
+type ImportDelivery struct {
+	Enabled     bool  `json:"enabled"`
+	Pending     int64 `json:"pending" doc:"Undelivered project events up to the import acceptance cursor, including earlier work and quarantine. Later live events do not delay this count."`
+	Quarantined int64 `json:"quarantined"`
+	Ready       bool  `json:"ready"`
+}
+
 type ImportUploadJob struct {
+	Format      string             `json:"format"`
+	Delivery    *ImportDelivery    `json:"delivery,omitempty"`
 	ID          string             `json:"id"`
 	ProjectID   string             `json:"project_id"`
 	SourceID    string             `json:"source_id"`
@@ -90,13 +99,15 @@ type ImportUploadJob struct {
 
 type storedImportUpload struct {
 	ImportUploadJob
-	ActorID string
+	ActorID        string
+	DeliveryCursor int64
 }
 
 type storedImportUploadFile struct {
 	ImportUploadFile
 	Ordinal    int
 	SourceID   string
+	Format     string
 	LineNumber int64
 	Tail       []byte
 	Discarding bool
@@ -117,7 +128,7 @@ func (s *Service) initializeImports(ctx context.Context) error {
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS import_uploads (
-id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),actor_id TEXT NOT NULL REFERENCES access_keys(id),source_id TEXT NOT NULL DEFAULT 'posthog',
+id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),actor_id TEXT NOT NULL REFERENCES access_keys(id),source_id TEXT NOT NULL DEFAULT 'posthog',format TEXT NOT NULL DEFAULT 'posthog',delivery_cursor INTEGER NOT NULL DEFAULT 0,
 idempotency_hash TEXT NOT NULL,request_hash TEXT NOT NULL,state TEXT NOT NULL,
 created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',
 UNIQUE(project_id,actor_id,idempotency_hash));
@@ -144,6 +155,24 @@ PRIMARY KEY(job_id,file_id,row_number)) WITHOUT ROWID;`); err != nil {
 	if !sourceColumn {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE import_uploads ADD COLUMN source_id TEXT NOT NULL DEFAULT 'posthog'`); err != nil {
 			return err
+		}
+	}
+	for _, column := range []struct{ name, definition string }{
+		{"format", "TEXT NOT NULL DEFAULT 'posthog'"}, {"delivery_cursor", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('import_uploads') WHERE name=?)`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := s.db.ExecContext(ctx, `ALTER TABLE import_uploads ADD COLUMN `+column.name+` `+column.definition); err != nil {
+				return err
+			}
+			if column.name == "delivery_cursor" {
+				if _, err := s.db.ExecContext(ctx, `UPDATE import_uploads SET delivery_cursor=coalesce((SELECT max(id) FROM events WHERE events.project_id=import_uploads.project_id),0)`); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return s.initializeImportRows(ctx)
@@ -214,11 +243,11 @@ func importWriteLock(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-const importJobColumns = `id,project_id,actor_id,source_id,state,created_at,updated_at,completed_at,error`
+const importJobColumns = `id,project_id,actor_id,source_id,state,created_at,updated_at,completed_at,error,format,delivery_cursor`
 
 func scanImportJob(row interface{ Scan(...any) error }) (storedImportUpload, error) {
 	var job storedImportUpload
-	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SourceID, &job.State, &job.CreatedAt, &job.UpdatedAt, &job.CompletedAt, &job.Error)
+	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SourceID, &job.State, &job.CreatedAt, &job.UpdatedAt, &job.CompletedAt, &job.Error, &job.Format, &job.DeliveryCursor)
 	job.Limits = importUploadLimits()
 	return job, err
 }
@@ -269,6 +298,12 @@ func (s *Service) loadImportJob(ctx context.Context, project, id string) (Import
 	if samples.Err() != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
+	job.Delivery = &ImportDelivery{}
+	job.Delivery.Enabled = s.ch != nil || s.lake != nil
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=? AND id<=? AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
+		return ImportUploadJob{}, apiError(503, "import delivery status unavailable")
+	}
+	job.Delivery.Ready = job.State == "completed" && job.Delivery.Enabled && job.Delivery.Pending == 0
 	return job.ImportUploadJob, nil
 }
 

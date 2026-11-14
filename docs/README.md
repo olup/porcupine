@@ -17,7 +17,7 @@ To let an agent guide you, give it the [agent guide](https://olup.github.io/porc
 | Send events from a browser or backend | [Choose an input](collect-events.md) |
 | Keep using a PostHog SDK | [Configure PostHog capture](compatibility.md) |
 | Link anonymous activity to a signed-in user | [Users, identity, and sessions](data-and-identity.md) |
-| Bring your existing PostHog history | [Import files with resume](posthog-import.md) |
+| Bring your existing event history | [Import files with resume](imports.md) |
 | Discover events and answer a question | [Query your events](query-events.md) |
 | Download a large query result | [Export query results](exports.md) |
 | Deliver events or scheduled query results elsewhere | [Webhooks and S3 pipelines](pipelines.md) |
@@ -33,6 +33,6 @@ The development branch adds [remote backups and offline recovery](native-backup-
 
 ## Look up a contract
 
-Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The [native event contract](native-event-contract.md) describes producer fields and the draft historical format. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.
+Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The [native event contract](native-event-contract.md) describes producer fields and historical message semantics. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.
 
 For deployment constraints and design decisions, read the [architecture](architecture.md), [durability contract](reliability.md), and [current scope](roadmap.md).

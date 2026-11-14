@@ -16,7 +16,7 @@ type NativeInputContract struct {
 	Version             string         `json:"version"`
 	LiveEndpoint        string         `json:"live_endpoint"`
 	LiveSchema          map[string]any `json:"live_schema"`
-	HistoricalImport    bool           `json:"native_historical_import_available" doc:"False until the resumable native file importer is implemented. Live capture is not a substitute for historical import."`
+	HistoricalImport    bool           `json:"native_historical_import_available" doc:"Historical files use the resumable import endpoint with format=native; live capture is not a substitute."`
 	HistoricalStatus    string         `json:"historical_schema_status"`
 	HistoricalSchema    map[string]any `json:"historical_event_schema"`
 	ServerManagedFields []string       `json:"server_managed_fields"`
@@ -40,13 +40,13 @@ func (s *Service) getEventInputContract(_ context.Context, _ *ProjectIDInput) (*
 	if err != nil {
 		return nil, apiError(500, "native input contract unavailable")
 	}
-	history, err := nativeContractSchema("native-history-event-v1.draft.schema.json")
+	history, err := nativeContractSchema("native-history-message-v1.schema.json")
 	if err != nil {
 		return nil, apiError(500, "native history contract unavailable")
 	}
 	return &NativeInputContractOutput{Body: NativeInputContract{
 		Version: nativeContractVersion, LiveEndpoint: "/ingest/v1/events", LiveSchema: live,
-		HistoricalStatus: "draft", HistoricalSchema: history,
+		HistoricalImport: true, HistoricalStatus: "stable", HistoricalSchema: history,
 		ServerManagedFields: []string{"project_id", "source_id", "event_id", "uuid", "received_at", "revision", "is_imported"},
 		Documentation:       "https://olup.github.io/porcupine/docs/native-event-contract.md",
 	}}, nil

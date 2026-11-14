@@ -1,6 +1,6 @@
 # Native and Segment ingestion
 
-The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. Development builds also expose JSON Schema discovery. Historical native import remains a draft.
+The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. Development builds also expose JSON Schema discovery. Development also adds [historical imports](imports.md) for native, PostHog, and Segment JSONL.
 
 Native, Segment and supported [PostHog inputs](compatibility.md) write to the same project event table. Choose a stable producer message ID for each original event so that a retry returns the same event ID.
 

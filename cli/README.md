@@ -28,6 +28,18 @@ On an email-enabled instance, login opens the browser for approval using OAuth w
 
 For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audience service key](../docs/service-keys.md). The CLI uses it ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. The upstream OIDC login option is for read-only MCP clients. See [team setup](../docs/connect-your-team.md) to enable CLI browser login.
 
+## Import event history
+
+Development builds after v0.13.0 add one-command imports for native, PostHog, and Segment JSONL files or directories:
+
+```sh
+porcupine import --project PROJECT_ID --format native ./events.jsonl
+porcupine import --project PROJECT_ID --format posthog ./posthog-export/
+porcupine import --project PROJECT_ID --format segment ./events.jsonl.gz
+```
+
+The credential needs `imports:write` and `events:write` on the destination project. The CLI streams gzip, checks source IDs and dates, manages checksums and chunks, resumes server offsets, and waits for analytical delivery. Rerun the same command to resume, or select a job with `--resume IMPORT_ID`. Use `--no-wait` for durable acceptance only. Progress goes to stderr and the final JSON summary to stdout. [Import guide](../docs/imports.md)
+
 ## Rename or delete a project
 
 Use `porcupine list-projects` to find the project ID. Renaming requires `management:write` for the selected project.
@@ -52,4 +64,4 @@ Development after v0.13.0 adds `porcupine restore`, an offline operation that ru
 
 The server registers management operations with Huma. From the repository root, `make cli-generate` regenerates the command catalog, and `make cli-check` checks for drift and tests the CLI module. Commit the generated catalog with changes to the API. An operation that depends on an optional server capability appears in help even when that capability is disabled on the chosen instance.
 
-Custom commands such as `login`, `status` and offline `restore` register alongside generated commands in `cli/cmd/porcupine/main.go`. They compile into the same executable. The CLI module builds independently using the checked-in catalog.
+Custom commands such as `login`, `status`, historical `import`, and offline `restore` register alongside generated commands in `cli/cmd/porcupine/main.go`. They compile into the same executable. The CLI module builds independently using the checked-in catalog.

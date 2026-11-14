@@ -9,7 +9,7 @@ Porcupine accepts native HTTP events, supported PostHog SDK requests, and Segmen
 | Already uses PostHog | [PostHog SDK configuration and tested profiles](compatibility.md) |
 | Already uses Segment | [Segment tracking routes and SDK example](native-and-segment-ingestion.md#point-a-segment-producer-at-porcupine) |
 | Sends JSON from a backend or custom client | [Native event format](native-and-segment-ingestion.md#send-native-events) |
-| Has historical PostHog exports | [Resumable file imports](posthog-import.md) |
+| Has historical events | [Native, PostHog, or Segment imports](imports.md) |
 
 PostHog compatibility covers ingestion. Queries and management use Porcupine's own API. The [compatibility guide](compatibility.md) lists the tested SDK versions and supported behavior.
 

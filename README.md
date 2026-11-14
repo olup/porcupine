@@ -57,11 +57,13 @@ Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yam
 
 One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/restore.md)
 
-I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. There’s also an uploader for historical PostHog events. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) · [Imports](docs/posthog-import.md)
+I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. There’s also an uploader for historical PostHog events. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) · [Imports](docs/imports.md)
 
 For a customer who wants a file every morning, I can save a SQL query in a pipeline and point it at their S3 bucket. For something like a signup notification, a webhook will do. [Pipelines](docs/pipelines.md) · [One-off exports](docs/exports.md)
 
 ## Development
+
+Development builds add `porcupine import --project PROJECT_ID --format native FILE_OR_DIRECTORY` for native, PostHog, or Segment data, with streaming gzip, automatic resume, original timestamps, and stable-ID deduplication. This command is not in the published v0.13.0 CLI. [Import guide](docs/imports.md)
 
 `make build` builds the native server with CGO and a C/C++ toolchain. `make cli` builds the standalone client. You can also download the CLI for macOS, Linux or Windows. [CLI guide](cli/README.md)
 

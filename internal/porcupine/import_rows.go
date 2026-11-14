@@ -9,6 +9,7 @@ type ImportRow struct {
 	Kind         string
 	Event        Event
 	Person       ImportPerson
+	ingestion    *ingestionMetadata
 	receiptKnown bool
 }
 type ImportPerson struct {

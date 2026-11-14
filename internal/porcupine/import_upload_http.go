@@ -17,6 +17,7 @@ import (
 type ImportUploadCreateInput struct {
 	ID   string `path:"id"`
 	Body struct {
+		Format         string                 `json:"format,omitempty" enum:"native,posthog,segment" default:"posthog"`
 		IdempotencyKey string                 `json:"idempotency_key" minLength:"1" maxLength:"200"`
 		Files          []ImportUploadFileSpec `json:"files" minItems:"1" maxItems:"4096"`
 	}
@@ -59,7 +60,7 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 		o.Metadata["http_only"] = true
 		o.Middlewares = append(o.Middlewares, func(ctx huma.Context, next func(huma.Context)) {
 			req, w := humago.Unwrap(ctx)
-			if method == "PUT" || id == "create-posthog-import" || id == "complete-posthog-import-file" {
+			if method == "PUT" || id == "create-import" || id == "complete-import-file" {
 				select {
 				case s.importSlots <- struct{}{}:
 					defer func() { <-s.importSlots }()
@@ -99,17 +100,17 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 		return o
 	}
 	base := "/api/v1/projects/{id}/imports"
-	create := operation("create-posthog-import", "POST", base, "Create a resumable PostHog JSONL import manifest; persons files precede events", 201)
+	create := operation("create-import", "POST", base, "Create a resumable native, PostHog or Segment JSONL import; persons files precede events", 201)
 	create.MaxBodyBytes = 4 << 20
 	huma.Register(api, create, s.createImportUpload)
-	huma.Register(api, operation("list-posthog-imports", "GET", base, "List bounded project import progress summaries", 200), s.listImportUploads)
-	huma.Register(api, operation("get-posthog-import", "GET", base+"/{import_id}", "Read authoritative per-file byte offsets, counts and safe row samples", 200), s.getImportUpload)
-	upload := operation("upload-posthog-import-chunk", "PUT", base+"/{import_id}/files/{file_id}", "Upload raw JSONL bytes with exact byte offset and SHA-256; cursor and accepted rows commit atomically", 200)
+	huma.Register(api, operation("list-imports", "GET", base, "List bounded project import progress summaries", 200), s.listImportUploads)
+	huma.Register(api, operation("get-import", "GET", base+"/{import_id}", "Read authoritative per-file byte offsets, counts and safe row samples", 200), s.getImportUpload)
+	upload := operation("upload-import-chunk", "PUT", base+"/{import_id}/files/{file_id}", "Upload raw JSONL bytes with exact byte offset and SHA-256; cursor and accepted rows commit atomically", 200)
 	upload.MaxBodyBytes = importMaxChunkBytes
 	huma.Register(api, upload, s.uploadImportChunk)
-	huma.Register(api, operation("complete-posthog-import-file", "POST", base+"/{import_id}/files/{file_id}/complete", "Validate final file SHA-256 and process the final JSONL row", 200), s.completeImportFile)
-	huma.Register(api, operation("complete-posthog-import", "POST", base+"/{import_id}/complete", "Complete an import after every file completes; downstream delivery remains asynchronous", 200), s.completeImportUpload)
-	huma.Register(api, operation("cancel-posthog-import", "DELETE", base+"/{import_id}", "Cancel future upload acceptance and clear private partial rows; already accepted records remain", 200), s.cancelImportUpload)
+	huma.Register(api, operation("complete-import-file", "POST", base+"/{import_id}/files/{file_id}/complete", "Validate final file SHA-256 and process the final JSONL row", 200), s.completeImportFile)
+	huma.Register(api, operation("complete-import", "POST", base+"/{import_id}/complete", "Complete an import after every file completes; downstream delivery remains asynchronous", 200), s.completeImportUpload)
+	huma.Register(api, operation("cancel-import", "DELETE", base+"/{import_id}", "Cancel future upload acceptance and clear private partial rows; already accepted records remain", 200), s.cancelImportUpload)
 }
 
 func (s *Service) createImportUpload(ctx context.Context, input *ImportUploadCreateInput) (*ImportUploadOutput, error) {
@@ -123,8 +124,20 @@ func (s *Service) createImportUpload(ctx context.Context, input *ImportUploadCre
 	if err != nil {
 		return nil, err
 	}
+	format := input.Body.Format
+	if format == "" {
+		format = "posthog"
+	}
+	if format != "native" && format != "posthog" && format != "segment" {
+		return nil, apiError(400, "format must be native, posthog or segment")
+	}
+	for _, file := range files {
+		if file.Kind == "persons" && format != "posthog" {
+			return nil, apiError(400, "persons files are supported only for PostHog snapshots")
+		}
+	}
 	manifest, _ := json.Marshal(files)
-	requestHash, keyHash := hash(string(manifest)), hash(input.Body.IdempotencyKey)
+	requestHash, keyHash := hash(format+"\x00"+string(manifest)), hash(input.Body.IdempotencyKey)
 	a := principal(ctx)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -163,10 +176,10 @@ func (s *Service) createImportUpload(ctx context.Context, input *ImportUploadCre
 	id = newID()
 	source := a.SourceID
 	if source == "" {
-		source = "posthog"
+		source = format
 	}
 	now := s.importTime()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO import_uploads(id,project_id,actor_id,source_id,idempotency_hash,request_hash,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'uploading',?,?)`, id, input.ID, a.ID, source, keyHash, requestHash, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO import_uploads(id,project_id,actor_id,source_id,format,idempotency_hash,request_hash,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'uploading',?,?)`, id, input.ID, a.ID, source, format, keyHash, requestHash, now, now); err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
 	hashState, err := importHashState(sha256.New())
@@ -261,6 +274,7 @@ func (s *Service) loadImportFileForWrite(ctx context.Context, project, jobID, fi
 		}
 	}
 	file.SourceID = job.SourceID
+	file.Format = job.Format
 	return file, nil
 }
 
