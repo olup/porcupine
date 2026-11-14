@@ -108,3 +108,8 @@ ducklake-compare:
 ducklake-s3-test:
 	go run ./internal/cmd/ducklake-s3-integration
 	go run ./internal/cmd/ducklake-s3-integration -tls
+
+.PHONY: ducklake-restore-drill
+ducklake-restore-drill: cli
+	docker build --build-arg VERSION=dev -t porcupine-native-restore-test .
+	PORCUPINE_RESTORE_DOCKER_IMAGE=porcupine-native-restore-test PORCUPINE_RESTORE_CLI=$(CURDIR)/bin/cli/porcupine CGO_ENABLED=1 go test -tags ducklake ./internal/porcupine -run '^TestDuckLakeCLIRestoreDrill$$' -count=1 -timeout=120s

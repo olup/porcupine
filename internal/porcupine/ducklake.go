@@ -35,7 +35,7 @@ type lakeStore interface {
 	DeleteProject(context.Context, string) error
 	Maintain(context.Context) error
 	CleanupStatus(context.Context) (DuckLakeCleanupStatus, error)
-	stageCheckpoint(context.Context, func(context.Context, string) error) (string, error)
+	stageCheckpoint(context.Context, func(context.Context, string) error) (*nativeCheckpoint, error)
 	Close() error
 }
 

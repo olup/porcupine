@@ -105,6 +105,9 @@ func Open(c Config) (*Service, error) {
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
 	}
+	if err := checkNativeRestoreMarker(c.DBPath); err != nil {
+		return nil, err
+	}
 	backups, err := prepareNativeBackup(c.NativeBackup, c.DBPath, c.DuckLake)
 	if err != nil {
 		return nil, err

@@ -17,19 +17,21 @@ import (
 )
 
 type duckLakeStore struct {
-	root           string
-	config         DuckLakeConfig
-	registry       *sql.DB
-	registryInfo   os.FileInfo
-	owner          *os.File
-	mu             contextMutex
-	cleanup        contextMutex
-	projects       map[string]*projectLake
-	closed         bool
-	remote         *duckLakeObjectStore
-	opening        map[string]*projectOpening
-	deletion       contextMutex
-	deletionActive bool
+	root             string
+	config           DuckLakeConfig
+	registry         *sql.DB
+	registryInfo     os.FileInfo
+	owner            *os.File
+	mu               contextMutex
+	cleanup          contextMutex
+	projects         map[string]*projectLake
+	closed           bool
+	remote           *duckLakeObjectStore
+	opening          map[string]*projectOpening
+	deletion         contextMutex
+	deletionActive   bool
+	checkpointActive int
+	backupPins       map[string]int
 }
 
 type projectLake struct {
@@ -284,6 +286,12 @@ func (s *duckLakeStore) addProjectLease(p *projectLake) func() {
 func lakeLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 func (s *duckLakeStore) openProject(ctx context.Context, project string) (*projectLake, error) {
+	return s.openProjectInitialized(ctx, project, nil)
+}
+
+// The offline restore initializer runs only while creating a fresh catalog,
+// before its configuration is sealed or published through opening reservations.
+func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project string, initialize func(context.Context, *sql.DB) error) (*projectLake, error) {
 	directory := s.projectDirectory(project)
 	var catalogID string
 	var ready bool
@@ -295,6 +303,9 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 		}
 	} else if err != nil {
 		return nil, err
+	}
+	if ready && initialize != nil {
+		return nil, errors.New("restore initializer requires a fresh project catalog")
 	}
 	catalog := filepath.Join(directory, "catalog.ducklake")
 	if ready {
@@ -385,6 +396,11 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
 		return fail(err)
 	}
+	if initialize != nil {
+		if err = initialize(ctx, db); err != nil {
+			return fail(err)
+		}
+	}
 	allowedDirectories := lakeLiteral(directory + string(os.PathSeparator))
 	if s.remote != nil {
 		allowedDirectories += "," + lakeLiteral(dataPath)
@@ -393,14 +409,20 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 	if caFile != "" {
 		allowedPaths = "[" + lakeLiteral(caFile) + "]"
 	}
-	for _, statement := range []string{
-		"SET allowed_directories=[" + allowedDirectories + "]",
-		"SET allowed_paths=" + allowedPaths,
-		"SET enable_external_access=false",
-		"SET autoinstall_known_extensions=false",
-		"SET autoload_known_extensions=false",
-		"SET lock_configuration=true",
-	} {
+
+	seal := []string{"SET autoinstall_known_extensions=false", "SET autoload_known_extensions=false", "SET lock_configuration=true"}
+	if initialize == nil {
+		seal = append([]string{"SET allowed_directories=[" + allowedDirectories + "]", "SET allowed_paths=" + allowedPaths, "SET enable_external_access=false"}, seal...)
+	} else {
+		// DuckDB cannot change an allowlist after external access is disabled.
+		// Offline restore restricts both namespaces before reading the archive,
+		// closes this engine, then reopens through the ordinary target-only path.
+		var external bool
+		if err = db.QueryRowContext(ctx, "SELECT current_setting('enable_external_access')").Scan(&external); err != nil || external {
+			return fail(errors.New("offline initializer must disable external access before returning"))
+		}
+	}
+	for _, statement := range seal {
 		if _, err = db.ExecContext(ctx, statement); err != nil {
 			return fail(err)
 		}
@@ -417,6 +439,16 @@ func (s *duckLakeStore) openProject(ctx context.Context, project string) (*proje
 }
 
 func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error {
+	// A pinned project must return immediately even when another project has a
+	// slow deletion in progress. Recheck after taking the deletion guard too.
+	if err := s.mu.Lock(ctx); err != nil {
+		return err
+	}
+	pinned := s.backupPins[project] != 0
+	s.mu.Unlock()
+	if pinned {
+		return analyticsError(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
+	}
 	if err := s.deletion.Lock(ctx); err != nil {
 		return err
 	}
@@ -427,6 +459,10 @@ func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		s.mu.Unlock()
 		return err
+	}
+	if s.backupPins[project] != 0 {
+		s.mu.Unlock()
+		return analyticsError(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
 	}
 	if s.opening[project] != nil {
 		s.mu.Unlock()
@@ -641,7 +677,7 @@ func (s *duckLakeStore) Close() error {
 	if s.closed {
 		return nil
 	}
-	if len(s.opening) != 0 || s.deletionActive {
+	if len(s.opening) != 0 || s.deletionActive || s.checkpointActive != 0 {
 		return errors.New("DuckLake is in use")
 	}
 	for _, p := range s.projects {

@@ -28,6 +28,7 @@ func newApp() *cli.Command {
 		Name: "porcupine", Version: version, Usage: "Query and manage a Porcupine instance",
 		Flags: []cli.Flag{&cli.StringFlag{Name: "url", Usage: "Instance origin", Sources: cli.EnvVars("PORCUPINE_URL"), Value: "http://127.0.0.1:8080"}},
 		Commands: []*cli.Command{
+			restoreCommand(),
 			{Name: "login", Usage: "Authorize this CLI in your browser", Flags: []cli.Flag{&cli.BoolFlag{Name: "admin", Usage: "Request administrator access"}}, Action: func(ctx context.Context, c *cli.Command) error {
 				origin, err := instanceOrigin(c)
 				if err != nil {
