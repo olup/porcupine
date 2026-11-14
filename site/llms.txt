@@ -58,6 +58,10 @@ For the same query over HTTP, send that body to `POST /api/v1/projects/PROJECT_I
 
 A successful capture means SQLite accepted the event. SQL sees it after analytical delivery. The query response includes `delivery.pending` and `pending_mutations`. The default DuckLake backend reports `sql.result_cache:false` and executes fresh queries. Optional ClickHouse deployments can reuse results for 60 seconds. Add `"use_cache":false` when checking fresh data and allow time for delivery. For custom properties, use the supported JSON extraction functions on the `properties` string column. See [SQL and discovery](https://olup.github.io/porcupine/docs/analytics.md) and [MCP](https://olup.github.io/porcupine/docs/mcp.md).
 
+## Prepare native producer data
+
+The [native event contract](https://olup.github.io/porcupine/docs/native-event-contract.md) defines producer fields, trusted server fields, IDs and adapter mappings. Development builds add `get-event-input-contract` through API, CLI and MCP, plus the public live schema at `/ingest/v1/schema`. Discover the running operation before calling it. These discovery routes are not in v0.13.0. Its historical event schema is a draft; native and Segment file imports are not implemented. A backdated live message still has live side effects.
+
 ## Start a fresh local instance
 
 Use this path when the user asks for a new deployment. It requires the standalone Porcupine CLI, Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or later. The [README quickstart](https://github.com/olup/porcupine#quickstart) creates a private `.env` in a fresh checkout with a random bootstrap secret. Use the current checkout for the shell examples below; the release overlay pins the server image to v0.13.0. Keep its local issuer set to `http://localhost:8080`.

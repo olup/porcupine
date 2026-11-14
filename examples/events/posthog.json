@@ -1,0 +1,5 @@
+{"batch": [
+  {"event": "$pageview", "uuid": "visit-001", "timestamp": "2026-01-10T09:00:00+01:00", "properties": {"distinct_id": "browser-7", "$current_url": "https://example.com/pricing", "$browser_language": "fr-FR"}},
+  {"event": "$identify", "uuid": "login-001", "timestamp": "2026-01-10T09:01:00+01:00", "properties": {"distinct_id": "user-42", "$anon_distinct_id": "browser-7", "$set": {"plan": "pro"}}},
+  {"event": "order_completed", "uuid": "order-813-completed", "timestamp": "2026-01-10T09:02:00+01:00", "properties": {"distinct_id": "user-42", "order_id": "ord-813", "amount_minor": 2900, "currency": "EUR", "external_id": 9007199254740993}}
+]}

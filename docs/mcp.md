@@ -67,6 +67,8 @@ manager without the instance-wide grants needed to create projects does not
 see that operation. The detailed event-read contract still describes a project
 parameter; the actual project ID is checked when the call runs.
 
+Development builds expose `get-event-input-contract` with `events:read` on the selected project. It returns the native producer schema, server-managed fields, and a draft historical event schema. Native file import is not available. See the [native contract](native-event-contract.md).
+
 ## Execution with `porcupine_call`
 
 The call tool accepts an operation ID and the arguments described by its

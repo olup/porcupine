@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://olup.github.io/porcupine/schemas/native-message-v1.schema.json",
+  "title": "Porcupine native message v1",
+  "description": "Canonical producer encoding for one live message. Omit absent optional fields instead of sending null or empty selectors. Server authorization, UTF-8 byte budgets, identity policy and receipt handling also apply. This is not the stored event representation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type"],
+  "properties": {
+    "type": {"enum": ["track", "pageview", "identify"]},
+    "message_id": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "\\S", "x-porcupine-max-utf8-bytes": 1024, "description": "Stable producer ID. Omission requests a new ID on each live submission."},
+    "timestamp": {"type": "string", "format": "date-time", "description": "Occurrence time in RFC 3339 with a timezone. Omission uses server receipt time in live capture."},
+    "actor_id": {"type": "string", "minLength": 1, "maxLength": 1000, "x-porcupine-max-utf8-bytes": 1000, "description": "Original anonymous or known actor. Omit for an actorless event."},
+    "name": {"type": "string", "minLength": 1, "maxLength": 500, "allOf": [{"pattern": "^[^$]"}, {"pattern": "\\S"}], "x-porcupine-max-utf8-bytes": 500},
+    "properties": {"type": "object", "description": "Business values, including nested JSON and null values. Ordinary native properties are not interpreted as identity commands."},
+    "context": {"type": "object", "x-porcupine-max-encoded-bytes": 65536, "description": "Capture-time metadata. Common conventions are documented in the native contract. Extensions are preserved, subject to the configured privacy policy."},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "\\S", "x-porcupine-max-utf8-bytes": 1000},
+    "anonymous_id": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "\\S", "x-porcupine-max-utf8-bytes": 1000},
+    "set": {"type": "object", "maxProperties": 128, "x-porcupine-max-encoded-bytes": 32768},
+    "set_once": {"type": "object", "maxProperties": 128, "x-porcupine-max-encoded-bytes": 32768}
+  },
+  "oneOf": [
+    {"properties": {"type": {"const": "track"}}, "required": ["name"], "not": {"anyOf": [{"required": ["user_id"]}, {"required": ["anonymous_id"]}, {"required": ["set"]}, {"required": ["set_once"]}]}},
+    {"properties": {"type": {"const": "pageview"}}, "not": {"anyOf": [{"required": ["name"]}, {"required": ["user_id"]}, {"required": ["anonymous_id"]}, {"required": ["set"]}, {"required": ["set_once"]}]}},
+    {"properties": {"type": {"const": "identify"}}, "required": ["user_id"], "not": {"anyOf": [{"required": ["actor_id"]}, {"required": ["name"]}, {"required": ["properties"]}]}}
+  ]
+}

@@ -559,6 +559,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /i/v0/e/", capture)
 	m.HandleFunc("POST /e/", capture)
 	m.HandleFunc("POST /ingest/v1/events", limitConcurrent(s.captureSlots, s.captureNative))
+	m.HandleFunc("GET /ingest/v1/schema", serveNativeInputSchema)
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
@@ -613,13 +614,15 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 	var input ingestInput
 	var batch eventBatch
 	raw = bytes.TrimSpace(raw)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	if len(raw) > 0 && raw[0] == '[' {
-		if err := json.Unmarshal(raw, &batch); err != nil {
+		if err := decoder.Decode(&batch); err != nil {
 			problem(w, 400, "invalid event array")
 			return
 		}
 	} else {
-		if err := json.Unmarshal(raw, &input); err != nil {
+		if err := decoder.Decode(&input); err != nil {
 			problem(w, 400, "invalid event JSON")
 			return
 		}
@@ -631,6 +634,10 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 			}
 			batch = []eventInput{input.eventInput}
 		}
+	}
+	if decoder.Decode(new(json.RawMessage)) != io.EOF {
+		problem(w, 400, "unexpected data after event JSON")
+		return
 	}
 	s.captureNormalized(w, r, input.eventInput, batch)
 }

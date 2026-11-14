@@ -33,6 +33,6 @@ The development branch adds [remote backups and offline recovery](native-backup-
 
 ## Look up a contract
 
-Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.
+Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The [native event contract](native-event-contract.md) describes producer fields and the draft historical format. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.
 
 For deployment constraints and design decisions, read the [architecture](architecture.md), [durability contract](reliability.md), and [current scope](roadmap.md).

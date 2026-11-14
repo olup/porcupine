@@ -198,6 +198,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-event-input-contract", Method: "GET", Path: "/api/v1/projects/{id}/input-contract",
+		Summary: "Discover native producer schemas, trusted server fields, and the draft historical format; native file import is not implemented",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
 		ID: "get-event-mutation", Method: "GET", Path: "/api/v1/projects/{id}/event-mutations/{mutation_id}",
 		Summary: "Read whether an event correction or deletion is pending or applied",
 		Params: []parameter{
