@@ -80,7 +80,12 @@ func main() {
 		slog.Error("OAuth configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig})
+	backupConfig, err := nativeBackupConfiguration()
+	if err != nil {
+		slog.Error("native backup configuration", "error", err)
+		os.Exit(1)
+	}
+	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)

@@ -1,5 +1,7 @@
 # Back up and restore an instance
 
+For the source build's automated local bundles, see [scheduled native backups](native-backups.md). This page describes the stopped-volume alternative and the separate ClickHouse drills.
+
 ## Default DuckLake stopped-volume backup
 
 A DuckLake recovery point needs the complete data volume from one stopped application: SQLite, its WAL state, the DuckLake registry, every project catalog, and every managed Parquet file. Saving only SQLite or only Parquet loses part of the recovery state. The current online ClickHouse checkpoint tool does not support DuckLake.

@@ -1,6 +1,6 @@
 # Online backup with Docker Compose
 
-This guide applies to the optional ClickHouse backend. For the default DuckLake backend, use the [stopped-volume backup procedure](restore.md). These online tools do not create a DuckLake checkpoint.
+This guide applies to the optional ClickHouse backend. For the default DuckLake backend, use [scheduled native backups](native-backups.md) or the [stopped-volume backup procedure](restore.md). These online tools do not create a DuckLake checkpoint.
 
 The optional `compose.backup.yaml` overlay configures a named ClickHouse backup
 disk and an on-demand Python operator container. The API uses its normal data

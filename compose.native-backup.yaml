@@ -1,0 +1,14 @@
+# Default DuckLake server backups. No operator sidecar or external database.
+services:
+  porcupine:
+    environment:
+      PORCUPINE_BACKUP_DIR: /backups
+      PORCUPINE_BACKUP_INTERVAL: ${PORCUPINE_BACKUP_INTERVAL:-24h}
+      PORCUPINE_BACKUP_TIMEOUT: ${PORCUPINE_BACKUP_TIMEOUT:-5m}
+      PORCUPINE_BACKUP_RETAIN: ${PORCUPINE_BACKUP_RETAIN:-7}
+    volumes:
+      - type: bind
+        source: ${PORCUPINE_BACKUP_HOST_DIR:?Set the private absolute native backup directory}
+        target: /backups
+        bind:
+          create_host_path: false

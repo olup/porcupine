@@ -8,7 +8,7 @@ This release does not expose analytical S3 storage or automatic SSD-to-S3 tierin
 
 DuckLake snapshots can retain older event payloads after logical edits or deletion. Porcupine schedules native rewrites, snapshot expiration and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing files scheduled for deletion. Long reads and maintenance backlogs can delay reclamation. Read the [cleanup guide](ducklake-cleanup.md) for deployment settings, progress and erasure limits. This does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory. Backups and external copies have their own retention rules.
 
-For recovery, use a [coordinated stopped-volume backup](restore.md). Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
+For recovery, use [scheduled native backups](native-backups.md) or a [coordinated stopped-volume backup](restore.md). Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
 
 ## ClickHouse hot and cold storage
 

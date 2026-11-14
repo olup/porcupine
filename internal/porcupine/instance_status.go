@@ -33,6 +33,7 @@ type InstanceConfiguration struct {
 }
 
 type InstanceStatus struct {
+	NativeBackup    *NativeBackupStatus    `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
 	Status          string                 `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
 	Version         string                 `json:"version" doc:"Server build version, or dev for an unversioned build."`
@@ -103,5 +104,12 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			result.Status = "degraded"
 		}
 	}
+	if s.backups != nil && principal(ctx).admin() {
+		result.NativeBackup = s.nativeBackupStatus()
+		if result.NativeBackup != nil && (result.NativeBackup.State == "failed" || result.NativeBackup.State == "interrupted") {
+			result.Status = "degraded"
+		}
+	}
+
 	return &InstanceStatusOutput{Body: result}, nil
 }

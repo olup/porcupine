@@ -41,6 +41,7 @@ nav:
       - Hosting: hosting.md
       - Check instance status: instance-status.md
       - Clean up DuckLake history: ducklake-cleanup.md
+      - Schedule native backups: native-backups.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
       - Store older data on S3: storage.md

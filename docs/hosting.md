@@ -180,7 +180,7 @@ S3 destinations store query results. They do not move DuckLake's analytical file
 
 Keep the original bootstrap secret privately for recovery. Changing `.env` after initialization does not replace the stored credential. Humans authorize their CLI or MCP tools using email verification or optional upstream OIDC. Backends and shared agents can use scoped service keys or OAuth client credentials. [Connect your team](connect-your-team.md) · [Service keys](service-keys.md)
 
-Before storing important history, exercise a [coordinated stopped-volume backup and restore](restore.md). The ClickHouse online backup script does not support DuckLake. Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
+Before storing important history, configure [scheduled native backups](native-backups.md) or exercise a [coordinated stopped-volume backup and restore](restore.md). The ClickHouse online backup script does not support DuckLake. Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
 
 Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
 

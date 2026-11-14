@@ -40,9 +40,11 @@ type Config struct {
 	Pipelines       *PipelineConfig
 	Exports         *ExportConfig
 	OAuth           *OAuthConfig
+	NativeBackup    *NativeBackupConfig
 }
 
 type Service struct {
+	backups               *nativeBackupRuntime
 	activity              projectActivity
 	catalogMu             sync.RWMutex
 	deletionMu            contextMutex
@@ -100,6 +102,10 @@ func Open(c Config) (*Service, error) {
 	}
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
+	}
+	backups, err := prepareNativeBackup(c.NativeBackup, c.DBPath, c.DuckLake)
+	if err != nil {
+		return nil, err
 	}
 	if c.QueueMaxEvents <= 0 {
 		c.QueueMaxEvents = 100000
@@ -184,7 +190,7 @@ func Open(c Config) (*Service, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Service{db: db, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
+	s := &Service{db: db, backups: backups, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
 		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
@@ -358,10 +364,14 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if exports != nil {
 		s.startExports()
 	}
+	if err := s.startNativeBackups(); err != nil {
+		return nil, errors.Join(err, s.Close())
+	}
 	return s, nil
 }
 
 func (s *Service) Close() error {
+	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
 		s.lakeMaintenanceCancel()
 		<-s.lakeMaintenanceDone

@@ -115,6 +115,9 @@ CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_a
 	if err != nil {
 		return fail(err)
 	}
+	if err := removeAbandonedCheckpoints(root); err != nil {
+		return fail(err)
+	}
 	return s, nil
 }
 

@@ -28,7 +28,9 @@
 - Scheduled native snapshot expiration, deleted-row rewrites and obsolete-file cleanup, including cold project catalogs. Policies are deployment-wide and protect active readers. [Cleanup controls](ducklake-cleanup.md)
 - Administrator-only cleanup progress through the existing status API, CLI and MCP.
 
-Next: coordinated automated backups with a restore drill, then analytical S3 storage. Saved queries and report collections remain deferred; chart rendering is not a priority.
+Coordinated automatic native backups, private status and an isolated restore drill are implemented in the source build. [Backup controls](native-backups.md)
+
+Next: analytical S3 storage. A dedicated offline restore command and automatic off-host backup replication remain future work; native restore currently follows the isolated manual procedure. Saved queries and report collections remain deferred; chart rendering is not a priority.
 
 ## Areas for future work
 
