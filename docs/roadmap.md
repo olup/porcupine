@@ -17,11 +17,14 @@
 - Optional coordinated local recovery bundles, verified inventory, configurable retention, Parquet reuse and a tested isolated restore.
 - Release publication depends on the validation workflow and tests the actual native images against HTTPS object storage without runtime extension downloads.
 
+## Development after v0.13.0
+
+Large-event delivery now retries smaller native transactions when DuckDB reports a typed out-of-memory error. Healthy batches keep their existing limits. The acceptance queue retains unfinished work; resource failures do not quarantine events. The [delivery notes](ducklake-large-batches.md) explain partial analytical visibility and memory limits. This change is not included in the published v0.13.0 image.
+
 ## Next work, in order
 
-1. **Large-event delivery batches.** Reproduce the actual ingestion-worker workload at its production row, byte and memory limits. A direct Apply observation with roughly 15 KiB properties is not yet proof of a worker defect. Keep accepted events durable, preserve IDs and distinguish resource exhaustion from invalid data before selecting adaptive behavior.
-2. **Complete backup operations.** S3-aware backups and off-host replication, then an offline restore command. Retain source/project isolation, safe credential rollback and outbound-delivery controls. Never publish a metadata-only copy as a complete S3 backup.
-3. **Simpler historical imports.** One resumable file-or-directory command for native, PostHog and Segment formats, preserving occurrence times and retry identity. Show validation, upload, acceptance and actual analytical availability without requiring a custom Python script.
+1. **Complete backup operations.** S3-aware backups and off-host replication, then an offline restore command. Retain source/project isolation, safe credential rollback and outbound-delivery controls. Never publish a metadata-only copy as a complete S3 backup.
+2. **Simpler historical imports.** One resumable file-or-directory command for native, PostHog and Segment formats, preserving occurrence times and retry identity. Show validation, upload, acceptance and actual analytical availability without requiring a custom Python script.
 
 Before this release, the agreed sequence was analytical S3, release publication, large batches, then backup follow-ups. S3 and publication are the first milestones of that sequence; later items remain development work until released.
 

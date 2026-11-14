@@ -10,7 +10,7 @@ List the project's event names with `get-event-catalog`. Choose an exact name, s
 
 ## Request a profile
 
-With the development CLI, run:
+With the CLI, run:
 
 ```sh
 porcupine get-event-profile --id "$PROJECT_ID" --event userInputSent

@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	duckdb "github.com/duckdb/duckdb-go/v2"
 )
 
 const duckLakeSchema = `
@@ -122,7 +124,36 @@ func (s *duckLakeStore) Apply(ctx context.Context, projections []eventProjection
 	return nil
 }
 
+// Allocation retries are bounded separately from successful chunks. A fixed total
+// attempt limit could replay the same committed prefix forever without allowing
+// the delivery worker to acknowledge the complete selection.
+const duckLakeAllocationRetries = 16
+
 func (p *projectLake) apply(ctx context.Context, projections []preparedLakeProjection) error {
+	chunkSize, retries := len(projections), duckLakeAllocationRetries
+	for offset := 0; offset < len(projections); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(offset+chunkSize, len(projections))
+		err := p.applyChunk(ctx, projections[offset:end])
+		if err == nil {
+			offset = end
+			continue
+		}
+		var nativeError *duckdb.Error
+		if !errors.As(err, &nativeError) || nativeError.Type != duckdb.ErrorTypeOutOfMemory || end-offset == 1 || retries == 0 {
+			return err
+		}
+		// The failed transaction has rolled back. Keep stable IDs and revisions for
+		// every retry, including already committed chunks if a later chunk fails.
+		chunkSize = (end - offset) / 2
+		retries--
+	}
+	return nil
+}
+
+func (p *projectLake) applyChunk(ctx context.Context, projections []preparedLakeProjection) error {
 	rows := make([]lakeProjectionRow, 0, len(projections))
 	controls := make(map[string]preparedLakeProjection)
 	for _, prepared := range projections {
