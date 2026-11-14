@@ -85,7 +85,7 @@ func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 			operations++
 		}
 	}
-	if operations != 45 {
+	if operations != 46 {
 		t.Fatalf("got %d operations", operations)
 	}
 	components := api["components"].(map[string]any)

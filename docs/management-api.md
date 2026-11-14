@@ -4,6 +4,8 @@ This reference lists HTTP operations, required permissions, and response codes. 
 
 The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
 
+Development builds add `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
+
 ## Authentication and scope
 
 Send a Bearer credential issued for `ISSUER/api/v1`. A person can authorize the [CLI](../cli/README.md) with email sign-in. A machine can use an [API-audience service key](service-keys.md) or exchange its client credentials for a short-lived [OAuth access token](oauth.md).

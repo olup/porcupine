@@ -19,6 +19,8 @@ The agent discovers operation contracts with `porcupine_docs`, then calls these 
 
 The catalog samples delivered events. It helps discover what is present, but does not describe every historical property or explain your application's business meaning. The [discovery reference](analytics.md#observed-event-and-property-discovery) describes its bounds.
 
+Development builds also expose `get-event-profile` for activity, recent examples, and sampled property coverage. Discover its contract before using it; v0.12.0 does not include this operation. [Inspect an event](event-discovery.md)
+
 ## Discover data from the CLI
 
 Set `PORCUPINE_URL` and sign in, then use the returned project ID:

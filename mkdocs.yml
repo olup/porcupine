@@ -28,6 +28,7 @@ nav:
       - Import from PostHog: posthog-import.md
   - Analyze and deliver:
       - Query your events: query-events.md
+      - Inspect an event, unreleased: event-discovery.md
       - DuckDB SQL recipes: duckdb-recipes.md
       - Export query results: exports.md
       - Webhooks and S3 pipelines: pipelines.md
