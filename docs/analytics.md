@@ -188,3 +188,7 @@ DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MC
 | `result_row_limit`, `result_byte_limit` | Reduce the result or call `create-event-export` |
 
 Native engine errors are classified without returning their raw text, candidate lists, stored values, filesystem paths or internal SQL. Other errors and backends may return only `error`; clients must keep that fallback.
+
+### Analytical S3 request deadlines
+
+On native S3 deployments, `limits.object_storage_request_timeout_seconds` reports the per-request object-storage timeout. Automatic native HTTP retries are disabled. Cancellation does not immediately abort every native HTTP request, so an in-flight object read can extend the SQL deadline by this interval. This field is omitted for local native storage and ClickHouse. [S3 configuration](ducklake-s3.md)

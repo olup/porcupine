@@ -121,7 +121,7 @@ func syncBackupDirectory(path string) error {
 	return file.Sync()
 }
 
-func pruneNativeBackups(directory, source string, retain int) error {
+func pruneNativeBackups(directory, source string, retain int, protectedID string) error {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return err
@@ -151,7 +151,27 @@ func pruneNativeBackups(directory, source string, retain int) error {
 		}
 		completed = append(completed, candidate{entry.Name(), created})
 	}
-	sort.Slice(completed, func(i, j int) bool { return completed[i].created.After(completed[j].created) })
+	if protectedID != "" {
+		found := false
+		for _, candidate := range completed {
+			if candidate.id == protectedID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("newly verified backup is missing from the retention inventory")
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool {
+		if completed[i].id == protectedID {
+			return completed[j].id != protectedID
+		}
+		if completed[j].id == protectedID {
+			return false
+		}
+		return completed[i].created.After(completed[j].created)
+	})
 	for _, old := range completed[min(retain, len(completed)):] {
 		if err := os.RemoveAll(filepath.Join(directory, old.id)); err != nil {
 			return fmt.Errorf("remove expired backup: %w", err)

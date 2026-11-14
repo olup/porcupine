@@ -20,6 +20,7 @@ type DuckLakeConfig struct {
 	CleanupGrace        time.Duration
 	CleanupInterval     time.Duration
 	DisableCleanup      bool
+	S3                  *DuckLakeS3Config
 }
 
 type lakeStore interface {

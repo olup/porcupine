@@ -31,7 +31,7 @@ func (s *duckLakeStore) cleanupDue(ctx context.Context, now time.Time) error {
 	var id string
 	err := s.registry.QueryRowContext(ctx, `SELECT c.project_id FROM catalogs c
  LEFT JOIN cleanup_progress p ON p.project_id=c.project_id
- WHERE c.ready=1 AND (p.next_attempt IS NULL OR p.next_attempt<=?)
+ WHERE c.ready=1 AND NOT EXISTS(SELECT 1 FROM deleting_projects d WHERE d.project_id=c.project_id) AND (p.next_attempt IS NULL OR p.next_attempt<=?)
  ORDER BY COALESCE(p.last_attempt,0),c.project_id LIMIT 1`, now.UnixMilli()).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.mu.Unlock()

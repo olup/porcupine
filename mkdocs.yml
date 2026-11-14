@@ -45,7 +45,8 @@ nav:
       - Schedule native backups: native-backups.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
-      - Store older data on S3: storage.md
+      - Storage options: storage.md
+      - Analytical S3 storage: ducklake-s3.md
       - Back up and restore: online-backup.md
       - Compose backup setup: backup-compose.md
       - Test disaster recovery: restore.md

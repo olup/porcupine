@@ -1,8 +1,8 @@
-# Host Porcupine 0.12.1
+# Host Porcupine 0.13.0
 
 The default server embeds DuckDB and DuckLake. One container holds the Go service, SQLite acceptance database, project catalogs, and Parquet data. No separate analytical database is required. Use persistent local storage and one application writer per data directory.
 
-The [v0.12.1 release](https://github.com/olup/porcupine/releases/tag/v0.12.1) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake extension. The CLI is a separate executable and needs no native database libraries.
+The [v0.13.0 release](https://github.com/olup/porcupine/releases/tag/v0.13.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
 
 ## Laptop with Docker Compose
 
@@ -28,7 +28,7 @@ sh examples/hello.sh
 
 The setup refuses to overwrite `.env`. Preserve that file privately. The example creates a project, sends a synthetic `hello` event, and waits until SQL counts it. Each run creates another project. [Project management](projects.md)
 
-The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.12.1`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
+The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.13.0`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
 
 Only `127.0.0.1:8080` is published. The `porcupine-data` named volume contains the complete `/data` directory, including SQLite and DuckLake. Keep the same Compose project name and volume when replacing a container.
 
@@ -49,8 +49,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.12.1-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.12.1
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.13.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.13.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -174,7 +174,7 @@ Live events have no automatic age-based deletion. Historical snapshots default t
 
 Keep the release and OAuth overlays when adding another overlay. Pipeline key files need an explicit container mount; a host pathname alone does not mount the file. Keep encryption keys privately with deployment recovery material. [Exports](exports.md) · [Pipelines](pipelines.md) · [Team sign-in](connect-your-team.md)
 
-S3 destinations store query results. They do not move DuckLake's analytical files off the SSD. Analytical S3 storage and remote DuckLake catalogs are outside this release. [Storage options](storage.md)
+S3 destinations store query results. For analytical files, a fresh DuckLake deployment can use the [native S3 option](ducklake-s3.md). SQLite and project catalogs stay local. This does not migrate an existing SSD archive or apply a hot-to-cold age policy. [Storage options](storage.md)
 
 ## Authentication, backups, and upgrades
 

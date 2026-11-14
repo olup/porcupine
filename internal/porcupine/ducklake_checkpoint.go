@@ -16,6 +16,9 @@ import (
 // Its caller holds the exclusive projection guard through this method and
 // removes the stage after copying it into a durable backup bundle.
 func (s *duckLakeStore) stageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (stage string, result error) {
+	if s.config.S3 != nil {
+		return "", errors.New("native local checkpoints do not include remote analytical S3 objects")
+	}
 	stage, err := os.MkdirTemp(s.root, ".checkpoint-")
 	if err != nil {
 		return "", err
@@ -39,7 +42,7 @@ func (s *duckLakeStore) stageCheckpoint(ctx context.Context, acceptance func(con
 			s.mu.Unlock()
 			return "", err
 		}
-		busy := false
+		busy := len(s.opening) > 0 || s.deletionActive
 		for _, p := range s.projects {
 			if len(p.leases) > 0 {
 				busy = true

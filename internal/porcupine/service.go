@@ -44,44 +44,46 @@ type Config struct {
 }
 
 type Service struct {
-	backups               *nativeBackupRuntime
-	activity              projectActivity
-	catalogMu             sync.RWMutex
-	deletionMu            contextMutex
-	deletionCancel        context.CancelFunc
-	deletionDone          chan struct{}
-	db                    *sql.DB
-	queueMax              int
-	queueMaxBytes         int64
-	hotReceiptLimit       int64
-	receiptSlots          chan struct{}
-	allowedOrigins        map[string]bool
-	trustedProxies        []netip.Prefix
-	clock                 func() time.Time
-	ch                    *clickHouse
-	lake                  lakeStore
-	lakeMemoryMB          int
-	lakeMaintenanceCancel context.CancelFunc
-	lakeMaintenanceDone   chan struct{}
-	deliveryCancel        context.CancelFunc
-	deliveryDone          chan struct{}
-	deliveryMaxEvents     int
-	deliveryMaxBytes      int
-	queryMu               contextMutex
-	queryReady            map[string]bool
-	querySlots            chan struct{}
-	captureSlots          chan struct{}
-	importSlots           chan struct{}
-	tokenSlots            chan struct{}
-	statusSlots           chan struct{}
-	querySecret           []byte
-	queryCacheEpoch       string
-	mutationMu            sync.Mutex
-	pipelines             *pipelineRuntime
-	batchSlot             chan struct{}
-	exports               *exportRuntime
-	oauth                 *oauthRuntime
-	projectionGuard       *projectionGuard
+	lakeS3Storage               bool
+	lakeS3RequestTimeoutSeconds int
+	backups                     *nativeBackupRuntime
+	activity                    projectActivity
+	catalogMu                   sync.RWMutex
+	deletionMu                  contextMutex
+	deletionCancel              context.CancelFunc
+	deletionDone                chan struct{}
+	db                          *sql.DB
+	queueMax                    int
+	queueMaxBytes               int64
+	hotReceiptLimit             int64
+	receiptSlots                chan struct{}
+	allowedOrigins              map[string]bool
+	trustedProxies              []netip.Prefix
+	clock                       func() time.Time
+	ch                          *clickHouse
+	lake                        lakeStore
+	lakeMemoryMB                int
+	lakeMaintenanceCancel       context.CancelFunc
+	lakeMaintenanceDone         chan struct{}
+	deliveryCancel              context.CancelFunc
+	deliveryDone                chan struct{}
+	deliveryMaxEvents           int
+	deliveryMaxBytes            int
+	queryMu                     contextMutex
+	queryReady                  map[string]bool
+	querySlots                  chan struct{}
+	captureSlots                chan struct{}
+	importSlots                 chan struct{}
+	tokenSlots                  chan struct{}
+	statusSlots                 chan struct{}
+	querySecret                 []byte
+	queryCacheEpoch             string
+	mutationMu                  sync.Mutex
+	pipelines                   *pipelineRuntime
+	batchSlot                   chan struct{}
+	exports                     *exportRuntime
+	oauth                       *oauthRuntime
+	projectionGuard             *projectionGuard
 }
 
 func Open(c Config) (*Service, error) {
@@ -220,6 +222,13 @@ func Open(c Config) (*Service, error) {
 		s.lake, err = newDuckLake(*c.DuckLake)
 		if err != nil {
 			return fail(err)
+		}
+		s.lakeS3Storage = c.DuckLake.S3 != nil
+		if s.lakeS3Storage {
+			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
+			if s.lakeS3RequestTimeoutSeconds == 0 {
+				s.lakeS3RequestTimeoutSeconds = 5
+			}
 		}
 		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
 		if s.lakeMemoryMB == 0 {

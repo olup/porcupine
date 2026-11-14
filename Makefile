@@ -103,3 +103,8 @@ ducklake-bench:
 
 ducklake-compare:
 	CGO_ENABLED=1 GOFLAGS=-tags=ducklake python3 scripts/integration.py
+
+.PHONY: ducklake-s3-test
+ducklake-s3-test:
+	go run ./internal/cmd/ducklake-s3-integration
+	go run ./internal/cmd/ducklake-s3-integration -tls

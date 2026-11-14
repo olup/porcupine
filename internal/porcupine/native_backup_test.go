@@ -75,7 +75,7 @@ func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) 
 	invalid := filepath.Join(root, "pc_backup_invalid")
 	os.Mkdir(invalid, 0700)
 	os.WriteFile(filepath.Join(invalid, "manifest.json"), []byte(`{"invalid":true}`), 0600)
-	if err := pruneNativeBackups(root, "source", 1); err != nil {
+	if err := pruneNativeBackups(root, "source", 1, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "pc_backup_old")); !os.IsNotExist(err) {
@@ -204,5 +204,27 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 				t.Fatal("unsafe or inconsistent recovery bundle accepted")
 			}
 		})
+	}
+}
+
+func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testing.T) {
+	root := t.TempDir()
+	for _, item := range []struct{ id, created string }{{"pc_backup_previous", "2030-01-01T00:00:00Z"}, {"pc_backup_published", "2026-11-14T00:00:00Z"}} {
+		directory := filepath.Join(root, item.id)
+		if err := os.Mkdir(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeBackupManifest(directory, nativeBackupManifest{Format: "porcupine-native-v1", ID: item.id, SourceID: "source", CreatedAt: item.created}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneNativeBackups(root, "source", 1, "pc_backup_published"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pc_backup_published")); err != nil {
+		t.Fatal("retention deleted the newly verified backup after clock rollback", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pc_backup_previous")); !os.IsNotExist(err) {
+		t.Fatal("retention did not respect its limit", err)
 	}
 }

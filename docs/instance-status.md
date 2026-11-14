@@ -50,6 +50,8 @@ An example response is:
 
 The overall `status` is `degraded` when a live check fails. An administrator also sees `degraded` when a DuckLake cleanup attempt has failed or was interrupted, until that catalog succeeds or is deleted. When native backups are configured, administrators also receive `native_backup` with schedule, checkpoint time and progress. A failed or interrupted backup degrades their status. See [native backups](native-backups.md). The report still returns HTTP `200`, so clients must inspect the JSON status. Optional services that are not configured do not degrade the instance. Checks run afresh, and responses use `Cache-Control: no-store`. Only one report can run at a time; a concurrent request returns `429`.
 
+`configuration.native_s3_storage` reports the native analytical S3 option. It does not test bucket connectivity or disclose its prefix or credentials.
+
 Fields under `configuration` describe deployment configuration. They do not prove remote connectivity or grant the caller permission to use that service. The check sends no email, writes no S3 objects, and makes no requests to project destinations or the identity provider. Storage policy configuration does not prove that ClickHouse has already moved data to S3.
 
 Read query syntax and execution limits through the project's [schema operation](analytics.md#event-schema). Inspect project delivery and pipeline runs through their own APIs.

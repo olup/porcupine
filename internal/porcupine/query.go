@@ -36,15 +36,16 @@ type AnalyticsTable struct {
 }
 
 type AnalyticsLimits struct {
-	MaxSQLBytes           int `json:"max_sql_bytes"`
-	MaxRows               int `json:"max_rows"`
-	MaxResultBytes        int `json:"max_result_bytes"`
-	MaxExecutionSeconds   int `json:"max_execution_seconds"`
-	RequestTimeoutSeconds int `json:"request_timeout_seconds"`
-	MaxMemoryBytes        int `json:"max_memory_bytes" doc:"Engine memory budget. Native DuckDB allocations can exceed this; it is not a hard process RSS ceiling."`
-	MaxReadRows           int `json:"max_read_rows" doc:"Physical row scan quota; zero means unavailable for this engine."`
-	MaxReadBytes          int `json:"max_read_bytes" doc:"Physical byte scan quota; zero means unavailable for this engine."`
-	MaxConcurrentQueries  int `json:"max_concurrent_queries" doc:"Instance-wide query concurrency limit"`
+	MaxSQLBytes                        int `json:"max_sql_bytes"`
+	MaxRows                            int `json:"max_rows"`
+	MaxResultBytes                     int `json:"max_result_bytes"`
+	MaxExecutionSeconds                int `json:"max_execution_seconds"`
+	RequestTimeoutSeconds              int `json:"request_timeout_seconds" doc:"Suggested client request timeout. Native object-storage I/O can finish after the SQL cancellation deadline."`
+	ObjectStorageRequestTimeoutSeconds int `json:"object_storage_request_timeout_seconds,omitempty" doc:"Native object-storage I/O timeout. Cancellation cannot immediately interrupt an in-flight HTTP request; it may extend the SQL execution deadline by this interval. Automatic HTTP retries are disabled."`
+	MaxMemoryBytes                     int `json:"max_memory_bytes" doc:"Engine memory budget. Native DuckDB allocations can exceed this; it is not a hard process RSS ceiling."`
+	MaxReadRows                        int `json:"max_read_rows" doc:"Physical row scan quota; zero means unavailable for this engine."`
+	MaxReadBytes                       int `json:"max_read_bytes" doc:"Physical byte scan quota; zero means unavailable for this engine."`
+	MaxConcurrentQueries               int `json:"max_concurrent_queries" doc:"Instance-wide query concurrency limit"`
 }
 
 type AnalyticsSchema struct {

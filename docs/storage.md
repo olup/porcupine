@@ -2,13 +2,13 @@
 
 ## Default DuckLake storage
 
-Porcupine 0.12.0 embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
+Porcupine embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
 
-This release does not expose analytical S3 storage or automatic SSD-to-S3 tiering for DuckLake. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
+A fresh deployment can instead keep its analytical data files on [S3](ducklake-s3.md), with catalogs and SQLite still local. This is configured before initializing the archive; it does not automatically migrate existing files or apply age-based SSD-to-S3 tiering. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
 
-DuckLake snapshots can retain older event payloads after logical edits or deletion. Porcupine schedules native rewrites, snapshot expiration and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing files scheduled for deletion. Long reads and maintenance backlogs can delay reclamation. Read the [cleanup guide](ducklake-cleanup.md) for deployment settings, progress and erasure limits. This does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory. Backups and external copies have their own retention rules.
+DuckLake snapshots can retain older event payloads after logical edits or deletion. Porcupine schedules native rewrites, snapshot expiration and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing files scheduled for deletion. Long reads and maintenance backlogs can delay reclamation. Read the [cleanup guide](ducklake-cleanup.md) for deployment settings, progress and erasure limits. This does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory and, when configured, its exact remote prefix. Backups and external copies have their own retention rules.
 
-For recovery, use [scheduled native backups](native-backups.md) or a [coordinated stopped-volume backup](restore.md). Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
+For local analytical files, use [scheduled native backups](native-backups.md) or a [coordinated stopped-volume backup](restore.md). The local automatic bundle is rejected for analytical S3 because it does not include remote objects. Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
 
 ## ClickHouse hot and cold storage
 

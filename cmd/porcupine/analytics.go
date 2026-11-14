@@ -11,10 +11,17 @@ import (
 
 func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeConfig, error) {
 	endpoint, directory := os.Getenv("PORCUPINE_CLICKHOUSE_URL"), os.Getenv("PORCUPINE_DUCKLAKE_DIR")
+	remote, err := duckLakeS3Configuration()
+	if err != nil {
+		return nil, nil, err
+	}
 	if endpoint != "" && directory != "" {
 		return nil, nil, errors.New("configure either PORCUPINE_DUCKLAKE_DIR or PORCUPINE_CLICKHOUSE_URL")
 	}
 	if endpoint != "" {
+		if remote != nil {
+			return nil, nil, errors.New("analytical S3 configuration requires DuckLake, not ClickHouse")
+		}
 		hotDays, err := analyticsInteger("PORCUPINE_HOT_STORAGE_DAYS", 0, 1, 36500)
 		if err != nil {
 			return nil, nil, err
@@ -28,9 +35,12 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 		directory = defaultAnalyticsDirectory(os.Getenv("PORCUPINE_DB"))
 	}
 	if directory == "" {
+		if remote != nil {
+			return nil, nil, errors.New("analytical S3 configuration requires a DuckLake directory")
+		}
 		return nil, nil, nil
 	}
-	config := &porcupine.DuckLakeConfig{Directory: directory}
+	config := &porcupine.DuckLakeConfig{Directory: directory, S3: remote}
 	for _, field := range []struct {
 		name     string
 		target   *int

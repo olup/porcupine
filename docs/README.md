@@ -27,7 +27,7 @@ To let an agent guide you, give it the [agent guide](https://olup.github.io/porc
 
 Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
 
-The deployment operator chooses [storage](storage.md) and configures [backups](restore.md). DuckLake uses local SSD storage in this release. ClickHouse-only cold storage and online checkpoint tools are documented separately. These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md). Operators can configure and monitor [DuckLake history cleanup](ducklake-cleanup.md) and [scheduled native backups](native-backups.md).
+The deployment operator chooses [storage](storage.md) and configures [backups](restore.md). DuckLake uses local SSD storage by default; new deployments can select [analytical S3](ducklake-s3.md) for their data files. ClickHouse-only cold storage and online checkpoint tools are documented separately. These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md). Operators can configure and monitor [DuckLake history cleanup](ducklake-cleanup.md) and [scheduled native backups](native-backups.md).
 
 ## Look up a contract
 

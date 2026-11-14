@@ -48,6 +48,9 @@ func prepareNativeBackup(c *NativeBackupConfig, database string, lake *DuckLakeC
 	if c == nil {
 		return nil, nil
 	}
+	if lake != nil && lake.S3 != nil {
+		return nil, errors.New("native local backups do not include remote analytical S3 objects; disable native backups for this storage mode")
+	}
 	if lake == nil || lake.Directory == "" || database == ":memory:" || c.Directory == "" {
 		return nil, errors.New("native backups require file-backed SQLite, DuckLake and a private backup directory")
 	}
@@ -337,5 +340,5 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 	if err := s.recordNativeBackupStatus(ctx, "ok", id, capturedAt); err != nil {
 		return err
 	}
-	return pruneNativeBackups(runtime.config.Directory, sourceID, runtime.config.Retain)
+	return pruneNativeBackups(runtime.config.Directory, sourceID, runtime.config.Retain, id)
 }

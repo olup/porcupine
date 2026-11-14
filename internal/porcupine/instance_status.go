@@ -24,6 +24,7 @@ type InstanceChecks struct {
 }
 
 type InstanceConfiguration struct {
+	NativeS3Storage  bool `json:"native_s3_storage" doc:"DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials."`
 	QueryExports     bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
 	WebhookPipelines bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
 	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
@@ -56,7 +57,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Status: "ok", Version: Version, CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
-			QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
+			NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && (s.ch != nil || s.lake != nil),
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,

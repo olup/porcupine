@@ -1,6 +1,6 @@
 # Configure native backups
 
-Unreleased. Build this source checkout to use this feature. Published v0.12.1 images do not include it.
+Available in v0.13.0 and later for local DuckLake data files. This local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects. S3-aware backup and restore are the next backup work.
 
 The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains an independent SQLite acceptance database, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed.
 
@@ -15,10 +15,10 @@ export PORCUPINE_BACKUP_HOST_DIR=/srv/porcupine-backups/native
 sudo install -d -m 0700 -o 65532 -g 65532 "$PORCUPINE_BACKUP_HOST_DIR"
 ```
 
-Add `compose.native-backup.yaml` to the deployment's existing overlay list. For a new local build:
+Add `compose.native-backup.yaml` to the deployment's existing overlay list. For a new release deployment:
 
 ```sh
-docker compose -f compose.yaml -f compose.native-backup.yaml up -d --build
+docker compose -f compose.yaml -f compose.release.yaml -f compose.native-backup.yaml up -d
 ```
 
 Keep the OAuth, proxy and other overlays already used by your instance. This overlay selects `/backups` inside the container and mounts the private host directory there. It applies to the default DuckLake backend; optional ClickHouse deployments keep their [existing backup tool](online-backup.md).
