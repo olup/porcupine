@@ -1,12 +1,12 @@
 # Scope and roadmap
 
-## Available in v0.13.0
+## Available in v0.14.0
 
-- **Capture.** Native JSON, supported PostHog SDK profiles and Segment ingestion. Historical PostHog events and persons can be imported from JSONL. Stable producer IDs support retries. [Inputs](collect-events.md)
+- **Capture.** Native JSON, supported PostHog SDK profiles and Segment ingestion. Native, PostHog, and Segment history can be imported from JSONL through one resumable CLI command. PostHog persons files provide profile snapshots. Stable producer IDs support retries. [Inputs](collect-events.md)
 - **Analytics.** Project-scoped DuckDB SQL through API, CLI and MCP. Discover event names, properties, activity, recent examples and sampled property coverage with event profiles. Identify links anonymous activity to a stable actor. [Queries](query-events.md) · [Event profiles](event-discovery.md)
 - **Delivery.** One-off query exports, individual or batched event webhooks, and scheduled SQL-to-S3 pipelines. [Pipelines](pipelines.md)
 - **Management.** Projects, scoped credentials, human email/OIDC sign-in and service accounts, through the shared API contract and agent tools. [Projects](projects.md) · [Permissions](security-and-interfaces.md)
-- **Operations.** Local DuckLake by default, optional [analytical S3](ducklake-s3.md) for fresh deployments, native history cleanup and administrator-visible status. [Scheduled backups](native-backups.md) currently support local data files; analytical S3 requires a separate consistent recovery procedure.
+- **Operations.** Local DuckLake by default, optional [analytical S3](ducklake-s3.md) for fresh deployments, native history cleanup and administrator-visible status. [Scheduled backups](native-backups.md) support local data files; [independent S3 backups and offline recovery](native-backup-recovery.md) support both local and analytical S3 data.
 
 ## Added in v0.13.0
 
@@ -17,21 +17,13 @@
 - Optional coordinated local recovery bundles, verified inventory, configurable retention, Parquet reuse and a tested isolated restore.
 - Release publication depends on the validation workflow and tests the actual native images against HTTPS object storage without runtime extension downloads.
 
-## Development after v0.13.0
+## Added in v0.14.0
 
-Large-event delivery now retries smaller native transactions when DuckDB reports a typed out-of-memory error. Healthy batches keep their existing limits. The acceptance queue retains unfinished work; resource failures do not quarantine events. The [delivery notes](ducklake-large-batches.md) explain partial analytical visibility and memory limits. This change is not included in the published v0.13.0 image.
-
-Development also adds complete S3 backups to an independent destination and offline recovery through the standalone CLI. Current catalog references and copied hashes must pass before publication or retention. Recovery reconstructs new catalogs, resets access and outbound work, and preserves event IDs, identity, corrections and tombstones. See [remote backups and recovery](native-backup-recovery.md). These changes remain outside the published v0.13.0 image.
-
-Development formalizes the [native event contract](native-event-contract.md), publishes its live JSON Schema, and exposes `get-event-input-contract` through API, CLI and MCP. The historical message schema requires occurrence time and producer ID. Native, PostHog, and Segment files now use a shared resumable import engine and one standalone CLI command, with gzip streaming and an analytical delivery check. Adapter contract tests cover identity, timestamps, large integers and retries across a shared logical source.
-
-The development server now supports DuckDB/DuckLake only. Live acceptance and historical upload have separate transaction owners, while SQL validation and offline CLI generation have independent dependencies. Existing archive, checkpoint and restore guards remain together. See [native ownership boundaries](native-only-architecture.md) for the scope and remaining work.
-
-## Next work, in order
-
-1. Validate these unreleased changes in the next release, including real migration files and recovery drills. The one-command historical import path is implemented in development builds.
-
-Before this release, the agreed sequence was analytical S3, release publication, large batches, then backup follow-ups. S3 and publication are the first milestones of that sequence; later items remain development work until released.
+- One-command historical imports for native, PostHog and Segment files or directories, including gzip streaming, automatic resume, original occurrence times and stable-ID deduplication. [Import guide](imports.md)
+- Published native schemas and `get-event-input-contract` through API, CLI and MCP. [Event contract](native-event-contract.md)
+- Smaller analytical transactions after a typed native out-of-memory error. Unfinished work stays queued. [Large-event delivery](ducklake-large-batches.md)
+- Complete backups to an independent S3 destination and offline recovery through the standalone CLI. [Backup and recovery](native-backup-recovery.md)
+- DuckDB/DuckLake as the only analytical runtime. Explicit acceptance/import/webhook transaction owners, an independent SQL-policy module, and offline CLI contract generation. [Architecture boundaries](native-only-architecture.md)
 
 ## Other planned improvements
 

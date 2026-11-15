@@ -1,6 +1,6 @@
 # Remote backups and offline recovery
 
-Development after v0.13.0. The published v0.13.0 image supports [local recovery bundles](native-backups.md); it does not contain the S3 destination or CLI restore command described here. Build the development server and CLI together to try this workflow.
+Available in v0.14.0 and later. Use matching released server and CLI versions. Local recovery bundles are also supported; see [local backups](native-backups.md).
 
 ## Choose a backup destination
 
@@ -17,7 +17,7 @@ PORCUPINE_BACKUP_TIMEOUT=30m
 PORCUPINE_BACKUP_RETAIN=7
 ```
 
-Leave `PORCUPINE_BACKUP_DIR` unset. Use `compose.native-backup-s3.yaml` with the development server build. Preserve the instance's analytical storage, sign-in and proxy overlays.
+Leave `PORCUPINE_BACKUP_DIR` unset. Use `compose.native-backup-s3.yaml` with the matching release overlay. Preserve the instance's analytical storage, sign-in and proxy overlays.
 
 Backup S3 settings use the same suffixes as [analytical S3](ducklake-s3.md), including `ENDPOINT`, `PATH_STYLE`, `CA_CERT_FILE`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` and `SESSION_TOKEN`. Empty explicit credentials use the AWS credential chain. The destination needs object read, write, list and delete permissions, including conditional creation. Keep its bucket and prefix disjoint from analytical data.
 
@@ -41,7 +41,7 @@ S3 backups are sequential full copies. Account for storage and transfer costs. L
 
 ## Restore a local bundle
 
-Use the same server version that created the bundle. Development builds use the same development image for capture and recovery. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
+Use the same server image version that created the bundle. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
 
 Create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository.
 
@@ -51,7 +51,7 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image porcupine-recovery:dev
+  --image ghcr.io/olup/porcupine:0.14.0
 ```
 
 The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container reads the private bundle, then gives installed files to the normal nonroot server user. It does not start an HTTP service. Failed attempts retain the volume for inspection. An incomplete installation carries a marker that normal startup refuses.
@@ -67,7 +67,7 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image porcupine-recovery:dev
+  --image ghcr.io/olup/porcupine:0.14.0
 ```
 
 To recover into S3, also set `PORCUPINE_DUCKLAKE_S3_*` for a fresh analytical bucket or prefix. Original analytical storage and archive storage are forbidden targets, including empty namespaces. Without target S3 settings, recovery uses the new volume's SSD. The CLI mounts custom CA and AWS credential files read-only.

@@ -50,7 +50,7 @@ An example response is:
 
 The overall `status` is `degraded` when a live check fails. An administrator also sees `degraded` when a DuckLake cleanup attempt has failed or was interrupted, until that catalog succeeds or is deleted. When native backups are configured, administrators also receive `native_backup` with schedule, checkpoint time and progress. A failed or interrupted backup degrades their status. See [native backups](native-backups.md). The report still returns HTTP `200`, so clients must inspect the JSON status. Optional services that are not configured do not degrade the instance. Checks run afresh, and responses use `Cache-Control: no-store`. Only one report can run at a time; a concurrent request returns `429`.
 
-Development after v0.13.0 adds `native_backup.source_id`, the analytical source identity needed with `latest_bundle` for [remote recovery](native-backup-recovery.md). It remains administrator-only.
+Version v0.14.0 adds `native_backup.source_id`, the analytical source identity needed with `latest_bundle` for [remote recovery](native-backup-recovery.md). It remains administrator-only.
 
 `configuration.analytics` reports that the native analytical store is configured; it is not a health check. `configuration.native_s3_storage` reports the native analytical S3 option. It does not test bucket connectivity or disclose its prefix or credentials.
 

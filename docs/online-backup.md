@@ -2,7 +2,7 @@
 
 Porcupine schedules coordinated SQLite and DuckLake backups inside its existing server process. It does not need a backup sidecar or an external database backup script.
 
-For a local directory destination, follow [Configure native backups](native-backups.md). For an independent S3 destination and the standalone offline restore command, follow [Remote backups and recovery](native-backup-recovery.md). That guide marks features newer than the published v0.13.0 image.
+For a local directory destination, follow [Configure native backups](native-backups.md). For an independent S3 destination and the standalone offline restore command, follow [Remote backups and recovery](native-backup-recovery.md). Use v0.14.0 or later for S3 backup and CLI recovery.
 
 A complete checkpoint includes the acceptance database, native registry, every project catalog, and the data files those catalogs reference. Projection and its SQLite acknowledgment are coordinated during capture. File and reader protections remain in place while the server copies and verifies the captured state.
 

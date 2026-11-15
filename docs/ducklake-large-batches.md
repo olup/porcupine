@@ -1,6 +1,6 @@
 # Large-event delivery
 
-Development work after v0.13.0. This behavior is not in the published v0.13.0 image.
+Available in v0.14.0 and later.
 
 Porcupine accepts events into its bounded SQLite queue before replying to the producer. A background worker projects them into DuckLake. An acknowledgment from the ingestion API therefore means durable acceptance, rather than immediate analytical visibility.
 

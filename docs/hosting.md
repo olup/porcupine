@@ -1,8 +1,8 @@
-# Host Porcupine 0.13.0
+# Host Porcupine 0.14.0
 
 The default server embeds DuckDB and DuckLake. One container holds the Go service, SQLite acceptance database, project catalogs, and Parquet data. No separate analytical database is required. Use persistent local storage and one application writer per data directory.
 
-The [v0.13.0 release](https://github.com/olup/porcupine/releases/tag/v0.13.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
+The [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
 
 ## Laptop with Docker Compose
 
@@ -28,7 +28,7 @@ sh examples/hello.sh
 
 The setup refuses to overwrite `.env`. Preserve that file privately. The example creates a project, sends a synthetic `hello` event, and waits until SQL counts it. Each run creates another project. [Project management](projects.md)
 
-The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.13.0`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
+The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.14.0`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
 
 Only `127.0.0.1:8080` is published. The `porcupine-data` named volume contains the complete `/data` directory, including SQLite and DuckLake. Keep the same Compose project name and volume when replacing a container.
 
@@ -49,8 +49,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.13.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.13.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.14.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.14.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -184,4 +184,4 @@ Before storing important history, configure [scheduled native backups](native-ba
 
 Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
 
-The current development branch supports only DuckDB/DuckLake. It refuses legacy analytical configuration rather than silently creating a fresh archive. An earlier external-database deployment needs a fresh native target and an explicit export/import migration. Keep its matching backup until validation succeeds. A changed image tag alone does not convert stored history or SQL. See [storage and migration boundaries](storage.md#earlier-analytical-backends).
+Version v0.14.0 supports only DuckDB/DuckLake. It refuses legacy analytical configuration rather than silently creating a fresh archive. An earlier external-database deployment needs a fresh native target and an explicit export/import migration. Keep its matching backup until validation succeeds. A changed image tag alone does not convert stored history or SQL. See [storage and migration boundaries](storage.md#earlier-analytical-backends).

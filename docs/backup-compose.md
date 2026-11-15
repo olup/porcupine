@@ -7,7 +7,7 @@ Keep the instance's existing proxy, sign-in, analytical storage, and release ove
 | Private local directory, local analytical files | `compose.native-backup.yaml` | [Local backup schedule](native-backups.md#enable-a-schedule) |
 | Independent S3 bucket or prefix | `compose.native-backup-s3.yaml` | [S3 backup configuration](native-backup-recovery.md#choose-a-backup-destination) |
 
-The S3 destination and offline restore command are development features after v0.13.0. Use a matching development server and CLI when following that guide.
+The S3 destination and offline restore command require v0.14.0 or later. Use matching server and CLI versions.
 
 The local scheduler runs in the server process and writes as container UID/GID 65532. Create its private host directory with the permissions in the local backup guide. A local backup directory must be outside the live analytical root. S3 backup namespaces must be separate from live analytical storage.
 

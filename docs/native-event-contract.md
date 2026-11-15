@@ -2,7 +2,7 @@
 
 The native producer format is independent of PostHog and Segment. Their live adapters translate messages into the same acceptance path, which assigns IDs, applies identity rules, and commits the durable queue.
 
-This reference describes version 1 of the native message format. The native capture endpoint already exists in v0.13.0. Schema discovery is new in development builds. Development also adds native and Segment historical imports alongside PostHog. These additions are not in the published v0.13.0 image.
+This reference describes version 1 of the native message format. The native capture endpoint is available in v0.13.0 and later. Version v0.14.0 adds schema discovery and native and Segment historical imports alongside PostHog.
 
 ## Discovery
 

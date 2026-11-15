@@ -1,8 +1,8 @@
 # Configure native backups
 
-The published v0.13.0 image supports backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.
+Porcupine supports local backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.
 
-The development branch adds an independent S3 destination and an offline restore command. See [remote backups and recovery](native-backup-recovery.md) for that unreleased workflow.
+Version v0.14.0 also supports an independent S3 destination and an offline restore command. See [remote backups and recovery](native-backup-recovery.md).
 
 The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains an independent SQLite acceptance database, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed.
 
