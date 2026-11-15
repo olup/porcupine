@@ -2,26 +2,26 @@
 
 The native producer format is independent of PostHog and Segment. Their live adapters translate messages into the same acceptance path, which assigns IDs, applies identity rules, and commits the durable queue.
 
-This reference describes version 1 of the native message format. The native capture endpoint already exists in v0.13.0. Schema discovery is new in development builds. The historical event schema is a **draft**; native and Segment file imports are not implemented.
+This reference describes version 1 of the native message format. The native capture endpoint already exists in v0.13.0. Schema discovery is new in development builds. Development also adds native and Segment historical imports alongside PostHog. These additions are not in the published v0.13.0 image.
 
 ## Discovery
 
 | Interface | Contract |
 | --- | --- |
 | Public HTTP | `GET /ingest/v1/schema` returns the live message JSON Schema without credentials. It contains no project data. |
-| Project HTTP | `GET /api/v1/projects/{id}/input-contract` returns the contract version, live schema, draft historical schema, and server-managed fields. Requires `events:read` on that project. |
+| Project HTTP | `GET /api/v1/projects/{id}/input-contract` returns the contract version, live schema, historical message schema, and server-managed fields. Requires `events:read` on that project. |
 | CLI | `porcupine get-event-input-contract --id PROJECT_ID` uses the same project operation. |
 | MCP | `porcupine_docs` with `operation_id: get-event-input-contract` discovers the contract. `porcupine_call` executes it with `path: {"id":"PROJECT_ID"}`. |
 
 The running instance's contract takes precedence over website examples. This input schema describes what a producer sends. `get-event-schema` separately describes the SQL table exposed to readers.
 
-The [live JSON Schema](https://olup.github.io/porcupine/schemas/native-message-v1.schema.json) and [draft historical event schema](https://olup.github.io/porcupine/schemas/native-history-event-v1.draft.schema.json) are generated from the files embedded in the server. Their `$id` values identify the contracts. The `/ingest/v1/events` path selects version 1; messages have no `schema_version` field.
+The [live JSON Schema](https://olup.github.io/porcupine/schemas/native-message-v1.schema.json) and [historical message schema](https://olup.github.io/porcupine/schemas/native-history-message-v1.schema.json) are generated from the files embedded in the server. Their `$id` values identify the contracts. The `/ingest/v1/events` path selects version 1; messages have no `schema_version` field.
 
 ## Versioning
 
 Version 1 gives each field one meaning across native capture and adapter normalization. Incompatible meanings require a new major contract and input path. Producers discover a running instance before relying on new optional fields, since older servers reject unknown top-level fields.
 
-The historical draft can change before its importer is released. Its ordinary-event shape does not define historical identity or profile records.
+The historical message schema requires stable producer IDs and original timestamps. Separate native person snapshot records are not defined.
 
 ## Live messages
 
@@ -160,13 +160,13 @@ The adapters preserve business values, but their metadata layouts are not identi
 
 The equivalent live journey is available as [native JSON](../examples/events/native.json), [Segment JSON](../examples/events/segment.json), and [PostHog JSON](../examples/events/posthog.json). Credentials are absent from these files. The test suite sends each journey through its real adapter, verifies the original times and identity link, then retries through all three with the same configured source.
 
-## Historical records, draft
+## Historical records
 
-The planned native historical event uses the ordinary live event shape with two additional requirements: `message_id` and `timestamp` are mandatory. The file encoding is UTF-8 JSONL, one ordinary event per line. Only `track` and `pageview` belong in the draft historical event schema.
+A native historical message uses the live shape with mandatory `message_id` and `timestamp`. Files are UTF-8 JSONL, one message per line. Historical `track` and `pageview` records become analytics events. An `identify` contributes explicit historical identity evidence; its `set` and `set_once` fields are never replayed as current traits.
 
-Native historical import is unavailable. A backdated message sent to the live endpoint still follows live identity and pipeline behavior. It is not a substitute for historical import.
+Use `porcupine import --project PROJECT_ID --format native FILE_OR_DIRECTORY` for historical data. A backdated message sent to the live endpoint still follows live identity and pipeline behavior. It is not a substitute for historical import. [Import guide](imports.md)
 
-Historical import needs separate record semantics:
+Historical import distinguishes these record semantics:
 
 | Record | Role |
 | --- | --- |
@@ -174,6 +174,6 @@ Historical import needs separate record semantics:
 | Identity evidence | An explicit historical relationship between IDs, subject to ownership and conflict checks. |
 | Person snapshot | Traits and mappings from a point in source history, with version and provenance information. |
 
-A person snapshot is not a live `identify` command. Replaying an old `set` could overwrite a newer plan, while a source's internal person UUID may not be its application user ID. The draft does not define public native encodings for identity evidence or person snapshots yet.
+A person snapshot is not a live `identify` command. Replaying an old `set` could overwrite a newer plan, while a source's internal person UUID may not be its application user ID. Native and Segment identify messages carry explicit evidence under the historical ownership rules. A separate native person snapshot encoding remains undefined.
 
-The existing [PostHog importer](posthog-import-format.md) already distinguishes event rows, explicit identity evidence, and person snapshots. It protects live-owned profiles, tracks unresolved identity, marks imported data, and suppresses historical delivery to automatic pipelines. Future native and Segment imports must preserve those guarantees through the common import engine.
+The existing [PostHog importer](posthog-import-format.md) already distinguishes event rows, explicit identity evidence, and person snapshots. It protects live-owned profiles, tracks unresolved identity, marks imported data, and suppresses historical delivery to automatic pipelines. Native and Segment imports share those guarantees through the common import engine.

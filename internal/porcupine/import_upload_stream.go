@@ -30,7 +30,7 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 		if work.file.Counts.Rows-file.Counts.Rows > importMaxChunkRows {
 			return apiError(413, "chunk exceeds 1000 JSONL rows")
 		}
-		row, err := parsePostHogImportRow(raw, file.Kind)
+		row, err := parseHistoricalImportRow(raw, file.Kind, file.Format)
 		if err != nil {
 			work.file.Counts.Invalid++
 			addSample("invalid_row")
@@ -120,7 +120,7 @@ func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, 
 	if err != nil {
 		return importLookupError(err)
 	}
-	if job.SourceID != original.SourceID || file.State != "uploading" || file.OffsetBytes != original.OffsetBytes || !bytes.Equal(file.HashState, original.HashState) {
+	if job.SourceID != original.SourceID || job.Format != original.Format || file.State != "uploading" || file.OffsetBytes != original.OffsetBytes || !bytes.Equal(file.HashState, original.HashState) {
 		return apiError(409, "file progress changed; reload import status")
 	}
 	var next string
@@ -187,7 +187,7 @@ func (s *Service) commitImportChunk(ctx context.Context, project, jobID string, 
 			return apiError(503, "import checkpoint unavailable")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=? WHERE id=?`, s.importTime(), jobID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=?,delivery_cursor=max(delivery_cursor,coalesce((SELECT max(id) FROM events WHERE project_id=?),0)) WHERE id=?`, s.importTime(), project, jobID); err != nil {
 		return apiError(503, "import checkpoint unavailable")
 	}
 	if err := tx.Commit(); err != nil {
@@ -239,10 +239,19 @@ func importDigestMatches(state []byte, expected string) bool {
 // Resolve source-scoped keys before both archive receipt lookup and acceptance.
 // The raw PostHog namespace is retained only for an unbound import creator.
 func prepareImportUploadSource(project, source string, rows []ImportRow) error {
-	if source == "posthog" {
-		return nil
-	}
 	for i := range rows {
+		if rows[i].ingestion != nil {
+			event := rows[i].Event
+			event.ProjectID = project
+			if err := prepareIngestionMetadata(&event, rows[i].ingestion, source); err != nil {
+				return err
+			}
+			rows[i].Event = event
+			continue
+		}
+		if source == "posthog" {
+			continue
+		}
 		event := eventWithMetadata(rows[i].Event)
 		event.ProjectID = project
 		if rows[i].Kind == "persons" {
@@ -260,9 +269,6 @@ func prepareImportUploadSource(project, source string, rows []ImportRow) error {
 // Invalid source-bound row metadata is a row-level rejection, just like a
 // malformed JSONL record, rather than a permanently unresumable file chunk.
 func prepareImportUploadWork(project, source string, work *importChunkWork) error {
-	if source == "posthog" {
-		return nil
-	}
 	if source == "" || !validSourceID(source) {
 		return errors.New("invalid configured import source")
 	}

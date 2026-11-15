@@ -1,44 +1,53 @@
-# Import a PostHog file or directory
+# Historical upload protocol
 
-The HTTP API and [standalone CLI](../cli/README.md) accept PostHog events and persons in JSON Lines format. Imports use the HTTP transport, including when an agent runs the CLI on your machine. An agent with local file access can upload a file or enumerate a directory. It needs an API-resource token or a private [API service key](service-keys.md) with `imports:write` and `events:write` for the destination project. [Import format](posthog-import-format.md)
+For file and directory imports, use the [one-command CLI guide](imports.md). This reference describes the HTTP transport underneath it. Development builds accept native, PostHog, and Segment JSONL. Published v0.13.0 supports the PostHog format and uses the older source-specific CLI operation names.
 
-For each file, record its relative path and model (events or persons), decompress gzip locally, and calculate the SHA-256 digest and byte length of the uncompressed content. Keep the files unchanged until completion. Create the import with a stable idempotency key, then follow the HTTP protocol below. After interruption, fetch the job and seek to each file’s confirmed offset in its uncompressed bytes. The server never receives a local filesystem path to open.
+## Manifest
 
-The final JSON includes file offsets, counts, and bounded samples of row numbers with error reasons. A completed import can contain invalid or unresolved rows. Compare event totals by day and name with PostHog, and use a fresh query (`"use_cache": false`) after delivery catches up. Historical data stays queryable. Importing alone does not enqueue webhooks or send the rows to scheduled S3 query pipelines.
+`POST /api/v1/projects/{id}/imports` requires `imports:write` and `events:write` on the selected project, using an API-audience credential. The body selects one format for the entire job:
 
-## HTTP upload
-
-Prefix each path in the table with `/api/v1/projects/{project_id}`. Use the API audience. Every operation checks the project and both import permissions; writes to an existing job additionally require the creator or an instance administrator.
-
-| Request | Result |
-| --- | --- |
-| `POST /imports` | Create or recover a job using `idempotency_key` and a `files` manifest. Each entry has a relative `path`, `kind` (`events` or `persons`), numeric `size_bytes`, and hex `sha256`. |
-| `GET /imports` | List import jobs for the project. |
-| `GET /imports/{id}` | Read states, counts, file IDs, processing order and committed offsets. |
-| `PUT /imports/{id}/files/{file_id}` | Send raw JSON Lines bytes with `Content-Type: application/octet-stream`, `Upload-Offset`, and `X-Chunk-SHA256`. |
-| `POST /imports/{id}/files/{file_id}/complete` | Process any last line and validate the byte count and checksum. |
-| `POST /imports/{id}/complete` | Finalize once every file is complete. |
-| `DELETE /imports/{id}` | Cancel further uploads and discard buffered partial rows. Rows already accepted remain. |
-
-Upload files in the order returned by the server. Persons files come first. For each chunk, send at most 256 KiB and at most 1,000 line endings. Keep a stable event UUID across live capture and import and select the same logical source. A lost response can be recovered by repeating the last identical chunk or checking the job's offset. Each committed chunk advances the cursor in the same SQLite transaction as accepting its rows. A final digest mismatch fails the job; earlier committed rows are retained. An import consumes the same bounded queue as live ingestion. Retry backpressure responses without advancing the offset.
-
-The server stages at most a partial 1 MiB row per active job. Analytical storage is separate from uploaded import files. DuckLake writes imported history to local SSD storage, so budget space for the resulting catalog and Parquet data. Optional ClickHouse deployments can use a hot-to-S3 policy. See [storage](storage.md).
-
-## Upload a chunk from the CLI
-
-Set `PORCUPINE_URL` and choose an API credential with the import grants. Create the job with the manifest you prepared, then read its returned job ID, file ID and confirmed offset.
-
-```sh
-porcupine create-posthog-import --id "$PROJECT_ID" --body @manifest.json
-porcupine get-posthog-import --id "$PROJECT_ID" --import-id "$IMPORT_ID"
+```json
+{
+  "format": "native",
+  "idempotency_key": "migration-2026-01",
+  "files": [
+    {"path":"events/part-1.jsonl","kind":"events","size_bytes":1234,"sha256":"SHA256_OF_UNCOMPRESSED_BYTES"}
+  ]
+}
 ```
 
-Save the next uncompressed chunk as `chunk.jsonl`, and set `CHUNK_SHA256` to its SHA-256 hex digest. For the first chunk of a new file, set `OFFSET=0`.
+`format` is `native`, `posthog`, or `segment`; omission selects PostHog. Each file has a clean relative label, kind, byte count, and 64-character hexadecimal SHA-256. These labels are not server filesystem paths. `persons` files are supported only for PostHog. Persons files precede events; the remaining order is lexical by label.
 
-```sh
-porcupine upload-posthog-import-chunk --id "$PROJECT_ID" --import-id "$IMPORT_ID" \
-    --file-id "$FILE_ID" --upload-offset "$OFFSET" --x-chunk-sha256 "$CHUNK_SHA256" \
-    --body @chunk.jsonl
-```
+The idempotency key is scoped to its project and creator. Reusing it with a different format or manifest returns `409`. The format and authenticated source binding are frozen in the job. Uploading with an administrator's credential does not change them.
 
-Repeat from the confirmed offset until the file is complete, then run `complete-posthog-import-file` with the same project, import and file IDs. Once all files are complete, run `complete-posthog-import` with the project and import IDs.
+## Operations
+
+Prefix each HTTP path with `/api/v1/projects/{id}`. Every operation checks both import permissions and project scope. Writes to an existing job additionally require its creator or an instance administrator.
+
+| Operation ID | Request | Result |
+| --- | --- | --- |
+| `create-import` | `POST /imports` | Create or recover the manifest. |
+| `list-imports` | `GET /imports` | Bounded progress summaries. |
+| `get-import` | `GET /imports/{import_id}` | Authoritative file offsets, counts, safe row samples, and analytical delivery status. |
+| `upload-import-chunk` | `PUT /imports/{import_id}/files/{file_id}` | Upload uncompressed JSONL bytes with exact offset and checksum. |
+| `complete-import-file` | `POST /imports/{import_id}/files/{file_id}/complete` | Check the file digest and process its final unterminated line. |
+| `complete-import` | `POST /imports/{import_id}/complete` | Finalize after every file completes. Analytical delivery remains asynchronous. |
+| `cancel-import` | `DELETE /imports/{import_id}` | Stop future acceptance and clear private partial rows. Previously accepted records remain. |
+
+These file operations use HTTP and the CLI; they are not exposed as MCP calls. An agent with a local environment can use the standalone CLI. Project-scoped discovery through `get-event-input-contract` remains available through MCP.
+
+## Chunk checkpoints
+
+A chunk uses `Content-Type: application/octet-stream`, `Upload-Offset`, and `X-Chunk-SHA256`. Send at most the returned `limits.max_chunk_bytes` bytes and `limits.max_rows_per_chunk` completed rows. Current maxima are 256 KiB and 1,000 rows. A row can span chunks, up to 1 MiB.
+
+File offsets count the exact uncompressed bytes, including line endings. Each checkpoint commits accepted rows and its offset in the same SQLite transaction. A lost response permits an identical retry of the last chunk. An offset conflict returns `409`; reload the job before continuing. Respect queue pressure responses without advancing the cursor.
+
+The final file digest covers all uncompressed bytes. A mismatch fails the job without undoing earlier accepted rows. Cancellation also retains earlier rows. The server keeps only a bounded incomplete row and resumable hash state, then clears those buffers on completion or cancellation.
+
+## Historical semantics and delivery
+
+Native and Segment records pass through the same historical acceptance rules as PostHog events. They require stable producer IDs and original timestamps. Explicit historical identity evidence cannot replace live-owned profiles or conflicting links. Incremental trait updates are not replayed as current state. PostHog persons snapshots use their separate ownership and version checks. [PostHog row semantics](posthog-import-format.md)
+
+Success means durable acceptance. `get-import` includes `delivery.enabled`, `delivery.pending`, `delivery.quarantined`, and `delivery.ready`. Pending is bounded by a stored project acceptance cursor, so continuous later ingestion does not keep an import waiting forever. It includes earlier undelivered work and quarantine. List summaries omit this detailed delivery report.
+
+The configured analytical store determines where imported data is written: local DuckLake files, [analytical S3](ducklake-s3.md), or the optional ClickHouse backend. Imports do not enqueue webhooks or enter automatic receipt-window S3 pipelines.

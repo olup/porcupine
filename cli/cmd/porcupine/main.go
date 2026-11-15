@@ -29,6 +29,7 @@ func newApp() *cli.Command {
 		Flags: []cli.Flag{&cli.StringFlag{Name: "url", Usage: "Instance origin", Sources: cli.EnvVars("PORCUPINE_URL"), Value: "http://127.0.0.1:8080"}},
 		Commands: []*cli.Command{
 			restoreCommand(),
+			importCommand(),
 			{Name: "login", Usage: "Authorize this CLI in your browser", Flags: []cli.Flag{&cli.BoolFlag{Name: "admin", Usage: "Request administrator access"}}, Action: func(ctx context.Context, c *cli.Command) error {
 				origin, err := instanceOrigin(c)
 				if err != nil {
@@ -51,7 +52,10 @@ func instanceOrigin(c *cli.Command) (string, error) {
 	if c.NArg() != 0 {
 		return "", fmt.Errorf("unexpected positional arguments, see %s --help", c.Name)
 	}
-	raw := c.Root().String("url")
+	return parseInstanceOrigin(c.Root().String("url"))
+}
+
+func parseInstanceOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.EscapedPath() != "" && u.EscapedPath() != "/" || strings.ContainsAny(raw, "?#") {
 		return "", fmt.Errorf("--url requires an instance origin such as https://analytics.example.com")

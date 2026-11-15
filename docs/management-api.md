@@ -4,7 +4,7 @@ This reference lists HTTP operations, required permissions, and response codes. 
 
 The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
 
-Development builds add `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native producer fields and labels the historical schema as a draft. [Native event contract](native-event-contract.md)
+Development builds add `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native live and historical producer fields and server-managed values. [Native event contract](native-event-contract.md)
 
 Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
 
@@ -174,9 +174,9 @@ replacement corrections, deletion tombstones, revision checks, idempotency, and
 mutation status. A `202` confirms durable acceptance, not analytical visibility.
 Storage tiering is deployment-only and has no management endpoint.
 
-## Historical PostHog imports
+## Historical imports
 
-The [import reference](posthog-import.md) covers manifest creation, binary chunk upload, status, resume, cancellation and import permissions. These operations use the API audience.
+The [import guide](imports.md) covers one-command native, PostHog, and Segment imports. The [HTTP protocol](posthog-import.md) covers manifest creation, binary chunk upload, status, resume, cancellation and import permissions. These operations use the API audience.
 
 ## Delivery pipeline management
 

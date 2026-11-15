@@ -25,7 +25,7 @@ nav:
       - PostHog SDKs: compatibility.md
       - Native and Segment: native-and-segment-ingestion.md
       - Users and sessions: data-and-identity.md
-      - Import from PostHog: posthog-import.md
+      - Import history: imports.md
   - Analyze and deliver:
       - Query your events: query-events.md
       - Inspect an event: event-discovery.md
@@ -58,7 +58,8 @@ nav:
       - MCP tools: mcp.md
       - Machine OAuth: oauth.md
       - OIDC configuration: mcp-interactive-oauth.md
-      - Import file format: posthog-import-format.md
+      - Historical upload protocol: posthog-import.md
+      - PostHog export format: posthog-import-format.md
   - How Porcupine works:
       - Architecture: architecture.md
       - Durability and recovery: reliability.md

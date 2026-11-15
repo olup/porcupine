@@ -23,18 +23,18 @@ Large-event delivery now retries smaller native transactions when DuckDB reports
 
 Development also adds complete S3 backups to an independent destination and offline recovery through the standalone CLI. Current catalog references and copied hashes must pass before publication or retention. Recovery reconstructs new catalogs, resets access and outbound work, and preserves event IDs, identity, corrections and tombstones. See [remote backups and recovery](native-backup-recovery.md). These changes remain outside the published v0.13.0 image.
 
-Development formalizes the [native event contract](native-event-contract.md), publishes its live JSON Schema, and exposes `get-event-input-contract` through API, CLI and MCP. The historical ordinary-event schema is a draft with mandatory occurrence time and producer ID; native and Segment file imports remain unimplemented. Adapter contract tests cover identity, timestamps, large integers and retries across a shared logical source.
+Development formalizes the [native event contract](native-event-contract.md), publishes its live JSON Schema, and exposes `get-event-input-contract` through API, CLI and MCP. The historical message schema requires occurrence time and producer ID. Native, PostHog, and Segment files now use a shared resumable import engine and one standalone CLI command, with gzip streaming and an analytical delivery check. Adapter contract tests cover identity, timestamps, large integers and retries across a shared logical source.
 
 ## Next work, in order
 
-1. **Simpler historical imports.** One resumable file-or-directory command for native, PostHog and Segment formats, preserving occurrence times and retry identity. Show validation, upload, acceptance and actual analytical availability without requiring a custom Python script.
+1. Validate these unreleased changes in the next release, including real migration files and recovery drills. The one-command historical import path is implemented in development builds.
 
 Before this release, the agreed sequence was analytical S3, release publication, large batches, then backup follow-ups. S3 and publication are the first milestones of that sequence; later items remain development work until released.
 
 ## Other planned improvements
 
-- Shared import processing with format-specific adapters, explicit timestamp requirements and original identity/profile semantics. Keep imported history from triggering live destinations by default.
-- Finalize native historical identity-evidence and profile-snapshot encodings against the [event contract](native-event-contract.md). Whether additional official SDK connectors or a plugin framework are useful remains an open question.
+- Expand historical adapter coverage from real-world export variants while preserving the common acceptance rules.
+- Define a separate native historical person-snapshot encoding against the [event contract](native-event-contract.md). Whether additional official SDK connectors or a plugin framework are useful remains an open question.
 - Scheduled SQL results delivered to webhooks, with optional alert conditions, cooldowns and repeat suppression. Reuse durable runs and destination credentials.
 - Operational metrics and measured hosting profiles. Add an external queue or multiple writers only when a deployment need justifies the shared state and failure-model changes.
 

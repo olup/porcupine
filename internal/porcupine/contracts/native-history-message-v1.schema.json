@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://olup.github.io/porcupine/schemas/native-history-message-v1.schema.json",
+  "title": "Porcupine historical message v1",
+  "description": "One native JSONL historical message. An original timestamp and stable producer ID are required. Identify messages provide explicit historical identity evidence; set and set_once are never replayed as current traits. Person snapshots use a separate PostHog persons file format.",
+  "allOf": [
+    {
+      "$ref": "https://olup.github.io/porcupine/schemas/native-message-v1.schema.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "message_id",
+        "timestamp"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "track",
+            "pageview",
+            "identify"
+          ]
+        }
+      }
+    }
+  ]
+}

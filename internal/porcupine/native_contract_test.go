@@ -52,7 +52,7 @@ func contractExample(t *testing.T, adapter string) []byte {
 
 func TestNativeContractSchemasAndExamples(t *testing.T) {
 	live := resolveNativeContract(t, "native-message-v1.schema.json")
-	history := resolveNativeContract(t, "native-history-event-v1.draft.schema.json")
+	history := resolveNativeContract(t, "native-history-message-v1.schema.json")
 	var examples []map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(contractExample(t, "native")))
 	decoder.UseNumber()
@@ -64,8 +64,8 @@ func TestNativeContractSchemasAndExamples(t *testing.T) {
 			t.Fatalf("example violates live contract: %v", err)
 		}
 		err := history.Validate(message)
-		if (message["type"] == "identify") != (err != nil) {
-			t.Fatalf("ordinary history draft accepted identity or rejected event: %v", err)
+		if err != nil {
+			t.Fatalf("historical schema rejected a message: %v", err)
 		}
 	}
 	for _, raw := range []string{
@@ -105,7 +105,7 @@ func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
 	route := "/api/v1/projects/" + a + "/input-contract"
 	body := request(t, s, "GET", route, reader, "", 200)
-	if body["version"] != "1" || body["native_historical_import_available"] != false || body["historical_schema_status"] != "draft" || body["live_endpoint"] != "/ingest/v1/events" {
+	if body["version"] != "1" || body["native_historical_import_available"] != true || body["historical_schema_status"] != "stable" || body["live_endpoint"] != "/ingest/v1/events" {
 		t.Fatalf("misleading contract: %v", body)
 	}
 	live, _ := nativeContractSchema("native-message-v1.schema.json")
