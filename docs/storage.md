@@ -32,4 +32,4 @@ Keep private deployment configuration, signing and encryption keys, and the matc
 
 ## Earlier analytical backends
 
-The current development branch supports DuckDB/DuckLake only. It does not automatically convert an older external-database deployment or its SQL. Preserve an older deployment and its backups until you have exported and imported the required history into a fresh native instance. The historical implementation is retained on `reference/clickhouse-before-ducklake`; its old operator settings are not supported by the native server.
+Version v0.14.0 supports DuckDB/DuckLake only. It does not automatically convert an older external-database deployment or its SQL. Preserve an older deployment and its backups until you have exported and imported the required history into a fresh native instance. The historical implementation is retained on `reference/clickhouse-before-ducklake`; its old operator settings are not supported by the native server.

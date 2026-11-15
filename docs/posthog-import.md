@@ -1,6 +1,6 @@
 # Historical upload protocol
 
-For file and directory imports, use the [one-command CLI guide](imports.md). This reference describes the HTTP transport underneath it. Development builds accept native, PostHog, and Segment JSONL. Published v0.13.0 supports the PostHog format and uses the older source-specific CLI operation names.
+For file and directory imports, use the [one-command CLI guide](imports.md). This reference describes the HTTP transport underneath it. Version v0.14.0 accepts native, PostHog, and Segment JSONL. Earlier releases support only PostHog imports and use source-specific CLI operation names.
 
 ## Manifest
 

@@ -1,6 +1,6 @@
 # Import historical events
 
-This command is available in development builds after v0.13.0. Build a matching server and CLI from the checkout; the published v0.13.0 CLI does not have `porcupine import`.
+Available in v0.14.0 and later. Install matching released server and CLI versions before importing.
 
 ## Import a file or directory
 

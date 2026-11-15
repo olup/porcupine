@@ -43,7 +43,7 @@ nav:
       - Check instance status: instance-status.md
       - Clean up DuckLake history: ducklake-cleanup.md
       - Schedule native backups: native-backups.md
-      - Remote backups and restore, unreleased: native-backup-recovery.md
+      - Remote backups and restore: native-backup-recovery.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
       - Storage options: storage.md
@@ -62,13 +62,13 @@ nav:
       - PostHog export format: posthog-import-format.md
   - How Porcupine works:
       - Architecture: architecture.md
-      - Native ownership boundaries, unreleased: native-only-architecture.md
+      - Native ownership boundaries: native-only-architecture.md
       - Durability and recovery: reliability.md
       - Deduplication: receipts.md
       - Export internals: export-design.md
       - SDK compatibility tests: sdk-compatibility-tests.md
       - Load testing: load-testing.md
-      - Large-event delivery, unreleased: ducklake-large-batches.md
+      - Large-event delivery: ducklake-large-batches.md
       - Roadmap: roadmap.md
       - Publish a release: releasing.md
   - Historical measurements:

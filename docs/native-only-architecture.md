@@ -1,6 +1,6 @@
 # Native architecture boundaries
 
-This design records the transition after historical import PR #40. It changes local code and tests; it does not release or deploy a new version.
+This design records the native-only runtime and transaction boundaries released in v0.14.0 after historical import PR #40.
 
 ## What changes
 
