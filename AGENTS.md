@@ -6,10 +6,10 @@ Agents connecting to a running instance should start with the
 [agent guide](https://olup.github.io/porcupine/llms.txt).
 
 - Use Go and Git. The default server embeds DuckDB/DuckLake using the official Go driver and requires CGO. Keep the standalone CLI CGO-free and its dependencies small.
-- Native server builds use the `ducklake` build tag. `make build-clickhouse` retains an explicit CGO-free ClickHouse server build; the pre-migration implementation is preserved on `reference/clickhouse-before-ducklake`.
+- DuckDB/DuckLake is the only analytical runtime. Server builds always require CGO; no backend selector or ClickHouse fallback remains. Historical comparisons are preserved on `reference/clickhouse-before-ducklake`.
 - Register management operations with Huma. Set the operation ID and authorization
   metadata so HTTP and MCP share their contract. After an API change, run
-  `make cli-generate` and commit the generated standalone CLI catalog.
+  `make cli-generate`; it regenerates the offline OpenAPI snapshot and standalone CLI catalog. Commit both generated artifacts. The snapshot is never an authorization registry.
 - Keep instance administration separate from project-scoped event permissions.
 - Resolve project scope from credentials, never trust an ingestion payload's project ID.
 - Preserve durable acceptance: acknowledge only after the bounded SQLite queue commits.

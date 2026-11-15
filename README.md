@@ -70,8 +70,8 @@ Development builds add `porcupine import --project PROJECT_ID --format native FI
 ```sh
 make check              # Go tests, vet, formatting and generated CLI catalog
 make ducklake-test      # native storage, queries and lifecycle tests
-make integration        # optional ClickHouse backend
-make integration-s3     # ClickHouse and local S3-compatible storage
+make integration        # native smoke, S3 and offline restore drills
+make integration-s3     # local HTTP/TLS S3-compatible fixtures
 make compat-install
 make compat             # pinned PostHog SDKs
 ```

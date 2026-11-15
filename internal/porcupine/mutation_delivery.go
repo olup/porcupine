@@ -12,7 +12,7 @@ import (
 func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 	s.catalogMu.RLock()
 	defer s.catalogMu.RUnlock()
-	if s.ch == nil && s.lake == nil {
+	if s.lake == nil {
 		return false, errors.New("analytical delivery is disabled")
 	}
 	ctx, release, err := s.projectionContext(ctx)

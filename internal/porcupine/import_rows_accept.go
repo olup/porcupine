@@ -26,22 +26,6 @@ func (s *Service) initializeImportRows(ctx context.Context) error {
 	}
 	return err
 }
-func (s *Service) prepareImportRows(ctx context.Context, project string, rows []ImportRow) (*receiptLookup, error) {
-	events := make([]Event, 0, len(rows))
-	for i := range rows {
-		rows[i].Event.ProjectID = project
-		rows[i].Event.Imported = true
-		events = append(events, rows[i].Event)
-	}
-	lookup, err := s.prepareReceiptLookup(ctx, project, events)
-	if err != nil {
-		return nil, err
-	}
-	for i := range rows {
-		rows[i].receiptKnown = lookup.known[rows[i].Event.UUID]
-	}
-	return lookup, nil
-}
 
 type importedPersonState struct {
 	sourceID                      string
@@ -101,10 +85,10 @@ func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p Impor
 	return err
 }
 
-// The upload owner validates its prepared receipt lookup and checkpoints the
-// source file cursor in the very same transaction as this row acceptance.
-// No ClickHouse/network work or outbound destination enqueueing occurs here.
-func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project string, row ImportRow) (ImportRowResult, error) {
+// The upload owner checkpoints the source file cursor in the same
+// transaction as local receipt checks and historical row acceptance.
+// No network work or outbound destination enqueueing occurs here.
+func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row ImportRow) (ImportRowResult, error) {
 	var result ImportRowResult
 	if row.Kind != "events" && row.Kind != "persons" {
 		return result, errImportRow
@@ -120,7 +104,7 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 	if err != nil {
 		return result, err
 	}
-	if duplicate || row.receiptKnown {
+	if duplicate {
 		return ImportRowResult{Duplicates: 1}, nil
 	}
 	var personState importedPersonState
@@ -165,10 +149,10 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 		event.Properties = properties
 		event.Timestamp = p.Timestamp.UTC().Format(time.RFC3339Nano)
 		if p.Timestamp.IsZero() {
-			event.Timestamp = s.clock().UTC().Format(time.RFC3339Nano)
+			event.Timestamp = rules.clock().UTC().Format(time.RFC3339Nano)
 		}
 	}
-	event.ReceivedAt = s.clock().UTC().Format(time.RFC3339Nano)
+	event.ReceivedAt = rules.clock().UTC().Format(time.RFC3339Nano)
 	event = eventWithMetadata(event)
 	// Imported control arguments cannot be replayed as live incremental updates.
 	// Persons snapshots hydrate profiles separately with explicit version guards.
@@ -182,10 +166,10 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 	if err = tx.QueryRowContext(ctx, `SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
 		return result, err
 	}
-	if pending >= int64(s.queueMax) || queueEventBytes(event) > s.queueMaxBytes-pendingBytes {
+	if pending >= int64(rules.queueMax) || queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
-	inserted, err := tx.ExecContext(ctx, `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol,ingestion_metadata,is_imported) VALUES(?,?,?,?,?,?,?,1,?,1)`, project, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event))
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported) VALUES(?,?,?,?,?,?,?,?,1)`, project, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event))
 	if err != nil {
 		return result, err
 	}
@@ -276,7 +260,7 @@ func (s *Service) acceptImportRowTx(ctx context.Context, tx *sql.Tx, project str
 			return result, err
 		}
 	}
-	if queueEventBytes(event) > s.queueMaxBytes-pendingBytes {
+	if queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
 	result.Accepted = 1

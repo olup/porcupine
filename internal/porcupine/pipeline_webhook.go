@@ -69,17 +69,18 @@ func webhookMatches(spec WebhookPipelineSpec, event string) bool {
 	return false
 }
 
-func (s *Service) enqueueWebhook(ctx context.Context, tx *sql.Tx, event Event) error {
-	return s.enqueueWebhooks(ctx, tx, []Event{event})
+// webhookAcceptance joins the producer's transaction without owning the journal
+// connection, the destination worker or the rest of the application.
+type webhookAcceptance struct {
+	config *PipelineConfig
+	rules  *eventRules
 }
-func (s *Service) enqueueWebhooks(ctx context.Context, tx *sql.Tx, events []Event) error {
+
+func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []Event) error {
 	if len(events) == 0 {
 		return nil
 	}
 	projectID := events[0].ProjectID
-	if s.pipelines == nil {
-		return nil
-	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,config FROM pipelines WHERE project_id=? AND kind='webhook' AND state='active' ORDER BY id`, projectID)
 	if err != nil {
 		return err
@@ -118,7 +119,7 @@ func (s *Service) enqueueWebhooks(ctx context.Context, tx *sql.Tx, events []Even
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	cfg := s.pipelines.config
+	cfg := *p.config
 	for _, d := range destinations {
 		matching := make([]Event, 0, len(events))
 		for _, event := range events {
@@ -129,7 +130,7 @@ func (s *Service) enqueueWebhooks(ctx context.Context, tx *sql.Tx, events []Even
 				matching = append(matching, event)
 			}
 		}
-		count, delta, err := enqueueWebhookDestinationGroup(ctx, tx, matching, d.id, d.spec, s.clock().UnixMilli(), globalCount, globalBytes, projectCount, projectBytes, cfg)
+		count, delta, err := enqueueWebhookDestinationGroup(ctx, tx, matching, d.id, d.spec, p.rules.clock().UnixMilli(), globalCount, globalBytes, projectCount, projectBytes, cfg)
 		if err != nil {
 			return err
 		}

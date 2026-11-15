@@ -117,7 +117,9 @@ func TestClosedWindowWaitsForEarlierProjectAdmissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{pipelines: rt, ch: &clickHouse{}, clock: func() time.Time { return time.UnixMilli(59999) }}
+	s := duckLakeJourneyService(t)
+	attachTestPipelines(s, rt)
+	s.clock = func() time.Time { return time.UnixMilli(59999) }
 	at, done := s.beginCaptureReceipt("p")
 	if at.UnixMilli() != 59999 || !s.pipelineWindowHasAdmissions("p", 0, 60000) {
 		t.Fatal("lost pre-boundary admission")

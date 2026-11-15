@@ -1,55 +1,16 @@
-# Online backup with Docker Compose
+# Configure backups with Compose
 
-This guide applies to the optional ClickHouse backend. For the default DuckLake backend, use [scheduled native backups](native-backups.md) or the [stopped-volume backup procedure](restore.md). These online tools do not create a DuckLake checkpoint.
+Keep the instance's existing proxy, sign-in, analytical storage, and release overlays. Add one backup overlay for the destination you need.
 
-The optional `compose.backup.yaml` overlay configures a named ClickHouse backup
-disk and an on-demand Python operator container. The API uses its normal data
-volume. Both the API and the operator must see the same SQLite database and lock
-files at `/data/porcupine.db` on a filesystem that supports advisory locks.
+| Destination | Overlay | Guide |
+| --- | --- | --- |
+| Private local directory, local analytical files | `compose.native-backup.yaml` | [Local backup schedule](native-backups.md#enable-a-schedule) |
+| Independent S3 bucket or prefix | `compose.native-backup-s3.yaml` | [S3 backup configuration](native-backup-recovery.md#choose-a-backup-destination) |
 
-On a Linux host, create two private directories on storage with enough room
-for a complete checkpoint. The pinned ClickHouse image writes as UID/GID 101
-and the operator runs as Porcupine's UID/GID 65532. For example:
+The S3 destination and offline restore command are development features after v0.13.0. Use a matching development server and CLI when following that guide.
 
-```sh
-export PORCUPINE_NATIVE_BACKUP_DIR=/srv/porcupine-backups/native
-export PORCUPINE_CHECKPOINT_DIR=/srv/porcupine-backups/checkpoints
-sudo install -d -m 0700 -o 101 -g 101 "$PORCUPINE_NATIVE_BACKUP_DIR"
-sudo install -d -m 0700 -o 65532 -g 65532 "$PORCUPINE_CHECKPOINT_DIR"
-```
+The local scheduler runs in the server process and writes as container UID/GID 65532. Create its private host directory with the permissions in the local backup guide. A local backup directory must be outside the live analytical root. S3 backup namespaces must be separate from live analytical storage.
 
-Keep the directories outside the active data volumes. Preserve the two directory
-settings in the deployment environment. Retain all other Compose overlays your
-installation uses. For example, a new OAuth deployment using the base and backup
-files can start with:
+A local-only backup overlay is rejected when analytical data lives on S3. It would otherwise omit remote event files. Do not substitute a copied metadata volume or a query-result export for a complete checkpoint.
 
-```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.backup.yaml up -d
-```
-
-Adding the disk changes the ClickHouse configuration. Plan the initial
-configuration rollout separately from the recurring backup job. For the example
-above, run a backup with a unique checkpoint name:
-
-```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.backup.yaml \
-  run --rm --no-deps backup backup \
-  --db /data/porcupine.db --clickhouse-url http://clickhouse:8123 \
-  --database porcupine --backup-disk backups \
-  --output "/checkpoints/$(date -u +%Y%m%dT%H%M%SZ)"
-```
-
-The same one-shot command can run from a scheduler in the Compose project directory.
-Record its exit status and alert on failure or a missing recent successful checkpoint.
-
-The ClickHouse archive lands in `PORCUPINE_NATIVE_BACKUP_DIR`. The SQLite copy
-and manifest land in `PORCUPINE_CHECKPOINT_DIR`. Keep both pieces on independent
-durable storage or copy them together off the host after the command succeeds.
-The SQLite copy contains private project and authentication state. The native
-archive contains event data. Apply appropriate encryption and access controls to both.
-
-During backup the API can accept events into SQLite within its existing queue
-budgets. ClickHouse delivery waits at the checkpoint. Size the queue for the
-expected ingestion rate and backup duration. Restore into a fresh deployment
-using the [online backup and restore procedure](online-backup.md), with both
-backup directories available and the API stopped on the restore target.
+Inspect progress with `porcupine get-instance-status` using an instance administrator credential. Keep completed backups off the source host and run an isolated [recovery drill](native-backup-recovery.md#restore-a-local-bundle) before relying on them.

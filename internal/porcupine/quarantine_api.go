@@ -10,7 +10,7 @@ import (
 type QuarantinedEvent struct {
 	EventID       string `json:"event_id" doc:"Durable event ID as a decimal string; used for retry and keyset pagination"`
 	UUID          string `json:"uuid" doc:"Original SDK event identifier"`
-	ErrorCode     int    `json:"error_code" doc:"Confirmed row-specific ClickHouse rejection code; raw error details are never returned"`
+	ErrorCode     int    `json:"error_code" doc:"Retained row-specific delivery diagnostic code; raw error details are never returned"`
 	QuarantinedAt string `json:"quarantined_at"`
 	ReceivedAt    string `json:"received_at"`
 }
@@ -37,7 +37,7 @@ type QuarantinedEventRetryInput struct {
 
 type QuarantinedEventRetry struct {
 	EventID  string `json:"event_id"`
-	Requeued bool   `json:"requeued" doc:"True when this request restored delivery eligibility; false if the retained original was already eligible. Neither value confirms ClickHouse delivery."`
+	Requeued bool   `json:"requeued" doc:"True when this request restored delivery eligibility; false if the retained original was already eligible. Neither value confirms analytical delivery."`
 }
 
 type QuarantinedEventRetryOutput struct{ Body QuarantinedEventRetry }

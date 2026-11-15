@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,20 +26,18 @@ import (
 )
 
 type Config struct {
-	DBPath          string
-	BootstrapToken  string
-	QueueMaxEvents  int
-	QueueMaxBytes   int64
-	HotReceiptLimit int64
-	AllowedOrigins  []string
-	TrustedProxies  []string
-	Clock           func() time.Time
-	ClickHouse      *ClickHouseConfig
-	DuckLake        *DuckLakeConfig
-	Pipelines       *PipelineConfig
-	Exports         *ExportConfig
-	OAuth           *OAuthConfig
-	NativeBackup    *NativeBackupConfig
+	DBPath         string
+	BootstrapToken string
+	QueueMaxEvents int
+	QueueMaxBytes  int64
+	AllowedOrigins []string
+	TrustedProxies []string
+	Clock          func() time.Time
+	DuckLake       *DuckLakeConfig
+	Pipelines      *PipelineConfig
+	Exports        *ExportConfig
+	OAuth          *OAuthConfig
+	NativeBackup   *NativeBackupConfig
 }
 
 type Service struct {
@@ -53,46 +50,33 @@ type Service struct {
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
 	db                          *sql.DB
-	queueMax                    int
-	queueMaxBytes               int64
-	hotReceiptLimit             int64
-	receiptSlots                chan struct{}
-	allowedOrigins              map[string]bool
-	trustedProxies              []netip.Prefix
-	clock                       func() time.Time
-	ch                          *clickHouse
-	lake                        lakeStore
-	lakeMemoryMB                int
-	lakeMaintenanceCancel       context.CancelFunc
-	lakeMaintenanceDone         chan struct{}
-	deliveryCancel              context.CancelFunc
-	deliveryDone                chan struct{}
-	deliveryMaxEvents           int
-	deliveryMaxBytes            int
-	queryMu                     contextMutex
-	queryReady                  map[string]bool
-	querySlots                  chan struct{}
-	captureSlots                chan struct{}
-	importSlots                 chan struct{}
-	tokenSlots                  chan struct{}
-	statusSlots                 chan struct{}
-	querySecret                 []byte
-	queryCacheEpoch             string
-	mutationMu                  sync.Mutex
-	pipelines                   *pipelineRuntime
-	batchSlot                   chan struct{}
-	exports                     *exportRuntime
-	oauth                       *oauthRuntime
-	projectionGuard             *projectionGuard
+	*eventRules
+	acceptance            *eventAcceptance
+	imports               *importManager
+	allowedOrigins        map[string]bool
+	trustedProxies        []netip.Prefix
+	lake                  lakeStore
+	lakeMemoryMB          int
+	lakeMaintenanceCancel context.CancelFunc
+	lakeMaintenanceDone   chan struct{}
+	deliveryCancel        context.CancelFunc
+	deliveryDone          chan struct{}
+	deliveryMaxEvents     int
+	deliveryMaxBytes      int
+	querySlots            chan struct{}
+	captureSlots          chan struct{}
+	importSlots           chan struct{}
+	tokenSlots            chan struct{}
+	statusSlots           chan struct{}
+	mutationMu            sync.Mutex
+	pipelines             *pipelineRuntime
+	batchSlot             chan struct{}
+	exports               *exportRuntime
+	oauth                 *oauthRuntime
+	projectionGuard       *projectionGuard
 }
 
 func Open(c Config) (*Service, error) {
-	if c.DuckLake != nil && c.ClickHouse != nil {
-		return nil, errors.New("choose one analytical store: DuckLake or ClickHouse")
-	}
-	if c.DuckLake != nil && c.HotReceiptLimit != 0 {
-		return nil, errors.New("DuckLake does not support finite receipt history")
-	}
 	if c.DuckLake != nil {
 		cleanup := *c.DuckLake
 		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
@@ -121,21 +105,10 @@ func Open(c Config) (*Service, error) {
 	if c.QueueMaxBytes == 0 {
 		c.QueueMaxBytes = DefaultQueueMaxBytes
 	}
-	if c.HotReceiptLimit < 0 {
-		return nil, errors.New("hot receipt limit must be nonnegative")
-	}
 	var oauth *oauthRuntime
 	if c.OAuth != nil {
 		var err error
 		oauth, err = normalizeOAuthConfig(*c.OAuth)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var ch *clickHouse
-	if c.ClickHouse != nil {
-		var err error
-		ch, err = newClickHouse(*c.ClickHouse)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +119,7 @@ func Open(c Config) (*Service, error) {
 	}
 	var exports *exportRuntime
 	if c.Exports != nil {
-		if ch == nil && c.DuckLake == nil {
+		if c.DuckLake == nil {
 			return nil, errors.New("exports require an analytical store")
 		}
 		ec, err := normalizeExportConfig(*c.Exports)
@@ -195,8 +168,14 @@ func Open(c Config) (*Service, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Service{db: db, backups: backups, queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, hotReceiptLimit: c.HotReceiptLimit, receiptSlots: make(chan struct{}, 2), allowedOrigins: origins, trustedProxies: proxies, clock: c.Clock,
-		ch: ch, pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, queryReady: map[string]bool{}, querySlots: make(chan struct{}, 2), queryCacheEpoch: newID()}
+	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock}, allowedOrigins: origins, trustedProxies: proxies,
+		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, querySlots: make(chan struct{}, 2)}
+	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
+	if pipelines != nil {
+		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
+		s.acceptance.enqueueWebhooks = webhooks.Enqueue
+	}
+	s.imports = &importManager{db: db, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
 	s.deliveryMaxBytes = 4 << 20
@@ -218,27 +197,7 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if ch != nil {
-		ch.projectionGuard = s.projectionGuard
-	}
-	if c.DuckLake != nil {
-		s.lake, err = newDuckLake(*c.DuckLake)
-		if err != nil {
-			return fail(err)
-		}
-		s.lakeS3Storage = c.DuckLake.S3 != nil
-		if s.lakeS3Storage {
-			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
-			if s.lakeS3RequestTimeoutSeconds == 0 {
-				s.lakeS3RequestTimeoutSeconds = 5
-			}
-		}
-		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
-		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = defaultDuckLakeMemoryMB
-		}
-		s.deliveryMaxEvents = 1000
-	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
 CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
 CREATE TABLE IF NOT EXISTS access_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, permissions TEXT NOT NULL, projects TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
@@ -302,15 +261,15 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 		tx.Rollback()
 		return fail(err)
 	}
-	var lakeBound, clickHouseBound bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('query_master_key','projection_table_uuid'))`).Scan(&lakeBound, &clickHouseBound); err != nil {
+	var lakeBound, foreignBackendBound bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('query_master_key','projection_table_uuid'))`).Scan(&lakeBound, &foreignBackendBound); err != nil {
 		return txFail(err)
 	}
 	if lakeBound && c.DuckLake == nil {
 		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))
 	}
-	if clickHouseBound && c.DuckLake != nil {
-		return txFail(errors.New("this SQLite database is bound to ClickHouse; automatic migration is not supported"))
+	if foreignBackendBound {
+		return txFail(errors.New("this acceptance database belongs to an unsupported analytical backend; automatic migration is not supported"))
 	}
 	var initialized string
 	err = tx.QueryRow(`SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
@@ -326,26 +285,27 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err != nil {
 		return txFail(err)
 	}
-	if ch != nil {
-		var encoded string
-		err = tx.QueryRow(`SELECT value FROM metadata WHERE key='query_master_key'`).Scan(&encoded)
-		if errors.Is(err, sql.ErrNoRows) {
-			s.querySecret = make([]byte, 32)
-			if _, err = rand.Read(s.querySecret); err == nil {
-				_, err = tx.Exec(`INSERT INTO metadata(key,value) VALUES('query_master_key',?)`, hex.EncodeToString(s.querySecret))
-			}
-		} else if err == nil {
-			s.querySecret, err = hex.DecodeString(encoded)
-			if err == nil && len(s.querySecret) != 32 {
-				err = errors.New("invalid query master key")
-			}
-		}
-		if err != nil {
-			return txFail(err)
-		}
-	}
+
 	if err = tx.Commit(); err != nil {
 		return txFail(err)
+	}
+	if c.DuckLake != nil {
+		s.lake, err = newDuckLake(*c.DuckLake)
+		if err != nil {
+			return fail(err)
+		}
+		s.lakeS3Storage = c.DuckLake.S3 != nil
+		if s.lakeS3Storage {
+			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
+			if s.lakeS3RequestTimeoutSeconds == 0 {
+				s.lakeS3RequestTimeoutSeconds = 5
+			}
+		}
+		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
+		if s.lakeMemoryMB == 0 {
+			s.lakeMemoryMB = defaultDuckLakeMemoryMB
+		}
+		s.deliveryMaxEvents = 1000
 	}
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
 		return fail(err)
@@ -367,7 +327,7 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	}
 	s.startDeletionRecovery()
 	s.startPipelines()
-	if ch != nil || s.lake != nil {
+	if s.lake != nil {
 		s.startDelivery()
 	}
 	if s.lake != nil {
@@ -400,9 +360,6 @@ func (s *Service) Close() error {
 	if s.deliveryCancel != nil {
 		s.deliveryCancel()
 		<-s.deliveryDone
-	}
-	if s.ch != nil {
-		s.ch.client.CloseIdleConnections()
 	}
 	var lakeErr error
 	if s.lake != nil {
@@ -737,250 +694,32 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	receiptTime, releaseReceiptTime := s.beginCaptureReceipt(projectID)
 	defer releaseReceiptTime()
-	received := receiptTime.Format(time.RFC3339Nano)
-	events := make([]Event, 0, len(batch))
-	cookieless := false
-	for _, e := range batch {
-		if e.DistinctID == "" && e.ingestion == nil {
-			if value, ok := e.Properties["distinct_id"].(string); ok {
-				e.DistinctID = value
-			}
-		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
-			cookieless = true
-		}
-		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
-			problem(w, 400, "event and distinct_id are required and must fit limits")
-			return
-		}
-		if strings.HasPrefix(e.Event, "$") && !isIdentityControl(e.Event) && e.Event != "$pageview" && e.Event != "$pageleave" && e.Event != "$autocapture" && e.Event != "$screen" && e.Event != "$exception" {
-			problem(w, 400, "unsupported reserved control event")
-			return
-		}
-		if e.UUID == "" && e.ingestion == nil {
-			e.UUID = newID()
-		}
-		if e.ingestion == nil && len(e.UUID) > 128 {
-			problem(w, 400, "uuid exceeds 128 characters")
-			return
-		}
-		if e.Timestamp == "" {
-			e.Timestamp = received
-		} else {
-			t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
-			if err != nil {
-				problem(w, 400, "timestamp must be RFC3339")
-				return
-			}
-			e.Timestamp = t.UTC().Format(time.RFC3339Nano)
-		}
-		if e.Properties == nil {
-			e.Properties = map[string]any{}
-		}
-		if isIdentityControl(e.Event) {
-			for key, raw := range map[string]json.RawMessage{"$set": e.Set, "$set_once": e.SetOnce} {
-				if len(raw) > 0 {
-					var value any
-					if err := json.Unmarshal(raw, &value); err != nil {
-						problem(w, 400, "invalid identity properties")
-						return
-					}
-					e.Properties[key] = value
-				}
-			}
-		}
-		if e.ingestion == nil {
-			delete(e.Properties, "token")
-			delete(e.Properties, "cookieless")
-			delete(e.Properties, "identity_day")
-		}
-		props, err := json.Marshal(e.Properties)
-		if err != nil {
-			problem(w, 400, "invalid properties")
-			return
-		}
-		prepared := Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
-		metadata := e.ingestion
-		if metadata == nil && a.SourceID != "" {
-			enriched := eventWithMetadata(prepared)
-			metadata = &ingestionMetadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
-		}
-		if metadata != nil {
-			if err := prepareIngestionMetadata(&prepared, metadata, a.SourceID); err != nil {
-				problem(w, 400, err.Error())
-				return
-			}
-		}
-		events = append(events, prepared)
+	prepared, err := prepareLiveBatch(projectID, a.SourceID, batch, receiptTime)
+	if err != nil {
+		problem(w, 400, err.Error())
+		return
 	}
-	var clientIP netip.Addr
-	if cookieless {
-		clientIP, err = s.clientIP(r)
+	peer := ingestionPeer{userAgent: r.UserAgent()}
+	if prepared.cookieless {
+		peer.address, err = s.clientIP(r)
 		if err != nil {
 			problem(w, 400, "invalid cookieless client address")
 			return
 		}
 	}
-	lookup, err := s.prepareReceiptLookup(r.Context(), projectID, events)
+	result, err := s.acceptance.Accept(r.Context(), prepared, peer, nativeResponse)
 	if err != nil {
-		w.Header().Set("Retry-After", "1")
-		problem(w, 503, "receipt history unavailable")
-		return
-	}
-	defer s.releaseReceiptLookup(lookup)
-	tx, err := s.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		problem(w, 503, "storage unavailable")
-		return
-	}
-	defer tx.Rollback()
-	// Acquire SQLite's write lock before checking capacity so concurrent captures cannot overfill it.
-	if _, err = tx.Exec(`UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		problem(w, 503, "storage unavailable")
-		return
-	}
-	if err = s.validateReceiptLookup(r.Context(), tx, lookup); err != nil {
-		w.Header().Set("Retry-After", "1")
-		problem(w, 503, "receipt history unavailable")
-		return
-	}
-	var receiptCount int64
-	if s.hotReceiptLimit > 0 {
-		if err = tx.QueryRow(`SELECT count(*) FROM event_receipts`).Scan(&receiptCount); err != nil {
-			problem(w, 503, "storage unavailable")
-			return
-		}
-	}
-	var pending, pendingBytes int64
-	if err = tx.QueryRow(`SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
-		problem(w, 503, "storage unavailable")
-		return
-	}
-	var cookielessID string
-	var day string
-	if cookieless {
-		// Choose the identity day under the SQLite write lock so delayed requests
-		// cannot recreate an expired key after another request rotates it.
-		day = s.clock().UTC().Format("2006-01-02")
-		secret, err := dailyCookielessKey(tx, day)
-		if err != nil {
-			problem(w, 503, "storage unavailable")
-			return
-		}
-		cookielessID = cookielessDistinctID(secret, projectID, clientIP, r.UserAgent())
-	}
-	accepted, duplicates, identityIgnored := 0, 0, 0
-	var receipts []ingestionReceipt
-	var acceptedBytes int64
-	var webhookEvents []Event
-	for _, e := range events {
-		exists, lookupErr := localReceipt(r.Context(), tx, projectID, e.UUID)
-		if lookupErr != nil {
-			problem(w, 503, "storage unavailable")
-			return
-		}
-		if exists || lookup.known[e.UUID] {
-			if nativeResponse {
-				id, idErr := localReceiptEventID(r.Context(), tx, projectID, e.UUID)
-				if idErr != nil {
-					problem(w, 503, "receipt event ID unavailable")
-					return
-				}
-				if id == 0 {
-					id = lookup.ids[e.UUID]
-				}
-				if id <= 0 {
-					problem(w, 503, "receipt event ID unavailable")
-					return
-				}
-				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(id, 10), UUID: e.UUID, Duplicate: true})
-			}
-			duplicates++
-			continue
-		}
-		if s.hotReceiptLimit > 0 && receiptCount > s.hotReceiptLimit {
+		var failure *acceptanceFailure
+		if errors.As(err, &failure) && failure.retry {
 			w.Header().Set("Retry-After", "1")
-			problem(w, 503, "receipt budget reconciliation required")
-			return
 		}
-		if pending+int64(accepted) >= int64(s.queueMax) {
-			w.Header().Set("Retry-After", "1")
-			problem(w, 503, "queue is full")
-			return
-		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
-			e.DistinctID = cookielessID
-			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
-			if e.SourceID != "" {
-				e.Context = scrubIngestionContext(e.Context)
-			}
-		}
-		identityInput := e
-		if isIdentityControl(e.Event) {
-			if e.SourceID != "" {
-				e.Context = json.RawMessage(`{}`)
-				identityInput.Context = e.Context
-			}
-			// Input IDs and trait operations remain in memory only. The queue stores
-			// the canonical snapshot after validation, without redundant raw inputs.
-			e.DistinctID, e.Properties = "", json.RawMessage(`{}`)
-		}
-		size := queueEventBytes(e)
-		if size > s.queueMaxBytes-pendingBytes-acceptedBytes {
-			w.Header().Set("Retry-After", "1")
-			problem(w, 503, "queue is full")
-			return
-		}
-		inserted, err := tx.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,capture_protocol,ingestion_metadata) VALUES(?,?,?,?,?,?,?,1,?)`, e.ProjectID, e.UUID, e.Event, e.DistinctID, string(e.Properties), e.Timestamp, e.ReceivedAt, encodeIngestionMetadata(e))
-		if err != nil {
-			problem(w, 503, "storage unavailable")
-			return
-		}
-		e.ID, err = inserted.LastInsertId()
-		if err != nil {
-			problem(w, 503, "storage unavailable")
-			return
-		}
-		if isIdentityControl(e.Event) {
-			identityInput.ID = e.ID
-			ignored, identityErr := s.applyIdentityControl(r.Context(), tx, &identityInput)
-			e = identityInput
-			if identityErr != nil {
-				problem(w, 503, "identity storage unavailable")
-				return
-			}
-			if ignored {
-				identityIgnored++
-			}
-			size = queueEventBytes(e)
-			if size > s.queueMaxBytes-pendingBytes-acceptedBytes {
-				w.Header().Set("Retry-After", "1")
-				problem(w, 503, "queue is full")
-				return
-			}
-		}
-		if s.pipelines != nil && !isIdentityControl(e.Event) {
-			webhookEvents = append(webhookEvents, e)
-		}
-		if nativeResponse {
-			receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(e.ID, 10), UUID: e.UUID})
-		}
-		accepted++
-		acceptedBytes += size
-	}
-	if err = s.enqueueWebhooks(r.Context(), tx, webhookEvents); err != nil {
-		w.Header().Set("Retry-After", "1")
-		problem(w, 503, "webhook queue unavailable")
-		return
-	}
-	if err = tx.Commit(); err != nil {
-		problem(w, 503, "storage unavailable")
+		problem(w, 503, err.Error())
 		return
 	}
 	s.wakeWebhook()
-	response := map[string]any{"status": 1, "accepted": accepted, "duplicates": duplicates, "identity_ignored": identityIgnored}
+	response := map[string]any{"status": 1, "accepted": result.accepted, "duplicates": result.duplicates, "identity_ignored": result.identityIgnored}
 	if nativeResponse {
-		response["receipts"] = receipts
+		response["receipts"] = result.receipts
 	}
 	write(w, 200, response)
 }

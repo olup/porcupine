@@ -10,8 +10,8 @@ import (
 )
 
 // Lifetime service locks exclude an offline restore. Shared projection locks
-// cover ClickHouse writes and their SQLite acknowledgment as one checkpoint unit.
-// The operator's Python tool takes the same projection file's exclusive flock.
+// cover native analytical writes and their SQLite acknowledgment as one checkpoint
+// unit. Native backups take the same projection file's exclusive lock.
 type projectionGuard struct {
 	path   string
 	writer *os.File
@@ -127,45 +127,5 @@ func (s *Service) initializeBackupGuard(ctx context.Context) error {
 }
 
 func (s *Service) initializeDelivery(ctx context.Context) error {
-	if s.lake != nil {
-		return s.initializeLakeSource(ctx)
-	}
-	if s.ch.projectionGuard == nil {
-		return s.ch.initialize(ctx)
-	}
-	ctx, release, err := s.projectionContext(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	if err = s.ch.initialize(ctx); err != nil {
-		return err
-	}
-	tables, err := s.ch.migrationTables(ctx)
-	if err != nil || tables[eventTable] == "" {
-		return errors.New("cannot attest the online backup projection source")
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return err
-	}
-	var oldUUID string
-	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='online_backup_source_uuid'`).Scan(&oldUUID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if oldUUID != "" && oldUUID != tables[eventTable] {
-		return errors.New("projection source changed; use a verified operator restore")
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES
-('online_backup_source_uuid',?),('online_backup_source_database',?),('online_backup_source_config',?)
-ON CONFLICT(key) DO UPDATE SET value=excluded.value`, tables[eventTable], s.ch.config.Database, hash(s.ch.url.String()+"\x00"+s.ch.config.Database+"\x00"+s.ch.config.User))
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.initializeLakeSource(ctx)
 }

@@ -38,18 +38,19 @@ type ExportListInput struct {
 }
 
 type ExportLimits struct {
-	MaxConcurrentJobs       int   `json:"max_concurrent_jobs"`
-	MaxQueuedJobs           int   `json:"max_queued_jobs"`
-	MaxExecutionSeconds     int   `json:"max_execution_seconds"`
-	MaxReadBytes            int64 `json:"max_read_bytes" doc:"Physical scan byte cap. Zero means the selected engine does not enforce this cap."`
-	MaxOutputBytes          int64 `json:"max_output_bytes"`
-	FileBytes               int64 `json:"file_bytes"`
-	MaxRowBytes             int64 `json:"max_row_bytes"`
-	MemoryBytes             int64 `json:"memory_bytes" doc:"ClickHouse per-query memory limit, or DuckDB shared per-project engine budget. Neither is a process RSS limit."`
-	BandwidthBytesPerSecond int64 `json:"bandwidth_bytes_per_second"`
-	TemporaryBytes          int64 `json:"temporary_bytes" doc:"Per-query temporary-disk cap. Zero means the selected engine does not enforce this cap."`
-	QueueThreshold          int64 `json:"queue_threshold"`
-	RetentionHours          int   `json:"retention_hours"`
+	MaxConcurrentJobs       int    `json:"max_concurrent_jobs"`
+	MaxQueuedJobs           int    `json:"max_queued_jobs"`
+	MaxExecutionSeconds     int    `json:"max_execution_seconds"`
+	MaxReadBytes            int64  `json:"max_read_bytes" doc:"Physical scan byte cap; zero because native exports do not enforce one."`
+	MaxOutputBytes          int64  `json:"max_output_bytes"`
+	FileBytes               int64  `json:"file_bytes"`
+	MaxRowBytes             int64  `json:"max_row_bytes"`
+	MemoryScope             string `json:"memory_scope" doc:"per_resident_project_engine: shared engine budget, not a per-query quota or process cap."`
+	MemoryBytes             int64  `json:"memory_bytes" doc:"DuckDB shared per-resident-project engine budget. Not an export-specific or hard process RSS limit."`
+	BandwidthBytesPerSecond int64  `json:"bandwidth_bytes_per_second"`
+	TemporaryBytes          int64  `json:"temporary_bytes" doc:"Per-export temporary-disk cap; zero because native exports do not enforce one."`
+	QueueThreshold          int64  `json:"queue_threshold"`
+	RetentionHours          int    `json:"retention_hours"`
 }
 
 type ExportList struct {
@@ -111,10 +112,7 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	}
 	canonical, err := s.validateExportSQL(ctx, input.ID, input.Body.SQL, input.Body.Parameters)
 	if err != nil {
-		if s.lake != nil {
-			return nil, err
-		}
-		return nil, apiError(400, "unsupported analytics SQL")
+		return nil, err
 	}
 	format := input.Body.Format
 	if format == "" {
@@ -226,23 +224,16 @@ func (s *Service) listEventExports(ctx context.Context, input *ExportListInput) 
 	}
 	if s.exports != nil {
 		config := s.exports.config
-		result.Limits = &ExportLimits{MaxConcurrentJobs: 1, MaxQueuedJobs: exportQueueLimit(config), MaxExecutionSeconds: config.MaxExecutionSeconds, MaxReadBytes: config.MaxReadBytes, MaxOutputBytes: config.MaxOutputBytes, FileBytes: config.FileBytes, MaxRowBytes: config.MaxRowBytes, MemoryBytes: config.MemoryBytes, BandwidthBytesPerSecond: config.BandwidthBytesPerSecond, TemporaryBytes: config.TemporaryBytes, QueueThreshold: config.QueueThreshold, RetentionHours: config.RetentionHours}
-		if s.lake != nil {
-			result.Limits.MaxReadBytes, result.Limits.TemporaryBytes = 0, 0
-			result.Limits.MemoryBytes = int64(s.lakeMemoryMB) << 20
-		}
+		result.Limits = &ExportLimits{MaxConcurrentJobs: 1, MaxQueuedJobs: exportQueueLimit(config), MaxExecutionSeconds: config.MaxExecutionSeconds, MaxOutputBytes: config.MaxOutputBytes, FileBytes: config.FileBytes, MaxRowBytes: config.MaxRowBytes, MemoryScope: "per_resident_project_engine", MemoryBytes: int64(s.lakeMemoryMB) << 20, BandwidthBytesPerSecond: config.BandwidthBytesPerSecond, QueueThreshold: config.QueueThreshold, RetentionHours: config.RetentionHours}
 	}
 	return &ExportListOutput{Body: result}, nil
 }
 
 func (s *Service) validateExportSQL(ctx context.Context, project, raw string, parameters map[string]string) (string, error) {
-	if s.lake != nil {
-		return s.lake.ValidateExport(ctx, project, raw, parameters, false)
+	if s.lake == nil {
+		return "", apiError(503, "analytical storage is not configured")
 	}
-	if err := validateSQLParameters(raw, parameters); err != nil {
-		return "", err
-	}
-	return validateSQL(raw)
+	return s.lake.ValidateExport(ctx, project, raw, parameters, false)
 }
 
 func (s *Service) getEventExport(ctx context.Context, input *ExportGetInput) (*ExportJobOutput, error) {

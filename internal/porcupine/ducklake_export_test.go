@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -102,7 +100,7 @@ func TestDuckLakeExportStreamWindowsAndConnectionIsolation(t *testing.T) {
 func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExport) {
 	t.Helper()
 	s := duckLakeJourneyService(t)
-	s.lakeMemoryMB = 256
+	s.lakeMemoryMB = defaultDuckLakeMemoryMB
 	config, err := normalizeExportConfig(ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +194,7 @@ func TestDuckLakeConfiguredExportsOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if s.lake == nil || s.exports == nil || s.ch != nil {
+	if s.lake == nil || s.exports == nil {
 		t.Fatal("native exports not configured")
 	}
 }

@@ -17,8 +17,7 @@ def main():
     # Source links in raw Markdown retain their repository-relative locations.
     for relative in [
         "compat/matrix.json", "compat/profiles.mjs",
-        "deployment/clickhouse/storage.xml", "deployment/.env.s3.example",
-        "compose.yaml", "compose.oauth.yaml", "compose.s3.yaml", "compose.exports.yaml",
+        "compose.yaml", "compose.oauth.yaml", "compose.exports.yaml",
     ]:
         source = ROOT / relative
         destination = OUTPUT / relative

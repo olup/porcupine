@@ -3,9 +3,9 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,7 +29,7 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 		t.Fatal("missing check timestamp")
 	}
 	checks := result["checks"].(map[string]any)
-	if checks["sqlite"] != "ok" || checks["clickhouse"] != "not_configured" {
+	if checks["sqlite"] != "ok" || checks["ducklake"] != "not_configured" || len(checks) != 2 {
 		t.Fatalf("unexpected local checks: %+v", checks)
 	}
 	for name, value := range result["configuration"].(map[string]any) {
@@ -54,48 +54,68 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 	request(t, s, "GET", "/api/v1/status", reader, "", 401)
 }
 
-func TestInstanceStatusClickHouseChecks(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		status     int
-		want       DependencyStatus
-	}{
-		{"healthy", "1\n", 200, dependencyOK},
-		{"auth_failure", "secret upstream error", 401, dependencyUnavailable},
-		{"database_failure", "secret upstream error", 500, dependencyUnavailable},
-		{"unexpected_success_body", "<html>proxy login</html>", 200, dependencyUnavailable},
-		{"oversized_success_body", strings.Repeat("1", 129), 200, dependencyUnavailable},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, _ := io.ReadAll(r.Body)
-				if string(body) != "SELECT 1" || r.URL.Query().Get("database") != "private_database" || r.URL.Query().Get("max_execution_time") != "1" {
-					t.Error("status did not use a bounded fixed probe of the configured database")
-				}
-				if r.Header.Get("X-ClickHouse-Key") != "private-password" {
-					t.Error("ClickHouse probe was not authenticated")
-				}
-				w.WriteHeader(tc.status)
-				io.WriteString(w, tc.body)
-			}))
-			defer upstream.Close()
+func instanceStatusReaderContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, actorContextKey{}, actor{ID: "status-reader", Permissions: []string{"management:read"}, Projects: []string{"*"}})
+}
+
+func instanceStatusNativeStore(t *testing.T, s *Service) *duckLakeStore {
+	t.Helper()
+	store := openLakeStorageTest(t, filepath.Join(t.TempDir(), "private-native-archive"), 1)
+	s.lake = store
+	s.lakeMemoryMB = 128
+	return store
+}
+
+func TestInstanceStatusNativeChecks(t *testing.T) {
+	for _, state := range []string{"healthy", "closed", "missing_registry"} {
+		t.Run(state, func(t *testing.T) {
 			s := service(t, 20)
-			var err error
-			s.ch, err = newClickHouse(ClickHouseConfig{URL: upstream.URL, Database: "private_database", User: "private_user", Password: "private-password"})
+			store := instanceStatusNativeStore(t, s)
+			source, err := store.SourceID(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
-			if result["checks"].(map[string]any)["clickhouse"] != string(tc.want) {
-				t.Fatalf("unexpected ClickHouse state: %+v", result)
+			switch state {
+			case "closed":
+				if err := store.Close(); err != nil {
+					t.Fatal(err)
+				}
+			case "missing_registry":
+				filename := filepath.Join(store.root, "registry.sqlite")
+				moved := filename + ".saved"
+				if err := os.Rename(filename, moved); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if err := os.Rename(moved, filename); err != nil {
+						t.Error(err)
+					}
+				}()
 			}
-			if (result["status"] == "ok") != (tc.want == dependencyOK) {
-				t.Fatal("overall health disagrees with the dependency check")
+			result := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
+			checks := result["checks"].(map[string]any)
+			want := string(dependencyUnavailable)
+			if state == "healthy" {
+				want = string(dependencyOK)
+			}
+			if checks["sqlite"] != "ok" || checks["ducklake"] != want || len(checks) != 2 {
+				t.Fatalf("wrong native dependency state: %+v", result)
+			}
+			if (result["status"] == "ok") != (state == "healthy") {
+				t.Fatal("overall health disagrees with native check")
+			}
+			if result["configuration"].(map[string]any)["analytics"] != true {
+				t.Fatal("configured native store disappeared from configuration after a failed probe")
 			}
 			encoded, _ := json.Marshal(result)
-			for _, private := range []string{upstream.URL, "private_database", "private_user", "private-password", "secret upstream error", "proxy login"} {
+			for _, private := range []string{store.root, source, "registry.sqlite", "DuckLake is closed", "source registry changed"} {
 				if strings.Contains(string(encoded), private) {
-					t.Fatal("status disclosed upstream details")
+					t.Fatal("status disclosed private storage details")
+				}
+			}
+			if state == "missing_registry" {
+				if _, err := os.Stat(filepath.Join(store.root, "registry.sqlite")); !os.IsNotExist(err) {
+					t.Fatal("status recreated a missing source registry")
 				}
 			}
 		})
@@ -112,12 +132,12 @@ func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
 		return nil
 	}}}}
 	defer func() { s.exports, s.pipelines, s.oauth = nil, nil, nil }()
-	result, err := s.getInstanceStatus(context.Background(), &struct{}{})
+	result, err := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := result.Body.Configuration
-	if !c.QueryExports || !c.WebhookPipelines || !c.EmailSignIn || c.S3QueryPipelines || c.S3Tiering || c.OIDCSignIn || result.Body.Status != "ok" {
+	if !c.QueryExports || !c.WebhookPipelines || !c.EmailSignIn || c.S3QueryPipelines || c.Analytics || c.NativeS3Storage || c.OIDCSignIn || result.Body.Status != "ok" {
 		t.Fatalf("incorrect configuration state: %+v", result.Body)
 	}
 	if sent.Load() != 0 {
@@ -126,70 +146,84 @@ func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
 	// An uninitialized export store and destination client would fail if probed.
 	s.oauth.config.Email = nil
 	s.oauth.oidc = &interactiveOIDC{}
-	result, err = s.getInstanceStatus(context.Background(), &struct{}{})
+	result, err = s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 	if err != nil || result.Body.Configuration.EmailSignIn || !result.Body.Configuration.OIDCSignIn {
 		t.Fatal("OIDC and email configuration were conflated")
 	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "1\n") }))
-	defer upstream.Close()
-	s.ch, err = newClickHouse(ClickHouseConfig{URL: upstream.URL, StoragePolicy: "private_policy"})
-	if err != nil {
-		t.Fatal(err)
+	instanceStatusNativeStore(t, s)
+	result, err = s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
+	if err != nil || !result.Body.Configuration.Analytics || !result.Body.Configuration.S3QueryPipelines || result.Body.Configuration.NativeS3Storage {
+		t.Fatal("native analytics configuration did not enable S3 query pipelines independently of analytical object storage", err)
 	}
-	result, err = s.getInstanceStatus(context.Background(), &struct{}{})
-	if err != nil || !result.Body.Configuration.S3QueryPipelines || !result.Body.Configuration.S3Tiering {
-		t.Fatal("configured ClickHouse did not enable S3 pipeline and storage declarations")
+	if sent.Load() != 0 {
+		t.Fatal("native status check sent email")
 	}
 }
 
 func TestInstanceStatusBoundedProbesAndConcurrency(t *testing.T) {
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
-		close(entered)
-		select {
-		case <-r.Context().Done():
-		case <-release:
-		}
-	}))
-	defer upstream.Close()
-	defer close(release)
 	s := service(t, 20)
-	var err error
-	s.ch, err = newClickHouse(ClickHouseConfig{URL: upstream.URL})
-	if err != nil {
+	store := instanceStatusNativeStore(t, s)
+	if err := store.mu.Lock(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	locked := true
+	defer func() {
+		if locked {
+			store.mu.Unlock()
+		}
+	}()
 	done := make(chan *InstanceStatusOutput, 1)
 	started := time.Now()
 	go func() {
-		output, _ := s.getInstanceStatus(context.Background(), &struct{}{})
+		output, _ := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 		done <- output
 	}()
-	select {
-	case <-entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("probe did not reach ClickHouse")
+	enteredDeadline := time.Now().Add(time.Second)
+	for len(s.statusSlots) == 0 {
+		if time.Now().After(enteredDeadline) {
+			t.Fatal("status probe did not take its admission slot")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	request(t, s, "GET", "/api/v1/status", adminToken, "", 429)
 	select {
 	case result := <-done:
-		if result == nil || result.Body.Checks.ClickHouse != dependencyUnavailable || result.Body.Status != "degraded" {
-			t.Fatal("timed-out dependency did not degrade the status")
+		if result == nil || result.Body.Checks.DuckLake != dependencyUnavailable || result.Body.Checks.SQLite != dependencyOK || result.Body.Status != "degraded" {
+			t.Fatal("timed-out native source did not degrade status")
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("status probe exceeded its budget")
+		t.Fatal("native source probe exceeded its budget")
 	}
 	if time.Since(started) > 3*time.Second || len(s.statusSlots) != 0 {
-		t.Fatal("status check did not release its bounded slot")
+		t.Fatal("status did not release its bounded slot")
+	}
+	store.mu.Unlock()
+	locked = false
+	result, err := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
+	if err != nil || result.Body.Checks.DuckLake != dependencyOK || result.Body.Status != "ok" {
+		t.Fatal("cancelled probe consumed the native gate", err)
+	}
+}
+
+func TestInstanceStatusCanceledContext(t *testing.T) {
+	s := service(t, 20)
+	instanceStatusNativeStore(t, s)
+	ctx, cancel := context.WithCancel(instanceStatusReaderContext(context.Background()))
+	cancel()
+	started := time.Now()
+	result, err := s.getInstanceStatus(ctx, &struct{}{})
+	if err != nil || result.Body.Checks.SQLite != dependencyUnavailable || result.Body.Checks.DuckLake != dependencyUnavailable || result.Body.Status != "degraded" {
+		t.Fatal("cancelled context reported healthy dependencies", err)
+	}
+	if time.Since(started) > time.Second || len(s.statusSlots) != 0 {
+		t.Fatal("cancelled status check exceeded its budget or retained admission")
 	}
 }
 
 func TestInstanceStatusSQLiteFailure(t *testing.T) {
 	s := service(t, 20)
 	s.db.Close()
-	result, err := s.getInstanceStatus(context.Background(), &struct{}{})
+	result, err := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 	if err != nil || result.Body.Checks.SQLite != dependencyUnavailable || result.Body.Status != "degraded" {
 		t.Fatal("failed local storage was reported healthy")
 	}

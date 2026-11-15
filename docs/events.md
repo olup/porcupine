@@ -23,7 +23,7 @@ Use a [service key](service-keys.md) or [OAuth token](oauth.md) with the require
 
 SQL and catalog discovery read the latest projected analytical state. They can therefore return an older revision until mutation delivery completes. Delivery status adds `pending_mutations` alongside `pending` original events. No cross-database snapshot joins these states.
 
-DuckLake has no result cache in this release. On the optional ClickHouse backend, interactive SQL bypasses its result cache while any project mutation is pending. After projection is acknowledged, caching resumes with a new generation, so earlier cached revisions are not reused. `get-event` always reads accepted state without this cache. For explicit fresh reads of projected data, pass `"use_cache": false` to `query-events`. See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
+DuckLake has no result cache. SQL executes against projected state; it does not wait for pending mutations. `get-event` reads current accepted state, including pending corrections. See [delivery consistency](analytics.md#delivery-consistency-and-errors).
 
 ## Full event replacement
 
@@ -61,7 +61,7 @@ Mutations require a configured analytical backend. Disabled delivery returns `50
 
 The supplied revision must come from the current event; `"1"` is illustrative. Deletion queues a higher-revision tombstone with blank current and original payloads. It preserves project, UUID, durable event ID, original receipt metadata, and revision. If the original event is still queued, the acceptance transaction removes its SQLite payload and records a receipt atomically. A later revision-zero delivery cannot resurrect the tombstoned event.
 
-After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. DuckLake historical snapshots, old ClickHouse parts, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads. This release does not schedule DuckLake snapshot expiration or physical-file cleanup and does not promise physical erasure within 30 days. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
+After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. DuckLake historical snapshots, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads. Scheduled cleanup rewrites deleted rows, expires snapshots, and removes obsolete files under reader and backup protection. It does not promise physical erasure within 30 days. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
 
 ## Idempotency, concurrency, and audit
 

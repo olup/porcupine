@@ -3,12 +3,9 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -123,60 +120,46 @@ func TestNormalizedMetadataPersistsWithoutChangingBusinessProperties(t *testing.
 	}
 }
 
-func TestNormalizedNumericReceiptsSurviveHotColdRestartAndDeletion(t *testing.T) {
-	for _, limit := range []int64{0, 1} {
-		t.Run(strconv.FormatInt(limit, 10), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "native.db")
-			s, err := Open(Config{DBPath: path, BootstrapToken: adminToken, QueueMaxEvents: 100})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { s.Close() }()
-			projectID, token := project(t, s)
-			first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable"), normalizedTrack("native", "stable")}, 200)
-			id, uuid := receiptFrom(t, first, 0)["event_id"], receiptFrom(t, first, 0)["uuid"].(string)
-			if receiptFrom(t, first, 1)["event_id"] != id || receiptFrom(t, first, 1)["duplicate"] != true {
-				t.Fatal("same-batch duplicate changed numeric ID")
-			}
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(Config{DBPath: path})
-			if err != nil {
-				t.Fatal(err)
-			}
-			retry := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable")}, 200)
-			if receiptFrom(t, retry, 0)["event_id"] != id {
-				t.Fatal("restart changed queued event ID")
-			}
-			f := receiptHistory(t)
-			s.ch, s.hotReceiptLimit = f.c, limit
-			if err := s.flushDelivery(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			deliverReceipt(t, s, token, "evict-first")
-			retry = normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable")}, 200)
-			if receiptFrom(t, retry, 0)["event_id"] != id || receiptFrom(t, retry, 0)["duplicate"] != true {
-				t.Fatal("hot/cold numeric receipt changed accepted event ID")
-			}
-			// A pending native tombstone keeps its durable numeric ID in the permanent head.
-			fresh := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "delete-pending")}, 200)
-			freshReceipt := receiptFrom(t, fresh, 0)
-			var actorID string
-			s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
-			_, err = s.deleteEvent(mutationContext(actorID), &EventDeleteInput{ID: projectID, UUID: freshReceipt["uuid"].(string), Body: EventDeleteBody{IdempotencyKey: "delete", ExpectedRevision: "0"}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.mu.Lock()
-			f.unavailable = true
-			f.mu.Unlock()
-			deletedRetry := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "delete-pending")}, 200)
-			if receiptFrom(t, deletedRetry, 0)["event_id"] != freshReceipt["event_id"] {
-				t.Fatal("pending deletion lost numeric event ID")
-			}
-			_ = uuid
-		})
+func TestNormalizedNumericReceiptsSurviveNativeRestartAndDeletion(t *testing.T) {
+	s, config := nativeCoreService(t)
+	projectID, token := project(t, s)
+	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable"), normalizedTrack("native", "stable")}, 200)
+	id := receiptFrom(t, first, 0)["event_id"]
+	if receiptFrom(t, first, 1)["event_id"] != id || receiptFrom(t, first, 1)["duplicate"] != true {
+		t.Fatal("same-batch duplicate changed numeric ID")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	s, err = Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	stopCoreDelivery(s)
+	retry := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable")}, 200)
+	if receiptFrom(t, retry, 0)["event_id"] != id {
+		t.Fatal("restart changed queued event ID")
+	}
+	duckLakeJourneyDrain(t, s)
+	normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "later")}, 200)
+	duckLakeJourneyDrain(t, s)
+	retry = normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable")}, 200)
+	if receiptFrom(t, retry, 0)["event_id"] != id || receiptFrom(t, retry, 0)["duplicate"] != true {
+		t.Fatal("permanent numeric receipt changed accepted ID")
+	}
+	fresh := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "delete-pending")}, 200)
+	freshReceipt := receiptFrom(t, fresh, 0)
+	var actorID string
+	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
+	_, err = s.deleteEvent(mutationContext(actorID), &EventDeleteInput{ID: projectID, UUID: freshReceipt["uuid"].(string), Body: EventDeleteBody{IdempotencyKey: "delete", ExpectedRevision: "0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedRetry := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "delete-pending")}, 200)
+	if receiptFrom(t, deletedRetry, 0)["event_id"] != freshReceipt["event_id"] {
+		t.Fatal("pending deletion lost numeric ID")
 	}
 }
 
@@ -197,7 +180,7 @@ func TestNormalizedAtomicAdmissionAndActorlessMutation(t *testing.T) {
 	if eventCount(t, s) != 1 {
 		t.Fatal("bounded queue partially accepted translated batch")
 	}
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	var actorID string
 	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
 	edit := mutationEdit(projectID, uuid, "edit-actorless", "0")
@@ -246,20 +229,20 @@ func TestNormalizedControlContextNeverReachesSQLiteWALOrProjection(t *testing.T)
 			}
 		}
 	}
-	var projected bool
-	c := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Query().Get("query"), "INSERT INTO ") {
-			return
+	attachCoreLake(t, s)
+	if err := s.lake.Apply(context.Background(), duckLakeJourneyProjections(t, batch)); err != nil {
+		t.Fatal("native control projection failed", err)
+	}
+	for _, event := range batch {
+		projected, err := s.lake.Load(context.Background(), event.ProjectID, event.UUID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		projected = true
-		data, _ := io.ReadAll(r.Body)
+		raw, _ := json.Marshal(projected)
 		for _, marker := range markers {
-			if strings.Contains(string(data), marker) {
-				t.Errorf("discarded control context %q reached ClickHouse projection", marker)
+			if strings.Contains(string(raw), marker) {
+				t.Fatalf("discarded control context %q reached native projection", marker)
 			}
 		}
-	})
-	if err := c.insert(context.Background(), batch); err != nil || !projected {
-		t.Fatal("control projection failed", err)
 	}
 }

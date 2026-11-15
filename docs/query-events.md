@@ -75,7 +75,7 @@ For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJ
 
 ## Check a recently sent event
 
-DuckLake queries execute against the current delivered state. This backend does not implement a result cache; `sql.result_cache` is `false` in schema discovery. `"use_cache": false` is accepted and explicitly requests a fresh query. Optional ClickHouse deployments can use a 60-second cache. Neither mode waits for queued events to reach analytical storage.
+DuckLake queries execute against the current delivered state. This backend does not implement a result cache; `sql.result_cache` is `false` in schema discovery. `"use_cache": false` remains accepted. Queries do not wait for queued events to reach analytical storage.
 
 The response's `delivery.pending` and `delivery.pending_mutations` report work awaiting projection. After sending an event, allow that work to drain before checking its count. See [query consistency](analytics.md#delivery-consistency-and-errors) and [cache behavior](analytics.md#cached-and-fresh-queries).
 

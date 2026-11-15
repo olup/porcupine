@@ -64,7 +64,7 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 			b.Fatal(err)
 		}
 		rt.webhookClient = &http.Client{Transport: &noNetwork}
-		s.pipelines = rt
+		attachTestPipelines(s, rt)
 		spec := WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"purchase"}}
 		if mode == "unmatched" {
 			spec.DeliveryMode, spec.IncludeEvents = "event", []string{"other-event"}

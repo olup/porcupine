@@ -1,72 +1,35 @@
 # Storage
 
-## Default DuckLake storage
+Porcupine embeds DuckDB and DuckLake. SQLite holds operational state and accepted work. Each project has its own local DuckLake catalog and managed analytical data files. Run one application writer per SQLite database and DuckLake root.
 
-Porcupine embeds DuckDB and DuckLake. Each project has a local catalog and Parquet directory under the managed DuckLake root. Keep that directory and SQLite on persistent local SSD storage. No S3 account is needed.
+## Local files or S3
 
-A fresh deployment can instead keep its analytical data files on [S3](ducklake-s3.md), with catalogs and SQLite still local. This is configured before initializing the archive; it does not automatically migrate existing files or apply age-based SSD-to-S3 tiering. [S3 destination pipelines](pipelines.md) and [one-time exports](exports.md) publish result files; they are separate from the analytical store.
+Local SSD is the default. Keep SQLite, the DuckLake registry, project catalogs, and Parquet files on persistent storage. No external database or S3 account is required.
 
-DuckLake snapshots can retain older event payloads after logical edits or deletion. Porcupine schedules native rewrites, snapshot expiration and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing files scheduled for deletion. Long reads and maintenance backlogs can delay reclamation. Read the [cleanup guide](ducklake-cleanup.md) for deployment settings, progress and erasure limits. This does not promise physical erasure within 30 days. Whole-project deletion removes that project's managed analytical directory and, when configured, its exact remote prefix. Backups and external copies have their own retention rules.
+A fresh deployment can place analytical data files on [S3](ducklake-s3.md). SQLite and catalogs remain local. Queries use the same project-scoped DuckDB SQL whether the files are local or remote. S3 is selected before archive initialization; changing configuration does not migrate an existing archive or enable age-based SSD-to-S3 tiering.
 
-For local analytical files, use [scheduled native backups](native-backups.md) or a [coordinated stopped-volume backup](restore.md). The local automatic bundle is rejected for analytical S3 because it does not include remote objects. Protect the SQLite database, DuckLake registry, every project catalog, and all data files from the same recovery point.
+Analytical storage, [destination pipelines](pipelines.md), [one-time exports](exports.md), and [backup destinations](native-backup-recovery.md) are separate. A scheduled query delivered to S3 is an external copy, not the analytical archive or an instance backup.
 
-## ClickHouse hot and cold storage
+Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
-The following sections apply only to the optional ClickHouse backend. S3 tiering is a global deployment setting controlled by the operator. ClickHouse moves eligible table parts onto its native S3 disk. Query cold and hot parts with the same SQL through the API, CLI, or MCP. To send a copy to a customer, use a [destination pipeline](pipelines.md). To recover the instance, take a [paired checkpoint](online-backup.md).
+## Retention and deletion
 
-Project credentials and agents cannot inspect or change storage policy, hot duration, bucket endpoint, region, or AWS credentials through HTTP or MCP. Even instance API administration does not expose deployment storage controls.
+Live events have no automatic age limit. Edits and deletions change the current analytical state once projected. Payload-free heads preserve revision and deletion facts so a late original cannot resurrect deleted data.
 
-### Deployment settings
+DuckLake snapshots can retain old payloads. Porcupine schedules deleted-row rewrites, snapshot expiration, and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing obsolete files. Active readers, backup pins, and maintenance backlogs can delay reclamation. See [history cleanup](ducklake-cleanup.md) for settings and progress.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `PORCUPINE_CLICKHOUSE_STORAGE_POLICY` | Empty | Existing policy stays unchanged; a fresh table uses local storage |
-| `PORCUPINE_HOT_STORAGE_DAYS` | `30` when enabled | Days after original receipt before parts become eligible to move |
-| `PORCUPINE_CLICKHOUSE_COLD_VOLUME` | `cold` when enabled | Destination ClickHouse volume |
+Logical deletion does not promise physical erasure within 30 days. SQLite free pages or WAL, snapshots, S3 noncurrent versions, backups, and external copies can retain earlier payloads. Their retention policies need to match the operator's requirements.
 
-A nonempty storage policy enables policy and MOVE TTL configuration. Hot duration accepts 1 through 36,500 days. Policy and volume must be valid ClickHouse identifiers and must exist in the server's storage configuration.
+Whole-project deletion removes its SQLite state and managed analytical directory or exact S3 prefix. Cleanup is durable and retried after failures. Other projects remain separate. Existing backups and copies already delivered to customers are outside this deletion scope. [Project lifecycle](projects.md)
 
-The [Compose override](../compose.s3.yaml) selects `hot_cold`. Its mounted [ClickHouse configuration](../deployment/clickhouse/storage.xml) contains a local `default` volume and a `cold` volume backed by the native S3 disk. The existing local volume remains part of the policy so existing parts remain usable.
+## Recovery
 
-The override passes `PORCUPINE_S3_ENDPOINT`, `AWS_REGION`, and optional `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` only to ClickHouse. They are not passed to the Go process or exposed to agents. The endpoint is a full bucket-and-prefix URL. Use a distinct prefix for each ClickHouse deployment. Credentials can come from the deployment's IAM provider chain or a secret manager.
+Use [coordinated native backups](native-backup-recovery.md) for local or analytical S3 deployments. A local bundle scheduler alone is insufficient for analytical S3 because it does not include remote objects. Complete S3 backups use an independent destination and verify the copied catalog references and data inventory before publication.
 
-### Enable S3 tiering
+A local-only deployment can also use a [stopped-volume copy](restore.md). Copy the entire data volume after its single writer stops. A live copy of selected SQLite or catalog files is not a consistent recovery point. An S3 bucket listing alone is not a recovery procedure.
 
-Use an existing bucket and credentials authorized for that deployment's prefix. Bucket creation and AWS deployment are outside Porcupine. Back up both databases before changing an existing deployment.
+Keep private deployment configuration, signing and encryption keys, and the matching image version independently. Recover into isolated fresh storage and verify counts, identity, revisions, deletions, and retries before reconnecting clients.
 
-1. Keep the base deployment's `.env` with its bootstrap and ClickHouse provisioning secrets.
-2. Copy [the S3 environment example](../deployment/.env.s3.example) to a private `.env.s3` file and set the real endpoint, region, and deployment settings. Use secret-manager or IAM credentials where available.
-3. Keep the same Compose project name, data volumes, and existing overlays. For the release deployment in the [hosting guide](hosting.md), add the S3 overlay to the start command.
+## Earlier analytical backends
 
-```sh
-docker compose --env-file .env --env-file .env.s3 \
-	-f compose.yaml -f compose.clickhouse.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.s3.yaml up -d
-```
-
-For an AWS Paris bucket, the endpoint has the form `https://YOUR_BUCKET.s3.eu-west-3.amazonaws.com/UNIQUE_PREFIX/` with `AWS_REGION=eu-west-3`. The endpoint must match the bucket's actual region. No bucket is created by this command.
-
-### Movement and policy changes
-
-The MOVE TTL uses original server receipt time, not a mutable client timestamp. ClickHouse moves parts asynchronously after all rows in a part meet the TTL condition. Thirty days is an eligibility rule, not a promise that each event moves exactly on day 30. Corrections retain original receipt metadata and the same logical event identity.
-
-Initialization applies the policy and compares the current TTL with deployment configuration. An actual TTL change requests materialization for existing parts, including historical data. Repeated initialization with matching settings does not repeatedly request materialization. Moving data remains background ClickHouse work.
-
-An empty policy leaves an existing policy and TTL untouched. Removing the override or increasing hot duration does not recall cold data to local storage. Tables that already contain cold parts still need the S3 disk configuration, credentials, object data, and local disk metadata. Removing these can make historical data unavailable.
-
-Porcupine keeps event history without an age limit. Deleting an individual event writes a tombstone. An instance administrator can [delete an entire project](management-api.md#operations), which also removes that project's rows from the hot and cold table parts. Other projects sharing those parts remain queryable. Operators can keep permanent SQLite receipts or [cap the local receipt ledger](receipts.md).
-
-## Migration from the first event table
-
-The current event table is `events_v2`, using `ReplacingMergeTree(revision,is_deleted)`. The SQL table exposed to readers is still `events`. On upgrade, initialization copies the logical `FINAL` contents of the legacy table into revision-zero projections and verifies payload, identity, receipt, and original-snapshot fields.
-
-A durable `schema_state` marker records successful verification before the exact verified legacy table is dropped. A table UUID check prevents retiring a different source table. After the marker, initialization never reimports the legacy table. A missing target after completed migration fails rather than recreating an empty replacement. Migration preserves logical events; it does not wipe data as a reset procedure.
-
-Stop the old binary before upgrading. Migration requires one application writer; running an old writer against the legacy table during migration is unsupported. Keep a tested backup rather than relying on downgrade to an older binary after migration.
-
-## Recovery and deletion limits
-
-The native S3 disk relies on local ClickHouse metadata under the persistent `/var/lib/clickhouse` volume as well as S3 objects. A bucket containing objects alone is not a documented restore procedure. Protect the local metadata and preserve the mounted disk configuration. Back up authoritative SQLite state separately.
-
-Corrections and tombstones work through the same table whether older parts are local or cold. Deleted payloads can persist in obsolete parts, object versions, and backups until their own cleanup. A whole-project deletion also cleans up Porcupine-managed one-time export objects. Backups, noncurrent object versions, obsolete parts and data already delivered to customer destinations follow their own retention rules. Do not configure object lifecycle expiration against live ClickHouse disk objects as a substitute for retention in the application.
-
-`make integration-s3` starts isolated real ClickHouse and MinIO services for opt-in native cold-storage and mutation tests, then removes its own test containers. It does not deploy AWS resources. Normal checks do not establish AWS connectivity, production backup recovery, or storage cost benchmarks.
+The current development branch supports DuckDB/DuckLake only. It does not automatically convert an older external-database deployment or its SQL. Preserve an older deployment and its backups until you have exported and imported the required history into a fresh native instance. The historical implementation is retained on `reference/clickhouse-before-ducklake`; its old operator settings are not supported by the native server.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -264,7 +263,7 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.pipelines = rt
+	attachTestPipelines(s, rt)
 	var actorID string
 	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
 	if _, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) VALUES('all',?,?,'webhook','all','active','{"delivery_mode":"event"}',x'00',0)`, projectID, actorID); err != nil {
@@ -281,7 +280,7 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 	if len(queued["events"].([]any)) != 1 {
 		t.Fatal("queued event reader exposed private identity control")
 	}
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	ctx := mutationContext(actorID)
 	_, err = s.editEvent(ctx, mutationEdit(projectID, "private-control", "edit-control", "0"))
 	mutationErrorStatus(t, err, 409)
@@ -301,28 +300,22 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 	}
 }
 
-func TestIdentityControlColdReceiptRetryCannotReapply(t *testing.T) {
-	for _, limit := range []int64{0, 1} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			s, _ := finiteReceiptService(t, limit)
-			projectID, token := project(t, s)
-			identityCapture(t, s, token, []map[string]any{identifyEvent("control", "account", "anon", map[string]any{"plan": "first"}, map[string]any{})}, 200)
-			_, _, version := storedIdentityProfile(t, s, projectID, "account")
-			if err := s.flushDelivery(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			deliverReceipt(t, s, token, "ordinary-later")
-			var local int
-			s.db.QueryRow(`SELECT count(*) FROM event_receipts WHERE uuid='control'`).Scan(&local)
-			if limit == 1 && local != 0 || limit == 0 && local != 1 {
-				t.Fatal("receipt retention fixture did not exercise the expected tier")
-			}
-			result := identityCapture(t, s, token, []map[string]any{identifyEvent("control", "account", "anon", map[string]any{"plan": "poison"}, map[string]any{})}, 200)
-			traits, _, after := storedIdentityProfile(t, s, projectID, "account")
-			if result["duplicates"] != float64(1) || after != version || traits["plan"] != "first" || eventCount(t, s) != 0 {
-				t.Fatal("permanent or cold physical receipt replayed a hidden control")
-			}
-		})
+func TestIdentityControlPermanentReceiptRetryCannotReapply(t *testing.T) {
+	s, _ := nativeCoreService(t)
+	projectID, token := project(t, s)
+	identityCapture(t, s, token, []map[string]any{identifyEvent("control", "account", "anon", map[string]any{"plan": "first"}, map[string]any{})}, 200)
+	_, _, version := storedIdentityProfile(t, s, projectID, "account")
+	duckLakeJourneyDrain(t, s)
+	request(t, s, "POST", "/capture/", "", captureBody(token, "ordinary-later"), 200)
+	duckLakeJourneyDrain(t, s)
+	var local int
+	if err := s.db.QueryRow(`SELECT count(*) FROM event_receipts WHERE project_id=? AND uuid='control'`, projectID).Scan(&local); err != nil || local != 1 {
+		t.Fatal("control receipt was not retained permanently", err)
+	}
+	result := identityCapture(t, s, token, []map[string]any{identifyEvent("control", "account", "anon", map[string]any{"plan": "poison"}, map[string]any{})}, 200)
+	traits, _, after := storedIdentityProfile(t, s, projectID, "account")
+	if result["duplicates"] != float64(1) || after != version || traits["plan"] != "first" || eventCount(t, s) != 0 {
+		t.Fatal("permanent receipt replayed an identity control")
 	}
 }
 

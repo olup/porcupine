@@ -4,45 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 )
 
-const workerExportBody = `{"meta":[{"name":"uuid","type":"String"},{"name":"event","type":"String"}],"data":[["a","purchase"],["b","purchase"]],"rows":2,"totals":["all","2"],"extremes":{"min":["a","purchase"],"max":["b","purchase"]},"statistics":{"elapsed":0.1}}`
-
-func bindExportCH(t *testing.T, s *Service, body string, kills *atomic.Int32) {
-	t.Helper()
-	c := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
-		data, _ := io.ReadAll(r.Body)
-		if strings.HasSuffix(r.Header.Get("X-ClickHouse-User"), "_export") {
-			io.WriteString(w, body)
-			return
-		}
-		if strings.HasPrefix(string(data), "KILL QUERY") && kills != nil {
-			kills.Add(1)
-		}
-	})
-	configureAnalyticsTest(s, c)
-}
-
 func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
 	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	bindExportCH(t, s, workerExportBody, nil)
+	s, job := nativeExportWorkerFixture(t, fake)
 	s.runExport(context.Background(), job)
 	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.State != ExportSucceeded || current.Rows != 2 || current.SQL != "" || len(current.Parameters) != 0 || current.FileCount != 1 || current.ExpiresAtMS <= s.clock().UnixMilli() || len(current.Columns) != 2 {
+	if current.State != ExportSucceeded || current.Rows != 1 || current.SQL != "" || len(current.Parameters) != 0 || current.FileCount != 1 || current.ExpiresAtMS <= s.clock().UnixMilli() || len(current.Columns) != 3 {
 		t.Fatalf("invalid successful job: %+v", current)
-	}
-	if !json.Valid(current.Totals) || !json.Valid(current.Extremes) || string(current.Totals) != `["all","2"]` {
-		t.Fatal("query totals/extremes were not preserved")
 	}
 	artifacts, err := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
 	if err != nil || len(artifacts) != 1 || !artifacts[0].Complete {
@@ -50,33 +27,10 @@ func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
 	}
 }
 
-func TestExportWorkerLateHTTP200FailureCleansPreviouslyCompletedChunks(t *testing.T) {
-	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	s.exports.config.FileBytes = 1
-	var kills atomic.Int32
-	bindExportCH(t, s, `{"meta":[{"name":"uuid","type":"String"},{"name":"event","type":"String"}],"data":[["a","purchase"],["b","purchase"],["c","purchase"]]`, &kills)
-	s.runExport(context.Background(), job)
-	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.State != ExportFailed || current.Error != "stream_invalid" || current.CleanupPending || current.SQL != "" {
-		t.Fatalf("partial result became visible or was not cleaned: %+v", current)
-	}
-	artifacts, _ := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.completes < 2 || len(fake.objects) != 0 || len(artifacts) != 0 || kills.Load() == 0 {
-		t.Fatal("late failure retained objects or did not kill server query")
-	}
-}
-
 func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		fake := &exportTestS3{}
-		s, job := exportWorkerFixture(t, fake)
-		bindExportCH(t, s, workerExportBody, nil)
+		s, job := nativeExportWorkerFixture(t, fake)
 		fake.onComplete = func() {
 			var err error
 			if revoke {
@@ -106,8 +60,7 @@ func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
 
 func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *testing.T) {
 	fake := &exportTestS3{failComplete: true, failDelete: true}
-	s, job := exportWorkerFixture(t, fake)
-	bindExportCH(t, s, workerExportBody, nil)
+	s, job := nativeExportWorkerFixture(t, fake)
 	s.runExport(context.Background(), job)
 	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
 	if err != nil {
@@ -138,7 +91,7 @@ func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *t
 }
 
 func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
-	s, job := exportWorkerFixture(t, &exportTestS3{})
+	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
 	request(t, s, "POST", "/capture/", "", captureBody(func() string { _, token := project(t, s); return token }(), "other-project-pressure"), 200)
 	ready, err := s.exportAdmission(context.Background(), job)
 	if err != nil || !ready {
@@ -173,8 +126,7 @@ func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 
 func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	bindExportCH(t, s, workerExportBody, nil)
+	s, job := nativeExportWorkerFixture(t, fake)
 	sink := newExportSink(context.Background(), s, job)
 	sink.setColumns([]AnalyticsResultColumn{{Name: "uuid"}})
 	if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"partial"`)}); err != nil {
@@ -211,96 +163,12 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 
 func TestExportWorkerStopWithoutStartedRuntime(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	s.stopExports()
 }
 
-func TestExportCleanupKillFailurePreventsNewAttempt(t *testing.T) {
-	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	sink := newExportSink(context.Background(), s, job)
-	sink.setColumns([]AnalyticsResultColumn{{Name: "value"}})
-	if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"prior attempt"`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := sink.finish(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`UPDATE export_jobs SET state='queued',cleanup_pending=1 WHERE id=?`, job.ID); err != nil {
-		t.Fatal(err)
-	}
-	var killFails atomic.Bool
-	killFails.Store(true)
-	c := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if strings.HasPrefix(string(body), "KILL QUERY") && killFails.Load() {
-			w.WriteHeader(503)
-		}
-	})
-	configureAnalyticsTest(s, c)
-	current, _ := s.loadExport(context.Background(), job.ProjectID, job.ID)
-	if err := s.cleanupExport(context.Background(), current); err == nil {
-		t.Fatal("failed query cancellation was ignored")
-	}
-	if _, ok := s.nextQueuedExport(context.Background()); ok {
-		t.Fatal("new attempt admitted while old query might remain active")
-	}
-	artifacts, _ := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
-	if len(artifacts) != 1 {
-		t.Fatal("query cancellation failure lost cleanup metadata")
-	}
-	killFails.Store(false)
-	if err := s.cleanupExport(context.Background(), current); err != nil {
-		t.Fatal(err)
-	}
-	queued, ok := s.nextQueuedExport(context.Background())
-	if !ok {
-		t.Fatal("cleanup did not unblock retry")
-	}
-	next, err := s.claimExport(context.Background(), queued)
-	if err != nil || next.AttemptID == job.AttemptID || next.QueryID == job.QueryID {
-		t.Fatal("retry reused old attempt or query identity", err)
-	}
-}
-
-func TestExportWorkerShutdownRequeuesWithoutPublishing(t *testing.T) {
-	s, job := exportWorkerFixture(t, &exportTestS3{})
-	started := make(chan struct{})
-	c := testClickHouse(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.Header.Get("X-ClickHouse-User"), "_export") {
-			io.Copy(io.Discard, r.Body)
-			close(started)
-			<-r.Context().Done()
-		}
-	})
-	configureAnalyticsTest(s, c)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); s.runExport(ctx, job) }()
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		cancel()
-		t.Fatal("export did not start")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("shutdown did not cancel active query")
-	}
-	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.State != ExportQueued || current.Error != "interrupted" || current.SQL == "" || current.CleanupPending {
-		t.Fatalf("shutdown lost resumable job or published partial result: %+v", current)
-	}
-}
-
 func TestExportWorkerRevalidatesPersistedSQL(t *testing.T) {
-	s, job := exportWorkerFixture(t, &exportTestS3{})
-	bindExportCH(t, s, workerExportBody, nil)
+	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
 	job.SQL = "SELECT password FROM system.users"
 	if _, err := s.db.Exec(`UPDATE export_jobs SET sql=? WHERE id=?`, job.SQL, job.ID); err != nil {
 		t.Fatal(err)
@@ -312,5 +180,65 @@ func TestExportWorkerRevalidatesPersistedSQL(t *testing.T) {
 	}
 	if current.State != ExportFailed || current.Error != "stream_invalid" || current.SQL != "" {
 		t.Fatal("persisted SQL bypassed current query policy")
+	}
+}
+
+func TestExportWorkerNativeRowFailureCleansCompletedChunks(t *testing.T) {
+	fake := &exportTestS3{}
+	s, job := nativeExportWorkerFixture(t, fake)
+	_, writer := key(t, s, []string{"events:write"}, []string{job.ProjectID})
+	for _, row := range []struct{ id, padding string }{{"a", "short"}, {"b", "short"}, {"c", "short"}, {"d", strings.Repeat("x", 1024)}} {
+		raw, _ := json.Marshal(map[string]any{"api_key": writer, "uuid": row.id, "event": "purchase", "distinct_id": "u", "properties": map[string]any{"padding": row.padding}})
+		request(t, s, "POST", "/capture/", "", string(raw), 200)
+	}
+	duckLakeJourneyDrain(t, s)
+	s.exports.config.FileBytes = 1
+	s.exports.config.MaxRowBytes = 128
+	job.SQL = "SELECT uuid,properties FROM events ORDER BY uuid"
+	job.Parameters = nil
+	s.runExport(context.Background(), job)
+	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State != ExportFailed || current.Error != "row_limit" || current.CleanupPending {
+		t.Fatalf("failed native stream published: %+v", current)
+	}
+	artifacts, _ := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.completes < 2 || len(fake.objects) != 0 || len(artifacts) != 0 {
+		t.Fatal("native stream failure retained completed chunks")
+	}
+}
+
+func TestExportWorkerShutdownRequeuesWithoutPublishing(t *testing.T) {
+	fake := &exportTestS3{}
+	s, job := nativeExportWorkerFixture(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	var once sync.Once
+	fake.onComplete = func() { once.Do(func() { close(started) }); <-ctx.Done() }
+	done := make(chan struct{})
+	go func() { defer close(done); s.runExport(ctx, job) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("native export did not reach upload")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not cancel native export")
+	}
+	current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State != ExportQueued || current.Error != "interrupted" || current.SQL == "" || current.CleanupPending {
+		t.Fatalf("shutdown lost resume state: %+v", current)
 	}
 }

@@ -35,6 +35,19 @@ func TestExportConfiguration(t *testing.T) {
 	}
 	t.Setenv("PORCUPINE_EXPORT_MEMORY_BYTES", "not-a-number")
 	if _, err := exportConfiguration(); err == nil || !strings.Contains(err.Error(), "PORCUPINE_EXPORT_MEMORY_BYTES") {
-		t.Fatalf("invalid budget: %v", err)
+		t.Fatalf("retired per-query budget was silently accepted: %v", err)
+	}
+}
+
+func TestExportConfigurationRejectsRetiredLimitsWithoutBucket(t *testing.T) {
+	for _, name := range []string{"PORCUPINE_EXPORT_MAX_READ_BYTES", "PORCUPINE_EXPORT_MEMORY_BYTES", "PORCUPINE_EXPORT_TEMPORARY_BYTES"} {
+		t.Run(name, func(t *testing.T) {
+			cleanExportEnvironment(t)
+			t.Setenv(name, "private-fixture-value")
+			_, err := exportConfiguration()
+			if err == nil || !strings.Contains(err.Error(), name) || strings.Contains(err.Error(), "private-fixture-value") {
+				t.Fatalf("retired limit did not fail closed: %v", err)
+			}
+		})
 	}
 }

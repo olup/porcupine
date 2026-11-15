@@ -347,7 +347,7 @@ func resetNativeRestoreCredentials(ctx context.Context, db *sql.DB, bootstrap st
 	}
 	for _, statement := range []string{
 		`UPDATE pipelines SET state='paused',secret=X''`,
-		`UPDATE export_jobs SET state='canceled',cancel_requested=1,attempt_id='',query_id='',cleanup_pending=0,file_count=0,error='cancelled by offline credential reset'`,
+		`UPDATE export_jobs SET state='canceled',cancel_requested=1,attempt_id='',cleanup_pending=0,file_count=0,error='cancelled by offline credential reset'`,
 		`UPDATE import_uploads SET state='cancelled',error='cancelled by offline credential reset' WHERE state NOT IN ('completed','failed','cancelled')`,
 		`DELETE FROM webhook_queue_usage`,
 		`DELETE FROM metadata WHERE key='native_backup_writer_id'`,

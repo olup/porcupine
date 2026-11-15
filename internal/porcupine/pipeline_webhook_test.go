@@ -22,7 +22,7 @@ func webhookTestService(t *testing.T, mode string) (*Service, string, string, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.pipelines = rt
+	attachTestPipelines(s, rt)
 	p, token := project(t, s)
 	var creator string
 	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&creator)
@@ -52,7 +52,7 @@ func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
 	for i := range 201 {
 		events = append(events, Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)})
 	}
-	if err = s.enqueueWebhooks(context.Background(), tx, events); err != nil {
+	if err = s.acceptance.enqueueWebhooks(context.Background(), tx, events); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(); err != nil {
@@ -120,7 +120,7 @@ func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
 	defer tx.Rollback()
 	for i := range 5 {
 		event := Event{ProjectID: p, UUID: fmt.Sprintf("unicode-%d", i), Event: "purchase", Properties: properties, ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.enqueueWebhook(context.Background(), tx, event); err != nil {
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,7 +173,7 @@ func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T)
 	tx, _ := s.db.Begin()
 	for _, uuid := range []string{"deleted-before-send", "deleted-after-attempt", "survivor"} {
 		event := Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.enqueueWebhook(context.Background(), tx, event); err != nil {
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -287,7 +287,7 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 		t.Helper()
 		tx, _ := s.db.Begin()
 		defer tx.Rollback()
-		if err := s.enqueueWebhook(context.Background(), tx, Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}); err != nil {
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

@@ -27,12 +27,10 @@ func purgeProjectSQLite(ctx context.Context, tx *sql.Tx, projectID string) error
 		"DELETE FROM event_heads WHERE project_id=?",
 		"DELETE FROM identity_links WHERE project_id=?",
 		"DELETE FROM identity_profiles WHERE project_id=?",
-		"DELETE FROM receipt_lookup_leases WHERE project_id=?",
 		"DELETE FROM event_receipts WHERE project_id=?",
 		// Ready and quarantine entries cascade. Queue triggers return capacity to other projects.
 		"DELETE FROM events WHERE project_id=?",
 		"DELETE FROM metadata WHERE key='last_delivery_success:' || ?",
-		"DELETE FROM metadata WHERE key='receipt_reconcile_cursor' AND json_extract(value,'$.project_id')=?",
 		"DELETE FROM projects WHERE id=?",
 	} {
 		if _, err := tx.ExecContext(ctx, statement, projectID); err != nil {

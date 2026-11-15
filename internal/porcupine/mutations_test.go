@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,7 +45,7 @@ func TestMutationQueuedReadCASIdempotencyAndPending(t *testing.T) {
 	}
 	_, err = s.editEvent(ctx, mutationEdit(projectID, "original", "disabled", "0"))
 	mutationErrorStatus(t, err, 503)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	_, err = s.editEvent(ctx, mutationEdit(projectID, "original", "stale", "7"))
 	mutationErrorStatus(t, err, 409)
 	input := mutationEdit(projectID, "original", "stable-request", "0")
@@ -102,7 +101,7 @@ func TestMutationCookielessSanitizationAndIdentifiedMarkers(t *testing.T) {
 	s := service(t, 20)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	cookielessRequest(t, s, ingest, "private", "192.0.2.73:1234", "ua", nil, 200)
 	original := storedCookieless(t, s, "private")
 	input := mutationEdit(projectID, "private", "private-edit", "0")
@@ -150,7 +149,7 @@ func TestMutationQueuedDeleteTombstoneAndDurableReceipt(t *testing.T) {
 	before := storedCookieless(t, s, "delete-me")
 	var originalID int64
 	s.db.QueryRow(`SELECT id FROM events WHERE uuid='delete-me'`).Scan(&originalID)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	input := &EventDeleteInput{ID: projectID, UUID: "delete-me", Body: EventDeleteBody{IdempotencyKey: "delete-request", ExpectedRevision: "0"}}
 	response, err := s.deleteEvent(ctx, input)
 	if err != nil || response.Body.State != "pending" || eventCount(t, s) != 0 || receiptCount(t, s) != 1 {
@@ -186,7 +185,7 @@ func TestMutationRestartPreservesHeadAuditAndOutbox(t *testing.T) {
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "restart"), 200)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	lake := attachCoreLake(t, s)
 	input := mutationEdit(projectID, "restart", "durable-request", "0")
 	response, err := s.editEvent(ctx, input)
 	if err != nil {
@@ -195,11 +194,12 @@ func TestMutationRestartPreservesHeadAuditAndOutbox(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err = Open(Config{DBPath: path})
+	s, err = Open(Config{DBPath: path, DuckLake: lake})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	stopCoreDelivery(s)
 	// Durable idempotent retries and queued reads do not need network access.
 	retry, err := s.editEvent(ctx, input)
 	if err != nil || retry.Body != response.Body {
@@ -216,7 +216,7 @@ func TestMutationValidationAndAtomicWriteFailure(t *testing.T) {
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "original"), 200)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	for _, raw := range []string{"", "-1", "+1", "1.0", " 0", "9223372036854775808"} {
 		_, err := s.editEvent(ctx, mutationEdit(projectID, "original", "invalid-revision", raw))
 		mutationErrorStatus(t, err, 400)
@@ -251,7 +251,7 @@ func TestMutationOutboxGlobalCountAndByteBounds(t *testing.T) {
 	s := service(t, 1)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
-	s.ch = testClickHouse(t, func(http.ResponseWriter, *http.Request) {})
+	attachCoreLake(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "first"), 200)
 	if _, err := s.editEvent(ctx, mutationEdit(projectID, "first", "first-mutation", "0")); err != nil {
 		t.Fatal(err)

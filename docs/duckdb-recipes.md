@@ -1,6 +1,6 @@
 # DuckDB SQL recipes
 
-Discover `get-event-schema` before using these recipes. They target `sql.dialect: duckdb`, the default DuckLake backend. Optional ClickHouse deployments need different SQL. Replace example event names, property keys and dates with values from your project.
+Discover `get-event-schema` before using these recipes. They target `sql.dialect: duckdb`, the DuckLake analytical store. Replace example event names, property keys and dates with values from your project.
 
 Each block contains a recipe name, a `parameters` string map and SQL. Send the SQL and parameters as the body of `query-events`. HTTP, CLI and MCP use the same body. The commented metadata is also used by the recipe tests.
 

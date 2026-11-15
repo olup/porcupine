@@ -7,8 +7,6 @@ import (
 
 func TestDuckLakeUnsupportedConfigurationFailsBeforeOpeningStorage(t *testing.T) {
 	for _, c := range []Config{
-		{DuckLake: &DuckLakeConfig{}, ClickHouse: &ClickHouseConfig{}},
-		{DuckLake: &DuckLakeConfig{}, HotReceiptLimit: 1},
 		{DuckLake: &DuckLakeConfig{}, Exports: &ExportConfig{}},
 		{DuckLake: &DuckLakeConfig{MaintenanceInterval: -time.Second}},
 		{DuckLake: &DuckLakeConfig{SnapshotRetention: -time.Second}},
@@ -20,7 +18,7 @@ func TestDuckLakeUnsupportedConfigurationFailsBeforeOpeningStorage(t *testing.T)
 			s.Close()
 		}
 		if s != nil || err == nil {
-			t.Fatal("unsupported experimental configuration accepted")
+			t.Fatal("invalid native configuration accepted")
 		}
 	}
 }

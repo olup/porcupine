@@ -9,14 +9,23 @@ import (
 	"testing"
 )
 
+func attachTestPipelines(s *Service, runtime *pipelineRuntime) {
+	s.pipelines = runtime
+	s.acceptance.enqueueWebhooks = nil
+	if runtime != nil {
+		participant := &webhookAcceptance{config: &runtime.config, rules: s.eventRules}
+		s.acceptance.enqueueWebhooks = participant.Enqueue
+	}
+}
+
 func enableTestPipelines(t *testing.T, s *Service) {
 	t.Helper()
 	runtime, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{7}, 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.pipelines = runtime
-	t.Cleanup(func() { s.pipelines = nil })
+	attachTestPipelines(s, runtime)
+	t.Cleanup(func() { attachTestPipelines(s, nil) })
 }
 func pipelineBody(endpoint string) string {
 	data, _ := json.Marshal(map[string]any{"name": "Test hook", "kind": "webhook", "webhook": map[string]any{"endpoint": endpoint, "include_events": []string{"checkout"}}, "credentials": map[string]any{"bearer_token": "private-pipeline-secret"}})
@@ -182,10 +191,8 @@ func TestPipelineMCPDiscoveryAndCallsUseCombinedPermissions(t *testing.T) {
 }
 
 func TestPipelineS3InspectableRuleAndWriteOnlyRotation(t *testing.T) {
-	s := service(t, 20)
+	s := duckLakeJourneyService(t)
 	enableTestPipelines(t, s)
-	s.ch = &clickHouse{}
-	t.Cleanup(func() { s.ch = nil })
 	id, _ := project(t, s)
 	base := "/api/v1/projects/" + id + "/pipelines"
 	body := `{"name":"Hourly results","kind":"s3","s3":{"sql":"SELECT uuid,event FROM events","format":"jsonl","interval_seconds":3600,"start_at":"2026-01-01T00:00:00Z","destination":{"bucket":"private-events","region":"us-east-1","prefix":"hourly"}},"credentials":{"access_key_id":"private-access-id","secret_access_key":"private-s3-secret"}}`

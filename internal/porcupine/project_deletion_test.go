@@ -61,7 +61,7 @@ func TestProjectDeletionRecoveryAfterRestart(t *testing.T) {
 	id, key := project(t, s)
 	other, otherKey := project(t, s)
 	// Simulate storage that was configured earlier and is unavailable now.
-	if _, err = s.db.Exec(`INSERT INTO metadata(key,value) VALUES('query_master_key','disconnected')`); err != nil {
+	if _, err = s.db.Exec(`INSERT INTO metadata(key,value) VALUES('ducklake_source_id','disconnected')`); err != nil {
 		s.Close()
 		t.Fatal(err)
 	}
@@ -78,9 +78,9 @@ func TestProjectDeletionRecoveryAfterRestart(t *testing.T) {
 		s.Close()
 		t.Fatalf("missing pending cleanup: %v", err)
 	}
-	// These fixtures have no ClickHouse rows. Restore their initial configuration
+	// These fixtures have no analytical rows. Restore their initial configuration
 	// before reopening and verify that restart alone finishes the pending intent.
-	if _, err = s.db.Exec(`DELETE FROM metadata WHERE key='query_master_key'`); err != nil {
+	if _, err = s.db.Exec(`DELETE FROM metadata WHERE key='ducklake_source_id'`); err != nil {
 		s.Close()
 		t.Fatal(err)
 	}

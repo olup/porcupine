@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -137,7 +135,7 @@ func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
 	file := ImportUploadFileSpec{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}
 	job := importTestCreate(t, s, project, token, "queue", []ImportUploadFileSpec{file})
 	importTestPut(t, s, project, job, job.Files[0], token, 0, data, 503)
-	status, _ := s.loadImportJob(t.Context(), project, job.ID)
+	status, _ := s.imports.loadImportJob(t.Context(), project, job.ID)
 	if status.Files[0].OffsetBytes != 0 || status.Counts.Rows != 0 || eventCount(t, s) != 0 {
 		t.Fatal("queue pressure partially committed rows/cursor")
 	}
@@ -154,7 +152,7 @@ func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
 	bad := importTestCreate(t, s, project, token, "bad-digest", []ImportUploadFileSpec{wrong})
 	importTestPut(t, s, project, bad, bad.Files[0], token, 0, data, 200)
 	importTestRequest(t, s, "POST", importTestBase(project, bad.ID)+"/files/"+bad.Files[0].ID+"/complete", token, nil, nil, 409)
-	failed, _ := s.loadImportJob(t.Context(), project, bad.ID)
+	failed, _ := s.imports.loadImportJob(t.Context(), project, bad.ID)
 	if failed.State != "failed" || failed.Error != "sha256_mismatch_partial_data_retained" || failed.Counts.Duplicates != 2 || eventCount(t, s) != 2 {
 		t.Fatal("final hash failure concealed durable partial ingestion", failed)
 	}
@@ -282,51 +280,35 @@ func TestImportUploadOversizedRowsRemainBoundedAndResume(t *testing.T) {
 	}
 }
 
-type importBlockingTransport struct {
-	next    http.RoundTripper
-	enabled atomic.Bool
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+type importBlockingBody struct {
+	reader           io.Reader
+	entered, release chan struct{}
+	once             sync.Once
 }
 
-func (b *importBlockingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if b.enabled.Load() && r.GetBody != nil {
-		body, _ := r.GetBody()
-		raw, _ := io.ReadAll(body)
-		body.Close()
-		if bytes.HasPrefix(raw, []byte("/* porcupine:receipts */")) {
-			b.once.Do(func() { close(b.entered) })
-			select {
-			case <-b.release:
-			case <-r.Context().Done():
-				return nil, r.Context().Err()
-			}
-		}
-	}
-	return b.next.RoundTrip(r)
+func (b *importBlockingBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { close(b.entered); <-b.release })
+	return b.reader.Read(p)
 }
+func (*importBlockingBody) Close() error { return nil }
 
-func TestImportUploadRevocationAndCancellationDuringColdLookup(t *testing.T) {
+func TestImportUploadRevocationAndCancellationDuringBodyRead(t *testing.T) {
 	for _, action := range []string{"revoke", "cancel"} {
 		t.Run(action, func(t *testing.T) {
-			s, f := finiteReceiptService(t, 1)
-			project, ingest := project(t, s)
-			deliverReceipt(t, s, ingest, "old-one")
-			deliverReceipt(t, s, ingest, "old-two")
+			s := service(t, 20)
+			project, _ := project(t, s)
 			actorID, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
-			data := importTestRow("new-cold-row")
+			data := importTestRow("new-row")
 			job := importTestCreate(t, s, project, token, "blocked", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
-			block := &importBlockingTransport{next: f.c.client.Transport, entered: make(chan struct{}), release: make(chan struct{})}
-			f.c.client.Transport = block
-			block.enabled.Store(true)
+			body := &importBlockingBody{reader: bytes.NewReader(data), entered: make(chan struct{}), release: make(chan struct{})}
 			var releaseOnce sync.Once
-			unblock := func() { releaseOnce.Do(func() { close(block.release) }) }
+			unblock := func() { releaseOnce.Do(func() { close(body.release) }) }
 			defer unblock()
 			done := make(chan *httptest.ResponseRecorder, 1)
 			handler := s.Handler()
 			go func() {
 				r := httptest.NewRequest("PUT", importTestBase(project, job.ID)+"/files/"+job.Files[0].ID, bytes.NewReader(data))
+				r.Body = body
 				r.Header.Set("Authorization", "Bearer "+token)
 				r.Header.Set("Content-Type", "application/octet-stream")
 				r.Header.Set("Upload-Offset", "0")
@@ -336,11 +318,10 @@ func TestImportUploadRevocationAndCancellationDuringColdLookup(t *testing.T) {
 				done <- w
 			}()
 			select {
-			case <-block.entered:
+			case <-body.entered:
 			case <-time.After(3 * time.Second):
-				t.Fatal("upload did not reach cold receipt lookup")
+				t.Fatal("upload did not reach body decoding after authorization")
 			}
-			// This request must remain able to write SQLite while the upload waits on HTTP.
 			want := 409
 			if action == "revoke" {
 				request(t, s, "DELETE", "/api/v1/access-keys/"+actorID, adminToken, "", 204)
@@ -357,7 +338,7 @@ func TestImportUploadRevocationAndCancellationDuringColdLookup(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("upload did not stop after authority/state changed")
 			}
-			status, err := s.loadImportJob(t.Context(), project, job.ID)
+			status, err := s.imports.loadImportJob(t.Context(), project, job.ID)
 			if err != nil || status.Files[0].OffsetBytes != 0 || status.Counts.Accepted != 0 || eventCount(t, s) != 0 {
 				t.Fatal("race committed unauthorized rows or progress", err)
 			}
@@ -394,7 +375,7 @@ func TestImportUploadConcurrentChunksCommitExactlyOnce(t *testing.T) {
 			t.Fatal("unexpected concurrent upload status", status)
 		}
 	}
-	current, err := s.loadImportJob(t.Context(), project, job.ID)
+	current, err := s.imports.loadImportJob(t.Context(), project, job.ID)
 	if err != nil || success == 0 || current.Counts.Accepted != 1 || current.Counts.Rows != 1 || current.Files[0].OffsetBytes != int64(len(data)) || eventCount(t, s) != 1 {
 		t.Fatal("concurrent upload did not commit exactly once", err, current.Counts)
 	}

@@ -16,7 +16,7 @@ import (
 
 func TestExportHTTPAndMCPShareAuthorizationIdempotencyAndContracts(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	projectID, ingest := project(t, s)
 	otherProject, _ := project(t, s)
 	creatorID, creator := key(t, s, []string{"events:read"}, []string{projectID})
@@ -66,7 +66,7 @@ func TestExportHTTPAndMCPShareAuthorizationIdempotencyAndContracts(t *testing.T)
 
 func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	ctx := exportContext(t, s, adminToken)
 	store, err := exportstore.New(context.Background(), exportstore.Config{Region: "us-east-1", Bucket: "private-exports", Prefix: "porcupine-exports", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "test-access", SecretAccessKey: "test-secret", UsePathStyle: true})
 	if err != nil {
@@ -148,7 +148,7 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 
 func TestExportListLimitsDoNotExposeOperatorSecretsAndRemainProjectScoped(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	s.exports.config.S3 = exportstore.Config{Bucket: "secret-bucket", Endpoint: "https://private.example", AccessKeyID: "private-access", SecretAccessKey: "private-secret"}
 	ctx := exportContext(t, s, adminToken)
 	projectID, _ := project(t, s)
@@ -161,6 +161,10 @@ func TestExportListLimitsDoNotExposeOperatorSecretsAndRemainProjectScoped(t *tes
 	page, err := s.listEventExports(ctx, &ExportListInput{ID: projectID, Limit: 1})
 	if err != nil || !page.Body.Enabled || page.Body.Limits == nil || page.Body.Limits.MaxConcurrentJobs != 1 || page.Body.Limits.MaxQueuedJobs != 100 || len(page.Body.Jobs) != 1 || page.Body.NextOffset == nil || *page.Body.NextOffset != 1 {
 		t.Fatalf("export limits/list page missing: %+v %v", page, err)
+	}
+	limits := page.Body.Limits
+	if limits.MaxReadBytes != 0 || limits.TemporaryBytes != 0 || limits.MemoryBytes != int64(s.lakeMemoryMB)<<20 || limits.MemoryScope != "per_resident_project_engine" {
+		t.Fatalf("export limits misrepresented native enforcement: %+v", limits)
 	}
 	encoded, _ := json.Marshal(page.Body)
 	for _, private := range []string{otherProject, "secret-bucket", "private.example", "private-access", "private-secret", "parameters", "SELECT"} {

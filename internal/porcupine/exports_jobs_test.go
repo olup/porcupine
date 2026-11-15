@@ -20,11 +20,21 @@ func exportContext(t *testing.T, s *Service, token string) context.Context {
 }
 
 func exportInput(project, key string) *ExportCreateInput {
-	return &ExportCreateInput{ID: project, Body: ExportCreateBody{IdempotencyKey: key, SQL: "SELECT uuid,event FROM events WHERE event={name:String}", Parameters: map[string]string{"name": "purchase"}}}
+	return &ExportCreateInput{ID: project, Body: ExportCreateBody{IdempotencyKey: key, SQL: "SELECT uuid,event FROM events WHERE event=$name", Parameters: map[string]string{"name": "purchase"}}}
 }
 
-func enableTestExports(s *Service, maxQueued int) {
-	s.exports = &exportRuntime{config: ExportConfig{MaxQueuedJobs: maxQueued, MaxExecutionSeconds: 100, MaxReadBytes: 1 << 30, MaxOutputBytes: 1 << 30, FileBytes: 1 << 20, MaxRowBytes: 1 << 20, MemoryBytes: 256 << 20, BandwidthBytesPerSecond: 1 << 20, RetentionHours: 24}, wake: make(chan struct{}, 1)}
+func enableTestExports(t *testing.T, s *Service, maxQueued int) {
+	t.Helper()
+	if s.lake == nil {
+		lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 256})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.lake = lake
+		s.lakeMemoryMB = 256
+	}
+
+	s.exports = &exportRuntime{config: ExportConfig{MaxQueuedJobs: maxQueued, MaxExecutionSeconds: 100, MaxOutputBytes: 1 << 30, FileBytes: 1 << 20, MaxRowBytes: 1 << 20, BandwidthBytesPerSecond: 1 << 20, RetentionHours: 24}, wake: make(chan struct{}, 1)}
 }
 
 func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) {
@@ -41,7 +51,7 @@ func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	s.clock = func() time.Time { return time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC) }
 	input := exportInput(projectID, "stable-job")
 	created, err := s.createEventExport(ctx, input)
@@ -63,7 +73,7 @@ func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) 
 	}
 	for _, change := range []func(*ExportCreateInput){
 		func(i *ExportCreateInput) { i.Body.Parameters["name"] = "other" },
-		func(i *ExportCreateInput) { i.Body.SQL = "SELECT event FROM events WHERE event={name:String}" },
+		func(i *ExportCreateInput) { i.Body.SQL = "SELECT event FROM events WHERE event=$name" },
 		func(i *ExportCreateInput) { i.Body.Format = "csv" },
 	} {
 		changed := exportInput(projectID, "stable-job")
@@ -115,7 +125,7 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 	projectID, _ := project(t, s)
 	_, err := s.createEventExport(ctx, exportInput(projectID, "disabled"))
 	mutationErrorStatus(t, err, 503)
-	enableTestExports(s, 1)
+	enableTestExports(t, s, 1)
 	for _, change := range []func(*ExportCreateInput){
 		func(i *ExportCreateInput) { i.Body.IdempotencyKey = "" },
 		func(i *ExportCreateInput) { i.Body.SQL = "DELETE FROM events" },
@@ -167,7 +177,7 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 
 func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 100)
+	enableTestExports(t, s, 100)
 	projectID, _ := project(t, s)
 	_, creatorToken := key(t, s, []string{"events:read"}, []string{projectID})
 	_, peerToken := key(t, s, []string{"events:read"}, []string{projectID})
@@ -197,7 +207,7 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE export_jobs SET state='running',attempt_id='attempt',columns_json='[{"name":"uuid","type":"String"}]',extras_json='{"totals":["total"],"extremes":{"min":["a"],"max":["z"]},"rows_before_limit_at_least":17}' WHERE id=?`, created.Body.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE export_jobs SET state='running',attempt_id='attempt',columns_json='[{"name":"uuid","type":"String"}]' WHERE id=?`, created.Body.ID); err != nil {
 		t.Fatal(err)
 	}
 	called := false
@@ -214,14 +224,14 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 		t.Fatal("administrator did not signal durable running cancellation", err)
 	}
 	job, err = s.loadExport(ctx, projectID, created.Body.ID)
-	if err != nil || string(job.Totals) != `["total"]` || job.RowsBeforeLimitAtLeast == nil || *job.RowsBeforeLimitAtLeast != 17 || len(job.Columns) != 1 || len(job.Extremes) == 0 {
-		t.Fatal("SQL result extras were not preserved in the manifest", err)
+	if err != nil || len(job.Columns) != 1 {
+		t.Fatal("SQL result columns were not preserved in the manifest", err)
 	}
 }
 
 func TestExportConcurrentIdempotencyAndQueueAcceptance(t *testing.T) {
 	s := service(t, 20)
-	enableTestExports(s, 1)
+	enableTestExports(t, s, 1)
 	ctx := exportContext(t, s, adminToken)
 	projectID, _ := project(t, s)
 	type result struct {

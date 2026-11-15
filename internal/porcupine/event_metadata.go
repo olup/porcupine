@@ -3,8 +3,6 @@ package porcupine
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
-	"strings"
 )
 
 type contextField struct {
@@ -89,59 +87,6 @@ func postHogContextValue(properties map[string]json.RawMessage, field contextFie
 
 // The same field specification drives old physical-row reads and new Go
 // projections, so adding context does not require rewriting historical parts.
-func legacyContextSQL(properties string) string {
-	values := map[string]string{}
-	for group, fields := range postHogContextFields {
-		nested := map[string]string{}
-		for _, field := range fields {
-			nested[field.name] = contextValueSQL(properties, field)
-		}
-		raw := contextObjectSQL(nested)
-		values[group] = "if(" + raw + "='{}',''," + raw + ")"
-	}
-	for _, field := range postHogContextScalars {
-		value := contextValueSQL(properties, field)
-		if field.session {
-			value = "if(JSONExtractBool(" + properties + ",'cookieless'),''," + value + ")"
-		}
-		values[field.name] = value
-	}
-	return contextObjectSQL(values)
-}
-func contextValueSQL(properties string, field contextField) string {
-	value := "''"
-	for i := len(field.keys) - 1; i >= 0; i-- {
-		key := field.keys[i]
-		raw := "JSONExtractRaw(" + properties + ",'" + key + "')"
-		text := "JSONExtractString(" + properties + ",'" + key + "')"
-		kind := "JSONType(" + properties + ",'" + key + "')"
-		candidate := "if(" + kind + "='String',if(" + text + "='',''," + raw + "),'' )"
-		if field.number {
-			candidate = "if(" + kind + " IN ('Int64','UInt64','Float64'),toJSONString(" + raw + ")," + candidate + ")"
-		}
-		value = "if(" + candidate + "!=''," + candidate + "," + value + ")"
-	}
-	return value
-}
-
-// Values are already encoded JSON, with ” denoting an absent key.
-func contextObjectSQL(values map[string]string) string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	fields := make([]string, 0, len(keys))
-	for _, key := range keys {
-		value := values[key]
-		fields = append(fields, "if("+value+"='','',concat('\""+key+"\":',"+value+"))")
-	}
-	return "concat('{',arrayStringConcat(arrayFilter(value -> value!='',[" + strings.Join(fields, ",") + "]),','),'}')"
-}
-
-const eventMetadataColumns = "source_id,message_id,event_type,context"
-const eventMetadataFallbackSQL = "if(source_id='','posthog',source_id) AS source_id,if(message_id='',uuid,message_id) AS message_id,if(event_type='',multiIf(event='$pageview','pageview',event IN ('$identify','$set'),'identify','track'),event_type) AS event_type,"
-
 func validEventContext(raw json.RawMessage) bool {
 	var object map[string]json.RawMessage
 	return json.Unmarshal(raw, &object) == nil && object != nil

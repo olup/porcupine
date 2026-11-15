@@ -10,7 +10,7 @@ does not read Parquet, fetch remote URLs, or accept compressed upload chunks.
 An event requires `uuid`, `event`, `distinct_id`, and `timestamp`. Properties may
 be a JSON object or a string containing a JSON object. Missing properties become
 `{}`. ISO 8601 timestamps retain their fractional precision in the `timestamp`
-column; UTC ClickHouse timestamp text is also accepted. The existing millisecond
+column; space-separated UTC export timestamps are also accepted. The existing millisecond
 SQL columns retain their normal precision.
 
 The export's `team_id` never chooses the destination project. The authenticated
@@ -79,8 +79,4 @@ a failed file digest does not remove records accepted by earlier chunks. Invalid
 samples contain line numbers and static reasons, never row values.
 
 The upload is bounded to 256 KiB and 1,000 rows per chunk, with a 1 MiB maximum
-row. Queue limits apply to imports too. Imports initially consume hot storage
-and follow the deployment's existing receipt-time cold-storage policy; this
-feature does not backdate receipts or change TTLs. Plan SSD capacity for the
-archive and import in batches if needed. Queue backpressure limits pending work,
-not the final size of retained historical data.
+row. Queue limits apply to imports too. Imported data is projected into the configured local or analytical S3 store. Import does not change that storage configuration or backdate receipt times. Budget for the resulting archive; queue backpressure limits pending work, not the final size of retained history.

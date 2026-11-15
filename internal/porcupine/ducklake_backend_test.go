@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -8,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDuckLakeWrongBackendDoesNotPoisonReopen(t *testing.T) {
+func TestDuckLakeMissingArchiveDoesNotPoisonReopen(t *testing.T) {
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken,
 		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 128, Threads: 1}}
@@ -25,14 +23,13 @@ func TestDuckLakeWrongBackendDoesNotPoisonReopen(t *testing.T) {
 	}
 	wrong := config
 	wrong.DuckLake = nil
-	wrong.ClickHouse = &ClickHouseConfig{URL: "http://127.0.0.1:1", Database: "unused", User: "unused", Password: "unused"}
 	bad, err := Open(wrong)
 	if bad != nil {
 		bad.Close()
-		t.Fatal("wrong backend accepted")
+		t.Fatal("missing archive accepted")
 	}
 	if err == nil {
-		t.Fatal("wrong backend not rejected")
+		t.Fatal("missing archive not rejected")
 	}
 	s, err = Open(config)
 	if err != nil {
@@ -45,6 +42,6 @@ func TestDuckLakeWrongBackendDoesNotPoisonReopen(t *testing.T) {
 	}
 	var poisoned int
 	if err := s.db.QueryRow("SELECT count(*) FROM metadata WHERE key='query_master_key'").Scan(&poisoned); err != nil || poisoned != 0 {
-		t.Fatalf("wrong backend persisted metadata: count=%d err=%v", poisoned, err)
+		t.Fatalf("missing archive persisted unrelated metadata: count=%d err=%v", poisoned, err)
 	}
 }

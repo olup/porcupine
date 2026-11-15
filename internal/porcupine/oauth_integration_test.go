@@ -240,7 +240,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	}
 
 	// A queued export records the durable principal, independent of any token's lifespan.
-	f.s.exports = &exportRuntime{config: ExportConfig{MaxQueuedJobs: 3}, wake: make(chan struct{}, 1)}
+	enableTestExports(t, f.s, 3)
 	var job ExportJob
 	f.call(t, "POST", "/api/v1/projects/"+a+"/exports", read.AccessToken, ExportCreateBody{IdempotencyKey: "oauth-owner", SQL: "SELECT count() FROM events", Format: "jsonl"}, 202, &job)
 	var owner string
@@ -284,7 +284,7 @@ func TestOAuthIntegrationExpiryAndDiscovery(t *testing.T) {
 	created := f.createClient(t, admin.AccessToken, []string{"events:read"}, []string{a})
 	token := f.token(t, created.ClientID, created.ClientSecret, resource)
 	f.call(t, "GET", "/api/v1/projects/"+a+"/events", token.AccessToken, nil, 200, nil)
-	f.s.exports = &exportRuntime{config: ExportConfig{MaxQueuedJobs: 3}, wake: make(chan struct{}, 1)}
+	enableTestExports(t, f.s, 3)
 	var queued ExportJob
 	f.call(t, "POST", "/api/v1/projects/"+a+"/exports", token.AccessToken, ExportCreateBody{IdempotencyKey: "expiring-token-owner", SQL: "SELECT count() FROM events", Format: "jsonl"}, 202, &queued)
 	f.now.Add(int64(61 * time.Second))

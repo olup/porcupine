@@ -49,7 +49,7 @@ PORCUPINE_ARCH_ENGINES=ducklake PORCUPINE_ARCH_PHASES=maintenance \
 PORCUPINE_MAINT_POLICY=bounded sh scripts/architecture-benchmark.sh
 ```
 
-The tagged Go test `TestDuckLakeNativeWriteConflictSemantics` runs the direct transaction probes without the load fixture. Run it with `CGO_ENABLED=1 go test -tags ducklake ./internal/porcupine -run '^TestDuckLakeNativeWriteConflictSemantics$' -count=1 -v`.
+The Go test `TestDuckLakeNativeWriteConflictSemantics` runs the direct transaction probes without the load fixture. Run it with `CGO_ENABLED=1 go test ./internal/porcupine -run '^TestDuckLakeNativeWriteConflictSemantics$' -count=1 -v`.
 
 ## Native upserts and concurrent transactions
 

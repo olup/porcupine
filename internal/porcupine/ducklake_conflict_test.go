@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -92,7 +90,7 @@ func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
 			if len(expected) != 0 {
 				t.Fatalf("missing rows after transaction: %v", expected)
 			}
-			architectureEmit("native_conflict", "ducklake", map[string]any{"operation": c.name, "committed": commitErr == nil, "rows": rows, "native_version": version, "platform": runtime.GOOS + "/" + runtime.GOARCH, "verdict": "VERIFIED"})
+			architectureEmit("native_conflict", map[string]any{"operation": c.name, "committed": commitErr == nil, "rows": rows, "native_version": version, "platform": runtime.GOOS + "/" + runtime.GOARCH, "verdict": "VERIFIED"})
 		})
 	}
 }

@@ -2,8 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"net/url"
-	"strings"
 	"time"
 )
 
@@ -18,19 +16,18 @@ const (
 )
 
 type InstanceChecks struct {
-	SQLite     DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
-	DuckLake   DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Local DuckLake registry identity check, bounded to one second."`
-	ClickHouse DependencyStatus `json:"clickhouse" enum:"ok,unavailable,not_configured" doc:"Authenticated SELECT 1 in the configured database, bounded to one second. Does not validate every table or project reader."`
+	SQLite   DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
+	DuckLake DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Local DuckLake registry identity check, bounded to one second."`
 }
 
 type InstanceConfiguration struct {
+	Analytics        bool `json:"analytics" doc:"An embedded DuckDB/DuckLake analytical store is configured. Its live check is reported separately."`
 	NativeS3Storage  bool `json:"native_s3_storage" doc:"DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials."`
 	QueryExports     bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
 	WebhookPipelines bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
 	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
 	EmailSignIn      bool `json:"email_sign_in" doc:"Email sign-in is configured. No verification email is sent."`
 	OIDCSignIn       bool `json:"oidc_sign_in" doc:"Upstream OIDC sign-in is configured. No identity-provider request is performed."`
-	S3Tiering        bool `json:"s3_tiering" doc:"A ClickHouse cold storage policy is configured. Its S3 disk and TTL progress are not probed."`
 }
 
 type InstanceStatus struct {
@@ -55,13 +52,12 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 
 	result := InstanceStatus{
 		Status: "ok", Version: Version, CheckedAt: time.Now().UTC().Format(time.RFC3339),
-		Checks: InstanceChecks{SQLite: dependencyOK, ClickHouse: dependencyNotConfigured, DuckLake: dependencyNotConfigured},
+		Checks: InstanceChecks{SQLite: dependencyOK, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
-			NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
-			S3QueryPipelines: s.pipelines != nil && (s.ch != nil || s.lake != nil),
+			Analytics: s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
+			S3QueryPipelines: s.pipelines != nil && s.lake != nil,
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,
-			S3Tiering:        s.ch != nil && s.ch.config.StoragePolicy != "",
 		},
 	}
 	probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
@@ -70,17 +66,6 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 	if err != nil {
 		result.Checks.SQLite = dependencyUnavailable
 		result.Status = "degraded"
-	}
-	if s.ch != nil {
-		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
-		data, err := s.ch.request(probe, s.ch.config.User, s.ch.config.Password, s.ch.config.Database,
-			url.Values{"max_execution_time": {"1"}, "default_format": {"TabSeparated"}}, strings.NewReader("SELECT 1"), 128)
-		cancel()
-		result.Checks.ClickHouse = dependencyOK
-		if err != nil || strings.TrimSpace(string(data)) != "1" {
-			result.Checks.ClickHouse = dependencyUnavailable
-			result.Status = "degraded"
-		}
 	}
 	if s.lake != nil {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)

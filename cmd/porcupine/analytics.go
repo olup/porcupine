@@ -4,41 +4,26 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
-func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeConfig, error) {
-	endpoint, directory := os.Getenv("PORCUPINE_CLICKHOUSE_URL"), os.Getenv("PORCUPINE_DUCKLAKE_DIR")
+func analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		if value != "" && (strings.HasPrefix(name, "PORCUPINE_CLICKHOUSE_") || name == "PORCUPINE_HOT_RECEIPT_LIMIT" || name == "PORCUPINE_HOT_STORAGE_DAYS") {
+			return nil, errors.New(name + " is no longer supported; use native DuckLake settings")
+		}
+	}
+	directory := os.Getenv("PORCUPINE_DUCKLAKE_DIR")
 	remote, err := duckLakeS3Configuration()
 	if err != nil {
-		return nil, nil, err
-	}
-	if endpoint != "" && directory != "" {
-		return nil, nil, errors.New("configure either PORCUPINE_DUCKLAKE_DIR or PORCUPINE_CLICKHOUSE_URL")
-	}
-	if endpoint != "" {
-		if remote != nil {
-			return nil, nil, errors.New("analytical S3 configuration requires DuckLake, not ClickHouse")
-		}
-		hotDays, err := analyticsInteger("PORCUPINE_HOT_STORAGE_DAYS", 0, 1, 36500)
-		if err != nil {
-			return nil, nil, err
-		}
-		return &porcupine.ClickHouseConfig{URL: endpoint, Database: os.Getenv("PORCUPINE_CLICKHOUSE_DATABASE"),
-			User: os.Getenv("PORCUPINE_CLICKHOUSE_USER"), Password: os.Getenv("PORCUPINE_CLICKHOUSE_PASSWORD"),
-			StoragePolicy: os.Getenv("PORCUPINE_CLICKHOUSE_STORAGE_POLICY"), HotStorageDays: hotDays,
-			ColdVolume: os.Getenv("PORCUPINE_CLICKHOUSE_COLD_VOLUME")}, nil, nil
+		return nil, err
 	}
 	if directory == "" {
 		directory = defaultAnalyticsDirectory(os.Getenv("PORCUPINE_DB"))
-	}
-	if directory == "" {
-		if remote != nil {
-			return nil, nil, errors.New("analytical S3 configuration requires a DuckLake directory")
-		}
-		return nil, nil, nil
 	}
 	config := &porcupine.DuckLakeConfig{Directory: directory, S3: remote}
 	for _, field := range []struct {
@@ -52,14 +37,14 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 	} {
 		value, err := analyticsInteger(field.name, 0, field.min, field.max)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		*field.target = value
 	}
 	if raw := os.Getenv("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL"); raw != "" {
 		interval, err := time.ParseDuration(raw)
 		if err != nil || interval < time.Second || interval > 24*time.Hour {
-			return nil, nil, errors.New("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL must be between 1s and 24h")
+			return nil, errors.New("PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL must be between 1s and 24h")
 		}
 		config.MaintenanceInterval = interval
 	}
@@ -74,7 +59,7 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 		if raw := os.Getenv(field.name); raw != "" {
 			duration, err := time.ParseDuration(raw)
 			if err != nil || duration < time.Second {
-				return nil, nil, errors.New(field.name + " must be a duration of at least 1s")
+				return nil, errors.New(field.name + " must be a duration of at least 1s")
 			}
 			*field.target = duration
 		}
@@ -82,11 +67,11 @@ func analyticsConfiguration() (*porcupine.ClickHouseConfig, *porcupine.DuckLakeC
 	if raw := os.Getenv("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED"); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
-			return nil, nil, errors.New("invalid PORCUPINE_DUCKLAKE_CLEANUP_ENABLED")
+			return nil, errors.New("invalid PORCUPINE_DUCKLAKE_CLEANUP_ENABLED")
 		}
 		config.DisableCleanup = !enabled
 	}
-	return nil, config, nil
+	return config, nil
 }
 
 func analyticsInteger(name string, fallback, min, max int) (int, error) {

@@ -23,7 +23,7 @@ Add `compose.native-backup.yaml` to the deployment's existing overlay list. For 
 docker compose -f compose.yaml -f compose.release.yaml -f compose.native-backup.yaml up -d
 ```
 
-Keep the OAuth, proxy and other overlays already used by your instance. This overlay selects `/backups` inside the container and mounts the private host directory there. It applies to the default DuckLake backend; optional ClickHouse deployments keep their [existing backup tool](online-backup.md).
+Keep the OAuth, proxy and other overlays already used by your instance. This overlay selects `/backups` inside the container and mounts the private host directory there. The scheduler runs in the same process as ingestion and analytics.
 
 For a directly hosted binary, set the environment variables below. The destination must be outside the managed DuckLake directory and accessible only to the server's owner. Use a dedicated backup directory.
 
@@ -76,7 +76,7 @@ Restore with the application stopped, into fresh storage, using the same interna
 4. Copy `acceptance.sqlite` to the original SQLite pathname. Copy the contents of `ducklake/` to the original DuckLake root. Preserve private permissions and the container user's ownership. Do not reuse SQLite WAL files or any files from a newer recovery point.
 5. Start one isolated writer. Pause restored pipeline destinations through the API or agent before permitting egress. Keep the recovery deployment isolated from the source's one-time export bucket while pending deletions are reviewed.
 6. Check instance status, known counts, identify results, corrections and deletions. Drain pending events and mutations. Retry known producer IDs and verify that their event IDs are unchanged. Check another project to prove isolation.
-7. Review credentials, pending exports and external side effects before reconnecting clients or resuming destinations. The automatic bundle does not perform the safety transformations of the separate ClickHouse restore tool.
+7. Review credentials, pending exports and external side effects before reconnecting clients or resuming destinations. A manual copy does not perform the access reset and destination pause of the [offline CLI restore](native-backup-recovery.md).
 
 A checkpoint cannot reconstruct revocations or deletions that occurred afterward. Restoring it can reactivate old credentials until you reconcile them. Keep independent recovery administration credentials available.
 

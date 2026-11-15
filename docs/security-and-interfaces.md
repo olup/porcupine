@@ -99,15 +99,13 @@ Each project has a separate DuckLake catalog and engine context. The public view
 
 Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#fixed-query-limits).
 
-The optional ClickHouse backend provisions restricted project readers, invoker-security views, physical-table row policies, and column-only grants. It applies `FINAL` for current revision selection and fixes read-only and resource settings. Its additional per-query memory, scanned-row, and read-byte limits are backend-specific.
-
-Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native and ClickHouse suites test their real storage boundaries in addition to parser rejection.
+Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native tests exercise the actual storage boundary in addition to parser rejection.
 
 ## Operator storage boundary
 
-Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Native analytical S3 storage is not available in this release.
+Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Analytical S3 is configured before initializing a fresh archive.
 
-Optional ClickHouse [S3 tiering](storage.md) uses operator-controlled bucket endpoints, credentials, policies, and hot duration. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
+[Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
 ## Pipeline boundaries
 
@@ -127,7 +125,7 @@ private-network targets. Custom S3 endpoints require an exact origin in the
 operator allowlist. These are distinct destination controls; allowing an S3
 origin does not permit private webhook traffic.
 
-Manual full-volume restores require the operator to pause every destination before allowing egress. The optional ClickHouse operator restore tool performs that pause automatically. A restore cannot reverse a request
+Manual full-volume restores require the operator to pause every destination before allowing egress. The [offline native restore](native-backup-recovery.md) resets archived access and pauses destinations automatically. A restore cannot reverse a request
 or object write already accepted elsewhere. Stable delivery identifiers and
 receiver deduplication remain part of the contract. See the pipeline reference
 for limits, credential replacement, and retry behavior.

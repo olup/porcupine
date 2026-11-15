@@ -26,7 +26,7 @@
       "id": "node.retry-stable-uuid",
       "required": true,
       "status": "implemented",
-      "scope": "Real SDK retries after proxy replaces committed response with HTTP 503; UUID remains stable and SQLite stores one event",
+      "scope": "Real SDK retries after proxy replaces committed response with HTTP 503; UUID remains stable and native analytics contains one event",
       "configuration": "nodeProfile"
     },
     {

@@ -183,7 +183,7 @@ func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T)
  INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,state,next_attempt_ms,created_at_ms) VALUES('old-delivery','old-pipeline',?,'old-event','body',4,'queued',0,1);
  INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms,manifest) VALUES('old-run','old-pipeline',0,1,'completed',1,'source/manifest.json');
  INSERT INTO pipeline_s3_files(run_id,object_key,upload_id) VALUES('old-run','source/pipeline.parquet','old-upload');
- INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at,attempt_id,query_id,cleanup_pending,file_count) VALUES('old-export',?,?,'SELECT 1','{}','parquet','old-idempotency','old-request','running',1,0,'now','old-attempt','old-query',1,1);
+ INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at,attempt_id,cleanup_pending,file_count) VALUES('old-export',?,?,'SELECT 1','{}','parquet','old-idempotency','old-request','running',1,0,'now','old-attempt',1,1);
  INSERT INTO export_files(job_id,attempt_id,file_index,object_key,upload_id) VALUES('old-export','old-attempt',0,'source/export.parquet','old-upload');
  CREATE TABLE project_deletion_files(project_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,PRIMARY KEY(project_id,object_key,upload_id)) WITHOUT ROWID;
  INSERT INTO project_deletion_files(project_id,object_key,upload_id) VALUES(?,'source/deleted-project.parquet','old-upload');`, projectID, actorID, projectID, projectID, actorID, projectID)
@@ -207,7 +207,7 @@ func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T)
 		t.Fatal("restored pipeline was not paused with erased credentials", err)
 	}
 	var cancelled bool
-	if err = s.db.QueryRow(`SELECT state='canceled' AND cancel_requested=1 AND attempt_id='' AND query_id='' AND cleanup_pending=0 AND file_count=0 FROM export_jobs WHERE id='old-export'`).Scan(&cancelled); err != nil || !cancelled {
+	if err = s.db.QueryRow(`SELECT state='canceled' AND cancel_requested=1 AND attempt_id='' AND cleanup_pending=0 AND file_count=0 FROM export_jobs WHERE id='old-export'`).Scan(&cancelled); err != nil || !cancelled {
 		t.Fatal("restored export could restart or delete source output", err)
 	}
 }

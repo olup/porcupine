@@ -1,5 +1,3 @@
-//go:build ducklake
-
 package porcupine
 
 import (
@@ -79,7 +77,7 @@ func architectureCrash(t *testing.T) {
 		}
 		report["checkpoint"], report["restart_seconds"], report["verdict"] = checkpoint, time.Since(start).Seconds(), "VERIFIED"
 		report["resources"] = architectureResources(root)
-		architectureEmit("crash", "ducklake", report)
+		architectureEmit("crash", report)
 	}
 }
 
@@ -156,7 +154,7 @@ func TestArchitectureCrashHelper(t *testing.T) {
 		t.Fatal("invalid crash checkpoint")
 	}
 	state.Project, state.Ingest = project(t, s)
-	comparisonQuery(t, h, state.Project, "SELECT count(*) AS total FROM events")
+	nativeBenchmarkQuery(t, h, state.Project, "SELECT count(*) AS total FROM events")
 	for i := 0; i < 20; i++ {
 		response := nativeRequest(t, s, state.Ingest, string(architectureLivePayload(i*100, 100, 0)), 200)
 		for j := 0; j < 100; j++ {

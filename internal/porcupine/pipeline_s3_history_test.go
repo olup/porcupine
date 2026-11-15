@@ -21,17 +21,12 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 		w.Write(committed)
 	}))
 	defer endpoint.Close()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "history.db"), BootstrapToken: adminToken, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "history.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	s.stopPipelines()
-	ch, err := newClickHouse(ClickHouseConfig{URL: "http://127.0.0.1:1", Database: "history_test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	configureAnalyticsTest(s, ch)
 	projectID, _ := project(t, s)
 	spec := testS3Spec()
 	spec.Destination.Endpoint = endpoint.URL

@@ -14,8 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/olup/porcupine/internal/porcupine"
+	"github.com/olup/porcupine/internal/apischema"
 )
 
 func main() {
@@ -23,7 +22,11 @@ func main() {
 	check := flag.Bool("check", false, "fail if the generated file is out of date")
 	flag.Parse()
 	log.SetFlags(0)
-	data, err := generate(porcupine.ManagementOpenAPI())
+	api, err := parseDocument(apischema.Document())
+	if err != nil {
+		log.Fatal(err)
+	}
+	data, err := generate(api)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,23 +47,23 @@ func main() {
 
 var commandName = regexp.MustCompile("^[a-z0-9]+(-[a-z0-9]+)*$")
 
-func generate(api *huma.OpenAPI) ([]byte, error) {
-	operations := map[string]*huma.Operation{}
+func generate(api *document) ([]byte, error) {
+	operations := map[string]*commandOperation{}
 	for path, item := range api.Paths {
-		if item.Ref != "" || len(item.Parameters) > 0 {
+		if item == nil || item.Ref != "" || len(item.Parameters) > 0 {
 			return nil, fmt.Errorf("%s: path-level references and parameters are unsupported", path)
 		}
-		for _, op := range []*huma.Operation{item.Get, item.Put, item.Post, item.Delete, item.Options, item.Head, item.Patch, item.Trace} {
+		for method, op := range map[string]*operation{"GET": item.Get, "PUT": item.Put, "POST": item.Post, "DELETE": item.Delete, "OPTIONS": item.Options, "HEAD": item.Head, "PATCH": item.Patch, "TRACE": item.Trace} {
 			if op == nil {
 				continue
 			}
-			if !commandName.MatchString(op.OperationID) || op.Method == "" || op.Path != path {
+			if !commandName.MatchString(op.OperationID) {
 				return nil, fmt.Errorf("%s: invalid CLI operation %q", path, op.OperationID)
 			}
 			if operations[op.OperationID] != nil {
 				return nil, fmt.Errorf("duplicate operationId %q", op.OperationID)
 			}
-			operations[op.OperationID] = op
+			operations[op.OperationID] = &commandOperation{operation: op, Method: method, Path: path}
 		}
 	}
 	var out bytes.Buffer
@@ -74,9 +77,14 @@ func generate(api *huma.OpenAPI) ([]byte, error) {
 	return format.Source(out.Bytes())
 }
 
-func writeOperation(out *bytes.Buffer, api *huma.OpenAPI, op *huma.Operation) error {
+func writeOperation(out *bytes.Buffer, api *document, op *commandOperation) error {
 	fmt.Fprintf(out, "{\nID: %q, Method: %q, Path: %q,\nSummary: %q,\n", op.OperationID, op.Method, op.Path, op.Summary)
 	if len(op.Parameters) > 0 {
+		for _, p := range op.Parameters {
+			if p == nil {
+				return fmt.Errorf("missing parameter")
+			}
+		}
 		out.WriteString("Params: []parameter{\n")
 		params := slices.Clone(op.Parameters)
 		sort.Slice(params, func(i, j int) bool {
@@ -97,6 +105,9 @@ func writeOperation(out *bytes.Buffer, api *huma.OpenAPI, op *huma.Operation) er
 			return fmt.Errorf("expected a single inline request body content type")
 		}
 		for media, content := range body.Content {
+			if content == nil {
+				return fmt.Errorf("missing request media schema")
+			}
 			fmt.Fprintf(out, "ContentType: %q, BodyRequired: %t,\n", media, body.Required)
 			switch media {
 			case "application/octet-stream":
@@ -113,7 +124,10 @@ func writeOperation(out *bytes.Buffer, api *huma.OpenAPI, op *huma.Operation) er
 	return nil
 }
 
-func writeParameter(out *bytes.Buffer, p *huma.Param) error {
+func writeParameter(out *bytes.Buffer, p *parameter) error {
+	if p == nil {
+		return fmt.Errorf("missing parameter")
+	}
 	switch p.In {
 	case "path", "header", "query":
 	default:
@@ -136,21 +150,7 @@ func writeParameter(out *bytes.Buffer, p *huma.Param) error {
 	return nil
 }
 
-func resolve(api *huma.OpenAPI, schema *huma.Schema) (*huma.Schema, error) {
-	if schema == nil {
-		return nil, fmt.Errorf("missing request schema")
-	}
-	if schema.Ref != "" {
-		resolved := api.Components.Schemas.SchemaFromRef(schema.Ref)
-		if resolved == nil || resolved.Ref != "" {
-			return nil, fmt.Errorf("unresolved schema reference %q", schema.Ref)
-		}
-		schema = resolved
-	}
-	return schema, nil
-}
-
-func writeBodyFields(out *bytes.Buffer, api *huma.OpenAPI, schema *huma.Schema) error {
+func writeBodyFields(out *bytes.Buffer, api *document, schema *schema) error {
 	schema, err := resolve(api, schema)
 	if err != nil {
 		return err
@@ -165,13 +165,13 @@ func writeBodyFields(out *bytes.Buffer, api *huma.OpenAPI, schema *huma.Schema) 
 		if err != nil {
 			return err
 		}
-		kind := resolved.Type
+		kind := string(resolved.Type)
 		if kind == "array" {
 			item, err := resolve(api, resolved.Items)
 			if err != nil {
 				return err
 			}
-			kind = "array of " + item.Type
+			kind = "array of " + string(item.Type)
 		}
 		if kind == "" {
 			kind = "any JSON value"

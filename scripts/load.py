@@ -26,8 +26,8 @@ from credentials import CredentialError, load_credentials
 EVENT_NAME = "porcupine_load"
 BODY_LIMIT = 1 << 20
 RESPONSE_LIMIT = 2 << 20
-COUNT_SQL = ("SELECT count() AS total FROM events WHERE event={event:String} "
-             "AND JSONExtractString(properties,'run_id')={run_id:String}")
+COUNT_SQL = ("SELECT count() AS total FROM events WHERE event=$event "
+             "AND json_extract_string(properties,'$.run_id')=$run_id")
 
 
 @dataclass(frozen=True)
@@ -366,7 +366,7 @@ def run(args):
     measurements = Measurements()
     initial, _ = client.count(run_id, measurements, "preflight")
     if initial is None:
-        raise ValueError("preflight query failed; check endpoint, read permission and ClickHouse readiness")
+        raise ValueError("preflight query failed; check endpoint, read permission and DuckLake readiness")
     if initial != 0:
         raise ValueError("run_id already has events; use a new run_id")
     stop = threading.Event()

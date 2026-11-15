@@ -7,7 +7,7 @@ COPY internal ./internal
 ARG VERSION=dev
 RUN --mount=type=cache,id=porcupine-analytics-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=porcupine-analytics-go-build,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -tags ducklake -trimpath \
+    CGO_ENABLED=1 go build -trimpath \
     -ldflags="-s -w -X github.com/olup/porcupine/internal/porcupine.Version=$VERSION" \
     -o /porcupine ./cmd/porcupine && mkdir /data
 RUN --mount=type=cache,id=porcupine-analytics-go-mod,target=/go/pkg/mod \

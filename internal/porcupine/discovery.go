@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"strconv"
 	"strings"
 )
 
@@ -22,7 +21,7 @@ type EventCatalogInput struct {
 
 type EventCatalogEvent struct {
 	Event                string `json:"event"`
-	Count                string `json:"count" doc:"All delivered logical events with this name, represented as a UInt64 decimal string."`
+	Count                string `json:"count" doc:"All delivered logical events with this name, represented as a decimal string."`
 	FirstReceivedAt      string `json:"first_received_at" doc:"Request arrival time of the lowest durable event ID, not the client event timestamp."`
 	LastReceivedAt       string `json:"last_received_at" doc:"Request arrival time of the highest durable event ID, not the client event timestamp."`
 	LatestEventUUID      string `json:"latest_event_uuid" doc:"UUID of the highest event ID. Query events by this UUID to inspect it."`
@@ -32,7 +31,7 @@ type EventCatalogEvent struct {
 type EventCatalogProperty struct {
 	Key               string   `json:"key"`
 	Types             []string `json:"types" doc:"Observed top-level JSON types in the bounded sample."`
-	SampleOccurrences string   `json:"sample_occurrences" doc:"Number of sampled events containing this key, represented as a UInt64 decimal string."`
+	SampleOccurrences string   `json:"sample_occurrences" doc:"Number of sampled events containing this key, represented as a decimal string."`
 	LatestEventUUID   string   `json:"latest_event_uuid" doc:"UUID of the latest sampled event containing this key; no property values are returned."`
 	LastReceivedAt    string   `json:"last_received_at" doc:"Request arrival time of the latest sampled event containing this key."`
 }
@@ -58,32 +57,6 @@ type EventCatalog struct {
 }
 
 type EventCatalogOutput struct{ Body EventCatalog }
-
-const catalogEventsSQL = `SELECT event, count() AS count,
-argMin(received_at,id) AS first_received_at,
-argMax(received_at,id) AS last_received_at,
-argMax(uuid,id) AS latest_event_uuid,
-argMax(timestamp,id) AS latest_event_timestamp
-FROM events`
-
-const catalogEventOrderSQL = `
-GROUP BY event ORDER BY max(id) DESC
-LIMIT {catalog_limit:UInt32} OFFSET {catalog_offset:UInt32}`
-
-const catalogPropertiesSQL = `SELECT key,
-arraySort(groupUniqArray(toString(JSONType(properties,key)))) AS types,
-count() AS sample_occurrences,
-argMax(uuid,id) AS latest_event_uuid,
-argMax(received_at,id) AS last_received_at
-FROM (
-SELECT id,uuid,received_at,properties FROM events
-WHERE event={event:String} ORDER BY id DESC LIMIT 1000
-)
-ARRAY JOIN arraySlice(arraySort(arrayFilter(k -> length(k)<=200
-AND startsWith(k,{property_prefix:String})
-AND ({property_kind:String}='all' OR ({property_kind:String}='custom' AND NOT startsWith(k,'$')) OR ({property_kind:String}='reserved' AND startsWith(k,'$')))
-AND ({property_has_after:UInt8}=0 OR k>{property_after:String}),JSONExtractKeys(properties))),1,200) AS key
-GROUP BY key ORDER BY key ASC LIMIT {property_limit:UInt32}`
 
 type catalogPropertyCursor struct {
 	Project string `json:"project"`
@@ -143,109 +116,11 @@ func (s *Service) eventCatalog(ctx context.Context, input *EventCatalogInput) (*
 	if err != nil {
 		return nil, err
 	}
-	input = &options
-	limit := input.Limit
-	if err := s.analyticsProject(ctx, input.ID); err != nil {
+	if err = s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	if s.lake != nil {
-		return s.lakeEventCatalog(ctx, *input)
-	}
-	if s.ch == nil {
+	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	select {
-	case s.querySlots <- struct{}{}:
-		defer func() { <-s.querySlots }()
-	default:
-		return nil, apiError(429, "analytics query concurrency limit reached")
-	}
-	ctx, cancel := context.WithTimeout(ctx, analyticsTimeout)
-	defer cancel()
-	namespace, reader, password, err := s.analyticsReader(ctx, input.ID)
-	if err != nil {
-		return nil, apiError(503, "analytics reader unavailable")
-	}
-	parameters := map[string]string{"catalog_limit": strconv.Itoa(limit + 1), "catalog_offset": strconv.Itoa(input.Offset)}
-	sql := catalogEventsSQL
-	if input.Event != "" {
-		sql += " WHERE event={event:String}"
-		parameters["event"] = input.Event
-	}
-	sql += catalogEventOrderSQL
-	data, err := s.ch.query(ctx, reader, password, namespace, sql, parameters)
-	if err != nil {
-		return nil, s.analyticsStorageError(ctx, input.ID, err)
-	}
-	events, err := decodeCatalogRows[EventCatalogEvent](data, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	for _, event := range events {
-		if len(event.Event) > 500 || !validStoredEventUUID(event.LatestEventUUID) || len(event.FirstReceivedAt) > 64 || len(event.LastReceivedAt) > 64 || len(event.LatestEventTimestamp) > 64 || !catalogCount(event.Count, 0) {
-			return nil, apiError(503, "invalid analytics storage response")
-		}
-	}
-	result := EventCatalog{Events: events, Properties: []EventCatalogProperty{}, Sampling: EventCatalogSampling{
-		PropertiesRequested: input.Event != "", SampleEventLimit: 1000, KeysPerEventLimit: 200,
-		MaxPropertyNameBytes: 200, PropertyLimit: input.PropertyLimit,
-	}}
-	if len(events) > limit {
-		result.Events = events[:limit]
-		next := input.Offset + limit
-		if next <= 10000 {
-			result.NextOffset = &next
-		} else {
-			result.Sampling.PaginationTruncated = true
-		}
-	}
-	if input.Event != "" {
-		parameters := map[string]string{"event": input.Event, "property_prefix": input.PropertyPrefix, "property_kind": input.PropertyKind, "property_limit": strconv.Itoa(input.PropertyLimit + 1), "property_has_after": "0", "property_after": ""}
-		if input.propertyAfter != nil {
-			parameters["property_has_after"] = "1"
-			parameters["property_after"] = *input.propertyAfter
-		}
-		data, err := s.ch.query(ctx, reader, password, namespace, catalogPropertiesSQL, parameters)
-		if err != nil {
-			return nil, s.analyticsStorageError(ctx, input.ID, err)
-		}
-		properties, err := decodeCatalogRows[EventCatalogProperty](data, input.PropertyLimit+1)
-		if err != nil {
-			return nil, err
-		}
-		for _, property := range properties {
-			if len(property.Key) > 200 || property.Types == nil || len(property.Types) > 16 || !validStoredEventUUID(property.LatestEventUUID) || len(property.LastReceivedAt) > 64 || !catalogCount(property.SampleOccurrences, 1000) {
-				return nil, apiError(503, "invalid analytics storage response")
-			}
-			for _, kind := range property.Types {
-				if len(kind) > 64 {
-					return nil, apiError(503, "invalid analytics storage response")
-				}
-			}
-		}
-		result.Properties = properties
-		finishCatalogProperties(&result, *input)
-	}
-	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
-	if err != nil {
-		return nil, apiError(503, "delivery status unavailable")
-	}
-	return &EventCatalogOutput{Body: result}, nil
-}
-
-func decodeCatalogRows[T any](data []byte, limit int) ([]T, error) {
-	var envelope struct {
-		Meta []AnalyticsResultColumn `json:"meta"`
-		Data []T                     `json:"data"`
-		Rows uint64                  `json:"rows"`
-	}
-	if json.Unmarshal(data, &envelope) != nil || envelope.Meta == nil || envelope.Data == nil || len(envelope.Data) > limit || envelope.Rows != uint64(len(envelope.Data)) {
-		return nil, apiError(503, "invalid analytics storage response")
-	}
-	return envelope.Data, nil
-}
-
-func catalogCount(value string, max uint64) bool {
-	count, err := strconv.ParseUint(value, 10, 64)
-	return err == nil && (max == 0 || count <= max)
+	return s.lakeEventCatalog(ctx, options)
 }

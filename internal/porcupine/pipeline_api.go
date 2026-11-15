@@ -221,7 +221,7 @@ func (s *Service) createPipeline(ctx context.Context, input *PipelineCreateInput
 	if s.pipelines == nil {
 		return nil, apiError(503, "pipelines are not configured")
 	}
-	if input.Body.Kind == "s3" && s.ch == nil && s.lake == nil {
+	if input.Body.Kind == "s3" && s.lake == nil {
 		return nil, apiError(503, "S3 pipelines require an analytical store")
 	}
 	if strings.TrimSpace(input.Body.Name) == "" || len(input.Body.Name) > 200 {
@@ -321,7 +321,7 @@ func (s *Service) setPipelineState(ctx context.Context, input *PipelineGetInput,
 		return nil, pipelineLookupError(err)
 	}
 	if p.Kind == "s3" && state == "active" {
-		if s.ch == nil && s.lake == nil {
+		if s.lake == nil {
 			return nil, apiError(503, "S3 pipelines require an analytical store")
 		}
 		release, err := s.lockS3Lifecycle(p.ID)

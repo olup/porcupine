@@ -25,6 +25,8 @@ Development also adds complete S3 backups to an independent destination and offl
 
 Development formalizes the [native event contract](native-event-contract.md), publishes its live JSON Schema, and exposes `get-event-input-contract` through API, CLI and MCP. The historical message schema requires occurrence time and producer ID. Native, PostHog, and Segment files now use a shared resumable import engine and one standalone CLI command, with gzip streaming and an analytical delivery check. Adapter contract tests cover identity, timestamps, large integers and retries across a shared logical source.
 
+The development server now supports DuckDB/DuckLake only. Live acceptance and historical upload have separate transaction owners, while SQL validation and offline CLI generation have independent dependencies. Existing archive, checkpoint and restore guards remain together. See [native ownership boundaries](native-only-architecture.md) for the scope and remaining work.
+
 ## Next work, in order
 
 1. Validate these unreleased changes in the next release, including real migration files and recovery drills. The one-command historical import path is implemented in development builds.

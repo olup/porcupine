@@ -41,15 +41,6 @@ func main() {
 		}
 		queueMax = n
 	}
-	hotReceiptLimit := int64(0)
-	if raw := os.Getenv("PORCUPINE_HOT_RECEIPT_LIMIT"); raw != "" {
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || n < 0 {
-			slog.Error("PORCUPINE_HOT_RECEIPT_LIMIT must be a nonnegative integer")
-			os.Exit(1)
-		}
-		hotReceiptLimit = n
-	}
 	queueMaxBytes, err := queueMaxBytesFromEnvironment()
 	if err != nil {
 		slog.Error("queue configuration", "error", err)
@@ -63,7 +54,7 @@ func main() {
 	if raw := os.Getenv("PORCUPINE_TRUSTED_PROXIES"); raw != "" {
 		trustedProxies = strings.Split(raw, ",")
 	}
-	clickHouse, duckLake, err := analyticsConfiguration()
+	duckLake, err := analyticsConfiguration()
 	if err != nil {
 		slog.Error("analytics configuration", "error", err)
 		os.Exit(1)
@@ -88,7 +79,7 @@ func main() {
 		slog.Error("native backup configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, HotReceiptLimit: hotReceiptLimit, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, ClickHouse: clickHouse, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig})
+	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)

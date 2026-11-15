@@ -31,8 +31,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
 
-`query-events` accepts an optional `use_cache` Boolean. The default DuckLake backend always executes fresh queries and reports `sql.result_cache: false`. Optional ClickHouse deployments can use a 60-second cache when the field is omitted or true. A false value bypasses that cache. See [the analytics reference](analytics.md#cached-and-fresh-queries)
-for mutation invalidation and delivery consistency.
+`query-events` executes fresh DuckDB SQL against delivered state and reports `sql.result_cache: false`. The optional `use_cache` field remains accepted but does not change execution. See [query consistency](analytics.md#cached-and-fresh-queries).
 
 | Operation | Required authority | Success |
 | --- | --- | --- |
@@ -125,15 +124,13 @@ queue inspection rather than historical event access.
 
 ## Quarantined delivery repair
 
-`list-quarantined-events` lists accepted originals retained after confirmed
-row-specific ClickHouse rejection. It returns metadata only. Event payloads,
-properties, visitor IDs, and raw ClickHouse errors are absent.
+`list-quarantined-events` lists stored quarantined originals for operator repair. It returns metadata only. Event payloads, properties, visitor IDs, and raw engine errors are absent. Native allocation and transient storage failures retain pending work; they do not automatically quarantine it.
 
 `GET /api/v1/projects/{id}/quarantined-events?limit=100&after_event_id=0`
 returns `events`, `limit`, `after_event_id`, and an optional
 `next_after_event_id`. Each event contains `event_id`, `uuid`, `error_code`,
 `quarantined_at`, and `received_at`. Event IDs and cursors are decimal strings
-to preserve 64-bit precision. Confirmed rejection codes are `321` and `469`.
+to preserve 64-bit precision. Error codes are diagnostic metadata, not an authorization or retry policy.
 
 Pages sort by increasing event ID. `limit` defaults to 100 and accepts 1 through
 1,000. Pass `next_after_event_id` as the next request's `after_event_id`.

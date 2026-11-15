@@ -1,5 +1,7 @@
 # Local benchmark reference
 
+This is a historical development record. Its measurements and comparison results describe the tested revision, not the current supported deployment. Old commands, external-database setup, and build tags below belong to that revision. For current use, read [hosting](hosting.md), [storage](storage.md), and [load testing](load-testing.md). The earlier external-database implementation remains on `reference/clickhouse-before-ducklake`.
+
 This historical reference measures the optional ClickHouse backend. For the default native architecture, read [DuckLake validation](ducklake-validation.md) and [maintenance measurements](ducklake-maintenance.md).
 
 A synthetic ten-minute run accepted and reconciled 120,000 events at 200 events/s.

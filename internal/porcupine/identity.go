@@ -109,7 +109,7 @@ func identityLink(ctx context.Context, tx *sql.Tx, project, id string) (string, 
 // applyIdentityControl runs after stable UUID deduplication and insertion, in the
 // capture transaction. Invalid or conflicting controls retain a durable no-op
 // marker and cannot change any profile or link, including a competing target.
-func (s *Service) applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, error) {
+func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, error) {
 	if !isIdentityControl(event.Event) {
 		return false, nil
 	}

@@ -30,8 +30,8 @@ func TestDuckLakeS3Environment(t *testing.T) {
 	}
 	t.Setenv("PORCUPINE_CLICKHOUSE_URL", "http://localhost:8123")
 	t.Setenv("PORCUPINE_DUCKLAKE_DIR", "")
-	if _, _, err := analyticsConfiguration(); err == nil {
-		t.Fatal("ClickHouse silently ignored native S3 configuration")
+	if _, err := analyticsConfiguration(); err == nil {
+		t.Fatal("retired engine settings were silently ignored")
 	}
 	t.Setenv("PORCUPINE_DUCKLAKE_S3_PATH_STYLE", "definitely")
 	if _, err := duckLakeS3Configuration(); err == nil {

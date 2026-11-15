@@ -48,9 +48,9 @@ nav:
       - Configure email delivery: email-transport.md
       - Storage options: storage.md
       - Analytical S3 storage: ducklake-s3.md
-      - Back up and restore: online-backup.md
+      - Backup consistency: online-backup.md
       - Compose backup setup: backup-compose.md
-      - Test disaster recovery: restore.md
+      - Stopped-volume recovery: restore.md
   - API reference:
       - HTTP management API: management-api.md
       - Native event contract: native-event-contract.md
@@ -62,14 +62,19 @@ nav:
       - PostHog export format: posthog-import-format.md
   - How Porcupine works:
       - Architecture: architecture.md
+      - Native ownership boundaries, unreleased: native-only-architecture.md
       - Durability and recovery: reliability.md
       - Deduplication: receipts.md
       - Export internals: export-design.md
       - SDK compatibility tests: sdk-compatibility-tests.md
-      - Benchmarks: benchmarks.md
       - Load testing: load-testing.md
-      - DuckLake development notes: ducklake-experiment.md
-      - DuckLake validation: ducklake-validation.md
       - Large-event delivery, unreleased: ducklake-large-batches.md
       - Roadmap: roadmap.md
       - Publish a release: releasing.md
+  - Historical measurements:
+      - Benchmark record: benchmarks.md
+      - Initial DuckLake experiment: ducklake-experiment.md
+      - Native validation record: ducklake-validation.md
+      - Validation plan: ducklake-validation-plan.md
+      - Maintenance investigation: ducklake-maintenance.md
+      - Maintenance load record: ducklake-maintenance-soak.md

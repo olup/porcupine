@@ -8,24 +8,6 @@ import (
 	"time"
 )
 
-const deliveryIsolationProbes = 32
-const deliveryIsolationTimeout = 10 * time.Second
-
-// Only these errors specifically describe a rejected value/row constraint.
-// General parser, schema, memory, permission, network and storage errors are not
-// sufficient evidence to quarantine accepted records.
-func deliveryRowError(err error) (int, bool) {
-	var failure *clickHouseError
-	if !errors.As(err, &failure) || (failure.Status != 400 && failure.Status != 500 && failure.Status != 200) {
-		return 0, false
-	}
-	switch failure.Code {
-	case 321, 469:
-		return failure.Code, true
-	}
-	return 0, false
-}
-
 func (s *Service) deliveryCursor(ctx context.Context) (int64, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='delivery_scan_cursor'`).Scan(&value)
@@ -50,102 +32,22 @@ func (s *Service) advanceDeliveryCursor(ctx context.Context, id int64) error {
 	return nil
 }
 
-type deliveryIsolation struct {
-	s         *Service
-	ctx       context.Context
-	remaining int
-	progress  bool
-}
-
 func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool, error) {
-	if s.lake != nil {
-		projections := make([]eventProjection, 0, len(batch))
-		for _, event := range batch {
-			snapshot, err := originalSnapshot(event)
-			if err != nil {
-				return false, err
-			}
-			projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
-		}
-		if err := s.lake.Apply(ctx, projections); err != nil {
+	projections := make([]eventProjection, 0, len(batch))
+	for _, event := range batch {
+		snapshot, err := originalSnapshot(event)
+		if err != nil {
 			return false, err
 		}
-		if err := s.acknowledgeOriginals(ctx, batch); err != nil {
-			return false, err
-		}
-		return true, nil
+		projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
 	}
-	err := s.ch.insert(ctx, batch)
-	if err == nil {
-		if err = s.acknowledgeOriginals(ctx, batch); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	if _, specific := deliveryRowError(err); !specific {
+	if err := s.applyAnalyticalProjections(ctx, projections); err != nil {
 		return false, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, deliveryIsolationTimeout)
-	defer cancel()
-	isolation := deliveryIsolation{s: s, ctx: probeCtx, remaining: deliveryIsolationProbes - 1}
-	err = isolation.reject(batch, err)
-	return isolation.progress, err
-}
-
-func (p *deliveryIsolation) insert(batch []Event) error {
-	if p.remaining == 0 {
-		return errDeliveryProbeBudget
+	if err := s.acknowledgeOriginals(ctx, batch); err != nil {
+		return false, err
 	}
-	p.remaining--
-	return p.s.ch.insert(p.ctx, batch)
-}
-
-var errDeliveryProbeBudget = errors.New("delivery isolation probe budget exhausted")
-
-func (p *deliveryIsolation) reject(batch []Event, failure error) error {
-	code, specific := deliveryRowError(failure)
-	if !specific {
-		return failure
-	}
-	if len(batch) == 1 {
-		// A second independent rejection must name the same row-specific code.
-		confirmed := p.insert(batch)
-		if confirmed == nil {
-			if err := p.s.acknowledgeOriginals(p.ctx, batch); err != nil {
-				return err
-			}
-			p.progress = true
-			return nil
-		}
-		if errors.Is(confirmed, errDeliveryProbeBudget) {
-			return nil
-		}
-		second, ok := deliveryRowError(confirmed)
-		if !ok || second != code {
-			return confirmed
-		}
-		changed, err := p.s.quarantineOriginal(p.ctx, batch[0], code)
-		p.progress = p.progress || changed
-		return err
-	}
-	middle := len(batch) / 2
-	for _, part := range [][]Event{batch[:middle], batch[middle:]} {
-		err := p.insert(part)
-		if errors.Is(err, errDeliveryProbeBudget) {
-			return nil
-		}
-		if err == nil {
-			if err = p.s.acknowledgeOriginals(p.ctx, part); err != nil {
-				return err
-			}
-			p.progress = true
-			continue
-		}
-		if err = p.reject(part, err); err != nil {
-			return err
-		}
-	}
-	return nil
+	return true, nil
 }
 
 func (s *Service) quarantineOriginal(ctx context.Context, event Event, code int) (bool, error) {
@@ -171,7 +73,7 @@ func (s *Service) retryQuarantinedDelivery(ctx context.Context, project string, 
 	return n > 0, err
 }
 
-// The positive replacement is already acknowledged by ClickHouse. Its private
+// The positive replacement is already acknowledged by the analytical store. Its private
 // original snapshot preserves evidence unless this is an intentional deletion.
 func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.Tx, projection eventProjection) error {
 	if projection.Revision == 0 {
@@ -182,7 +84,7 @@ func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.T
 		return err
 	}
 	if queued {
-		if err := s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, "", projection.ID); err != nil {
+		if err := s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID); err != nil {
 			return err
 		}
 	}

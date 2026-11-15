@@ -10,6 +10,12 @@ import (
 )
 
 func exportConfiguration() (*porcupine.ExportConfig, error) {
+	for _, name := range []string{"PORCUPINE_EXPORT_MAX_READ_BYTES", "PORCUPINE_EXPORT_MEMORY_BYTES", "PORCUPINE_EXPORT_TEMPORARY_BYTES"} {
+		if os.Getenv(name) != "" {
+			return nil, errors.New(name + " is not enforced by DuckDB and is no longer supported")
+		}
+	}
+
 	bucket := os.Getenv("PORCUPINE_EXPORT_S3_BUCKET")
 	if bucket == "" {
 		for _, name := range []string{"PORCUPINE_EXPORT_S3_PREFIX", "PORCUPINE_EXPORT_S3_ENDPOINT", "PORCUPINE_EXPORT_S3_ACCESS_KEY_ID", "PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY"} {
@@ -44,19 +50,17 @@ func exportConfiguration() (*porcupine.ExportConfig, error) {
 }
 
 func readExportLimits(c *porcupine.ExportConfig) error {
+
 	var seconds, queued, hours int64
 	fields := []struct {
 		name  string
 		value *int64
 	}{
 		{"PORCUPINE_EXPORT_MAX_EXECUTION_SECONDS", &seconds},
-		{"PORCUPINE_EXPORT_MAX_READ_BYTES", &c.MaxReadBytes},
 		{"PORCUPINE_EXPORT_MAX_OUTPUT_BYTES", &c.MaxOutputBytes},
 		{"PORCUPINE_EXPORT_FILE_BYTES", &c.FileBytes},
 		{"PORCUPINE_EXPORT_MAX_ROW_BYTES", &c.MaxRowBytes},
-		{"PORCUPINE_EXPORT_MEMORY_BYTES", &c.MemoryBytes},
 		{"PORCUPINE_EXPORT_BANDWIDTH_BYTES_PER_SECOND", &c.BandwidthBytesPerSecond},
-		{"PORCUPINE_EXPORT_TEMPORARY_BYTES", &c.TemporaryBytes},
 		{"PORCUPINE_EXPORT_QUEUE_THRESHOLD", &c.QueueThreshold},
 		{"PORCUPINE_EXPORT_MAX_QUEUED_JOBS", &queued},
 		{"PORCUPINE_EXPORT_RETENTION_HOURS", &hours},

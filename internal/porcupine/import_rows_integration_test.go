@@ -9,20 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestClickHouseIntegrationPostHogImport(t *testing.T) {
-	config := integrationClickHouseConfig(t)
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "import.db"), BootstrapToken: adminToken, ClickHouse: &config, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{0x74}, 32)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	s.stopPipelines()
+func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) {
+	s := duckLakeJourneyService(t)
+	enableTestPipelines(t, s)
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -125,7 +119,7 @@ func TestClickHouseIntegrationPostHogImport(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("import projection did not drain")
 		}
-		if err = s.flushDelivery(context.Background()); err != nil {
+		if err := s.flushDelivery(context.Background()); err != nil {
 			t.Fatal("import delivery failed")
 		}
 	}
@@ -165,56 +159,32 @@ func TestClickHouseIntegrationPostHogImport(t *testing.T) {
 		t.Fatal("archive person snapshot overwrote current live profile")
 	}
 	call("GET", "/api/v1/projects/"+projectID+"/events/stripped-control", adminToken, nil, nil, 404)
-	ns, reader, password, err := s.analyticsReader(context.Background(), projectID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Imported rows have honest current receipt times, yet cannot bypass the
-	// dedicated window predicate using a user WITH alias of that same column.
-	for _, sql := range []string{"SELECT uuid FROM events ORDER BY uuid", "WITH 0 AS is_imported SELECT uuid FROM events ORDER BY uuid"} {
-		windowSQL, e := pipelineWindowSQL(sql, ns)
-		if e != nil {
-			t.Fatal(e)
-		}
-		response, e := s.ch.openExport(context.Background(), ns, reader, password, "import_window_"+strings.ReplaceAll(newID(), "-", ""), windowSQL, map[string]string{"window_start": "0", "window_end": "9223372036854775807"})
-		if e != nil {
-			t.Fatal(e)
-		}
+	// Automatic receipt-window exports filter historical rows before user SQL,
+	// including a user projection alias with the same import-marker name.
+	for _, query := range []string{"SELECT uuid FROM events ORDER BY uuid", "SELECT uuid,0 AS is_imported FROM events ORDER BY uuid"} {
 		var ids []string
-		stream, e := streamExportJSON(context.Background(), response, 1<<20, exportStreamCallbacks{Row: func(values []json.RawMessage) error {
+		stream, err := s.lake.Export(context.Background(), projectID, query, nil, &analyticalWindow{StartMS: 0, EndMS: 9223372036854775807}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func(values []json.RawMessage) error {
 			var id string
-			json.Unmarshal(values[0], &id)
+			if err := json.Unmarshal(values[0], &id); err != nil {
+				return err
+			}
 			ids = append(ids, id)
 			return nil
 		}})
-		response.Close()
-		if e != nil || stream.Rows != 1 || len(ids) != 1 || ids[0] != "live-first" {
-			t.Fatalf("automatic receipt-window export included imported history: %v rows=%v", e, ids)
+		if err != nil || stream.Rows != 1 || len(ids) != 1 || ids[0] != "live-first" {
+			t.Fatalf("automatic export included imported history: %v ids=%v", err, ids)
 		}
 	}
-	spoofed, e := pipelineWindowSQL("WITH 0 AS received_at_ms SELECT uuid FROM events", ns)
-	if e != nil {
-		t.Fatal(e)
+	stream, err := s.lake.Export(context.Background(), projectID, "SELECT uuid,0 AS received_at_ms FROM events", nil, &analyticalWindow{StartMS: 0, EndMS: 10}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }})
+	if err != nil || stream.Rows != 0 {
+		t.Fatal("user projection alias bypassed trusted receipt-time filter", err)
 	}
-	response, e := s.ch.openExport(context.Background(), ns, reader, password, "import_window_alias_"+strings.ReplaceAll(newID(), "-", ""), spoofed, map[string]string{"window_start": "0", "window_end": "10"})
-	if e != nil {
-		t.Fatal(e)
-	}
-	stream, e := streamExportJSON(context.Background(), response, 1<<20, exportStreamCallbacks{})
-	response.Close()
-	if e != nil || stream.Rows != 0 {
-		t.Fatal("user WITH alias bypassed trusted receipt-time predicate")
-	}
+
 	t.Log("real JSONL HTTP import: counts, resume replay, live dedup, profile safety, controls, archive time, webhook and receipt-window isolation verified")
 }
 
-func TestClickHouseIntegrationPostHogBoundImport(t *testing.T) {
-	config := integrationClickHouseConfig(t)
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "bound-import.db"), BootstrapToken: adminToken, ClickHouse: &config})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
+func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
+	s := duckLakeJourneyService(t)
 	projectID, _ := project(t, s)
 	other, _ := project(t, s)
 	bound := func(source string) string {
@@ -263,7 +233,7 @@ func TestClickHouseIntegrationPostHogBoundImport(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("bound import delivery did not drain")
 		}
-		if err = s.flushDelivery(context.Background()); err != nil {
+		if err := s.flushDelivery(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -25,11 +25,6 @@ func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind str
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	lookup, err := s.prepareImportRows(ctx, project, rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.releaseReceiptLookup(lookup)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -38,12 +33,9 @@ func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind str
 	if _, err = tx.Exec(`UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.validateReceiptLookup(ctx, tx, lookup); err != nil {
-		t.Fatal(err)
-	}
 	results := make([]ImportRowResult, len(rows))
 	for i, row := range rows {
-		results[i], err = s.acceptImportRowTx(ctx, tx, project, row)
+		results[i], err = s.eventRules.AcceptHistoricalTx(ctx, tx, project, row)
 		if err != nil {
 			t.Fatal(err)
 		}

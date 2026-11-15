@@ -91,7 +91,7 @@ func (f *exportTestS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExport) {
 	t.Helper()
-	s := service(t, 100)
+	s := duckLakeJourneyService(t)
 	config, err := normalizeExportConfig(ExportConfig{BandwidthBytesPerSecond: 100 << 20, FileBytes: 1024})
 	if err != nil {
 		t.Fatal(err)

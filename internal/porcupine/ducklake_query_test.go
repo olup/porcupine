@@ -1,15 +1,16 @@
-//go:build ducklake
-
 package porcupine
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/nativequery"
 )
 
 func TestDuckLakeSQLGuardNativeGrammar(t *testing.T) {
@@ -37,11 +38,11 @@ func TestDuckLakeSQLGuardNativeGrammar(t *testing.T) {
 		`/* before */ SELECT '; DELETE FROM events' AS harmless FROM events; -- after` + "\n",
 	} {
 		t.Run(query, func(t *testing.T) {
-			canonical, _, err := validateDuckLakeSQL(context.Background(), db, query, nil)
+			canonical, _, err := nativequery.Prepare(context.Background(), db, query, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err = validateDuckLakeSQL(context.Background(), db, canonical, nil); err != nil {
+			if _, _, err = nativequery.Prepare(context.Background(), db, canonical, nil); err != nil {
 				t.Fatalf("canonical query rejected: %s: %v", canonical, err)
 			}
 		})
@@ -87,15 +88,12 @@ func TestDuckLakeSQLGuardRejectsEscapeRoutes(t *testing.T) {
 		strings.Repeat(" ", maxSQLBytes+1),
 	} {
 		t.Run(query, func(t *testing.T) {
-			if canonical, _, err := validateDuckLakeSQL(context.Background(), db, query, nil); err == nil {
+			if canonical, _, err := nativequery.Prepare(context.Background(), db, query, nil); err == nil {
 				t.Fatalf("unsafe SQL accepted: %s", canonical)
 			}
 		})
 	}
-	guard := duckLakeSQLGuard{parameters: map[string]bool{}}
-	if err := guard.walk(map[string]any{"type": "FUTURE_SQL_NODE"}, map[string]bool{"events": true}, 0); err == nil {
-		t.Fatal("unknown parser node must fail closed")
-	}
+
 }
 
 func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
@@ -219,6 +217,72 @@ func TestDuckLakeQuerySerializationAliasesAndNonfiniteValues(t *testing.T) {
 		_, err := store.Query(context.Background(), "aliases", "SELECT CAST('"+value+"' AS DOUBLE) AS unsupported", nil)
 		if err == nil || queryStatus(err) != 400 {
 			t.Fatalf("non-finite number %s: %v", value, err)
+		}
+	}
+}
+
+func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
+	store := openLakeStorageTest(t, t.TempDir(), 1)
+	if err := store.Apply(context.Background(), []eventProjection{lakeStorageProjection(t, "policy", "one", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		sql         string
+		params      map[string]string
+		code, field string
+	}{
+		{"SELECT read_blob('/private/secret') FROM events", nil, "unsupported_function", "read_blob"},
+		{"SELECT event FROM events WHERE event=$event", nil, "missing_parameter", "event"},
+		{"SELECT event FROM events", map[string]string{"extra": "private parameter value"}, "unused_parameter", "extra"},
+		{"SELECT * FROM other_project.events", nil, "unsupported_sql", ""},
+		{"SELECT FROM", nil, "invalid_sql", ""},
+		{"SELECT \x00", nil, "invalid_sql", ""},
+		{"SELECT \xff", nil, "invalid_sql", ""},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			_, queryErr := store.Query(context.Background(), "policy", tc.sql, tc.params)
+			_, exportErr := store.ValidateExport(context.Background(), "policy", tc.sql, tc.params, false)
+			var queryFailure, exportFailure *managementError
+			if !errors.As(queryErr, &queryFailure) || !errors.As(exportErr, &exportFailure) {
+				t.Fatalf("missing transport policy error: query=%v export=%v", queryErr, exportErr)
+			}
+			if queryFailure.GetStatus() != 400 || exportFailure.GetStatus() != 400 || queryFailure.Code != tc.code || queryFailure.Field != tc.field || queryFailure.Hint == "" || *queryFailure != *exportFailure {
+				t.Fatalf("query/export policy drift: query=%+v export=%+v", queryFailure, exportFailure)
+			}
+			encoded, _ := json.Marshal(exportFailure)
+			for _, secret := range []string{"/private/secret", "private parameter value", "other_project"} {
+				if strings.Contains(string(encoded), secret) {
+					t.Fatal("policy error exposed source or value")
+				}
+			}
+		})
+	}
+}
+
+func TestDuckLakeSQLTextRoundTripBoundary(t *testing.T) {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, raw := range []string{"SELECT \x00", "SELECT '\x00'", "SELECT \xff", "SELECT '\xff'", "SELECT '雪' -- \xff"} {
+		_, _, err := nativequery.Prepare(context.Background(), db, raw, nil)
+		var failure *nativequery.Error
+		if !errors.As(err, &failure) || failure.Code != "invalid_sql" {
+			t.Fatalf("invalid SQL text accepted: %q: %v", raw, err)
+		}
+		if _, err := nativequery.Inspect(context.Background(), db, raw); err == nil {
+			t.Fatalf("inspection accepted invalid text: %q", raw)
+		}
+	}
+	for _, raw := range []string{"SELECT '雪 ; DELETE FROM events' AS value", "SELECT 'escaped '' quote' AS value", "SELECT E'\\n' AS value", "SELECT '\ufffd' AS value"} {
+		canonical, _, err := nativequery.Prepare(context.Background(), db, raw, nil)
+		if err != nil {
+			t.Fatalf("valid literal rejected: %q: %v", raw, err)
+		}
+		again, _, err := nativequery.Prepare(context.Background(), db, canonical, nil)
+		if err != nil || again != canonical {
+			t.Fatalf("literal roundtrip failed: %q: %v", raw, err)
 		}
 	}
 }

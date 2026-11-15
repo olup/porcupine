@@ -34,10 +34,13 @@ const safeFetch = async (url, options) => {
 };
 async function management(path, { method = 'GET', body, token = admin } = {}) {
   const response = await fetch(api + path, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-  assert.equal(response.status, method === 'POST' ? 201 : 200, 'management HTTP status');
+  assert.equal(response.status, method === 'POST' && !path.endsWith('/query') ? 201 : 200, 'management HTTP status');
   return response.json();
 }
-const events = async (id = project.project.id) => (await management(`/api/v1/projects/${id}/events?limit=1000`)).events;
+const events = async (id = project.project.id) => {
+  const result = await management(`/api/v1/projects/${id}/query`, { method: 'POST', body: { sql: 'SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,source_id,message_id,event_type,context FROM events ORDER BY id LIMIT 1000' } });
+  return result.result.data.map(row => ({ ...row, id: Number(row.id), properties: JSON.parse(row.properties), context: JSON.parse(row.context) }));
+};
 async function event(name, count = 1, projectID = project.project.id) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const found = (await events(projectID)).filter(e => e.event === name);
@@ -46,7 +49,17 @@ async function event(name, count = 1, projectID = project.project.id) {
   }
   throw new Error(`persisted event missing: ${name}`);
 }
-const identities = id => JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), id], { encoding: 'utf8' }));
+const identities = id => {
+  const target = [project, otherProject, ...identifiedProjects].find(item => item?.project.id === id);
+  const controls = new Map();
+  for (const wire of [...wires, ...browserWires]) {
+    const payload = decodeWire(wire);
+    for (const item of payload.batch || [payload]) {
+      if ((payload.api_key || item.api_key || item.properties?.token) === target.ingest_token && ['$identify', '$set'].includes(item.event)) controls.set(item.uuid, { uuid: item.uuid, event: item.event });
+    }
+  }
+  return JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), id, JSON.stringify([...controls.values()])], { encoding: 'utf8' }));
+};
 async function sdkSend(tab, name, operation, argument) {
   const pending = tab.waitForResponse(response => new URL(response.url()).origin === api && response.request().method() === 'POST' && decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() }).batch.some(item => item.event === name));
   const value = await tab.evaluate(operation, argument);
@@ -94,7 +107,7 @@ function contract(id, run) {
 }
 before(async () => {
   assert.ok(matrix.cases.some(item => item.required), 'matrix has required contracts');
-  const goTests = execFileSync('go', ['test', '-list', '.', './internal/porcupine'], { cwd: root, encoding: 'utf8' }).split(/\r?\n/);
+  const goTests = execFileSync('go', ['test', '-list', '.', './internal/porcupine'], { cwd: root, encoding: 'utf8', env: { ...process.env, CGO_ENABLED: '1' } }).split(/\r?\n/);
   for (const item of matrix.go_contracts) assert.ok(goTests.includes(item.test), `Go contract exists: ${item.test}`);
   for (const fixture of matrix.fixtures) {
     const recorded = JSON.parse(await readFile(join(here, fixture), 'utf8'));
@@ -103,7 +116,7 @@ before(async () => {
   }
   directory = await mkdtemp(join(tmpdir(), 'porcupine-compat-'));
   const binary = join(directory, 'porcupine');
-  execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CGO_ENABLED: '0' } });
+  execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CGO_ENABLED: '1' } });
   site = createServer(async (request, response) => {
     if (request.url === '/') { response.setHeader('content-type', 'text/html'); response.end('<!doctype html><title>Porcupine SDK contract</title><script src="/sdk.js"></script>'); }
     else if (request.url === '/sdk.js') { response.setHeader('content-type', 'text/javascript'); response.end(await readFile(join(here, 'node_modules/posthog-js/dist/array.no-external.js'))); }
@@ -148,7 +161,7 @@ before(async () => {
   page.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
   await page.goto(origin);
   await page.evaluate(({ host, token, profile }) => window.posthog.init(token, { ...profile, api_host: host }), { host: api, token: project.ingest_token, profile: browserProfile });
-}, { timeout: 240000 }); // Includes compiling both the Go tests and the CGO-free binary in a fresh checkout.
+}, { timeout: 240000 }); // Includes compiling both the Go tests and the native binary in a fresh checkout.
 
 after(async () => {
   await context?.close(); await browser?.close();
