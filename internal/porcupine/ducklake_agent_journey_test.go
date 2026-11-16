@@ -221,7 +221,7 @@ func TestDuckLakeParameterDependentScalarMetadata(t *testing.T) {
 	if err := s.Apply(context.Background(), []eventProjection{p}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.Query(context.Background(), "a", `WITH extracted AS (SELECT json_extract_string(properties,$path) AS value FROM events) SELECT count(*) AS total,count_if(value IS NULL) AS missing,count(DISTINCT value) AS distinct_values FROM extracted`, map[string]string{"path": "$.language"})
+	result, err := s.Query(context.Background(), "a", `WITH extracted AS (SELECT json_extract_string(properties,$path) AS value FROM events) SELECT count(*) AS total,count_if(value IS NULL) AS missing,count(DISTINCT value) AS distinct_values FROM extracted`, map[string]string{"path": "$.language"}, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["total"]) != `"1"` || string(result.Data[0]["missing"]) != `"0"` || string(result.Data[0]["distinct_values"]) != `"1"` {
 		t.Fatalf("resolved scalar metadata lost types or values: %+v %v", result, err)
 	}

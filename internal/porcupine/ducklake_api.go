@@ -2,7 +2,7 @@ package porcupine
 
 import (
 	"context"
-	"time"
+	"encoding/json"
 
 	"github.com/olup/porcupine/internal/nativequery"
 )
@@ -34,31 +34,38 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 		{"revision", "UBIGINT", "Current revision for compare-and-swap mutations."},
 		{"is_imported", "UTINYINT", "1 for historical imports; 0 for live ingestion."},
 	}
+	tenant, err := s.projectTenant(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	effective := effectiveInteractiveQueries(s.interactiveConfig, tenant.Budgets)
 	limits := analyticsLimits()
+	limits.MaxConcurrentQueries = effective.MaxConcurrent
+	limits.MaxExecutionMS = effective.TimeoutMS
+	limits.MaxExecutionSeconds = (effective.TimeoutMS + 999) / 1000
+	limits.RequestTimeoutSeconds = limits.MaxExecutionSeconds + 5
+	limits.MaxRows, limits.MaxResultBytes = effective.MaxRows, effective.MaxResultBytes
 	limits.MaxReadRows, limits.MaxReadBytes = 0, 0
 	limits.ObjectStorageRequestTimeoutSeconds = s.lakeS3RequestTimeoutSeconds
 	if s.lakeS3RequestTimeoutSeconds > 0 {
-		limits.RequestTimeoutSeconds = max(limits.RequestTimeoutSeconds, 10+s.lakeS3RequestTimeoutSeconds)
+		limits.RequestTimeoutSeconds += s.lakeS3RequestTimeoutSeconds
 	}
 	if s.lakeMemoryMB > 0 {
 		limits.MaxMemoryBytes = s.lakeMemoryMB << 20
 	}
-	return &AnalyticsSchemaOutput{Body: AnalyticsSchema{Enabled: true, Tables: []AnalyticsTable{{Name: "events", Columns: columns}}, Limits: limits, Delivery: delivery,
+	return &AnalyticsSchemaOutput{Body: AnalyticsSchema{Enabled: true, Tables: []AnalyticsTable{{Name: "events", Columns: columns}}, Limits: limits, TenantBudgets: tenant.Budgets, DeploymentLimits: s.interactiveConfig, Delivery: delivery,
 		SQL: AnalyticsSQL{Dialect: "duckdb", ResultCache: false, Functions: nativequery.Functions(),
 			Features:    []string{"SELECT", "GROUP BY", "CTEs", "subqueries", "joins", "UNION", "window functions", "scalar casts", "$name bound parameters"},
 			Unsupported: []string{"writes", "qualified tables", "private columns", "external sources", "table functions", "recursive CTEs", "time travel", "result cache", "physical scan row and byte quotas", "per-query memory and temporary-disk quotas", "remote catalogs"}}}}, nil
 }
 
 func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryInput) (*AnalyticsQueryOutput, error) {
-	select {
-	case s.querySlots <- struct{}{}:
-		defer func() { <-s.querySlots }()
-	default:
-		return nil, apiError(429, "analytics query concurrency limit reached")
+	ctx, limits, release, err := s.beginInteractiveQuery(ctx, input.ID)
+	if err != nil {
+		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	result, err := s.lake.Query(ctx, input.ID, input.Body.SQL, input.Body.Parameters)
+	defer release()
+	result, err := s.lake.Query(ctx, input.ID, input.Body.SQL, input.Body.Parameters, limits.executionLimits())
 	if err != nil {
 		return nil, err
 	}
@@ -66,18 +73,20 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
 	}
-	return &AnalyticsQueryOutput{Body: AnalyticsQuery{Result: result, Delivery: delivery}}, nil
+	output := AnalyticsQuery{Result: result, Delivery: delivery}
+	encoded, err := json.Marshal(output)
+	if err != nil || len(encoded) > limits.MaxResultBytes {
+		return nil, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
+	}
+	return &AnalyticsQueryOutput{Body: output}, nil
 }
 
 func (s *Service) lakeEventCatalog(ctx context.Context, input EventCatalogInput) (*EventCatalogOutput, error) {
-	select {
-	case s.querySlots <- struct{}{}:
-		defer func() { <-s.querySlots }()
-	default:
-		return nil, apiError(429, "analytics query concurrency limit reached")
+	ctx, limits, release, err := s.beginInteractiveQuery(ctx, input.ID)
+	if err != nil {
+		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	defer release()
 	result, err := s.lake.Catalog(ctx, input)
 	if err != nil {
 		return nil, err
@@ -85,6 +94,10 @@ func (s *Service) lakeEventCatalog(ctx context.Context, input EventCatalogInput)
 	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || len(encoded) > limits.MaxResultBytes {
+		return nil, apiError(429, "event catalog result byte limit reached")
 	}
 	return &EventCatalogOutput{Body: result}, nil
 }

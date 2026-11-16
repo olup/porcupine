@@ -59,6 +59,11 @@ func main() {
 		slog.Error("analytics configuration", "error", err)
 		os.Exit(1)
 	}
+	interactiveConfig, err := interactiveQueryConfiguration()
+	if err != nil {
+		slog.Error("interactive query configuration", "error", err)
+		os.Exit(1)
+	}
 	exportConfig, err := exportConfiguration()
 	if err != nil {
 		slog.Error("export configuration", "error", err)
@@ -79,13 +84,13 @@ func main() {
 		slog.Error("native backup configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig})
+	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)
 	}
 	defer s.Close()
-	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(duckLake), IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(duckLake) + time.Duration(interactiveConfig.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

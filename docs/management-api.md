@@ -6,6 +6,8 @@ The running server publishes its OpenAPI contract at `GET /openapi.json`. The CL
 
 Version v0.14.0 adds `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native live and historical producer fields and server-managed values. [Native event contract](native-event-contract.md)
 
+**Unreleased:** [tenant management and usage budgets](tenants.md) add operator-only operations and make project creation require `instance:admin`. The tenant schema requires a fresh data directory. The tenant operations below are not available in v0.14.0.
+
 Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
 
 ## Authentication and scope
@@ -30,6 +32,8 @@ configuration, the server retains legacy authentication for offline use. Public
 PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
+
+The following table describes v0.14.0. The [unreleased tenant operations](#unreleased-tenant-operations) below include the change to project creation authority.
 
 `query-events` executes fresh DuckDB SQL against delivered state and reports `sql.result_cache: false`. The optional `use_cache` field remains accepted but does not change execution. See [query consistency](analytics.md#cached-and-fresh-queries).
 
@@ -66,7 +70,42 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 For managed SQL exports, see the [export job operations](exports.md). The [pipeline operations](pipelines.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
 
-Project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
+### Unreleased tenant operations
+
+All tenant operations require `instance:admin`, including reads of tenant-wide consumption. They are exposed through the same operation registry as the CLI and MCP. Project readers can inspect configured `tenant_budgets`, `deployment_limits`, and effective `limits` through `get-event-schema`, including the configured ingestion allowance but no tenant-wide consumption.
+
+| Operation ID | Route | Success |
+| --- | --- | --- |
+| `list-tenants` | `GET /api/v1/tenants` | `200` |
+| `create-tenant` | `POST /api/v1/tenants` | `201` |
+| `get-tenant` | `GET /api/v1/tenants/{tenant_id}` | `200` |
+| `update-tenant` | `PATCH /api/v1/tenants/{tenant_id}` | `200` |
+| `update-tenant-budgets` | `PUT /api/v1/tenants/{tenant_id}/budgets` | `200` |
+| `get-tenant-usage` | `GET /api/v1/tenants/{tenant_id}/usage` | `200` |
+
+`list-tenants` returns `tenants` and an optional `next_cursor`. Its `limit` defaults to 100 and accepts 1–200. Continue with `cursor=NEXT_CURSOR`. `create-tenant` accepts `name` and an optional complete `budgets` object. `get-tenant`, creation, and updates return `{"tenant":{...}}`.
+
+`update-tenant` accepts `name`, `ingestion_allowed`, or both. Suspension prevents new acceptance while allowing retries and delivery of already accepted events. `update-tenant-budgets` replaces the complete budget object without resetting usage:
+
+| Budget field | Accepted value |
+| --- | --- |
+| `ingestion_monthly_events` | `null` for unlimited, or a nonnegative integer; zero prevents new acceptance |
+| `hot_query_max_concurrent` | 1–64 |
+| `hot_query_timeout_ms` | 1–60,000 |
+| `hot_query_max_rows` | 1–100,000 |
+| `hot_query_max_result_bytes` | 256–67,108,864 |
+
+Query limits are further bounded by the deployment's configured ceilings. Creating a tenant without `budgets` selects unlimited ingestion and deployment-default interactive limits.
+
+`get-tenant-usage` accepts an optional `period=YYYY-MM`, defaulting to the current UTC calendar month. It returns `tenant_id`, `period_start`, `period_end`, decimal-string `accepted_events`, nullable decimal-string `remaining_events`, and effective `ingestion_allowed`. Usage counts new unique canonical rows at durable acceptance, including imports and identity controls. Rejected, ignored, duplicate, and rolled-back rows consume nothing. Deletes do not refund usage. Reading an earlier month applies the current budget to that month's recorded counter; it does not recover historical budget settings. No manual reset or tenant deletion operation is provided.
+
+In this implementation, `create-project` requires `instance:admin`; it accepts optional `tenant_id`, defaulting to `default`. Project responses include `tenant_id`, which is immutable. `list-projects` accepts an optional tenant filter but still returns only authorized projects. Explicit project grants may span tenants; `*` remains deployment-wide. There is no tenant administrator role.
+
+The [tenant guide](tenants.md) explains shared allowances, resumable imports, quota response codes, and the current single-process SQLite boundary.
+
+### Project and credential details
+
+In v0.14.0, project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
 a one-time public `ingest_token` with `events:write` for that project. With OAuth
 enabled, send `{"name":"Trusted service","ingestion_mode":"server_only"}` to
 require authenticated backend writes. The response omits the public key. The

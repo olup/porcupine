@@ -60,9 +60,9 @@ func TestExistingPipelinesRequireSameKeyAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec(`INSERT INTO projects(id,name,created_at) VALUES('p','p','now');
+	_, err = s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES('p',?,'p','now');
 INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms)
-SELECT 'd','p',id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1`)
+SELECT 'd','p',id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1`, defaultTenantID)
 	if err != nil {
 		t.Fatal(err)
 	}

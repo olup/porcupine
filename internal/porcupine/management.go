@@ -16,6 +16,7 @@ import (
 )
 
 type Project struct {
+	TenantID      string `json:"tenant_id" doc:"Owning tenant. Project ownership is immutable."`
 	IngestionMode string `json:"ingestion_mode" enum:"mixed,server_only" doc:"mixed permits public ingestion keys; server_only requires an API-resource access token or service key in the Authorization header."`
 	ID            string `json:"id" doc:"Project identifier"`
 	Name          string `json:"name" doc:"Project name"`
@@ -26,8 +27,12 @@ type ProjectList struct {
 	Projects []Project `json:"projects"`
 }
 type ProjectListOutput struct{ Body ProjectList }
+type ProjectListInput struct {
+	TenantID string `query:"tenant_id" maxLength:"128" doc:"Optional tenant filter. Existing project grants still apply."`
+}
 type ProjectCreateInput struct {
 	Body struct {
+		TenantID      string `json:"tenant_id,omitempty" maxLength:"128" doc:"Owning tenant. Omit to use the installation's default tenant."`
 		Name          string `json:"name" minLength:"1" maxLength:"200" doc:"Project name"`
 		IngestionMode string `json:"ingestion_mode,omitempty" enum:"mixed,server_only" default:"mixed" doc:"server_only requires configured OAuth, creates no public ingestion key, and requires an API-resource access token or service key on every capture route."`
 	}
@@ -228,7 +233,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
 	huma.Register(api, op("get-event-input-contract", "GET", "/api/v1/projects/{id}/input-contract", "Discover native live and historical schemas, trusted server fields and import semantics", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventInputContract)
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
-	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key", operationAccess{Permission: "management:write", InstancePermissions: []string{"management:write", "events:write"}}, 201), s.managementCreateProject)
+	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant; requires the deployment operator. Mixed projects return a one-time public ingestion key", operationAccess{Permission: "instance:admin"}, 201), s.managementCreateProject)
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
 	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", operationAccess{Permission: "instance:admin", ProjectParameter: "id"}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListKeys)
@@ -258,6 +263,7 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous", operationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
 	s.registerQuarantine(api, op)
+	s.registerTenants(api, op)
 	s.registerImportUploads(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
@@ -267,9 +273,9 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	return api
 }
 
-func (s *Service) managementListProjects(ctx context.Context, _ *struct{}) (*ProjectListOutput, error) {
+func (s *Service) managementListProjects(ctx context.Context, input *ProjectListInput) (*ProjectListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,created_at,ingestion_mode FROM projects ORDER BY created_at,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE (?='' OR tenant_id=?) ORDER BY created_at,id`, input.TenantID, input.TenantID)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -277,7 +283,7 @@ func (s *Service) managementListProjects(ctx context.Context, _ *struct{}) (*Pro
 	items := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.CreatedAt, &p.IngestionMode); err != nil {
+		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if authorize(a, "management:read", p.ID) {
@@ -305,7 +311,7 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 	}
 	out := &ProjectRenameOutput{}
 	p := &out.Body.Project
-	err = s.db.QueryRowContext(ctx, `UPDATE projects SET name=? WHERE id=? RETURNING id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.IngestionMode)
+	err = s.db.QueryRowContext(ctx, `UPDATE projects SET name=? WHERE id=? RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "project not found")
 	}
@@ -320,6 +326,16 @@ func (s *Service) managementDeleteProject(ctx context.Context, input *ProjectIDI
 }
 
 func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCreateInput) (*ProjectCreateOutput, error) {
+	if !principal(ctx).admin() {
+		return nil, apiError(403, "deployment operator required to create projects")
+	}
+	tenantID := input.Body.TenantID
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	if _, err := s.loadTenant(ctx, tenantID); err != nil {
+		return nil, err
+	}
 	name, err := projectName(input.Body.Name)
 	if err != nil {
 		return nil, err
@@ -334,7 +350,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if mode == ingestionServerOnly && s.oauth == nil {
 		return nil, apiError(503, "server_only ingestion requires configured OAuth")
 	}
-	p := Project{ID: newID(), Name: name, CreatedAt: now(), IngestionMode: mode}
+	p := Project{ID: newID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
 	raw := ""
 	if mode == ingestionMixed {
 		raw = token()
@@ -344,7 +360,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,name,created_at,ingestion_mode) VALUES(?,?,?,?)`, p.ID, p.Name, p.CreatedAt, p.IngestionMode)
+	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES(?,?,?,?,?)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
 	if err == nil && mode == ingestionMixed {
 		projects, _ := json.Marshal([]string{p.ID})
 		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,?,?,?,?,?)`, newID(), p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)

@@ -105,11 +105,12 @@ var operations = []operation{
 	},
 	{
 		ID: "create-project", Method: "POST", Path: "/api/v1/projects",
-		Summary:     "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key",
+		Summary:     "Create a project in a tenant; requires the deployment operator. Mixed projects return a one-time public ingestion key",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"ingestion_mode (string) [mixed server_only] server_only requires configured OAuth, creates no public ingestion key, and requires an API-resource access token or service key on every capture route.",
 			"name (string, required) Project name",
+			"tenant_id (string) Owning tenant. Omit to use the installation's default tenant.",
 		},
 	},
 	{
@@ -124,6 +125,15 @@ var operations = []operation{
 			"name (string, required)",
 			"permissions (array of string, required) Subset of the service account's permissions.",
 			"projects (array of string, required) Subset of the service account's projects.",
+		},
+	},
+	{
+		ID: "create-tenant", Method: "POST", Path: "/api/v1/tenants",
+		Summary:     "Create a tenant with optional budgets; deployment operator only",
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"budgets (object) Optional complete budget configuration. Omit for unlimited ingestion and deployment-default interactive limits.",
+			"name (string, required)",
 		},
 	},
 	{
@@ -264,6 +274,21 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-tenant", Method: "GET", Path: "/api/v1/tenants/{tenant_id}",
+		Summary: "Read tenant configuration; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "get-tenant-usage", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/usage",
+		Summary: "Read a tenant's UTC monthly acceptance counter and remaining allowance; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "period", In: "query", Type: "string", Description: "UTC calendar month, YYYY-MM. Defaults to the current month. Prior months remain available; there is no manual reset operation.", Required: false},
+		},
+	},
+	{
 		ID: "invite-human", Method: "POST", Path: "/api/v1/humans",
 		Summary:     "Invite a project member or instance administrator. For an administrator use projects [*] and permissions [instance:admin].",
 		ContentType: "application/json", BodyRequired: true,
@@ -356,6 +381,9 @@ var operations = []operation{
 	{
 		ID: "list-projects", Method: "GET", Path: "/api/v1/projects",
 		Summary: "List projects accessible to this key",
+		Params: []parameter{
+			{Name: "tenant_id", In: "query", Type: "string", Description: "Optional tenant filter. Existing project grants still apply.", Required: false},
+		},
 	},
 	{
 		ID: "list-quarantined-events", Method: "GET", Path: "/api/v1/projects/{id}/quarantined-events",
@@ -363,6 +391,14 @@ var operations = []operation{
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "after_event_id", In: "query", Type: "string", Description: "Return quarantined originals with event_id greater than this decimal cursor (server default: 0)", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
+		},
+	},
+	{
+		ID: "list-tenants", Method: "GET", Path: "/api/v1/tenants",
+		Summary: "List tenants and configured budgets; deployment operator only",
+		Params: []parameter{
+			{Name: "cursor", In: "query", Type: "string", Description: "Continue after the tenant ID returned as next_cursor.", Required: false},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
 		},
 	},
@@ -476,6 +512,33 @@ var operations = []operation{
 			"grants (array of object)",
 			"permissions (array of string)",
 			"projects (array of string)",
+		},
+	},
+	{
+		ID: "update-tenant", Method: "PATCH", Path: "/api/v1/tenants/{tenant_id}",
+		Summary: "Rename a tenant or suspend new ingestion without changing usage; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"ingestion_allowed (boolean) Suspend only new acceptance. Delivery, queries, exports and deletion retain their existing permissions.",
+			"name (string)",
+		},
+	},
+	{
+		ID: "update-tenant-budgets", Method: "PUT", Path: "/api/v1/tenants/{tenant_id}/budgets",
+		Summary: "Replace monthly ingestion and interactive query budgets without resetting consumption; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"hot_query_max_concurrent (integer, required) Interactive operations shared by all projects in this tenant, further bounded by deployment capacity.",
+			"hot_query_max_result_bytes (integer, required) Maximum encoded interactive SQL result size, including metadata overhead.",
+			"hot_query_max_rows (integer, required) Maximum rows returned by an interactive SQL query.",
+			"hot_query_timeout_ms (integer, required) Execution deadline in milliseconds, further bounded by the deployment ceiling.",
+			"ingestion_monthly_events (integer, required) New canonical events accepted per UTC calendar month, including imports and identity controls. Null is unlimited; zero allows only retries of previously accepted events.",
 		},
 	},
 	{

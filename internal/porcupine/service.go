@@ -26,18 +26,19 @@ import (
 )
 
 type Config struct {
-	DBPath         string
-	BootstrapToken string
-	QueueMaxEvents int
-	QueueMaxBytes  int64
-	AllowedOrigins []string
-	TrustedProxies []string
-	Clock          func() time.Time
-	DuckLake       *DuckLakeConfig
-	Pipelines      *PipelineConfig
-	Exports        *ExportConfig
-	OAuth          *OAuthConfig
-	NativeBackup   *NativeBackupConfig
+	DBPath             string
+	BootstrapToken     string
+	QueueMaxEvents     int
+	QueueMaxBytes      int64
+	AllowedOrigins     []string
+	TrustedProxies     []string
+	Clock              func() time.Time
+	DuckLake           *DuckLakeConfig
+	Pipelines          *PipelineConfig
+	Exports            *ExportConfig
+	OAuth              *OAuthConfig
+	NativeBackup       *NativeBackupConfig
+	InteractiveQueries *InteractiveQueryConfig
 }
 
 type Service struct {
@@ -64,6 +65,8 @@ type Service struct {
 	deliveryMaxEvents     int
 	deliveryMaxBytes      int
 	querySlots            chan struct{}
+	interactiveConfig     InteractiveQueryConfig
+	tenantQueries         tenantQueryAdmission
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
 	tokenSlots            chan struct{}
@@ -77,6 +80,10 @@ type Service struct {
 }
 
 func Open(c Config) (*Service, error) {
+	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
+	if err != nil {
+		return nil, err
+	}
 	if c.DuckLake != nil {
 		cleanup := *c.DuckLake
 		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
@@ -169,7 +176,7 @@ func Open(c Config) (*Service, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock}, allowedOrigins: origins, trustedProxies: proxies,
-		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, querySlots: make(chan struct{}, 2)}
+		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
 	if pipelines != nil {
 		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
@@ -197,8 +204,12 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if err := s.initializeTenants(context.Background()); err != nil {
+		return fail(err)
+	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
+CREATE INDEX IF NOT EXISTS projects_tenant ON projects(tenant_id,id);
 CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
 CREATE TABLE IF NOT EXISTS access_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, permissions TEXT NOT NULL, projects TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -709,6 +720,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	result, err := s.acceptance.Accept(r.Context(), prepared, peer, nativeResponse)
 	if err != nil {
+		if writeTenantIngestionError(w, r, err, nativeResponse) {
+			return
+		}
 		var failure *acceptanceFailure
 		if errors.As(err, &failure) && failure.retry {
 			w.Header().Set("Retry-After", "1")

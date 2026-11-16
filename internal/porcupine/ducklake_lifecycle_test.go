@@ -61,7 +61,7 @@ func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 			t.Fatal("maintenance never acquired a resident project")
 		}
 	}
-	result, err := s.Query(ctx, "cold", "SELECT count(*) AS total FROM events", nil)
+	result, err := s.Query(ctx, "cold", "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits())
 	if err != nil {
 		t.Fatalf("cold-project query failed while idle resident projects were available: status=%d error=%v", queryStatus(err), err)
 	}
@@ -93,7 +93,10 @@ func TestDuckLakeProjectAdmissionIsResourceLimit(t *testing.T) {
 	}
 	defer release()
 	for name, operation := range map[string]func() error{
-		"query":   func() error { _, err := s.Query(ctx, "cold", "SELECT count(*) FROM events", nil); return err },
+		"query": func() error {
+			_, err := s.Query(ctx, "cold", "SELECT count(*) FROM events", nil, defaultQueryExecutionLimits())
+			return err
+		},
 		"catalog": func() error { _, err := s.Catalog(ctx, EventCatalogInput{ID: "cold"}); return err },
 		"export":  func() error { _, err := s.ValidateExport(ctx, "cold", "SELECT * FROM events", nil, false); return err },
 	} {
@@ -143,7 +146,7 @@ func TestDuckLakeProjectsReopenDuringMaintenance(t *testing.T) {
 	}()
 	for round := 0; round < 4; round++ {
 		for _, name := range names {
-			result, err := s.Query(ctx, name, "SELECT uuid FROM events", nil)
+			result, err := s.Query(ctx, name, "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 			if err != nil {
 				t.Fatalf("round %d project %s failed on first query: %v", round, name, err)
 			}

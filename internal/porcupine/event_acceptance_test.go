@@ -57,7 +57,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 			if !errors.As(err, &failure) || failure.message != "webhook queue unavailable" || !failure.retry || participantCalls != 1 || result.accepted != 0 || result.receipts != nil {
 				t.Fatalf("failed commit returned an acknowledgment: %+v %v", result, err)
 			}
-			for _, table := range []string{"events", "identity_links", "event_receipts", "acceptance_test_destination"} {
+			for _, table := range []string{"events", "identity_links", "event_receipts", "acceptance_test_destination", "tenant_usage"} {
 				var count int
 				if err := s.db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
 					t.Fatalf("failed participant committed %s: %d %v", table, count, err)

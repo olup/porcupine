@@ -440,7 +440,7 @@ func TestDuckLakeS3SlowProjectDeletionLeavesOtherProjectsAvailable(t *testing.T)
 		t.Fatal("project deletion did not reach S3")
 	}
 	query, stop := context.WithTimeout(ctx, time.Second)
-	result, err := store.Query(query, "b", "SELECT uuid FROM events", nil)
+	result, err := store.Query(query, "b", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	stop()
 	if err != nil || len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"b"` {
 		t.Fatal("one project's remote deletion blocked another project's analytical query")
@@ -492,7 +492,7 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	paused.Store(true)
 	limited, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	start := time.Now()
-	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil)
+	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	cancel()
 	elapsed := time.Since(start)
 	paused.Store(false)
@@ -505,7 +505,7 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	if err == nil || elapsed > 2*time.Second {
 		t.Fatalf("S3 query cancellation was not bounded: error=%t elapsed=%s", err != nil, elapsed)
 	}
-	result, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil)
+	result, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	s3FixtureError(t, fixture, "query recovered S3 endpoint", err)
 	if len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"kept"` {
 		t.Fatal("native S3 connection did not recover after cancellation")
@@ -557,7 +557,7 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		_, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil)
+		_, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 		done <- err
 	}()
 	var releaseOnce sync.Once
@@ -569,7 +569,7 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 		t.Fatal("cold opening did not exercise remote catalog-identity data")
 	}
 	limited, stop := context.WithTimeout(ctx, time.Second)
-	result, err := store.Query(limited, "b", "SELECT uuid FROM events", nil)
+	result, err := store.Query(limited, "b", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	stop()
 	if err != nil || len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"b"` {
 		t.Fatal("cold-project S3 access blocked an already resident project")
@@ -609,7 +609,7 @@ func TestDuckLakeS3CredentialChainUsesOnlyIsolatedEnvironment(t *testing.T) {
 	if len(fixture.keys(t, prefix)) == 0 {
 		t.Fatal("native credential chain produced no remote analytical objects")
 	}
-	result, err := store.Query(ctx, "chain", "SELECT uuid FROM events", nil)
+	result, err := store.Query(ctx, "chain", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	s3FixtureError(t, fixture, "query native credential-chain S3 files after configuration lock", err)
 	if len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"credential-chain"` {
 		t.Fatal("native credential-chain query lost its event")
@@ -666,7 +666,7 @@ func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
 			store = lake.(*duckLakeStore)
 			s3FixtureError(t, fixture, "retry accepted event after correcting TLS", store.Apply(ctx, []eventProjection{original}))
 			fixture.flush(t, store, "tls")
-			rows, err := store.Query(ctx, "tls", "SELECT uuid FROM events", nil)
+			rows, err := store.Query(ctx, "tls", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 			s3FixtureError(t, fixture, "query after correcting TLS", err)
 			if len(rows.Data) != 1 || string(rows.Data[0]["uuid"]) != `"kept"` {
 				t.Fatal("TLS configuration correction lost the accepted event")

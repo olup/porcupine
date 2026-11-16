@@ -57,6 +57,8 @@ Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yam
 
 One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/restore.md)
 
+**Unreleased:** [tenants and usage budgets](docs/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. This requires a fresh data directory and is not part of v0.14.0.
+
 I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. The standalone CLI imports native, PostHog, or Segment history from files or directories. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) · [Imports](docs/imports.md)
 
 For a customer who wants a file every morning, I can save a SQL query in a pipeline and point it at their S3 bucket. For something like a signup notification, a webhook will do. [Pipelines](docs/pipelines.md) · [One-off exports](docs/exports.md)

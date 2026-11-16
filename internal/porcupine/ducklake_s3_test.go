@@ -108,7 +108,7 @@ func TestDuckLakeOpeningReservationsDoNotHoldGlobalMutex(t *testing.T) {
 	}
 	store.opening["cold"] = pending
 	store.mu.Unlock()
-	if _, err := store.Query(ctx, "hot", "SELECT count(*) AS total FROM events", nil); err != nil {
+	if _, err := store.Query(ctx, "hot", "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		t.Fatal("opening reservation blocked the hot project", err)
 	}
 	deadline, cancel := context.WithTimeout(ctx, 20*time.Millisecond)

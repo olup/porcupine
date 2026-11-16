@@ -349,7 +349,7 @@ func TestDuckLakeExportNativeValueParity(t *testing.T) {
 		if strings.Contains(query, "$value") {
 			params = map[string]string{"value": "東京\n<value>"}
 		}
-		expected, err := store.Query(context.Background(), "typed", query, params)
+		expected, err := store.Query(context.Background(), "typed", query, params, defaultQueryExecutionLimits())
 		if err != nil {
 			t.Fatal(query, err)
 		}

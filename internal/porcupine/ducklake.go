@@ -27,7 +27,7 @@ type lakeStore interface {
 	SourceID(context.Context) (string, error)
 	Apply(context.Context, []eventProjection) error
 	Load(context.Context, string, string) (eventProjection, error)
-	Query(context.Context, string, string, map[string]string) (AnalyticsResult, error)
+	Query(context.Context, string, string, map[string]string, queryExecutionLimits) (AnalyticsResult, error)
 	ValidateExport(context.Context, string, string, map[string]string, bool) (string, error)
 	Export(context.Context, string, string, map[string]string, *analyticalWindow, int64, exportStreamCallbacks) (exportStreamResult, error)
 	Catalog(context.Context, EventCatalogInput) (EventCatalog, error)

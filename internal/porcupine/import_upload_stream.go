@@ -146,6 +146,10 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 			continue
 		}
 		if err != nil {
+			var budget *tenantIngestionError
+			if errors.As(err, &budget) {
+				return tenantIngestionProblem(err)
+			}
 			return apiError(503, "import queue or storage unavailable; retry the same chunk")
 		}
 		if _, err := tx.ExecContext(ctx, `RELEASE import_row`); err != nil {

@@ -40,7 +40,7 @@ func TestOAuthOpenAPIAndPublicKeyCreation(t *testing.T) {
 		t.Fatal("OpenAPI does not describe pinned OAuth flow")
 	}
 	required := schema["paths"].(map[string]any)["/api/v1/projects"].(map[string]any)["post"].(map[string]any)["security"].([]any)[0].(map[string]any)["oauth2"].([]any)
-	if len(required) != 2 {
-		t.Fatal("OpenAPI project creation omitted a required scope")
+	if len(required) != 1 || required[0] != "instance:admin" {
+		t.Fatal("OpenAPI project creation must require the deployment operator")
 	}
 }

@@ -12,7 +12,7 @@ import (
 func TestMCPInteractiveProjectIsolationAndRevocation(t *testing.T) {
 	f := newOIDCFixture(t)
 	for _, id := range []string{"project-a", "project-b"} {
-		if _, err := f.s.db.Exec("INSERT INTO projects(id,name,created_at) VALUES(?,?,?)", id, id, now()); err != nil {
+		if _, err := f.s.db.Exec("INSERT INTO projects(id,tenant_id,name,created_at) VALUES(?,?,?,?)", id, defaultTenantID, id, now()); err != nil {
 			t.Fatal(err)
 		}
 	}

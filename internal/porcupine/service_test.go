@@ -58,7 +58,7 @@ func request(t *testing.T, s *Service, method, path, token, body string, status 
 	result := map[string]any{}
 	if w.Body.Len() > 0 {
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s %s: invalid JSON response: %v; body=%q", method, path, err, w.Body.String())
 		}
 	}
 	return result

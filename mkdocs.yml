@@ -40,6 +40,7 @@ nav:
       - Permissions: security-and-interfaces.md
   - Deploy and operate:
       - Hosting: hosting.md
+      - Tenants and budgets (unreleased): tenants.md
       - Check instance status: instance-status.md
       - Clean up DuckLake history: ducklake-cleanup.md
       - Schedule native backups: native-backups.md

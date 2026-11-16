@@ -69,6 +69,8 @@ porcupine query-events --id "$PROJECT_ID" --body @query.json
 
 Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](analytics.md) lists supported syntax, bindings, and fixed execution limits.
 
+**Unreleased:** [tenant budgets](tenants.md#interactive-query-limits) can lower a project's interactive query deadline, result size, and concurrency. `get-event-schema` returns configured `tenant_budgets`, `deployment_limits`, and effective `limits`. SQL, catalog discovery, and event profiles share the tenant's interactive places; requests return `429` when capacity is full. Changing budgets and reading aggregate tenant consumption remain operator-only. These controls are not included in v0.14.0.
+
 Use the [DuckDB SQL recipes](duckdb-recipes.md) for trends, sessions, funnels, retention and percentiles. They state their metric definitions and are tested against a known fixture through MCP.
 
 For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. Through MCP, call `query-events` with `path: {"id": "PROJECT_ID"}` and the JSON as `body`. See the [MCP request examples](mcp.md#execution-with-porcupine_call).

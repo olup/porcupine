@@ -152,7 +152,8 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 			event.Timestamp = rules.clock().UTC().Format(time.RFC3339Nano)
 		}
 	}
-	event.ReceivedAt = rules.clock().UTC().Format(time.RFC3339Nano)
+	acceptedAt := rules.clock().UTC()
+	event.ReceivedAt = acceptedAt.Format(time.RFC3339Nano)
 	event = eventWithMetadata(event)
 	// Imported control arguments cannot be replayed as live incremental updates.
 	// Persons snapshots hydrate profiles separately with explicit version guards.
@@ -262,6 +263,9 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	}
 	if queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
+	}
+	if err := consumeTenantEventsTx(ctx, tx, project, acceptedAt, 1); err != nil {
+		return result, err
 	}
 	result.Accepted = 1
 	return result, nil

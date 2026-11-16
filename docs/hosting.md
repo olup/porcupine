@@ -164,6 +164,21 @@ Live events have no automatic age-based deletion. Historical snapshots default t
 
 `/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 
+### Unreleased interactive query ceilings
+
+These settings belong to the unreleased [tenant implementation](tenants.md), not the published v0.14.0 image. They set deployment-wide safety ceilings. Tenant budgets can lower them, but cannot raise them.
+
+| Setting | Default | Accepted range |
+| --- | --- | --- |
+| `PORCUPINE_QUERY_MAX_CONCURRENT` | 2 | 2–64 deployment analytical places |
+| `PORCUPINE_QUERY_TIMEOUT_MS` | 5,000 | 1–60,000 ms |
+| `PORCUPINE_QUERY_MAX_ROWS` | 1,000 | 1–100,000 rows |
+| `PORCUPINE_QUERY_MAX_RESULT_BYTES` | 1,048,576 | 256–67,108,864 bytes |
+
+The concurrency pool also retains the existing background export safety slot; tenant interactive budgets do not create additional deployment capacity. These settings do not change DuckDB's per-engine memory budget or provide process isolation. Increase them only within the host's measured resource capacity. An unset value uses the default. Query readers discover their effective limits through `get-event-schema`.
+
+Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance administrator can create additional tenants, set per-tenant budgets, or inspect aggregate usage. This remains one Porcupine process with SQLite; it does not add shared PostgreSQL or multi-worker support.
+
 ## Optional destinations
 
 | Capability | Configuration |
@@ -183,5 +198,7 @@ Keep the original bootstrap secret privately for recovery. Changing `.env` after
 Before storing important history, configure [scheduled native backups](native-backups.md) or exercise a [coordinated stopped-volume backup and restore](restore.md). Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
 
 Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
+
+**Unreleased tenant schema:** start with an empty data directory. The server rejects pre-tenant SQLite databases rather than assigning existing projects automatically. There is no in-place migration or compatibility mode for this pre-launch change. Keep an older instance and its matching recovery material separately if you need to export data into a fresh tenant-enabled instance.
 
 Version v0.14.0 supports only DuckDB/DuckLake. It refuses legacy analytical configuration rather than silently creating a fresh archive. An earlier external-database deployment needs a fresh native target and an explicit export/import migration. Keep its matching backup until validation succeeds. A changed image tag alone does not convert stored history or SQL. See [storage and migration boundaries](storage.md#earlier-analytical-backends).

@@ -133,6 +133,7 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	if _, err = tx.Exec(`UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
 	}
+	acceptedAt := a.rules.clock().UTC()
 	var pending, pendingBytes int64
 	if err = tx.QueryRow(`SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
 		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
@@ -142,7 +143,7 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	if batch.cookieless {
 		// Choose the identity day under the SQLite write lock so delayed requests
 		// cannot recreate an expired key after another request rotates it.
-		day = a.rules.clock().UTC().Format("2006-01-02")
+		day = acceptedAt.Format("2006-01-02")
 		secret, err := dailyCookielessKey(tx, day)
 		if err != nil {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
@@ -227,6 +228,13 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 		}
 		accepted++
 		acceptedBytes += size
+	}
+	if err = consumeTenantEventsTx(ctx, tx, batch.projectID, acceptedAt, int64(accepted)); err != nil {
+		var budget *tenantIngestionError
+		if errors.As(err, &budget) {
+			return liveAcceptanceResult{}, err
+		}
+		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
 	}
 	if a.enqueueWebhooks != nil {
 		if err = a.enqueueWebhooks(ctx, tx, webhookEvents); err != nil {

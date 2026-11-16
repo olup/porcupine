@@ -53,7 +53,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 	}
 	s, projectID, token := duckLakeBenchmarkService(b)
 	// Open the project engine before timing, so this measures the hot path.
-	if _, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil); err != nil {
+	if _, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		b.Fatal(err)
 	}
 	payloads := make([][]byte, b.N)
@@ -93,7 +93,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 	b.StopTimer()
 	b.ReportMetric(100, "events/op")
 	b.ReportMetric(float64(b.N*100)/b.Elapsed().Seconds(), "events/s")
-	result, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil)
+	result, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits())
 	if err != nil || len(result.Data) != 1 || string(result.Data[0]["total"]) != fmt.Sprintf("\"%d\"", b.N*100) {
 		b.Fatalf("projection count does not match accepted batches: %+v, %v", result, err)
 	}
@@ -126,13 +126,13 @@ FROM fixture`, projectID)
 		b.Fatal(err)
 	}
 	query := "SELECT event,date_trunc('hour',event_time) AS hour,count(*) AS total,sum(CAST(json_extract_string(properties,'$.amount') AS DOUBLE)) AS amount FROM events GROUP BY event,hour ORDER BY hour,event"
-	if _, err := s.lake.Query(context.Background(), projectID, query, nil); err != nil {
+	if _, err := s.lake.Query(context.Background(), projectID, query, nil, defaultQueryExecutionLimits()); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		result, err := s.lake.Query(context.Background(), projectID, query, nil)
+		result, err := s.lake.Query(context.Background(), projectID, query, nil, defaultQueryExecutionLimits())
 		if err != nil || result.Rows != 9 {
 			b.Fatalf("aggregation result: %d rows, %v", result.Rows, err)
 		}

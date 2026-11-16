@@ -97,7 +97,7 @@ The default backend parses native DuckDB SQL and checks its AST before execution
 
 Each project has a separate DuckLake catalog and engine context. The public view excludes private originals and tombstone internals. The engine's filesystem permissions are restricted to its managed directory and external access is disabled after initialization. Query parameter values are bound separately, with exact name matching. Even instance administrators use these project-scoped read-only paths.
 
-Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#fixed-query-limits).
+Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#query-limits).
 
 Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native tests exercise the actual storage boundary in addition to parser rejection.
 

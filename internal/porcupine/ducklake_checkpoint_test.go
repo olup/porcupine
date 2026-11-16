@@ -123,7 +123,7 @@ func TestDuckLakeCheckpointWaitsForReadersAndCleansFailedStage(t *testing.T) {
 	if err != nil || len(stages) != 0 {
 		t.Fatalf("failed stage leaked: %v %v", stages, err)
 	}
-	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil); err != nil {
+	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		t.Fatal("failed checkpoint prevented reopening", err)
 	}
 }
@@ -176,7 +176,7 @@ func TestDuckLakeCheckpointKeepsWriterOpenDuringAcceptanceCapture(t *testing.T) 
 	if closeErr == nil {
 		t.Fatal("store closed while the acceptance checkpoint was live")
 	}
-	if _, err := lake.Query(context.Background(), "a", "SELECT count(*) FROM events", nil); err != nil {
+	if _, err := lake.Query(context.Background(), "a", "SELECT count(*) FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		t.Fatal("interrupted checkpoint retained its writer guard", err)
 	}
 }
@@ -184,7 +184,7 @@ func TestDuckLakeCheckpointKeepsWriterOpenDuringAcceptanceCapture(t *testing.T) 
 func TestDuckLakeCheckpointRejectsPendingPartialDeletion(t *testing.T) {
 	lake := openLakeStorageTest(t, t.TempDir(), 1)
 	ctx := context.Background()
-	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil); err != nil {
+	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lake.registry.ExecContext(ctx, "INSERT INTO deleting_projects VALUES('a')"); err != nil {

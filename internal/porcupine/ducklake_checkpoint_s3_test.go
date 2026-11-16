@@ -112,7 +112,7 @@ func TestDuckLakeS3CheckpointPinsObjectsWithoutBlockingReadsOrWrites(t *testing.
 	}
 	assertCheckpointPins(t, store, ctx, "a")
 	query, stopQuery := context.WithTimeout(ctx, 4*time.Second)
-	if _, err := store.Query(query, "b", "SELECT uuid FROM events", nil); err != nil {
+	if _, err := store.Query(query, "b", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		stopQuery()
 		t.Fatal("slow checkpoint LIST held the global mutex", err)
 	}
@@ -203,7 +203,7 @@ func TestDuckLakeS3CheckpointPinsObjectsWithoutBlockingReadsOrWrites(t *testing.
 	}
 	assertCheckpointPins(t, store, ctx, "a")
 	query, stopQuery = context.WithTimeout(ctx, 4*time.Second)
-	rows, err := store.Query(query, "a", "SELECT uuid FROM events", nil)
+	rows, err := store.Query(query, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	stopQuery()
 	if err != nil || len(rows.Data) != 2 {
 		t.Fatal("slow checkpoint GET blocked source reads", err)

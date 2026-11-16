@@ -33,6 +33,8 @@ The deployment operator chooses [storage](storage.md) and configures [backups](r
 
 Version v0.14.0 includes [remote backups and offline recovery](native-backup-recovery.md).
 
+**Unreleased:** [tenants and usage budgets](tenants.md) group projects under a monthly ingestion allowance and shared interactive query limits. Tenant management is restricted to instance administrators. This feature requires a fresh data directory and is not included in v0.14.0.
+
 ## Look up a contract
 
 Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The [native event contract](native-event-contract.md) describes producer fields and historical message semantics. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.

@@ -2,6 +2,8 @@
 
 A project separates event data, identities, and delivery pipelines. Every analytics request targets one project ID. Credentials can hold access to several projects, and the server checks the target on every request.
 
+**Unreleased:** every project belongs to a [tenant](tenants.md), which shares usage budgets across its projects. Fresh installations provide the tenant `default`. Project grants remain explicit and can span tenants; tenant ownership does not grant access. These changes are not in v0.14.0.
+
 Use the [CLI](../cli/README.md), HTTP API, or a connected MCP agent. For the examples below, set `PORCUPINE_URL` and run `porcupine login --admin` with an instance administrator's email address.
 
 ## List and create projects
@@ -20,7 +22,7 @@ porcupine create-project --body '{"name":"Demo","ingestion_mode":"server_only"}'
 
 For browser capture, use `"ingestion_mode":"mixed"`. The creation response includes the project's public `ingest_token`. Store it in your browser configuration and configure the application's allowed origin on the server. For private backend credentials, create a [service key](service-keys.md).
 
-Keep the returned project ID for future requests. Creating a project requires `management:write` and `events:write` with instance-wide project scope. An instance administrator has that authority.
+Keep the returned project ID for future requests. In v0.14.0, creating a project requires `management:write` and `events:write` with instance-wide project scope. In the unreleased tenant implementation, creation requires `instance:admin`. Its body accepts an optional `tenant_id`, defaulting to `default`; the response includes the immutable tenant ownership. `list-projects` accepts a `tenant_id` filter and still restricts results to the caller's grants.
 
 ## Rename a project
 
@@ -47,6 +49,8 @@ porcupine delete-project --id PROJECT_ID
 ```
 
 The server cancels pending project work and cleans up its managed data. Interrupted cleanup is retried after restart and periodically. A completed deletion returns HTTP `204`, including on retry for the same ID. Backups and copies already sent to external destinations have separate retention policies. See [project deletion and recovery](reliability.md#whole-project-deletion).
+
+In the unreleased tenant implementation, deleting a project preserves its tenant's monthly acceptance counters. Deletion does not refund an ingestion allowance.
 
 ## Use an agent or HTTP
 
