@@ -96,3 +96,7 @@ ducklake-s3-test:
 ducklake-restore-drill: cli
 	docker build --build-arg VERSION=dev -t porcupine-native-restore-test .
 	PORCUPINE_RESTORE_DOCKER_IMAGE=porcupine-native-restore-test PORCUPINE_RESTORE_CLI=$(CURDIR)/bin/cli/porcupine CGO_ENABLED=1 go test ./internal/porcupine -run '^TestDuckLakeCLIRestoreDrill$$' -count=1 -timeout=120s
+
+.PHONY: shared-postgres-test
+shared-postgres-test:
+	CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration
