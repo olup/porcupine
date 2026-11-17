@@ -96,7 +96,7 @@ Existing published guides are retained. The operator reference describes develop
 
 ## Acceptance cost evidence
 
-Measured on Apple M1 Pro, Darwin/arm64, with the same prebuilt test binary, SQLite configuration, synthetic payloads and real native HTTP acceptance path. Each case sends 100 requests, repeated three times. Only the recorder pointer is disabled in the private test control; receipts, identity, allowance checks and journal commits remain enabled. There is no product flag to turn accounting off.
+Measured on Apple M1 Pro, Darwin/arm64, with the same prebuilt test binary, SQLite configuration, synthetic payloads and native `/ingest/v1/events` handler through in-process `httptest` requests. Socket/network transport is excluded. Each case sends 100 requests, repeated three times. Only the recorder pointer is disabled in the private test control; receipts, identity, allowance checks and journal commits remain enabled. There is no product flag to turn accounting off.
 
 | Fixture | Meter off median | Meter on median | Observation |
 | --- | ---: | ---: | --- |
