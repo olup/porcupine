@@ -308,9 +308,8 @@ func (c *pausedS3HTTPClient) Do(request *http.Request) (*http.Response, error) {
 	return c.underlying.Do(request)
 }
 
-// Serial: a 300 ms deadline must reach the remote read before CPU contention
-// from parallel tests delays the catalog open.
 func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
@@ -348,11 +347,21 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	s3FixtureError(t, fixture, "reopen S3 cancellation fixture", err)
 	store = lake.(*duckLakeStore)
 	paused.Store(true)
-	limited, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	start := time.Now()
+	// Cancel when the remote read is in flight, not after a fixed delay, so
+	// CPU contention before the read cannot make the fixture miss it.
+	limited, cancel := context.WithCancel(ctx)
+	var canceledAt atomic.Int64
+	go func() {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+		}
+		canceledAt.Store(time.Now().UnixNano())
+		cancel()
+	}()
 	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
 	cancel()
-	elapsed := time.Since(start)
+	elapsed := time.Since(time.Unix(0, canceledAt.Load()))
 	paused.Store(false)
 	close(resume)
 	select {
