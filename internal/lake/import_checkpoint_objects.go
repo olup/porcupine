@@ -16,7 +16,9 @@ import (
 
 const MaxImmutableImportCheckpointBytes int64 = 2 << 20
 
-func (s *DuckLakeObjectStore) importCheckpointPrefix(scope HostedProjectScope, job, file string) (string, error) {
+// HostedImportCheckpointPrefix identifies the parser checkpoint namespace
+// reserved for one import file in its existing hosted stream.
+func (s *DuckLakeObjectStore) HostedImportCheckpointPrefix(scope HostedProjectScope, job, file string) (string, error) {
 	if job == "" || file == "" || len(job) > 200 || len(file) > 200 || scope.Key.SourceID != s.sourceID || scope.Key.ProjectID == "" || scope.CatalogID != SharedNativeCatalogID(scope.Key.SourceID, scope.Key.ProjectID) || len(scope.StreamID) != 36 || !LakePrefixSegmentPattern.MatchString(scope.StreamID) {
 		return "", errors.New("immutable import checkpoint object scope is invalid")
 	}
@@ -26,7 +28,7 @@ func (s *DuckLakeObjectStore) importCheckpointPrefix(scope HostedProjectScope, j
 // PutImmutableImportCheckpoint stores bounded private parser state under the
 // exact project stream, job and file. It never overwrites an existing object.
 func (s *DuckLakeObjectStore) PutImmutableImportCheckpoint(ctx context.Context, scope HostedProjectScope, job, file string, body []byte) (ImmutableObjectRef, error) {
-	prefix, err := s.importCheckpointPrefix(scope, job, file)
+	prefix, err := s.HostedImportCheckpointPrefix(scope, job, file)
 	if err != nil {
 		return ImmutableObjectRef{}, err
 	}
@@ -59,7 +61,7 @@ func (s *DuckLakeObjectStore) ReadImmutableImportCheckpoint(ctx context.Context,
 	return raw, err
 }
 func (s *DuckLakeObjectStore) readImmutableImportCheckpoint(ctx context.Context, scope HostedProjectScope, job, file string, ref ImmutableObjectRef) ([]byte, string, error) {
-	prefix, err := s.importCheckpointPrefix(scope, job, file)
+	prefix, err := s.HostedImportCheckpointPrefix(scope, job, file)
 	if err != nil {
 		return nil, "", err
 	}

@@ -227,6 +227,9 @@ func (s *Service) startDeletionRecovery() {
 func (s *Service) resumeProjectDeletions(ctx context.Context) {
 	if s.sealHostedProject != nil {
 		s.resumeHostedProjectSeals(ctx)
+		if s.hosted != nil {
+			s.resumeHostedProjectCleanup(ctx)
+		}
 		return
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM project_deletions WHERE completed=0 ORDER BY rowid`)

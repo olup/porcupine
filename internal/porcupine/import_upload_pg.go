@@ -49,7 +49,7 @@ func (m *importManager) withHostedImport(ctx context.Context, project string, fn
 	}
 	defer session.Release()
 	var result *ImportUploadOutput
-	err = session.RunNative(ctx, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, project, func(ctx context.Context) error {
 		p := heldImportProject{session: session}
 		if err := m.db.QueryRowContext(ctx, `SELECT tenant_id FROM projects p WHERE p.id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=p.tenant_id)`, project).Scan(&p.tenant); err != nil {
 			return importLookupError(err)

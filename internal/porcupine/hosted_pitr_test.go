@@ -29,7 +29,7 @@ func TestHostedPostgresPITR(t *testing.T) {
 	fixture := nativeS3Fixture(t)
 	pg := newPITRPostgres(t, bin)
 	admin := pg.admin()
-	for _, db := range []string{"control", "catalogs"} {
+	for _, db := range []string{"control", "catalogs", "hosted"} {
 		if _, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+db); err != nil {
 			t.Fatal(err)
 		}
@@ -60,6 +60,18 @@ func TestHostedPostgresPITR(t *testing.T) {
 	referencedKeys := fixture.keys(t, fixture.projectPrefix(t, store, projectA))
 	if len(referencedKeys) == 0 {
 		t.Fatal("the recovery target must reference S3 Parquet")
+	}
+	hostedConfig := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
+		Shared: &SharedConfig{DatabaseURL: pg.dsn("hosted")}, allowUnreleasedHostedFixture: true,
+		DuckLake: &lakeapi.DuckLakeConfig{PostgresURL: pg.dsn("hosted"), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1,
+			MaintenanceInterval: time.Hour, CleanupGrace: 72 * time.Hour,
+			RestoreWindow: 24 * time.Hour, RestoreMaxReaderTime: time.Hour, RestoreSafetyMargin: time.Hour}}
+	hosted, hostedHTTP, closeHosted := hostedCleanupWorker(t, hostedConfig)
+	hostedProject, _ := sharedJourneyProject(t, hostedHTTP.URL, defaultTenantID, "hosted project under deletion")
+	pitrCreateHostedOutput(t, pitrWorker{hostedHTTP, hosted}, hostedProject)
+	hostedKeys := fixture.keys(t, fixture.projectPrefix(t, hosted.hosted.native, hostedProject))
+	if len(hostedKeys) < 2 {
+		t.Fatal("hosted recovery target must include Parquet and an immutable live manifest")
 	}
 	if _, err := admin.ExecContext(t.Context(), "SELECT pg_create_restore_point($1)", pitrRestorePoint); err != nil {
 		t.Fatal(err)
@@ -100,7 +112,25 @@ func TestHostedPostgresPITR(t *testing.T) {
 	if err := store.DeleteProject(t.Context(), projectC); !errors.Is(err, lakeapi.ErrHostedNativeGuardRequired) {
 		t.Fatal("legacy physical cleanup must refuse the fenced hosted project", err)
 	}
+	if err := hosted.beginControlProjectDeletion(t.Context(), hostedProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := hosted.hosted.flusher.sealProject(t.Context(), hostedProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := hosted.cleanHostedProject(t.Context(), hostedProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := hosted.cleanHostedProject(t.Context(), hostedProject); !errors.Is(err, errHostedRecoveryFloor) {
+		t.Fatalf("hosted cleanup crossed the current restore target: %v", err)
+	}
+	closeHosted()
 	beforeRestore := fixture.keys(t, fixture.storage.Prefix)
+	for _, key := range hostedKeys {
+		if !slices.Contains(beforeRestore, key) {
+			t.Fatalf("hosted cleanup dropped retained object %s", key)
+		}
+	}
 	for _, key := range referencedKeys {
 		if !slices.Contains(beforeRestore, key) {
 			t.Fatalf("obsolete-file grace failed to retain %s", key)
@@ -109,6 +139,8 @@ func TestHostedPostgresPITR(t *testing.T) {
 	closePrimary()
 	pg.recover(pitrRestorePoint)
 	restored, _ := pitrOfflineWorker(t, pg, fixture, "pitr-restored")
+	restoredHosted, restoredHTTP, _ := hostedCleanupWorker(t, hostedConfig)
+	pitrAssertEvent(t, restoredHTTP.URL, hostedProject, adminToken, "hosted")
 
 	// Reapply the post-target revocation over the private fixture listener.
 	sharedJourneyHTTP(t, restored.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, adminToken, nil, nil, 204)
@@ -123,6 +155,18 @@ func TestHostedPostgresPITR(t *testing.T) {
 	}
 	if afterRestore := fixture.keys(t, fixture.storage.Prefix); !slices.Equal(beforeRestore, afterRestore) {
 		t.Fatalf("recovery changed S3 objects: before=%v after=%v", beforeRestore, afterRestore)
+	}
+	native := restoredHosted.hosted.native
+	scopeAfterRestore, err := native.LookupHostedProjectExisting(t.Context(), lakeapi.ProjectWriteKey{SourceID: native.Config.SharedSourceID, ProjectID: hostedProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofs, err := native.PendingNativeEffects(t.Context(), scopeAfterRestore, 0, 2)
+	if err != nil || len(proofs.Evidence) != 1 {
+		t.Fatalf("restore lost the hosted native proof: %+v %v", proofs, err)
+	}
+	if _, err := native.Remote.ReadImmutableEffectObject(t.Context(), scopeAfterRestore, proofs.Evidence[0].Effects.Manifest); err != nil {
+		t.Fatal("restore could not read the hosted immutable manifest", err)
 	}
 }
 

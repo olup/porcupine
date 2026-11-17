@@ -74,7 +74,7 @@ func (w *hostedPipelineDelivery) stepDelivery(ctx context.Context, d output.Pipe
 	attemptID := eventapi.NewID()
 	var frozen frozenHostedWebhook
 	var ticket bool
-	err = session.RunNative(ctx, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		var err error
 		frozen, progress, ticket, err = w.freeze(ctx, session, key, d, attemptID)
 		if progress || ticket || ctx.Err() != nil {

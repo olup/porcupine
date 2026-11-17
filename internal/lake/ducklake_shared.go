@@ -188,6 +188,13 @@ func (s *DuckLakeStore) deleteSharedNativeProject(ctx context.Context, project s
 	if busy {
 		return errors.New("DuckLake project is in use")
 	}
+	var hostedDeletion bool
+	if err := s.SharedCatalog.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pc_native_hosted_deletion WHERE source_id=$1 AND project_id=$2)`, s.Config.SharedSourceID, project).Scan(&hostedDeletion); err != nil {
+		return errors.New("shared analytical deletion unavailable")
+	}
+	if hostedDeletion {
+		return ErrHostedNativeGuardRequired
+	}
 	var deleted, ready int
 	var catalogID string
 	err = s.SharedCatalog.QueryRowContext(ctx, "SELECT catalog_id,deleted,ready FROM pc_native_projects WHERE source_id=$1 AND project_id=$2", s.Config.SharedSourceID, project).Scan(&catalogID, &deleted, &ready)

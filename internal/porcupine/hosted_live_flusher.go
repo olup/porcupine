@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
@@ -17,10 +16,11 @@ import (
 // buffered acceptance also needs the full shared API, consent, assembly and send
 // providers. This constructor requires real PG, native and object storage.
 type hostedLiveFlusher struct {
-	native      *lakeapi.DuckLakeStore
-	coordinator *lakeapi.PostgresProjectCoordinator
-	publisher   *hostedEffectPublisher
-	policy      hostedIngestionPolicy
+	native             *lakeapi.DuckLakeStore
+	coordinator        *lakeapi.PostgresProjectCoordinator
+	publisher          *hostedEffectPublisher
+	policy             hostedIngestionPolicy
+	returnedActivities sync.Map
 }
 
 func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store) (*hostedLiveFlusher, error) {
@@ -55,12 +55,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		return err
 	}
 	defer session.Release()
-	ticket := eventapi.NewID()
-	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
-	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
-		return err
-	}
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
 			return e
@@ -148,7 +143,7 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 	}
 	defer session.Release()
 	var result lakeapi.NativeCommitEvidence
-	err = session.RunNative(ctx, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, input.Key.Scope.Key.ProjectID, func(ctx context.Context) error {
 		scope, err := f.native.LookupHostedProjectExisting(ctx, input.Key.Scope.Key)
 		if err != nil {
 			return err
@@ -210,12 +205,7 @@ func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.Proj
 		return err
 	}
 	defer session.Release()
-	ticket := eventapi.NewID()
-	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
-	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
-		return err
-	}
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
 			return e
@@ -238,7 +228,7 @@ func (f *hostedLiveFlusher) reconcileHostedWrites(ctx context.Context, session *
 	if err := f.reconcile(ctx, session, scope, fence, tenant); err != nil {
 		return err
 	}
-	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant)
+	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, false)
 }
 
 func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {

@@ -200,10 +200,9 @@ func (s *Service) resumeTenantDeletions(ctx context.Context) {
 		code := ""
 		if err := s.finishTenantDeletion(ctx, id); err != nil {
 			code = "cleanup_pending"
-			if errors.Is(err, errRestoredArtifactsPending) {
-				code = "restored_artifacts_pending"
-			}
 			switch {
+			case errors.Is(err, errRestoredArtifactsPending):
+				code = "restored_artifacts_pending"
 			case s.sealHostedProject != nil:
 				code = "hosted_cleanup_pending"
 			case s.shared != nil:
@@ -221,7 +220,7 @@ func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error
 	if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM project_deletions WHERE tenant_id=$1 AND completed=0`, tenant).Scan(&remaining); err != nil {
 		return err
 	}
-	if remaining != 0 || s.shared != nil || s.sealHostedProject != nil {
+	if remaining != 0 || s.shared != nil && s.hosted == nil {
 		return errors.New("tenant local cleanup pending")
 	}
 	var held bool
@@ -230,6 +229,9 @@ func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error
 	}
 	if held {
 		return errRestoredArtifactsPending
+	}
+	if s.hosted != nil {
+		return s.finishTenantControlDeletion(ctx, tenant)
 	}
 	if err := s.localAdmission.Lock(ctx); err != nil {
 		return err

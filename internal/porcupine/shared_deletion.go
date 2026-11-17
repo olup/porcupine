@@ -78,10 +78,17 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	if completed {
 		return tx.Commit()
 	}
+	if err := s.completeProjectDeletionTx(ctx, tx, id, tenant); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) completeProjectDeletionTx(ctx context.Context, tx *sql.Tx, id, tenant string) error {
 	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
 	}
-	if s.usage != nil && project != "" {
+	if s.usage != nil && tenant != "" {
 		at := s.clock()
 		if err := s.usage.store.RecordStorageSampleTx(ctx, tx, usage.StorageSample{TenantID: tenant, ProjectID: id, Day: usage.Day(at), ObservedAt: usage.Stamp(at), Bytes: 0}); err != nil {
 			return err
@@ -93,5 +100,5 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	if _, err := tx.ExecContext(ctx, `UPDATE project_deletions SET completed=1 WHERE project_id=$1`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }

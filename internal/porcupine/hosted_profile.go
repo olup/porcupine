@@ -15,13 +15,14 @@ import (
 )
 
 type hostedRuntime struct {
-	native       *lakeapi.DuckLakeStore
-	flusher      *hostedLiveFlusher
-	buffer       *bufferedAcceptance
-	stopBuffer   context.CancelFunc
-	stopRecovery context.CancelFunc
-	recoveryDone chan struct{}
-	scratch      string
+	native        *lakeapi.DuckLakeStore
+	flusher       *hostedLiveFlusher
+	buffer        *bufferedAcceptance
+	stopBuffer    context.CancelFunc
+	stopRecovery  context.CancelFunc
+	recoveryDone  chan struct{}
+	scratch       string
+	recoveryFloor HostedRecoveryFloor
 }
 
 // openHostedProfile is the composition tested before public enablement. All
@@ -37,7 +38,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &hostedRuntime{}
+	h := &hostedRuntime{recoveryFloor: c.HostedRecoveryFloor}
 	s.hosted = h
 	s.shared = &sharedRuntime{config: SharedConfig{WorkerID: eventapi.NewID()}}
 	control, err := openSharedControl(ctx, *c.Shared)
@@ -92,9 +93,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	s.imports = newHostedImportManager(s.eventRules, h.flusher)
 	s.hostedMutations = h.flusher
 	s.sealHostedProject = h.flusher.sealProject
-	endActivity := func(ctx context.Context, project, activity string) error {
-		return endHostedProjectActivity(ctx, control, project, activity)
-	}
+	endActivity := h.flusher.finishProjectActivity
 	if err := s.configureHostedPipelines(c.Pipelines, h.flusher, hostedPipelineExecution{
 		deleteGate: hostedOutputBlocked, beginAttemptTx: registerHostedProjectActivityTx, endAttempt: endActivity,
 	}); err != nil {
@@ -158,7 +157,7 @@ func (s *Service) initializeHostedProject(ctx context.Context, project string) e
 		return err
 	}
 	defer session.Release()
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return h.flusher.runActiveHostedProject(ctx, session, project, func(ctx context.Context) error {
 		if err := s.requireProjectActive(ctx, project); err != nil {
 			return err
 		}
@@ -181,6 +180,7 @@ func (s *Service) startHostedRecovery(interval time.Duration) {
 		var after string
 		for {
 			work, cancel := context.WithTimeout(ctx, 30*time.Second)
+			h.flusher.flushReturnedProjectActivities(work)
 			records, err := h.native.ScanHostedProjects(work, after, 32)
 			if err == nil {
 				if len(records) == 0 {

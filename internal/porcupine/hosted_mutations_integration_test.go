@@ -355,4 +355,31 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 
 	_, err = b.service.editEvent(actorContext, edit)
 	mutationErrorStatus(t, err, 403)
+
+	readyActor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:edit"})
+	readyContext := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: readyActor, Projects: []string{project}, Permissions: []string{"events:edit"}})
+	ready, err := a.service.editEvent(readyContext, mutationEdit(project, laterUUID, "ready-at-project-fence", "0"))
+	if err != nil || ready.Body.State != "pending" {
+		t.Fatal(ready, err)
+	}
+	for _, node := range []*sharedJourneyNode{a, b} {
+		node.service.deletionCancel()
+		<-node.service.deletionDone
+	}
+	if err := a.service.beginControlProjectDeletion(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := fb.sealDeletedProject(ctx, scope.Key); err != nil {
+		t.Fatal("seal did not settle an accepted mutation", err)
+	}
+	settled, err := hostedMutationBy(ctx, a.service.control, scope, defaultTenantID, "mutation_id", ready.Body.MutationID)
+	if err != nil || settled.state != "applied" {
+		t.Fatal(settled.state, err)
+	}
+	page, err = fb.native.PendingNativeEffects(ctx, scope, 4, 1)
+	if err != nil || page.NativeHighWater != 5 || page.AcknowledgedThrough != 5 || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
+		t.Fatal(page, err)
+	}
+	_, err = b.service.editEvent(readyContext, edit)
+	mutationErrorStatus(t, err, 503)
 }

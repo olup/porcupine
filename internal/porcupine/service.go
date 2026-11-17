@@ -38,19 +38,20 @@ type Config struct {
 	AcceptanceMode               AcceptanceMode
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
-	ReceiptRetention   time.Duration
-	AllowedOrigins     []string
-	TrustedProxies     []string
-	Clock              func() time.Time
-	DuckLake           *lakeapi.DuckLakeConfig
-	Pipelines          *output.PipelineConfig
-	Exports            *output.ExportConfig
-	OAuth              *OAuthConfig
-	Auth               *AuthConfig
-	NativeBackup       *lakeapi.NativeBackupConfig
-	InteractiveQueries *InteractiveQueryConfig
-	Shared             *SharedConfig
-	Usage              *usage.Config
+	ReceiptRetention    time.Duration
+	AllowedOrigins      []string
+	TrustedProxies      []string
+	Clock               func() time.Time
+	DuckLake            *lakeapi.DuckLakeConfig
+	Pipelines           *output.PipelineConfig
+	Exports             *output.ExportConfig
+	OAuth               *OAuthConfig
+	Auth                *AuthConfig
+	NativeBackup        *lakeapi.NativeBackupConfig
+	InteractiveQueries  *InteractiveQueryConfig
+	Shared              *SharedConfig
+	Usage               *usage.Config
+	HostedRecoveryFloor HostedRecoveryFloor
 	// Internal integration gate until hosted lifecycle, backup and acceptance are activated together.
 	hostedImports bool
 }

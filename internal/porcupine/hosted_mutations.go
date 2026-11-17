@@ -68,7 +68,7 @@ func (f *hostedLiveFlusher) withHostedMutationProject(ctx context.Context, proje
 		return err
 	}
 	defer session.Release()
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return f.runActiveHostedProject(ctx, session, project, func(ctx context.Context) error {
 		var tenant string
 		if err := f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&tenant); err != nil {
 			return err
@@ -313,7 +313,7 @@ func (f *hostedLiveFlusher) hostedMutationStatus(ctx context.Context, project, i
 
 // settleReadyHostedMutation runs after the common effect predecessor has been
 // reconciled. It needs neither the producer credential nor worker-local state.
-func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
+func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string, deleting bool) error {
 	i, err := hostedMutationBy(ctx, f.publisher.control, scope, tenant, "state", "ready")
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -329,6 +329,9 @@ func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, sessi
 		return errHostedMutationBusy
 	}
 	if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if deleting {
+			return f.publisher.effects.PrepareDeletingMutationStreamTx(ctx, tx, pipelineScope(scope), tenant)
+		}
 		return f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(scope), tenant)
 	}); err != nil {
 		return err
@@ -337,7 +340,7 @@ func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, sessi
 	if err != nil {
 		return err
 	}
-	if err := f.publisher.publishOn(ctx, output.PipelineBinding{}, e, session); err != nil {
+	if err := f.publisher.publishEvidence(ctx, output.PipelineBinding{}, e, session, deleting); err != nil {
 		return err
 	}
 	_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, e.Sequence)

@@ -196,7 +196,7 @@ INSERT INTO access_keys VALUES('reader',NULL);
 	fake.mu.Lock()
 	objects, deletes := len(fake.objects), fake.deletes
 	fake.mu.Unlock()
-	if objects != 1 || deletes != 1 {
+	if objects != 2 || deletes != 0 {
 		t.Fatalf("published objects=%d cleanup deletes=%d", objects, deletes)
 	}
 
@@ -226,12 +226,30 @@ INSERT INTO access_keys VALUES('reader',NULL);
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err = b.CleanupProject(ctx, "a"); err != nil {
-		t.Fatal(err)
+	inventory := func() []HostedDeletionArtifact {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		items, err := b.HostedDeletionInventory(ctx, tx, "tenant", "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return items
 	}
-	var holds int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM managed_artifact_ownership WHERE project_id='a'`).Scan(&holds); err != nil || holds != 2 {
-		t.Fatalf("retained artifact ownership=%d: %v", holds, err)
+	artifacts := inventory()
+	if len(artifacts) != 2 {
+		t.Fatalf("retained artifact inventory: %+v", artifacts)
+	}
+	for _, artifact := range artifacts {
+		if err := b.DeleteHostedArtifact(ctx, artifact); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := inventory(); len(got) != 0 {
+		t.Fatalf("provider still has retained artifacts: %+v", got)
 	}
 	if _, err = b.Get(ctx, "b", expired.ID); err != nil {
 		t.Fatalf("targeted deletion affected another project: %v", err)

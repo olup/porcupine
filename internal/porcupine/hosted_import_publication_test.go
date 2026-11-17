@@ -370,8 +370,19 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = fb.RecoverProject(t.Context(), key); err != nil {
+	for _, node := range []*sharedJourneyNode{a, b} {
+		node.service.deletionCancel()
+		<-node.service.deletionDone
+	}
+	if err := a.service.beginControlProjectDeletion(t.Context(), key.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if err = fb.sealDeletedProject(t.Context(), key); err != nil {
 		t.Fatal("sealed import recovery", err)
+	}
+	seq, proof, err = fb.publisher.checkpoint(t.Context(), scope, defaultTenantID)
+	if err != nil || seq != nextProof.Sequence || proof != nextProof.ProofFingerprint {
+		t.Fatal("deletion fence lost the committed import outcome", seq, proof, err)
 	}
 }
 

@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const hostedProjectLifecycleSchema = `CREATE TABLE hosted_project_activity (
@@ -90,4 +93,41 @@ func endHostedProjectActivity(ctx context.Context, db *sql.DB, project, activity
 	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedQueryControlTimeout)
 	defer cancel()
 	return finishHostedProjectActivity(bounded, db, project, activityID)
+}
+
+// Run the whole operation under one ticket so cold opens, reconciliation, and
+// object access before a downstream dispatch each participate in the drain.
+func (f *hostedLiveFlusher) runActiveHostedProject(ctx context.Context, session *lakeapi.ProjectWriteSession, project string, run func(context.Context) error) (err error) {
+	ticket := eventapi.NewID()
+	defer func() { err = errors.Join(err, f.finishProjectActivity(ctx, project, ticket)) }()
+	if err := beginHostedProjectActivity(ctx, f.publisher.control, project, ticket); err != nil {
+		return err
+	}
+	return session.RunNative(ctx, run)
+}
+
+type returnedHostedProjectActivity struct {
+	project string
+	ticket  string
+}
+
+// Remember actual return when control is unavailable. Recovery can retry the
+// acknowledgement while this executor lives, without expiring a live ticket.
+func (f *hostedLiveFlusher) finishProjectActivity(ctx context.Context, project, ticket string) error {
+	err := endHostedProjectActivity(ctx, f.publisher.control, project, ticket)
+	if err != nil {
+		f.returnedActivities.Store(returnedHostedProjectActivity{project: project, ticket: ticket}, struct{}{})
+	}
+	return err
+}
+
+func (f *hostedLiveFlusher) flushReturnedProjectActivities(ctx context.Context) {
+	f.returnedActivities.Range(func(key, _ any) bool {
+		activity := key.(returnedHostedProjectActivity)
+		if err := finishHostedProjectActivity(ctx, f.publisher.control, activity.project, activity.ticket); err != nil {
+			return false
+		}
+		f.returnedActivities.Delete(key)
+		return true
+	})
 }

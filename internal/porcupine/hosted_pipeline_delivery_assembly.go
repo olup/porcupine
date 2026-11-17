@@ -34,7 +34,7 @@ func (w *hostedPipelineDelivery) assembleNext(ctx context.Context) (bool, error)
 	}
 	defer session.Release()
 	var progress bool
-	err = session.RunNative(ctx, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, err := f.native.LookupHostedProjectExisting(ctx, key)
 		if err != nil {
 			return err

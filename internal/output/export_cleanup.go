@@ -24,6 +24,9 @@ func StageExportProjectCleanupTx(ctx context.Context, tx *sql.Tx, projectID stri
 }
 
 func (s *ExportJobs) CleanupProject(ctx context.Context, projectID string) error {
+	if s.retained != nil {
+		return errors.New("hosted export cleanup requires retention-aware project deletion")
+	}
 	for {
 		var key, uploadID, storageID string
 		err := s.db.QueryRowContext(ctx, `SELECT object_key,upload_id,storage_id FROM project_deletion_files
@@ -61,12 +64,19 @@ func (s *ExportJobs) removeExportArtifact(ctx context.Context, key, uploadID str
 		if err := s.store.Abort(ctx, key, uploadID); err != nil {
 			return err
 		}
-	} else if s.retained != nil {
-		// The owned key was checkpointed before Begin could reach S3.
-		if err := s.store.AbortKeyUploads(ctx, key); err != nil {
-			return err
-		}
 	}
 	// Complete may have committed despite a lost acknowledgment; always delete.
 	return s.store.Delete(ctx, key)
+}
+
+// Hosted restores can still read a completed export by its unversioned key.
+// Keep its contents readable after transferring ownership to durable inventory.
+func (s *ExportJobs) retireExportArtifact(ctx context.Context, key, uploadID string) error {
+	if s.retained == nil {
+		return s.removeExportArtifact(ctx, key, uploadID)
+	}
+	if uploadID != "" {
+		return s.store.Abort(ctx, key, uploadID)
+	}
+	return s.store.AbortKeyUploads(ctx, key)
 }

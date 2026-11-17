@@ -80,6 +80,24 @@ func (s *DuckLakeStore) LookupHostedProjectExisting(ctx context.Context, key Pro
 	return readHostedProjectScopeState(ctx, p.DB, key, true)
 }
 
+// HostedProjectCatalogAbsent verifies that neither a registry row nor the
+// deterministic metadata schema exists. Call with the project coordinator held
+// and initialization drained. A failed lookup inside a catalog is not absence.
+func (s *DuckLakeStore) HostedProjectCatalogAbsent(ctx context.Context, key ProjectWriteKey) (bool, error) {
+	if s.SharedCatalog == nil || key.SourceID != s.Config.SharedSourceID || key.ProjectID == "" {
+		return false, ErrProjectWriteFenceStale
+	}
+	if _, err := s.SourceID(ctx); err != nil {
+		return false, err
+	}
+	var absent bool
+	err := s.SharedCatalog.QueryRowContext(ctx, `SELECT NOT EXISTS (
+SELECT 1 FROM pc_native_projects WHERE source_id=$1 AND project_id=$2)
+AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname=$3)`,
+		key.SourceID, key.ProjectID, SharedNativeSchema(SharedNativeCatalogID(key.SourceID, key.ProjectID))).Scan(&absent)
+	return absent, err
+}
+
 // AdvanceRecoveryFence also accepts a sealed stream. It cannot reopen one or
 // authorize event mutations. Call under the already acquired project session.
 func (s *DuckLakeStore) AdvanceRecoveryFence(ctx context.Context, fence ProjectWriteFence) error {

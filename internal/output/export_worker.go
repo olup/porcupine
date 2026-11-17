@@ -482,7 +482,7 @@ func (s *ExportJobs) cleanupExport(ctx context.Context, job storedExport) error 
 		if err := retainArtifactOwnership(ctx, s.control, job.ProjectID, "export", s.store, file.key, file.id); err != nil {
 			return err
 		}
-		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {
+		if err = s.retireExportArtifact(ctx, file.key, file.id); err != nil {
 			return err
 		}
 		if _, err = s.db.ExecContext(ctx, `DELETE FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND file_index=$3`, job.ID, file.attempt, file.index); err != nil {
