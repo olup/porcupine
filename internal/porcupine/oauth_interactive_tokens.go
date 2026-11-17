@@ -299,9 +299,6 @@ func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQueryer, principal actor) (actor, error) {
-	if s.shared != nil {
-		query = s.control
-	}
 	var grantID string
 	err := query.QueryRowContext(ctx, `SELECT id FROM oauth_interactive_grants WHERE principal_id=$1`, principal.ID).Scan(&grantID)
 	if errors.Is(err, sql.ErrNoRows) {

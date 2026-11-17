@@ -52,6 +52,10 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	<-s.deliveryDone
 	pending := `{"type":"track","message_id":"pending-checkpoint","actor_id":"person","name":"pending"}`
 	pendingID := receiptFrom(t, nativeRequest(t, s, ingest, pending, 200), 0)["event_id"]
+	if _, err := s.control.Exec(`UPDATE tenants SET ingestion_monthly_events=10000 WHERE id='default'`); err != nil {
+		t.Fatal(err)
+	}
+	usageBefore := request(t, s, "GET", "/api/v1/tenants/default/usage", adminToken, "", 200)
 	if err := s.createNativeBackup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +72,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 		t.Fatal(err)
 	}
 	r := nativeRestoreTarget(t, id, bundle, source)
+	r.TargetControlDBPath = filepath.Join(t.TempDir(), "separate-control", "management.db")
 	result, err := RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: DuckLakeConfig{MemoryLimitMB: 256, Threads: 1}})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +91,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	if err = os.Rename(bundle, bundle+".offline"); err != nil {
 		t.Fatal(err)
 	}
-	restoredConfig := Config{DBPath: r.TargetDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
+	restoredConfig := Config{DBPath: r.TargetDBPath, ControlDBPath: r.TargetControlDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
 	restored, err := Open(restoredConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +99,13 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	defer func() { restored.Close() }()
 	request(t, restored, "GET", "/api/v1/projects", adminToken, "", 401)
 	request(t, restored, "GET", "/api/v1/projects", r.BootstrapToken, "", 200)
+	period := usageBefore["period_start"].(string)[:7]
+	for attempt := 0; attempt < 2; attempt++ {
+		usage := request(t, restored, "GET", "/api/v1/tenants/default/usage?period="+period, r.BootstrapToken, "", 200)
+		if usage["accepted_events"] != usageBefore["accepted_events"] || usage["remaining_events"] != usageBefore["remaining_events"] {
+			t.Fatal("restored tenant accounting changed or published twice", usage, usageBefore)
+		}
+	}
 	nativeRequest(t, restored, ingest, pending, 401)
 	duckLakeJourneyDrain(t, restored)
 	// Lifecycle verifier uses the source fixture bootstrap token, so query these
@@ -230,6 +242,9 @@ func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *tes
 			if kind == "schema" {
 				if _, err = os.Stat(r.TargetDBPath + ".native-restore-incomplete"); err != nil {
 					t.Fatal("failed restore lost incomplete marker", err)
+				}
+				if _, err = os.Stat(localControlPath(r.TargetDBPath) + ".native-restore-incomplete"); err != nil {
+					t.Fatal("failed restore lost control incomplete marker", err)
 				}
 				if _, err = Open(Config{DBPath: r.TargetDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory}}); err == nil {
 					t.Fatal("startup accepted incomplete restore")

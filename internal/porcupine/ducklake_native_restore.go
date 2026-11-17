@@ -67,21 +67,23 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = validateNativeRestoreS3Target(ctx, c.DuckLake.S3, c.Backup.S3); err != nil {
 		return result, err
 	}
-	if err = os.MkdirAll(filepath.Dir(r.TargetDBPath), 0700); err != nil {
-		return result, err
-	}
-	marker := r.TargetDBPath + ".native-restore-incomplete"
-	incomplete, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return result, err
-	}
-	_, err = incomplete.WriteString("Offline native restore has not completed. Do not start this target.\n")
-	err = errors.Join(err, incomplete.Sync(), incomplete.Close())
-	if err != nil {
-		return result, err
-	}
-	if err = syncBackupDirectory(filepath.Dir(marker)); err != nil {
-		return result, err
+	markers := []string{r.TargetDBPath + ".native-restore-incomplete", r.TargetControlDBPath + ".native-restore-incomplete"}
+	for _, marker := range markers {
+		if err = os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+			return result, err
+		}
+		incomplete, openErr := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return result, openErr
+		}
+		_, err = incomplete.WriteString("Offline native restore has not completed. Do not start this target.\n")
+		err = errors.Join(err, incomplete.Sync(), incomplete.Close())
+		if err != nil {
+			return result, err
+		}
+		if err = syncBackupDirectory(filepath.Dir(marker)); err != nil {
+			return result, err
+		}
 	}
 	stage, err := os.MkdirTemp(filepath.Dir(r.TargetDBPath), ".native-restore-stage-")
 	if err != nil {
@@ -109,13 +111,30 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='ducklake_source_id'`).Scan(&source); err != nil || source != manifest.SourceID {
 		return result, errors.New("backup acceptance source identity mismatch")
 	}
-	if err = verifyRestoreSQLiteSchema(ctx, db); err != nil {
+	controlPath := filepath.Join(stage, "control.sqlite")
+	if err = validateBackupSQLite(ctx, controlPath); err != nil {
+		return result, err
+	}
+	if err = verifyNativeBackupPair(ctx, sqlitePath, controlPath); err != nil {
+		return result, err
+	}
+	control, err := sql.Open("sqlite", controlPath+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		if control != nil {
+			err = errors.Join(err, control.Close())
+		}
+	}()
+	control.SetMaxOpenConns(1)
+	if err = verifyRestoreSQLiteSchema(ctx, db, control); err != nil {
 		return result, err
 	}
 	if err = verifyNativeRestoreRegistry(ctx, stage, manifest); err != nil {
 		return result, err
 	}
-	result, err = resetNativeRestoreCredentials(ctx, db, r.BootstrapToken)
+	result, err = resetNativeRestoreCredentials(ctx, db, control, r.BootstrapToken)
 	if err != nil {
 		return result, err
 	}
@@ -123,6 +142,10 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		return result, err
 	}
 	db = nil
+	if err = control.Close(); err != nil {
+		return result, err
+	}
+	control = nil
 	c.DuckLake.Directory = r.TargetDuckLakeDirectory
 	if err = os.MkdirAll(c.DuckLake.Directory, 0700); err != nil {
 		return result, err
@@ -153,7 +176,13 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = validateBackupSQLite(ctx, sqlitePath); err != nil {
 		return result, err
 	}
-	// SQLite stays unpublished until the reconstructed catalogs have all closed.
+	// Both SQLite files stay unpublished until the reconstructed catalogs close.
+	if err = validateBackupSQLite(ctx, controlPath); err != nil {
+		return result, err
+	}
+	if err = copyCheckpointFile(ctx, controlPath, r.TargetControlDBPath); err != nil {
+		return result, err
+	}
 	if err = os.Rename(sqlitePath, r.TargetDBPath); err != nil {
 		return result, err
 	}
@@ -161,7 +190,7 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		return result, err
 	}
 	if r.ChownToNonroot {
-		for _, root := range []string{r.TargetDBPath, r.TargetDuckLakeDirectory} {
+		for _, root := range []string{r.TargetDBPath, r.TargetControlDBPath, r.TargetDuckLakeDirectory} {
 			if err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					return walkErr
@@ -176,8 +205,10 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		}
 		// The volume mount root is created by Docker as root. The service needs to
 		// create SQLite WAL and shared-memory files beside the installed database.
-		if err = os.Chown(filepath.Dir(r.TargetDBPath), 65532, 65532); err != nil {
-			return result, err
+		for _, path := range []string{r.TargetDBPath, r.TargetControlDBPath} {
+			if err = os.Chown(filepath.Dir(path), 65532, 65532); err != nil {
+				return result, err
+			}
 		}
 	}
 	if err = syncBackupDirectory(r.TargetDuckLakeDirectory); err != nil {
@@ -186,11 +217,16 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = syncBackupDirectory(filepath.Dir(r.TargetDBPath)); err != nil {
 		return result, err
 	}
-	if err = os.Remove(marker); err != nil {
+	if err = syncBackupDirectory(filepath.Dir(r.TargetControlDBPath)); err != nil {
 		return result, err
 	}
-	if err = syncBackupDirectory(filepath.Dir(marker)); err != nil {
-		return result, err
+	for i := len(markers) - 1; i >= 0; i-- {
+		if err = os.Remove(markers[i]); err != nil {
+			return result, err
+		}
+		if err = syncBackupDirectory(filepath.Dir(markers[i])); err != nil {
+			return result, err
+		}
 	}
 	result.BackupID, result.SourceID = manifest.ID, manifest.SourceID
 	return result, nil

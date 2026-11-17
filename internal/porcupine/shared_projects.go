@@ -9,19 +9,27 @@ import (
 // Only foreign-key anchors are copied into the owner's local journal. Shared
 // credentials are authenticated against control storage, never against these
 // uncredentialed local actor records.
-func (s *Service) ensureSharedProjectLocal(ctx context.Context, project string, a actor) error {
-	if s.shared == nil {
-		return nil
-	}
-	owner, _, err := s.sharedProjectOwner(ctx, project)
-	if err != nil {
-		return err
-	}
-	if owner != s.shared.config.WorkerID {
-		return apiError(503, "project journal belongs to another worker")
+func (s *Service) ensureProjectLocal(ctx context.Context, project string, a actor) error {
+	if s.shared != nil {
+		owner, _, err := s.sharedProjectOwner(ctx, project)
+		if err != nil {
+			return err
+		}
+		if owner != s.shared.config.WorkerID {
+			return apiError(503, "project journal belongs to another worker")
+		}
+	} else {
+		var deleted bool
+		if err := s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, project).Scan(&deleted); err != nil {
+			return apiError(503, "project metadata unavailable")
+		}
+		allowDeleted, _ := ctx.Value(sharedDeletedProjectContextKey{}).(bool)
+		if deleted && !allowDeleted {
+			return apiError(404, "project not found")
+		}
 	}
 	var p Project
-	err = s.control.QueryRowContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE id=$1`, project).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
+	err := s.control.QueryRowContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE id=$1`, project).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apiError(404, "project not found")
 	}

@@ -9,15 +9,6 @@ import (
 	"slices"
 )
 
-// purgeProjectSQLite removes local state in the caller's transaction. The caller
-// drains delivery and handles external objects before their manifests are removed.
-func purgeProjectSQLite(ctx context.Context, tx *sql.Tx, projectID string) error {
-	if err := purgeProjectGrants(ctx, tx, projectID); err != nil {
-		return err
-	}
-	return purgeProjectLocalRecords(ctx, tx, projectID)
-}
-
 // purgeProjectLocalRecords removes only owner-local payloads and jobs. Shared
 // credential grants are pruned separately in the control transaction.
 func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string) error {

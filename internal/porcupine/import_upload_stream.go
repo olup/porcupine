@@ -95,6 +95,12 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 }
 
 func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor actor, complete bool) error {
+	if m.rules.admission != nil {
+		if err := m.rules.admission.Lock(ctx); err != nil {
+			return err
+		}
+		defer m.rules.admission.Unlock()
+	}
 	if m.rules.prepareAcceptance != nil {
 		if err := m.rules.prepareAcceptance(ctx, project); err != nil {
 			return apiError(503, "ingestion policy unavailable; retry the same chunk")

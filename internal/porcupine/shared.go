@@ -55,6 +55,9 @@ func (s *Service) bindSharedControl(ctx context.Context) error {
 }
 
 func validateSharedConfiguration(c Config) error {
+	if c.Shared != nil && c.ControlDBPath != "" {
+		return errors.New("local control path cannot be combined with shared PostgreSQL")
+	}
 	if c.Shared == nil {
 		if c.DuckLake != nil && c.DuckLake.PostgresURL != "" {
 			return errors.New("PostgreSQL DuckLake metadata requires shared control configuration")

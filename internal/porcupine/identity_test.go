@@ -265,7 +265,7 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 	}
 	attachTestPipelines(s, rt)
 	var actorID string
-	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
+	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
 	if _, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) VALUES('all',?,?,'webhook','all','active','{"delivery_mode":"event"}',x'00',0)`, projectID, actorID); err != nil {
 		t.Fatal(err)
 	}

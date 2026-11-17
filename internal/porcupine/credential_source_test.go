@@ -63,7 +63,7 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 	if client["source_id"] != sourceID {
 		t.Fatal("missing OAuth binding metadata", client)
 	}
-	loaded, err := loadOAuthClient(context.Background(), s.db, client["client_id"].(string))
+	loaded, err := loadOAuthClient(context.Background(), s.control, client["client_id"].(string))
 	if err != nil || loaded.SourceID != sourceID {
 		t.Fatal("OAuth client lost source binding", err)
 	}
@@ -130,7 +130,7 @@ func TestCredentialSourceMigrationPreservesExistingCredentials(t *testing.T) {
 	}
 	projectID, _ := project(t, s)
 	_, oldKey := key(t, s, []string{"events:write"}, []string{projectID})
-	if _, err = s.db.Exec(`DROP TRIGGER revoke_service_api_keys; ALTER TABLE access_keys DROP COLUMN source_id`); err != nil {
+	if _, err = s.control.Exec(`DROP TRIGGER revoke_service_api_keys; ALTER TABLE access_keys DROP COLUMN source_id`); err != nil {
 		s.Close()
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestCredentialSourceMigrationPreservesExistingCredentials(t *testing.T) {
 		t.Fatal("migration not idempotent", err)
 	}
 	var missing int
-	if s.db.QueryRow(`SELECT count(*) FROM access_keys WHERE source_id IS NULL OR source_id<>''`).Scan(&missing) != nil || missing != 0 {
+	if s.control.QueryRow(`SELECT count(*) FROM access_keys WHERE source_id IS NULL OR source_id<>''`).Scan(&missing) != nil || missing != 0 {
 		t.Fatal("migration did not preserve blank source defaults")
 	}
 }

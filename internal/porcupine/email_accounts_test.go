@@ -54,7 +54,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operator, err := loadEmailHuman(ctx, s.db, principalID)
+	operator, err := loadEmailHuman(ctx, s.control, principalID)
 	if err != nil || !operator.admin() || !operator.emailHuman {
 		t.Fatalf("seed admin: %+v %v", operator, err)
 	}
@@ -68,7 +68,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 	if id != h["id"] {
 		t.Fatal("retry assigned a different principal ID")
 	}
-	actor, err := loadEmailHuman(ctx, s.db, id)
+	actor, err := loadEmailHuman(ctx, s.control, id)
 	if err != nil || !authorize(actor, "events:read", p1) || authorize(actor, "events:read", p2) || authorize(actor, "events:write", p1) {
 		t.Fatal("account project or permission escaped")
 	}
@@ -77,7 +77,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 	request(t, s, "POST", "/api/v1/humans", admin, strings.Replace(input, "events:read", "instance:admin", 1), 400)
 	request(t, s, "POST", "/api/v1/humans", admin, strings.Replace(input, p1, "unknown", 1), 400)
 	request(t, s, "PUT", "/api/v1/humans/"+id, admin, `{"projects":["`+p2+`"],"permissions":["events:read"]}`, 200)
-	actor, err = loadEmailHuman(ctx, s.db, id)
+	actor, err = loadEmailHuman(ctx, s.control, id)
 	if err != nil || !slices.Equal(actor.Projects, []string{p2}) {
 		t.Fatal("rights were not replaced")
 	}
@@ -102,7 +102,7 @@ func TestEmailBootstrapPinAndBreakGlass(t *testing.T) {
 		t.Fatal(err)
 	}
 	var bootstrap string
-	if err := s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrap); err != nil {
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrap); err != nil {
 		t.Fatal(err)
 	}
 	request(t, s, "DELETE", "/api/v1/access-keys/"+bootstrap, api, "", 409)
@@ -178,7 +178,7 @@ func TestEmailInvitationDeliveryRecovery(t *testing.T) {
 	if _, err := s.inviteHuman(ctx, in); queryStatus(err) != 429 {
 		t.Fatal("retry cooldown missing", err)
 	}
-	if _, err = s.db.Exec(`UPDATE email_humans SET notice_retry_after_ms=0 WHERE principal_id=?`, id); err != nil {
+	if _, err = s.control.Exec(`UPDATE email_humans SET notice_retry_after_ms=0 WHERE principal_id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -210,7 +210,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 		t.Fatal("missing human project grants")
 	}
 	ctx := context.Background()
-	h, err := loadEmailHuman(ctx, s.db, id)
+	h, err := loadEmailHuman(ctx, s.control, id)
 	if err != nil || !slices.Equal(h.emailProjectPermissions[a], []string{"events:read"}) || !slices.Equal(h.emailProjectPermissions[b], []string{"events:write"}) {
 		t.Fatal("incorrect stored project grants", err)
 	}
@@ -219,17 +219,17 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 
 	// Observe the durable consent principal used by OAuth token validation.
 	grantID := newID()
-	_, err = s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'test grant',?,'["events:read"]',?,?)`, grantID, hash(token()), `["`+a+`"]`, now())
+	_, err = s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'test grant',?,'["events:read"]',?,?)`, grantID, hash(token()), `["`+a+`"]`, now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,created_at_ms,expires_at_ms,resource) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, id, principal(oauthManagementAdmin(t, s)).ID, s.clock().UnixMilli(), s.clock().Add(time.Hour).UnixMilli(), s.oauth.mcpResource)
+	_, err = s.control.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,created_at_ms,expires_at_ms,resource) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, id, principal(oauthManagementAdmin(t, s)).ID, s.clock().UnixMilli(), s.clock().Add(time.Hour).UnixMilli(), s.oauth.mcpResource)
 	if err != nil {
 		t.Fatal(err)
 	}
 	active := func() bool {
 		var yes bool
-		if err := s.db.QueryRow(`SELECT revoked_at IS NULL FROM access_keys WHERE id=?`, grantID).Scan(&yes); err != nil {
+		if err := s.control.QueryRow(`SELECT revoked_at IS NULL FROM access_keys WHERE id=?`, grantID).Scan(&yes); err != nil {
 			t.Fatal(err)
 		}
 		return yes
@@ -247,7 +247,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 func TestEmailAdminInviteWithoutSeedMailbox(t *testing.T) {
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
 	ctx := context.Background()
-	client, err := loadOAuthClient(ctx, s.db, "porcupine-local-admin")
+	client, err := loadOAuthClient(ctx, s.control, "porcupine-local-admin")
 	if err != nil || !client.permitsInteractiveScope("instance:admin") {
 		t.Fatal("admin PKCE client must be available without a seeded mailbox")
 	}

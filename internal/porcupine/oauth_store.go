@@ -47,10 +47,8 @@ type oauthQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func (s *Service) loadCredentialActor(ctx context.Context, query oauthQueryer, id string) (actor, error) {
-	if s.shared != nil {
-		query = s.control
-	}
+func (s *Service) loadCredentialActor(ctx context.Context, id string) (actor, error) {
+	query := s.control
 	var result actor
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&result.ID, &permissions, &projects, &result.SourceID)
@@ -269,7 +267,7 @@ func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource stri
 	if stored.grantID != "" {
 		current, err = s.loadInteractiveOAuthActor(ctx, s.control, stored.grantID)
 	} else {
-		current, err = s.loadCredentialActor(ctx, s.control, info.GetClientID())
+		current, err = s.loadCredentialActor(ctx, info.GetClientID())
 	}
 	if err != nil {
 		return actor{}, oautherrors.ErrInvalidAccessToken

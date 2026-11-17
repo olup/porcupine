@@ -11,7 +11,7 @@ import (
 
 func TestRetireManualInvitations(t *testing.T) {
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "test.db"), "admin@example.test")
-	_, err := s.db.Exec(`CREATE TABLE local_invitations(principal_id TEXT PRIMARY KEY,code_hash TEXT,expires_at_ms INTEGER,used_at_ms INTEGER);
+	_, err := s.control.Exec(`CREATE TABLE local_invitations(principal_id TEXT PRIMARY KEY,code_hash TEXT,expires_at_ms INTEGER,used_at_ms INTEGER);
  INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at)
  VALUES ('retired-human','Manual','hash1','["events:read"]','["example"]','test'),
  ('old-grant','Grant','hash2','["events:read"]','["example"]','test');
@@ -27,7 +27,7 @@ func TestRetireManualInvitations(t *testing.T) {
 		}
 	}
 	var revoked int
-	if err = s.db.QueryRow("SELECT count(*) FROM access_keys WHERE id IN ('retired-human','old-grant') AND revoked_at IS NOT NULL").Scan(&revoked); err != nil || revoked != 2 {
+	if err = s.control.QueryRow("SELECT count(*) FROM access_keys WHERE id IN ('retired-human','old-grant') AND revoked_at IS NOT NULL").Scan(&revoked); err != nil || revoked != 2 {
 		t.Fatalf("manual principals revoked = %d: %v", revoked, err)
 	}
 	if _, err = s.lookupActiveEmailID(context.Background(), "admin@example.test"); err != nil {

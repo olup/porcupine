@@ -12,6 +12,12 @@ Analytical storage, [destination pipelines](pipelines.md), [one-time exports](ex
 
 Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
+## Unreleased separate control and journal
+
+Local development builds use two SQLite databases. The ingestion journal stays at `PORCUPINE_DB`; control defaults to that path plus `.control`, or the explicit `PORCUPINE_CONTROL_DB` path. The two databases have separate connections and schemas. Accepted-event rows, identity state, receipts, imports, and jobs never enter control storage. Uncredentialed actor/project anchors in the journal provide local foreign keys; authentication reads only control.
+
+The files carry matching identities and cannot be replaced independently. Preserve both databases and DuckLake together. Native v2 backup bundles include `acceptance.sqlite` and `control.sqlite`; use the matching offline restore tool. This layout requires a fresh data directory and is not part of v0.14.0. See [deployment choices](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased).
+
 ## Unreleased shared metadata mode
 
 The [shared deployment](shared-deployment.md) adds optional control PostgreSQL, PostgreSQL DuckLake catalogs, and analytical S3 to the same binary. This is not included in v0.14.0. The default still needs neither PostgreSQL nor S3.

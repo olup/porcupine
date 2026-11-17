@@ -11,16 +11,30 @@ import (
 
 func runProjectPurge(t *testing.T, s *Service, project string, commit bool) {
 	t.Helper()
-	tx, err := s.db.Begin()
+	control, err := s.control.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
-	if err := purgeProjectSQLite(t.Context(), tx, project); err != nil {
+	defer control.Rollback()
+	journal, err := s.db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Rollback()
+	if err := purgeProjectGrants(t.Context(), control, project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.ExecContext(t.Context(), "DELETE FROM projects WHERE id=?", project); err != nil {
+		t.Fatal(err)
+	}
+	if err := purgeProjectLocalRecords(t.Context(), journal, project); err != nil {
 		t.Fatal(err)
 	}
 	if commit {
-		if err := tx.Commit(); err != nil {
+		if err := journal.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if err := control.Commit(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -33,7 +47,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(aKey, "stable"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(bKey, "stable"), 200)
 	var adminID string
-	if err := s.db.QueryRow("SELECT id FROM access_keys WHERE token_hash=?", hash(adminToken)).Scan(&adminID); err != nil {
+	if err := s.control.QueryRow("SELECT id FROM access_keys WHERE token_hash=?", hash(adminToken)).Scan(&adminID); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{remove, keep} {
@@ -104,7 +118,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 	_, bothToken := key(t, s, []string{"events:read"}, []string{remove, keep})
 	_, manager := key(t, s, []string{"management:read"}, []string{keep})
 	h := EmailHuman{ID: newID(), Email: "dev@example.org", CreatedAt: now(), Projects: []string{remove, keep}, Permissions: []string{"events:edit", "events:read"}, Grants: []HumanProjectGrant{{remove, []string{"events:edit"}}, {keep, []string{"events:read"}}}}
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	tx, err := s.control.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,14 +138,14 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 			t.Fatal("unrelated project manager saw a deleted project's credential")
 		}
 	}
-	record, err := loadEmailHuman(t.Context(), s.db, h.ID)
+	record, err := loadEmailHuman(t.Context(), s.control, h.ID)
 	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.emailProjectPermissions) != 1 {
 		t.Fatal(record, err)
 	}
 	runProjectPurge(t, s, keep, true)
 	var grants string
 	var revoked sql.NullString
-	if err := s.db.QueryRow("SELECT project_grants,revoked_at FROM email_humans JOIN access_keys ON principal_id=id WHERE id=?", h.ID).Scan(&grants, &revoked); err != nil {
+	if err := s.control.QueryRow("SELECT project_grants,revoked_at FROM email_humans JOIN access_keys ON principal_id=id WHERE id=?", h.ID).Scan(&grants, &revoked); err != nil {
 		t.Fatal(err)
 	}
 	var remaining []HumanProjectGrant
@@ -177,11 +191,11 @@ func TestProjectPurgeOIDCBindingsAfterRestart(t *testing.T) {
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)
-	seeder := &Service{db: s.db, control: s.db, oauth: &oauthRuntime{oidc: &interactiveOIDC{issuer: "https://identity.example", bindings: map[string]actor{"member": {Permissions: []string{"events:read"}, Projects: []string{removed, keep}}}}}}
+	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{oidc: &interactiveOIDC{issuer: "https://identity.example", bindings: map[string]actor{"member": {Permissions: []string{"events:read"}, Projects: []string{removed, keep}}}}}}
 	if err := seeder.initializeOIDCHumans(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec("INSERT INTO project_deletions VALUES(?,1)", removed); err != nil {
+	if _, err := s.control.Exec("INSERT INTO project_deletions VALUES(?,1)", removed); err != nil {
 		t.Fatal(err)
 	}
 	runProjectPurge(t, s, removed, true)

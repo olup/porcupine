@@ -61,7 +61,7 @@ func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
 			}
 			defer s.Close()
 			var count int
-			if err := s.db.QueryRow("SELECT count(*) FROM email_humans").Scan(&count); err != nil || count != map[bool]int{false: 0, true: 1}[reviewed] {
+			if err := s.control.QueryRow("SELECT count(*) FROM email_humans").Scan(&count); err != nil || count != map[bool]int{false: 0, true: 1}[reviewed] {
 				t.Fatalf("configured mailbox seeded without review: reviewed=%v count=%d error=%v", reviewed, count, err)
 			}
 			admin := accountTestToken(t, s)
@@ -70,7 +70,7 @@ func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
 			if err != nil {
 				t.Fatal("fresh administrator invitation failed", err)
 			}
-			human, err := loadEmailHuman(context.Background(), s.db, id)
+			human, err := loadEmailHuman(context.Background(), s.control, id)
 			if err != nil || !human.admin() {
 				t.Fatal("fresh administrator lost its permissions", err)
 			}
@@ -86,7 +86,7 @@ func TestNativeRestoreDoesNotReseedOIDCBindingsWithoutReview(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			seeder := &Service{db: s.db, control: s.db, oauth: &oauthRuntime{
+			seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{
 				config: OAuthConfig{AllowRestoredIdentityBootstrap: reviewed},
 				oidc: &interactiveOIDC{issuer: "https://identity.example.test", bindings: map[string]actor{
 					"configured-subject": {Permissions: []string{"events:read"}, Projects: []string{"project-a"}},
@@ -96,7 +96,7 @@ func TestNativeRestoreDoesNotReseedOIDCBindingsWithoutReview(t *testing.T) {
 				t.Fatal(err)
 			}
 			var count int
-			if err := s.db.QueryRow("SELECT count(*) FROM oidc_humans").Scan(&count); err != nil || count != map[bool]int{false: 0, true: 1}[reviewed] {
+			if err := s.control.QueryRow("SELECT count(*) FROM oidc_humans").Scan(&count); err != nil || count != map[bool]int{false: 0, true: 1}[reviewed] {
 				t.Fatalf("configured OIDC subject seeded without review: reviewed=%v count=%d error=%v", reviewed, count, err)
 			}
 		})

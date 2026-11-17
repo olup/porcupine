@@ -91,7 +91,7 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 	local := service(t, 20)
 	for _, table := range []string{"tenants", "tenant_usage", "projects", "project_deletions", "access_keys", "metadata", "cookieless_keys", "oauth_clients", "service_api_keys", "oauth_tokens", "oauth_authorization_requests", "oauth_interactive_grants", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_interactive_access", "oidc_humans", "email_humans"} {
 		t.Run(table, func(t *testing.T) {
-			rows, err := local.db.QueryContext(ctx, `SELECT name FROM pragma_table_info($1) ORDER BY name`, table)
+			rows, err := local.control.QueryContext(ctx, `SELECT name FROM pragma_table_info($1) ORDER BY name`, table)
 			if err != nil {
 				t.Fatal(err)
 			}

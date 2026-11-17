@@ -101,7 +101,7 @@ func (s *Service) projectTenant(ctx context.Context, project string) (Tenant, er
 	for i := range columns {
 		columns[i] = "t." + columns[i]
 	}
-	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+strings.Join(columns, ",")+` FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=$1`, project))
+	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+strings.Join(columns, ",")+` FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=p.id)`, project))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Tenant{}, apiError(404, "project not found")
 	}

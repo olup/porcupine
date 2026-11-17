@@ -14,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
+//go:embed control_schema.sql
+var controlSchema string
+
 //go:embed shared_control_schema.sql
 var sharedControlSchema string
 
@@ -75,7 +78,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(5786939852849845331)`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, sharedControlSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, controlSchema+sharedControlSchema); err != nil {
 		return fmt.Errorf("initialize shared control schema: %w", err)
 	}
 	var initialized string

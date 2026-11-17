@@ -125,7 +125,7 @@ func TestRestartDedupAndBootstrap(t *testing.T) {
 		t.Fatal("durable pending event missing")
 	}
 	var stored string
-	if err = s.db.QueryRow(`SELECT token_hash FROM access_keys WHERE name='bootstrap admin'`).Scan(&stored); err != nil {
+	if err = s.control.QueryRow(`SELECT token_hash FROM access_keys WHERE name='bootstrap admin'`).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored == adminToken || stored != hash(adminToken) {

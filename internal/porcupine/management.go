@@ -215,8 +215,8 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if s.shared != nil && projectOperationNeedsOwner(ctx.Operation().OperationID) {
-				if err := s.ensureSharedProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
+			if projectOperationNeedsOwner(ctx.Operation().OperationID) {
+				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
 					writeSharedRouteProblem(w, err)
 					return
 				}
@@ -296,7 +296,7 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 
 func (s *Service) managementListProjects(ctx context.Context, input *ProjectListInput) (*ProjectListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.control.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE ($1='' OR tenant_id=$2) ORDER BY created_at,id`, input.TenantID, input.TenantID)
+	rows, err := s.control.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE ($1='' OR tenant_id=$2) AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=projects.id) ORDER BY created_at,id`, input.TenantID, input.TenantID)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -393,9 +393,9 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		if err := s.assignSharedProjectOwner(ctx, p.ID); err != nil {
 			return nil, apiError(503, "project ownership registration unavailable")
 		}
-		if err := s.ensureSharedProjectLocal(ctx, p.ID, principal(ctx)); err != nil {
-			return nil, err
-		}
+	}
+	if err := s.ensureProjectLocal(ctx, p.ID, principal(ctx)); err != nil {
+		return nil, err
 	}
 	return &ProjectCreateOutput{Body: ProjectCreated{Project: p, IngestToken: raw}}, nil
 }

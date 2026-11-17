@@ -148,11 +148,11 @@ type webhookDelivery struct {
 	attempts                                    int
 }
 
-func (s *Service) pipelineCreatorAuthorized(ctx context.Context, q oauthQueryer, id, project string) (bool, error) {
+func (s *Service) pipelineCreatorAuthorized(ctx context.Context, id, project string) (bool, error) {
 	if err := s.requireSharedProjectOwner(ctx, project); err != nil {
 		return false, err
 	}
-	a, err := s.loadCredentialActor(ctx, q, id)
+	a, err := s.loadCredentialActor(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, errInteractiveGrant) {
 		return false, nil
 	}
@@ -179,7 +179,7 @@ func (s *Service) claimWebhook(ctx context.Context) (*webhookDelivery, error) {
 	if err != nil {
 		return nil, err
 	}
-	allowed, err := s.pipelineCreatorAuthorized(ctx, tx, d.actorID, d.projectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, d.actorID, d.projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	if err != nil || json.Unmarshal(secret, &destination) != nil || validateWebhookEndpoint(destination.Endpoint) != nil || validateWebhookHeaders(destination.Headers) != nil {
 		return true, s.finishWebhook(ctx, d, 0, "invalid_destination", false)
 	}
-	allowed, err := s.pipelineCreatorAuthorized(ctx, s.db, d.actorID, d.projectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, d.actorID, d.projectID)
 	if err != nil {
 		return true, err
 	}

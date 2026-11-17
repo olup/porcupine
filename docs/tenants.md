@@ -126,8 +126,8 @@ A project reader can call `get-event-schema` to see configured `tenant_budgets`,
 
 ## Deployment boundary
 
-The default uses exact transactional ingestion accounting and local query admission in one Porcupine process with SQLite. The optional unreleased [shared deployment](shared-deployment.md) uses PostgreSQL metadata, shared query reservations, ten-second usage publication and policy refresh, owner-local SQLite queues, and S3 Parquet. No event payloads enter operational PostgreSQL or PostgreSQL-backed DuckLake catalogs.
+The default uses separate control and journal SQLite files in one Porcupine process. The journal performs exact transactional ingestion accounting; control stores policy and replayable aggregate usage. Each batch refreshes policy under a local admission lock, which also serializes operator budget changes. Tenant usage reads reconcile journal high-water counters into control without double-counting. Query admission remains local. The optional unreleased [shared deployment](shared-deployment.md) uses PostgreSQL metadata, shared query reservations, ten-second usage publication and policy refresh, owner-local SQLite queues, and S3 Parquet. No event payloads enter operational PostgreSQL or PostgreSQL-backed DuckLake catalogs.
 
 Hosted billing, rate limits across workers, replicated acceptance, automatic owner failover, and separately provisioned query compute remain [future architecture work](roadmap.md#future-saas-architecture-to-evaluate).
 
-The unreleased tenant schema requires a fresh data directory. A pre-tenant SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.
+The unreleased tenant schema requires a fresh data directory. A pre-tenant or combined control/journal SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.

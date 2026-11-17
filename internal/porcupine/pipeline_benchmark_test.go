@@ -50,10 +50,17 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 	}
 	b.Cleanup(func() { s.Close() })
 	projectID, token := "benchmark-project", "benchmark-ingestion-token"
-	if _, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES(?,?,?,?)`, projectID, defaultTenantID, "capture benchmark", clock.Format(time.RFC3339Nano)); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES(?,?,?,?)`, projectID, defaultTenantID, "capture benchmark", clock.Format(time.RFC3339Nano)); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES('benchmark-key','benchmark',?,'["events:write"]','["benchmark-project"]',?)`, hash(token), clock.Format(time.RFC3339Nano)); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES('benchmark-key','benchmark',?,'["events:write"]','["benchmark-project"]',?)`, hash(token), clock.Format(time.RFC3339Nano)); err != nil {
+		b.Fatal(err)
+	}
+	var operator string
+	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&operator); err != nil {
+		b.Fatal(err)
+	}
+	if err := s.ensureProjectLocal(ctx, projectID, actor{ID: operator}); err != nil {
 		b.Fatal(err)
 	}
 	var noNetwork benchmarkNoNetwork
@@ -78,7 +85,7 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 			b.Fatal(err)
 		}
 		var actorID string
-		if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID); err != nil {
+		if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID); err != nil {
 			b.Fatal(err)
 		}
 		if _, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) VALUES('benchmark-pipeline',?,?,'webhook','capture benchmark','active',?,x'00',?)`, projectID, actorID, string(config), clock.UnixMilli()); err != nil {

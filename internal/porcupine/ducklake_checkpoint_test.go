@@ -42,12 +42,20 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage, err := lake.stageCheckpoint(ctx, func(ctx context.Context, path string) error {
-		database, err := sql.Open("sqlite", config.DBPath)
-		if err != nil {
-			return err
+		for _, item := range []struct{ source, destination string }{
+			{config.DBPath, path},
+			{localControlPath(config.DBPath), filepath.Join(filepath.Dir(path), "control.sqlite")},
+		} {
+			database, err := sql.Open("sqlite", item.source)
+			if err != nil {
+				return err
+			}
+			err = errors.Join(snapshotSQLite(ctx, database, item.destination), database.Close())
+			if err != nil {
+				return err
+			}
 		}
-		defer database.Close()
-		return snapshotSQLite(ctx, database, path)
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +82,9 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := copyCheckpointFile(ctx, filepath.Join(backup, "acceptance.sqlite"), config.DBPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyCheckpointFile(ctx, filepath.Join(backup, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.CopyFS(config.DuckLake.Directory, os.DirFS(filepath.Join(backup, "ducklake"))); err != nil {

@@ -1,7 +1,7 @@
 # Shared metadata and owner-local event queues
 
 This pre-launch change supports two configurations of the same published server.
-The default keeps SQLite and local DuckLake catalogs. Shared deployment adds
+The default keeps separate control and journal SQLite files with local DuckLake catalogs. Shared deployment adds
 PostgreSQL control metadata and PostgreSQL DuckLake catalogs with S3 data files.
 No existing-data migration, commercial fork or billing service is introduced.
 See [shared deployment](shared-deployment.md) for the operator instructions.
@@ -12,8 +12,8 @@ See [shared deployment](shared-deployment.md) for the operator instructions.
 receipts, identity state, imports, mutations and destination jobs. A producer is
 acknowledged only after its SQLite transaction commits.
 
-`Service.control` aliases that database in local mode. In shared mode it connects
-to PostgreSQL and owns projects, tenant policies, cumulative usage, credentials,
+`Service.control` always uses a separate database. Local mode opens another
+SQLite file; shared mode connects to PostgreSQL. It owns projects, tenant policies, cumulative usage, credentials,
 humans, OAuth state, worker registration and query permits. It contains no event,
 identity-profile, import, export or pipeline-payload tables. PostgreSQL allocates
 ID ranges, rather than receiving a row for every event.

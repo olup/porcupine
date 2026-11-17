@@ -13,6 +13,12 @@ Each project has its own local DuckLake catalog and either a local Parquet direc
 
 SQLite remains authoritative for projects, grants, OAuth state, receipts, pending events, mutations, and destination jobs. DuckLake stores analytical history. Both are needed for recovery.
 
+## Unreleased control and ingestion separation
+
+Local development builds use distinct SQLite databases for control metadata and the ingestion journal. `Service.control` owns accounts, credentials, tenants, project definitions, budget policy, and aggregate usage. `Service.db` owns event acceptance, receipt history, identity state, exact local acceptance counters, imports, mutations, and delivery jobs. Journal project and actor rows are uncredentialed foreign-key anchors, not authorization records.
+
+A local acceptance batch refreshes authoritative policy under the standalone admission lock, then atomically accepts events and consumption in the journal. Policy changes use the same lock. Usage reads replay the journal's high-water counters into control without charging twice. Native backups capture both SQLite databases and analytical state; file identities prevent pairing unrelated snapshots. The separate local layout is unreleased and requires a fresh data directory.
+
 ## Unreleased shared deployment
 
 The same server can optionally use [shared PostgreSQL metadata](shared-deployment.md) and S3 while keeping a durable SQLite volume on each worker. This configuration is in development and is not included in v0.14.0.

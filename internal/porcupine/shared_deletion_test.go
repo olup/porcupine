@@ -75,7 +75,7 @@ func TestSharedProjectDeletionGrantsOwnershipAndUsage(t *testing.T) {
 INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,projects_json,expires_at_ms) VALUES('single-refresh','consent','family','multi','events:read','["removed"]',1),('multi-refresh','consent','family','multi','events:read','["removed","kept"]',1)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
 	var owners int
@@ -114,16 +114,16 @@ INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,p
 	if err := s.control.QueryRow(`SELECT count(*) FROM oauth_refresh_tokens WHERE token_hash='single-refresh'`).Scan(&singleTokens); err != nil || singleTokens != 0 {
 		t.Fatal("exhausted refresh token retained", singleTokens, err)
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal("begin not idempotent", err)
 	}
-	if err := s.completeSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.completeControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.completeSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.completeControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal("completion not idempotent", err)
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal("completed deletion cannot be retried", err)
 	}
 	var completed bool
@@ -144,7 +144,7 @@ INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,p
 	if err := s.control.QueryRow(`SELECT projects FROM access_keys WHERE id='global'`).Scan(&global); err != nil || global != `["*"]` {
 		t.Fatal("explicit global grant changed", global, err)
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "kept"); err != nil {
+	if err := s.beginControlProjectDeletion(ctx, "kept"); err != nil {
 		t.Fatal(err)
 	}
 	var humanRevoked sql.NullString
@@ -173,7 +173,7 @@ func TestProjectPurgeLocalRecordsLeavesGrantAuthorityAlone(t *testing.T) {
 	}
 	var revoked sql.NullString
 	var projects string
-	if err := s.db.QueryRow(`SELECT projects,revoked_at FROM access_keys WHERE id=$1`, id).Scan(&projects, &revoked); err != nil || revoked.Valid {
+	if err := s.control.QueryRow(`SELECT projects,revoked_at FROM access_keys WHERE id=$1`, id).Scan(&projects, &revoked); err != nil || revoked.Valid {
 		t.Fatal("local payload purge changed credential authority", err)
 	}
 	var scopes []string
@@ -192,17 +192,17 @@ func TestProjectPurgeLocalRecordsLeavesGrantAuthorityAlone(t *testing.T) {
 func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 	s := sharedDeletionFixture(t)
 	ctx := t.Context()
-	if err := s.completeSharedProjectDeletion(ctx, "kept"); err == nil {
+	if err := s.completeControlProjectDeletion(ctx, "kept"); err == nil {
 		t.Fatal("unstaged project was deleted")
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "missing"); err == nil {
+	if err := s.beginControlProjectDeletion(ctx, "missing"); err == nil {
 		t.Fatal("unknown project deletion succeeded")
 	}
 	_, release, err := s.acquireSharedQueryPermit(ctx, "removed", defaultTenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.beginSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
 		release()
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 	if err := s.waitSharedProjectQueries(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.completeSharedProjectDeletion(ctx, "removed"); err != nil {
+	if err := s.completeControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
 	if _, release, err := s.acquireSharedQueryPermit(ctx, "kept", defaultTenantID); err != nil {
@@ -231,7 +231,7 @@ func TestSharedProjectDeletionRollsBackFenceOnGrantFailure(t *testing.T) {
 	if _, err := s.control.Exec(`UPDATE access_keys SET projects='invalid-json' WHERE id='corrupt'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.beginSharedProjectDeletion(t.Context(), "removed"); err == nil {
+	if err := s.beginControlProjectDeletion(t.Context(), "removed"); err == nil {
 		t.Fatal("corrupt grants were silently ignored")
 	}
 	var fence bool
@@ -241,7 +241,7 @@ func TestSharedProjectDeletionRollsBackFenceOnGrantFailure(t *testing.T) {
 	if _, err := s.control.Exec(`UPDATE access_keys SET projects='["removed"]' WHERE id='corrupt'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.beginSharedProjectDeletion(context.Background(), "removed"); err != nil {
+	if err := s.beginControlProjectDeletion(context.Background(), "removed"); err != nil {
 		t.Fatal("failed deletion could not resume", err)
 	}
 	err := s.control.QueryRow(`SELECT id FROM projects WHERE id='removed'`).Scan(new(string))

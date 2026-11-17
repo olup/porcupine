@@ -173,7 +173,7 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				t.Fatalf("revoked key retained MCP access: %v", err)
 			}
 			var bootstrapID string
-			if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
+			if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
 				t.Fatal(err)
 			}
 			mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "revoke-access-key", Path: map[string]string{"id": bootstrapID}}, 409)

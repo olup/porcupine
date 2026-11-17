@@ -46,7 +46,7 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.CapturedAt != status.LastCheckpointAt || manifest.CapturedAt == "" || manifest.SQLitePath != "acceptance.sqlite" || manifest.SourceID == "" || len(manifest.Files) < 3 {
+	if manifest.CapturedAt != status.LastCheckpointAt || manifest.CapturedAt == "" || manifest.SQLitePath != "acceptance.sqlite" || manifest.ControlSQLitePath != "control.sqlite" || manifest.SourceID == "" || len(manifest.Files) < 3 {
 		t.Fatalf("invalid native recovery manifest: %+v", manifest)
 	}
 	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
@@ -90,6 +90,9 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 		t.Fatal("native source deletion damaged completed bundle", err)
 	}
 	if err := copyCheckpointFile(ctx, filepath.Join(bundle, "acceptance.sqlite"), config.DBPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyCheckpointFile(ctx, filepath.Join(bundle, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.CopyFS(config.DuckLake.Directory, os.DirFS(filepath.Join(bundle, "ducklake"))); err != nil {
@@ -247,6 +250,22 @@ func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
 	case <-observer.captured:
 	case <-ctx.Done():
 		t.Fatal("backup did not capture SQLite")
+	}
+	control, err := sql.Open("sqlite", localControlPath(config.DBPath)+"?_pragma=busy_timeout(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exists bool
+	if err := control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)`, a).Scan(&exists); err != nil || !exists {
+		control.Close()
+		t.Fatal("checkpoint control database unavailable", err)
+	}
+	if _, err := control.ExecContext(ctx, `UPDATE projects SET name='changed during checkpoint' WHERE id=?`, a); err == nil {
+		control.Close()
+		t.Fatal("control metadata changed between the paired checkpoint and native catalog capture")
+	}
+	if err := control.Close(); err != nil {
+		t.Fatal(err)
 	}
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"after-checkpoint","actor_id":"user","name":"after"}`, 200)
 	rows := duckLakeJourneyQuery(t, s, a, adminToken, "SELECT count(*) AS total FROM events", nil)

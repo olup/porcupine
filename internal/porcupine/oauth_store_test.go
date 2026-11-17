@@ -81,7 +81,7 @@ func TestOAuthPerClientCapIsAtomicUnderConcurrentIssuance(t *testing.T) {
 		}
 	}
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE client_id=?`, id).Scan(&count); err != nil {
+	if err := s.control.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE client_id=?`, id).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if issued != 4 || rejected != 16 || count != 64 {
@@ -89,7 +89,7 @@ func TestOAuthPerClientCapIsAtomicUnderConcurrentIssuance(t *testing.T) {
 	}
 	clock.Add(900000)
 	oauthProtocolRequest(t, s, id, secret, oauthGrantForm(), 200)
-	if err := s.db.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 1 {
+	if err := s.control.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("expired tokens were not pruned transactionally", err)
 	}
 }
@@ -102,7 +102,7 @@ func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
 		ids = append(ids, id)
 	}
 	fresh, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
-	tx, err := s.db.Begin()
+	tx, err := s.control.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,12 +125,12 @@ func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
 	}
 	oauthProtocolRequest(t, s, fresh, secret, oauthGrantForm(), 429)
 	var count int
-	if err = s.db.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 10000 {
+	if err = s.control.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 10000 {
 		t.Fatal("global token cap changed rows", err)
 	}
 	clock.Add(900000)
 	oauthProtocolRequest(t, s, fresh, secret, oauthGrantForm(), 200)
-	if err = s.db.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 1 {
+	if err = s.control.QueryRow(`SELECT count(*) FROM oauth_tokens`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("global expiry pruning did not reclaim capacity", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
 func TestOAuthLibraryVerifierDoesNotExposeOrAcceptStoredDigest(t *testing.T) {
 	s, _ := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
-	client, err := loadOAuthClient(context.Background(), s.db, id)
+	client, err := loadOAuthClient(context.Background(), s.control, id)
 	if err != nil {
 		t.Fatal(err)
 	}

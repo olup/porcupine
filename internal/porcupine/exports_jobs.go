@@ -56,11 +56,7 @@ func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (stor
 }
 
 func (s *Service) exportActor(ctx context.Context, keyID string) (actor, error) {
-	return s.exportActorFrom(ctx, s.control, keyID)
-}
-
-func (s *Service) exportActorFrom(ctx context.Context, query oauthQueryer, keyID string) (actor, error) {
-	return s.loadCredentialActor(ctx, query, keyID)
+	return s.loadCredentialActor(ctx, keyID)
 }
 
 func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {

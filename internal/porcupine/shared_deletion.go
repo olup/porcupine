@@ -8,14 +8,18 @@ import (
 
 // The project-row lock is also taken by shared query admission. Once this fence
 // commits, no worker can start another project query or owner operation.
-func (s *Service) beginSharedProjectDeletion(ctx context.Context, id string) error {
+func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var project string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&project)
+	lock := ""
+	if s.shared != nil {
+		lock = " FOR UPDATE"
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1`+lock, id).Scan(&project)
 	if errors.Is(err, sql.ErrNoRows) {
 		var completed bool
 		if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed); err != nil {
@@ -40,19 +44,23 @@ func (s *Service) beginSharedProjectDeletion(ctx context.Context, id string) err
 
 // Finalization removes active ownership only after the owner has drained and
 // cleaned its payloads and external objects. The deletion tombstone is permanent.
-func (s *Service) completeSharedProjectDeletion(ctx context.Context, id string) error {
+func (s *Service) completeControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var project string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, id).Scan(&project)
+	lock := ""
+	if s.shared != nil {
+		lock = " FOR UPDATE"
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1`+lock, id).Scan(&project)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	var completed bool
-	if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1 FOR UPDATE`, id).Scan(&completed); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`+lock, id).Scan(&completed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return apiError(409, "project deletion has not started")
 		}

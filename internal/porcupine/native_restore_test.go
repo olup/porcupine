@@ -21,6 +21,11 @@ func TestNativeRestoreRequiresFreshTargetsAndPrivateReset(t *testing.T) {
 		func(r *NativeRestoreRequest) { r.ResetCredentialsAcknowledged = false },
 		func(r *NativeRestoreRequest) { r.BootstrapToken = "short" },
 		func(r *NativeRestoreRequest) { r.TargetDBPath = "relative.db" },
+		func(r *NativeRestoreRequest) { r.TargetControlDBPath = "relative.db" },
+		func(r *NativeRestoreRequest) { r.TargetControlDBPath = r.TargetDBPath },
+		func(r *NativeRestoreRequest) {
+			r.TargetControlDBPath = filepath.Join(r.TargetDuckLakeDirectory, "control.db")
+		},
 		func(r *NativeRestoreRequest) { r.LocalBundlePath = filepath.Join(root, "target") },
 		func(r *NativeRestoreRequest) { r.TargetDBPath = filepath.Join(r.TargetDuckLakeDirectory, "queue.db") },
 	} {
@@ -46,14 +51,14 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 	projectID, ingest := project(t, s)
 	readerID, oldReader := key(t, s, []string{"events:read"}, []string{projectID})
 	ctx := context.Background()
-	if _, err := s.db.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO identity_profiles(project_id,identified_id,is_identified,version,traits) VALUES(?,'person',1,7,'{"plan":"team"}')`, projectID); err != nil {
 		t.Fatal(err)
 	}
 	for _, old := range []string{adminToken, ingest, oldReader} {
-		if _, err := resetNativeRestoreCredentials(ctx, s.db, old); err == nil {
+		if _, err := resetNativeRestoreCredentials(ctx, s.db, s.control, old); err == nil {
 			t.Fatal("archived access or ingestion credential reused as recovery root")
 		}
 	}
@@ -61,7 +66,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatal(err)
 	}
 	fresh := strings.Repeat("fresh-recovery", 3)
-	result, err := resetNativeRestoreCredentials(ctx, s.db, fresh)
+	result, err := resetNativeRestoreCredentials(ctx, s.db, s.control, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +80,11 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 	nativeRequest(t, s, result.IngestionKeys[0].Token, `{"type":"track","name":"new-key","actor_id":"person"}`, 200)
 	for _, table := range []string{"email_humans", "oidc_humans", "oauth_clients", "oauth_tokens", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_interactive_grants", "service_api_keys", "webhook_deliveries", "export_files"} {
 		var count int
-		if err = s.db.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+		database := s.control
+		if table == "webhook_deliveries" || table == "export_files" {
+			database = s.db
+		}
+		if err = database.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("old credential/output table %s retained rows: %d %v", table, count, err)
 		}
 	}
@@ -84,7 +93,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatal("restored instance retained backup writer ownership", err)
 	}
 	var alias string
-	if err = s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != result.RecoveryAdminID {
+	if err = s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != result.RecoveryAdminID {
 		t.Fatal("fresh admin not pinned", err)
 	}
 	var retained string
@@ -92,20 +101,20 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatal("analytical identity changed", err)
 	}
 	var revoked bool
-	if err = s.db.QueryRow(`SELECT revoked_at IS NOT NULL FROM access_keys WHERE id=?`, readerID).Scan(&revoked); err != nil || !revoked {
+	if err = s.control.QueryRow(`SELECT revoked_at IS NOT NULL FROM access_keys WHERE id=?`, readerID).Scan(&revoked); err != nil || !revoked {
 		t.Fatal("audit principal not retained revoked", err)
 	}
 }
 
 func TestNativeRestoreRejectsSQLiteSchemaChanges(t *testing.T) {
 	s := service(t, 100)
-	if err := verifyRestoreSQLiteSchema(context.Background(), s.db); err != nil {
+	if err := verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec("ALTER TABLE projects ADD COLUMN future_column TEXT"); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyRestoreSQLiteSchema(context.Background(), s.db); err == nil {
+	if err := verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err == nil {
 		t.Fatal("future schema accepted")
 	}
 }
@@ -123,20 +132,20 @@ func TestNativeRestoreOAuthCredentialsAndRevokedHumanOTPStayInvalid(t *testing.T
 	request(t, s, "DELETE", "/api/v1/humans/"+revoked["id"].(string), oldAdmin, "", 204)
 	_, clientSecret := oauthProtocolClient(t, s, []string{"events:read"}, []string{projectID})
 	var grantID string
-	if err := s.db.QueryRow(`SELECT grant_id FROM oauth_interactive_access WHERE token_hash=?`, hash(oldAccess.AccessToken)).Scan(&grantID); err != nil {
+	if err := s.control.QueryRow(`SELECT grant_id FROM oauth_interactive_access WHERE token_hash=?`, hash(oldAccess.AccessToken)).Scan(&grantID); err != nil {
 		t.Fatal(err)
 	}
 	oldCode := strings.Repeat("used-source-authorization-code", 2)
-	if _, err := s.db.Exec(`INSERT INTO oauth_authorization_codes(code_hash,grant_id,client_id,redirect_uri,challenge,expires_at_ms,used_at_ms) VALUES(?,?,?,'http://127.0.0.1/callback','challenge',1,1)`, hash(oldCode), grantID, app.ClientID); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO oauth_authorization_codes(code_hash,grant_id,client_id,redirect_uri,challenge,expires_at_ms,used_at_ms) VALUES(?,?,?,'http://127.0.0.1/callback','challenge',1,1)`, hash(oldCode), grantID, app.ClientID); err != nil {
 		t.Fatal(err)
 	}
 	for _, old := range []string{clientSecret, oldAdmin, oldAccess.AccessToken, oldAccess.RefreshToken, oldCode} {
-		if _, err := resetNativeRestoreCredentials(context.Background(), s.db, old); err == nil {
+		if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, old); err == nil {
 			t.Fatal("archived OAuth credential reused as recovery root")
 		}
 	}
 	fresh := strings.Repeat("fresh-offline-admin", 3)
-	if _, err := resetNativeRestoreCredentials(context.Background(), s.db, fresh); err != nil {
+	if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, fresh); err != nil {
 		t.Fatal(err)
 	}
 	request(t, s, "GET", "/api/v1/projects", oldAdmin, "", 401)
@@ -176,7 +185,7 @@ func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T)
 	s := service(t, 100)
 	projectID, _ := project(t, s)
 	var actorID string
-	if err := s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&actorID); err != nil {
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&actorID); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) VALUES('old-pipeline',?,?,'webhook','Old delivery','active','{}',X'0102',1);
@@ -190,10 +199,10 @@ func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = verifyRestoreSQLiteSchema(context.Background(), s.db); err != nil {
+	if err = verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err != nil {
 		t.Fatal("same-release lazy deletion table was rejected", err)
 	}
-	if _, err = resetNativeRestoreCredentials(context.Background(), s.db, strings.Repeat("fresh-offline-admin", 3)); err != nil {
+	if _, err = resetNativeRestoreCredentials(context.Background(), s.db, s.control, strings.Repeat("fresh-offline-admin", 3)); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"webhook_deliveries", "webhook_members", "pipeline_s3_runs", "pipeline_s3_files", "export_files", "project_deletion_files"} {

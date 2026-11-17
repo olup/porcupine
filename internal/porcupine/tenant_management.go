@@ -147,6 +147,12 @@ func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdat
 	if err := tenantOperator(ctx); err != nil {
 		return nil, err
 	}
+	if s.shared == nil {
+		if err := s.localAdmission.Lock(ctx); err != nil {
+			return nil, err
+		}
+		defer s.localAdmission.Unlock()
+	}
 	if input.Body.Name == nil && input.Body.IngestionAllowed == nil {
 		return nil, apiError(400, "name or ingestion_allowed is required")
 	}
@@ -178,6 +184,12 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 	if err := tenantOperator(ctx); err != nil {
 		return nil, err
 	}
+	if s.shared == nil {
+		if err := s.localAdmission.Lock(ctx); err != nil {
+			return nil, err
+		}
+		defer s.localAdmission.Unlock()
+	}
 	b := input.Body
 	if err := validateTenantBudgets(b); err != nil {
 		return nil, err
@@ -197,6 +209,9 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageInput) (*TenantUsageOutput, error) {
 	if err := tenantOperator(ctx); err != nil {
 		return nil, err
+	}
+	if err := s.publishLocalUsage(ctx); err != nil {
+		return nil, apiError(503, "tenant usage publication unavailable")
 	}
 	start, _ := tenantMonth(s.clock())
 	if input.Period != "" {

@@ -288,7 +288,7 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return errExportSink
 	}
-	current, err := s.exportActorFrom(ctx, tx, job.ActorID)
+	current, err := s.exportActor(ctx, job.ActorID)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, errInteractiveGrant) {
 		return errExportRevoked
 	}

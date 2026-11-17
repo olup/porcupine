@@ -13,7 +13,7 @@ import (
 
 func tenantAllowance(t *testing.T, s *Service, tenant string, limit int64) {
 	t.Helper()
-	if _, err := s.db.Exec(`UPDATE tenants SET ingestion_monthly_events=? WHERE id=?`, limit, tenant); err != nil {
+	if _, err := s.control.Exec(`UPDATE tenants SET ingestion_monthly_events=? WHERE id=?`, limit, tenant); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -94,7 +94,7 @@ func TestTenantIngestionSuspensionDoesNotBlockDeliveryOrRetry(t *testing.T) {
 	_, token := project(t, s)
 	body := `{"type":"track","message_id":"stable","actor_id":"u","name":"Original"}`
 	first := nativeRequest(t, s, token, body, 200)
-	if _, err := s.db.Exec(`UPDATE tenants SET ingestion_allowed=0 WHERE id=?`, defaultTenantID); err != nil {
+	if _, err := s.control.Exec(`UPDATE tenants SET ingestion_allowed=0 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
 	denied := nativeRequest(t, s, token, `{"type":"track","message_id":"new","actor_id":"u","name":"New"}`, 429)

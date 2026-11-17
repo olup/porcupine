@@ -136,7 +136,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	id, _ := oauthProtocolClient(t, s, []string{"events:read", "management:read"}, []string{"*"})
 	callback := issuer + "/client/callback"
 	redirects, _ := json.Marshal([]string{callback, "https://chatgpt.com/connector_platform_oauth_redirect", "https://claude.ai/api/mcp/auth_callback"})
-	_, err = s.db.Exec(`UPDATE oauth_clients SET grant_types='["authorization_code","refresh_token"]',redirect_uris=?,token_endpoint_auth_method='none' WHERE client_id=?`, string(redirects), id)
+	_, err = s.control.Exec(`UPDATE oauth_clients SET grant_types='["authorization_code","refresh_token"]',redirect_uris=?,token_endpoint_auth_method='none' WHERE client_id=?`, string(redirects), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestInteractiveOIDCConsentProjectIsolationAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), human.ID); err != nil {
+	if _, err = f.s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), human.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.s.authenticateResource(context.Background(), access, f.host.URL+"/mcp"); err == nil {
@@ -338,7 +338,7 @@ func TestInteractiveOIDCBindingRemovalRevokesDurablePrincipals(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revoked *string
-	if err := f.s.db.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, human.ID).Scan(&revoked); err != nil || revoked == nil {
+	if err := f.s.control.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, human.ID).Scan(&revoked); err != nil || revoked == nil {
 		t.Fatal("removed subject did not revoke durable human")
 	}
 	f.s.oauth.oidc.bindings["operator-subject"] = actor{Permissions: []string{"events:read"}, Projects: []string{"project-a"}}
@@ -351,7 +351,7 @@ func TestInteractiveOIDCBindingRemovalRevokesDurablePrincipals(t *testing.T) {
 }
 func TestInteractiveOIDCClientProjectIntersection(t *testing.T) {
 	f := newOIDCFixture(t)
-	if _, err := f.s.db.Exec(`UPDATE access_keys SET projects='["project-b"]' WHERE id=?`, f.clientID); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects='["project-b"]' WHERE id=?`, f.clientID); err != nil {
 		t.Fatal(err)
 	}
 	csrf := f.login(t)

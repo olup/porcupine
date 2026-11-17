@@ -17,13 +17,17 @@ The development server supports both deployment modes in the same binary. The pu
 | Analytical event files | Local SSD or S3 | S3 |
 | Tenant and project support | Multiple tenants, each with projects | Multiple tenants, each with projects |
 
+Local mode uses two separate SQLite files. `PORCUPINE_DB` selects the ingestion journal, defaulting to `./data/porcupine.db` for a native process. `PORCUPINE_CONTROL_DB` selects the control database; when omitted it defaults to the journal path plus `.control`. The container defaults are `/data/porcupine.db` and `/data/porcupine.db.control`. Keep both files and their SQLite auxiliary files on persistent local storage.
+
+Control contains accounts, grants, tenants, project metadata, policies, and reported usage. The journal contains accepted events, retry receipts, identity state, durable acceptance counters, imports, and delivery jobs. They are linked by persistent instance identities. Startup rejects a missing or unrelated replacement database; restore both together. Shared mode replaces only the control database with PostgreSQL and rejects `PORCUPINE_CONTROL_DB`.
+
 For one server or one team, keep SQLite. PostgreSQL is not required to use tenants, email accounts, budgets, the API, CLI, or MCP. A fresh tenant-enabled instance creates `default`; you can keep every project there.
 
 Choose [shared PostgreSQL deployment](shared-deployment.md) when workers need common management state and analytical catalogs. PostgreSQL stores metadata, not an intermediate copy of event payloads. Shared mode still needs durable project ownership and the owner's SQLite volume. It does not provide automatic writer failover, transparent project rebalancing, or coordinated whole-instance backup.
 
 After deployment, [connect the instance administrator, choose a tenant, create projects, and invite people](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased). Invitations currently grant explicit project permissions in both modes. Only an instance administrator manages tenants and their budgets.
 
-The standalone setup below remains the default. Start a fresh data directory for the unreleased tenant-enabled schema; existing pre-tenant data directories are not migrated.
+The standalone setup below remains the default. Start a fresh data directory for the unreleased tenant-enabled schema; existing combined control/journal and pre-tenant data directories are not migrated.
 
 ## Laptop with Docker Compose
 

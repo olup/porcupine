@@ -73,6 +73,15 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		result.Checks.SQLite = dependencyUnavailable
 		result.Status = "degraded"
 	}
+	if s.shared == nil {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		err := s.control.PingContext(probe)
+		cancel()
+		if err != nil {
+			result.Checks.SQLite = dependencyUnavailable
+			result.Status = "degraded"
+		}
+	}
 	if s.shared != nil {
 		result.Checks.SharedControl = dependencyUnavailable
 		result.Checks.WorkerRegistration = dependencyUnavailable

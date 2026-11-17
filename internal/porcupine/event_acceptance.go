@@ -14,6 +14,7 @@ import (
 // eventRules is the shared policy for live and historical acceptance. Its clock
 // and budgets have one owner even when several entry points write the journal.
 type eventRules struct {
+	admission         *contextMutex
 	clock             func() time.Time
 	queueMax          int
 	queueMaxBytes     int64
@@ -128,6 +129,12 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 }
 
 func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, peer ingestionPeer, withReceipts bool) (liveAcceptanceResult, error) {
+	if a.rules.admission != nil {
+		if err := a.rules.admission.Lock(ctx); err != nil {
+			return liveAcceptanceResult{}, err
+		}
+		defer a.rules.admission.Unlock()
+	}
 	if a.rules.prepareAcceptance != nil {
 		if err := a.rules.prepareAcceptance(ctx, batch.projectID); err != nil {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "ingestion policy unavailable", retry: true}

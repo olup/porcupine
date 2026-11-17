@@ -24,7 +24,7 @@ func (s *Service) pipelineS3CanContinue(ctx context.Context, w *s3PipelineWork) 
 	if err := s.db.QueryRowContext(ctx, `SELECT state FROM pipelines WHERE id=$1 AND project_id=$2`, w.pipeline.ID, w.pipeline.ProjectID).Scan(&state); err != nil || state != "active" {
 		return errors.New("pipeline_paused")
 	}
-	allowed, err := s.pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, w.pipeline.ActorID, w.pipeline.ProjectID)
 	if err != nil || !allowed {
 		return errors.New("creator_unauthorized")
 	}
@@ -58,7 +58,7 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	defer finish()
-	allowed, err := s.pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, w.pipeline.ActorID, w.pipeline.ProjectID)
 	if err != nil {
 		return false, err
 	}

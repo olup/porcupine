@@ -36,7 +36,7 @@ func receiptFrom(t *testing.T, result map[string]any, index int) map[string]any 
 
 func bindIngestionSource(t *testing.T, s *Service, token, source string) {
 	t.Helper()
-	if _, err := s.db.Exec(`UPDATE access_keys SET source_id=? WHERE token_hash=?`, source, hash(token)); err != nil {
+	if _, err := s.control.Exec(`UPDATE access_keys SET source_id=? WHERE token_hash=?`, source, hash(token)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -152,7 +152,7 @@ func TestNormalizedNumericReceiptsSurviveNativeRestartAndDeletion(t *testing.T) 
 	fresh := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "delete-pending")}, 200)
 	freshReceipt := receiptFrom(t, fresh, 0)
 	var actorID string
-	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
+	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
 	_, err = s.deleteEvent(mutationContext(actorID), &EventDeleteInput{ID: projectID, UUID: freshReceipt["uuid"].(string), Body: EventDeleteBody{IdempotencyKey: "delete", ExpectedRevision: "0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestNormalizedAtomicAdmissionAndActorlessMutation(t *testing.T) {
 	}
 	attachCoreLake(t, s)
 	var actorID string
-	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
+	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&actorID)
 	edit := mutationEdit(projectID, uuid, "edit-actorless", "0")
 	edit.Body.Snapshot.DistinctID = ""
 	edit.Body.Snapshot.Properties = map[string]any{"token": "still-business"}

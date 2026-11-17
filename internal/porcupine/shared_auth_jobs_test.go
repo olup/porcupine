@@ -40,7 +40,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	projects, _ := json.Marshal([]string{project})
 	human := EmailHuman{ID: newID(), Email: "pipeline-owner@example.test", CreatedAt: now.Format(time.RFC3339Nano), Permissions: scopes, Projects: []string{project}, Grants: []HumanProjectGrant{{ProjectID: project, Permissions: scopes}}}
 	client, consent := newID(), newID()
-	tx, err := s.db.BeginTx(t.Context(), nil)
+	tx, err := s.control.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,13 +59,16 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if _, err := tx.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES($1,$1,$2,$3,$4,$5,$6)`, consent, human.ID, client, s.oauth.mcpResource, now.UnixMilli(), now.Add(time.Minute).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`UPDATE pipelines SET actor_id=$1 WHERE id=$2`, consent, expiredPipeline); err != nil {
-		t.Fatal(err)
-	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), s.db, consent, project); err != nil || !allowed {
+	if err := s.ensureProjectLocal(t.Context(), project, actor{ID: consent}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE pipelines SET actor_id=$1 WHERE id=$2`, consent, expiredPipeline); err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), consent, project); err != nil || !allowed {
 		t.Fatal("consent was not initially valid", allowed, err)
 	}
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "consent-expiry-event"), 200)
@@ -74,10 +77,10 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	}
 	now = now.Add(2 * time.Minute)
 	var revoked sql.NullString
-	if err := s.db.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=$1`, consent).Scan(&revoked); err != nil || revoked.Valid {
+	if err := s.control.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=$1`, consent).Scan(&revoked); err != nil || revoked.Valid {
 		t.Fatal("fixture must exercise expired consent before pruning revokes its principal", err)
 	}
-	if _, err := s.loadCredentialActor(t.Context(), s.db, consent); !errors.Is(err, errInteractiveGrant) {
+	if _, err := s.loadCredentialActor(t.Context(), consent); !errors.Is(err, errInteractiveGrant) {
 		t.Fatal("expired consent did not produce the domain authorization error", err)
 	}
 	var destinations []string

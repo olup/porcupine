@@ -2,7 +2,7 @@
 
 **Unreleased.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the implemented deployment contract, not a production availability guarantee. For a single-server setup, compare the [SQLite and PostgreSQL modes](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
 
-The same server binary has two modes. The default keeps control metadata, accepted events, and jobs in local SQLite, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
+The same server binary has two modes. The default keeps control metadata in one local SQLite file and accepted events and jobs in a separate SQLite journal, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
 
 Event payloads never enter the operational PostgreSQL database. DuckLake data inlining is disabled for PostgreSQL catalogs too: accepted payloads move from SQLite directly into S3 Parquet files. PostgreSQL holds metadata, grants, policies, counters, and coordination records.
 

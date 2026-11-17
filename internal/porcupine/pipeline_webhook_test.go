@@ -25,7 +25,7 @@ func webhookTestService(t *testing.T, mode string) (*Service, string, string, st
 	attachTestPipelines(s, rt)
 	p, token := project(t, s)
 	var creator string
-	s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&creator)
+	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&creator)
 	id := newID()
 	config, _ := json.Marshal(WebhookPipelineSpec{DeliveryMode: mode, IntervalSeconds: 60, IncludeEvents: []string{"test_event", "purchase"}, ExcludeEvents: []string{"blocked"}})
 	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://hooks.example.test/events?private=secret", Headers: map[string]string{"Authorization": "Bearer synthetic", "X-Custom-Key": "private"}})
@@ -243,7 +243,13 @@ func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 	}
 	request(t, s, "POST", "/capture/", "", captureBody(token, "paused-original"), 200)
 	s.db.Exec(`UPDATE pipelines SET state='active' WHERE id=?`, id)
-	s.db.Exec(`UPDATE access_keys SET revoked_at='revoked' WHERE id=(SELECT actor_id FROM pipelines WHERE id=?)`, id)
+	var actorID string
+	if err := s.db.QueryRow(`SELECT actor_id FROM pipelines WHERE id=?`, id).Scan(&actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.control.Exec(`UPDATE access_keys SET revoked_at='revoked' WHERE id=?`, actorID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.stepWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +261,9 @@ func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 	if state != "failed" {
 		t.Fatal("revocation did not retain a terminal failure")
 	}
-	s.db.Exec(`UPDATE access_keys SET revoked_at=NULL WHERE id=(SELECT actor_id FROM pipelines WHERE id=?)`, id)
+	if _, err := s.control.Exec(`UPDATE access_keys SET revoked_at=NULL WHERE id=?`, actorID); err != nil {
+		t.Fatal(err)
+	}
 	if retried, err := s.retryWebhookDelivery(context.Background(), project, id, run); !retried || err != nil {
 		t.Fatal(retried, err)
 	}

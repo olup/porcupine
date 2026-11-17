@@ -26,7 +26,7 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 				t.Fatal("server-only project minted a public ingestion key")
 			}
 			var credentials int
-			if err := f.s.db.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
+			if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
 				t.Fatal("server-only creation stored an ingestion credential")
 			}
 			var listed ProjectList
@@ -124,7 +124,7 @@ func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"invalid","ingestion_mode":"browser_only"}`, 422)
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"server","ingestion_mode":"server_only"}`, 503)
 	var projects int
-	if err := s.db.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 2 {
+	if err := s.control.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 2 {
 		t.Fatal("invalid project mode created partial metadata")
 	}
 }

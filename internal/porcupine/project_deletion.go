@@ -115,11 +115,7 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 	if err = s.stageProjectExportCleanup(ctx, tx, id); err != nil {
 		return err
 	}
-	if s.shared != nil {
-		err = purgeProjectLocalRecords(ctx, tx, id)
-	} else {
-		err = purgeProjectSQLite(ctx, tx, id)
-	}
+	err = purgeProjectLocalRecords(ctx, tx, id)
 	if err != nil {
 		return err
 	}
@@ -138,28 +134,30 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		return apiError(503, "project deletion is waiting for local work; retry DELETE")
 	}
 	defer finishActivity()
+	ctx = allowSharedDeletedProject(ctx)
+	var alreadyCompleted bool
+	if err := s.control.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&alreadyCompleted); err == nil && alreadyCompleted {
+		return nil
+	}
 	if s.shared != nil {
-		ctx = allowSharedDeletedProject(ctx)
-		var completed bool
-		if err := s.control.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed); err == nil && completed {
-			return nil
-		}
 		owner, _, err := s.sharedProjectOwner(ctx, id)
 		if err != nil || owner != s.shared.config.WorkerID {
 			return apiError(503, "project deletion requires its available journal owner")
 		}
-		if err := s.beginSharedProjectDeletion(ctx, id); err != nil {
+	}
+	if err := s.beginControlProjectDeletion(ctx, id); err != nil {
+		return err
+	}
+	var staged bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&staged); err != nil {
+		return apiError(503, "local deletion state unavailable")
+	}
+	if !staged {
+		if err := s.ensureProjectLocal(ctx, id, actor{}); err != nil {
 			return err
 		}
-		var staged bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&staged); err != nil {
-			return apiError(503, "local deletion state unavailable")
-		}
-		if !staged {
-			if err := s.ensureSharedProjectLocal(ctx, id, actor{}); err != nil {
-				return err
-			}
-		}
+	}
+	if s.shared != nil {
 		if err := s.waitSharedProjectQueries(ctx, id); err != nil {
 			return apiError(503, "project deletion is waiting for active queries; retry DELETE")
 		}
@@ -184,10 +182,8 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		}
 	}
 	if err == nil {
-		if s.shared != nil {
-			if err := s.completeSharedProjectDeletion(ctx, id); err != nil {
-				return apiError(503, "project metadata cleanup incomplete; retry DELETE")
-			}
+		if err := s.completeControlProjectDeletion(ctx, id); err != nil {
+			return apiError(503, "project metadata cleanup incomplete; retry DELETE")
 		}
 		return nil
 	}
@@ -233,28 +229,29 @@ func (s *Service) resumeProjectDeletions(ctx context.Context) {
 		ids = append(ids, id)
 	}
 	rows.Close()
+	query := `SELECT project_id FROM project_deletions WHERE completed=0`
+	var args []any
 	if s.shared != nil {
-		rows, err := s.control.QueryContext(ctx, `SELECT d.project_id FROM project_deletions d JOIN shared_project_owners o ON o.project_id=d.project_id WHERE d.completed=0 AND o.worker_id=$1`, s.shared.config.WorkerID)
-		if err == nil {
-			known := map[string]bool{}
-			for _, id := range ids {
+		query = `SELECT d.project_id FROM project_deletions d JOIN shared_project_owners o ON o.project_id=d.project_id WHERE d.completed=0 AND o.worker_id=$1`
+		args = []any{s.shared.config.WorkerID}
+	}
+	rows, err = s.control.QueryContext(ctx, query, args...)
+	if err == nil {
+		known := map[string]bool{}
+		for _, id := range ids {
+			known[id] = true
+		}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) != nil {
+				break
+			}
+			if !known[id] {
+				ids = append(ids, id)
 				known[id] = true
 			}
-			for rows.Next() {
-				var id string
-				if rows.Scan(&id) != nil {
-					break
-				}
-				if !known[id] {
-					// A crash after the shared fence but before the local cleanup
-					// checkpoint must still be recoverable by this owner.
-					if err := s.ensureSharedProjectLocal(allowSharedDeletedProject(ctx), id, actor{}); err == nil {
-						ids = append(ids, id)
-					}
-				}
-			}
-			rows.Close()
 		}
+		rows.Close()
 	}
 	for _, id := range ids {
 		if ctx.Err() != nil {

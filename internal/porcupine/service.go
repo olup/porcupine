@@ -27,6 +27,7 @@ import (
 
 type Config struct {
 	DBPath             string
+	ControlDBPath      string
 	BootstrapToken     string
 	QueueMaxEvents     int
 	QueueMaxBytes      int64
@@ -44,6 +45,7 @@ type Config struct {
 
 type Service struct {
 	control                     *sql.DB
+	localAdmission              contextMutex
 	shared                      *sharedRuntime
 	sharedIngestion             *sharedIngestionState
 	lakeS3Storage               bool
@@ -104,10 +106,21 @@ func Open(c Config) (*Service, error) {
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
 	}
+	if c.Shared == nil {
+		if c.ControlDBPath == "" {
+			c.ControlDBPath = localControlPath(c.DBPath)
+		}
+		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+			return nil, err
+		}
+		if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
+			return nil, err
+		}
+	}
 	if err := checkNativeRestoreMarker(c.DBPath); err != nil {
 		return nil, err
 	}
-	backups, err := prepareNativeBackup(c.NativeBackup, c.DBPath, c.DuckLake)
+	backups, err := prepareNativeBackup(c.NativeBackup, c.DBPath, c.ControlDBPath, c.DuckLake)
 	if err != nil {
 		return nil, err
 	}
@@ -168,30 +181,41 @@ func Open(c Config) (*Service, error) {
 		}
 		origins[origin] = true
 	}
-	// Apply connection-local settings whenever database/sql opens a replacement connection.
-	dsn := c.DBPath
-	if dsn != ":memory:" {
-		absolute, err := filepath.Abs(dsn)
-		if err != nil {
-			return nil, err
-		}
-		dsn = (&url.URL{Scheme: "file", Path: absolute}).String()
-	}
-	pragmas := url.Values{"_pragma": {"journal_mode(WAL)", "synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}}
-	db, err := sql.Open("sqlite", dsn+"?"+pragmas.Encode())
+	db, err := openLocalSQLite(c.DBPath)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	var control *sql.DB
+	if c.Shared == nil {
+		control, err = openLocalSQLite(c.ControlDBPath)
+	} else {
+		control, err = openSharedControl(context.Background(), *c.Shared)
+	}
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if c.Shared == nil {
+		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+			control.Close()
+			db.Close()
+			return nil, err
+		}
+	}
 	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock}, allowedOrigins: origins, trustedProxies: proxies,
 		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
-	s.control = db
+	s.control = control
+	if c.Shared != nil {
+		copyConfig := *c.Shared
+		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
+		s.shared = &sharedRuntime{config: copyConfig}
+	}
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
 	if pipelines != nil {
 		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
 		s.acceptance.enqueueWebhooks = webhooks.Enqueue
 	}
-	s.imports = &importManager{db: db, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
+	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
 	s.deliveryMaxBytes = 4 << 20
@@ -212,6 +236,14 @@ func Open(c Config) (*Service, error) {
 		}
 		s.projectionGuard.close()
 		return nil, err
+	}
+	if c.Shared == nil {
+		err = initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig)
+	} else {
+		err = initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig)
+	}
+	if err != nil {
+		return fail(err)
 	}
 	s.projectionGuard, err = openProjectionGuard(c.DBPath)
 	if err != nil {
@@ -276,20 +308,6 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeExports(context.Background()); err != nil {
 		return fail(err)
 	}
-	if c.Shared != nil {
-		control, err := openSharedControl(context.Background(), *c.Shared)
-		if err != nil {
-			return fail(err)
-		}
-		s.control = control
-		copyConfig := *c.Shared
-		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
-		s.shared = &sharedRuntime{config: copyConfig}
-		if err := initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig); err != nil {
-			return fail(err)
-		}
-		s.imports.control = control
-	}
 	tx, err := db.Begin()
 	if err != nil {
 		return fail(err)
@@ -315,16 +333,11 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	var initialized string
 	err = tx.QueryRow(`SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
 	if errors.Is(err, sql.ErrNoRows) {
-		if s.shared == nil && len(c.BootstrapToken) < 16 {
-			return txFail(errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first initialization"))
-		}
-		if s.shared == nil {
-			_, err = tx.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, newID(), "bootstrap admin", hash(c.BootstrapToken), `["instance:admin"]`, `["*"]`, now())
-		} else {
-			err = nil
-		}
-		if err == nil {
-			_, err = tx.Exec(`INSERT INTO metadata(key,value) VALUES('initialized','1')`)
+		_, err = tx.Exec(`INSERT INTO metadata(key,value) VALUES('initialized','1'),('journal_layout','separate-control-v1')`)
+	} else if err == nil {
+		var layout string
+		if e := tx.QueryRow(`SELECT value FROM metadata WHERE key='journal_layout'`).Scan(&layout); e != nil || layout != "separate-control-v1" {
+			return txFail(errors.New("combined control/journal database is unsupported; start with a fresh data directory"))
 		}
 	}
 	if err != nil {
@@ -333,6 +346,13 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 
 	if err = tx.Commit(); err != nil {
 		return txFail(err)
+	}
+	if s.shared == nil {
+		if err := s.bindLocalControl(context.Background()); err != nil {
+			return fail(err)
+		}
+		s.eventRules.admission = &s.localAdmission
+		s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
 	}
 	if s.shared != nil {
 		if err := s.bindSharedControl(context.Background()); err != nil {
@@ -585,11 +605,11 @@ func (s *Service) Handler() http.Handler {
 			problem(w, 503, "storage unavailable")
 			return
 		}
-		if s.shared != nil {
+		{
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
 			if err := s.control.PingContext(ctx); err != nil {
-				problem(w, 503, "shared control unavailable")
+				problem(w, 503, "control storage unavailable")
 				return
 			}
 		}
@@ -770,7 +790,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	defer finish()
 	r = r.WithContext(ctx)
-	if err := s.ensureSharedProjectLocal(ctx, projectID, a); err != nil {
+	if err := s.ensureProjectLocal(ctx, projectID, a); err != nil {
 		writeSharedRouteProblem(w, err)
 		return
 	}

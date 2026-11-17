@@ -13,7 +13,7 @@ func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testin
 	s := service(t, 20)
 	a, _ := project(t, s)
 	b, _ := project(t, s)
-	if _, err := s.db.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
+	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, release, err := s.beginInteractiveQuery(context.Background(), a)
@@ -30,7 +30,7 @@ func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testin
 		t.Fatal(err)
 	}
 	c, _ := project(t, s)
-	if _, err = s.db.Exec(`UPDATE projects SET tenant_id=? WHERE id=?`, other.ID, c); err != nil {
+	if _, err = s.control.Exec(`UPDATE projects SET tenant_id=? WHERE id=?`, other.ID, c); err != nil {
 		t.Fatal(err)
 	}
 	_, _, otherRelease, err := s.beginInteractiveQuery(context.Background(), c)
@@ -111,7 +111,7 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	}
 	set := func(timeout, rows, bytes int) {
 		t.Helper()
-		if _, err := s.db.Exec(`UPDATE tenants SET hot_query_timeout_ms=?,hot_query_max_rows=?,hot_query_max_result_bytes=? WHERE id=?`, timeout, rows, bytes, defaultTenantID); err != nil {
+		if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=?,hot_query_max_rows=?,hot_query_max_result_bytes=? WHERE id=?`, timeout, rows, bytes, defaultTenantID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -153,7 +153,7 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
+	if _, err = s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.lakeEventCatalog(context.Background(), EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
@@ -198,7 +198,7 @@ func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) 
 	spy := &recordingQueryLimits{lakeStore: s.lake}
 	s.lake = spy
 	id, _ := project(t, s)
-	if _, err := s.db.Exec(`UPDATE tenants SET hot_query_timeout_ms=6000,hot_query_max_rows=2000,hot_query_max_result_bytes=? WHERE id=?`, 4<<20, defaultTenantID); err != nil {
+	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=6000,hot_query_max_rows=2000,hot_query_max_result_bytes=? WHERE id=?`, 4<<20, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
 	batch := make([]eventProjection, 40)

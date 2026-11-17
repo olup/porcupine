@@ -35,6 +35,7 @@ type nativeBackupManifest struct {
 	SourceStorage     nativeBackupStorageIdentity `json:"source_storage,omitempty"`
 	CreatedAt         string                      `json:"created_at"`
 	CapturedAt        string                      `json:"captured_at"`
+	ControlSQLitePath string                      `json:"control_sqlite_path"`
 	SQLitePath        string                      `json:"sqlite_path"`
 	DuckLakeDirectory string                      `json:"ducklake_directory"`
 	Files             []backupFile                `json:"files"`
@@ -144,7 +145,7 @@ func pruneNativeBackups(directory, source string, retain int, protectedID string
 		var manifest nativeBackupManifest
 		err = json.NewDecoder(io.LimitReader(file, nativeBackupManifestLimit)).Decode(&manifest)
 		file.Close()
-		if err != nil || manifest.Format != "porcupine-native-v1" || manifest.ID != entry.Name() || manifest.SourceID != source {
+		if err != nil || manifest.Format != "porcupine-native-v2" || manifest.ID != entry.Name() || manifest.SourceID != source {
 			continue
 		}
 		created, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt)
@@ -210,7 +211,7 @@ func verifyNativeBackup(ctx context.Context, directory string) (nativeBackupMani
 	if err != nil {
 		return manifest, err
 	}
-	if manifest.Format != "porcupine-native-v1" || manifest.SourceID == "" || manifest.ID == "" {
+	if manifest.Format != "porcupine-native-v2" || manifest.SourceID == "" || manifest.ID == "" {
 		return manifest, errors.New("unsupported native backup manifest")
 	}
 	if err := validateNativeBackupManifest(manifest); err != nil {
@@ -227,7 +228,7 @@ func verifyNativeBackup(ctx context.Context, directory string) (nativeBackupMani
 		}
 		expected[item.Path] = item
 	}
-	for _, required := range []string{"acceptance.sqlite", "ducklake/registry.sqlite"} {
+	for _, required := range []string{"acceptance.sqlite", "control.sqlite", "ducklake/registry.sqlite"} {
 		if _, ok := expected[required]; !ok {
 			return manifest, errors.New("incomplete backup inventory")
 		}
@@ -272,6 +273,12 @@ func verifyNativeBackup(ctx context.Context, directory string) (nativeBackupMani
 	}
 	if len(expected) > 0 {
 		return manifest, errors.New("backup file is missing")
+	}
+	if err := validateBackupSQLite(ctx, filepath.Join(directory, "control.sqlite")); err != nil {
+		return manifest, err
+	}
+	if err := verifyNativeBackupPair(ctx, filepath.Join(directory, "acceptance.sqlite"), filepath.Join(directory, "control.sqlite")); err != nil {
+		return manifest, err
 	}
 	for _, item := range []struct{ path, query string }{{"acceptance.sqlite", "SELECT value FROM metadata WHERE key='ducklake_source_id'"}, {"ducklake/registry.sqlite", "SELECT id FROM source"}} {
 		path := filepath.Join(directory, filepath.FromSlash(item.path))
@@ -318,6 +325,40 @@ func verifyNativeBackup(ctx context.Context, directory string) (nativeBackupMani
 	return manifest, nil
 }
 
+func verifyNativeBackupPair(ctx context.Context, journalPath, controlPath string) error {
+	paths := []string{journalPath, controlPath}
+	metadata := make([]map[string]string, len(paths))
+	for i, path := range paths {
+		db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
+		if err != nil {
+			return err
+		}
+		rows, err := db.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key IN ('journal_source_id','local_control_source_id','local_journal_source_id','journal_layout')`)
+		if err != nil {
+			db.Close()
+			return err
+		}
+		metadata[i] = map[string]string{}
+		for rows.Next() {
+			var key, value string
+			if err = rows.Scan(&key, &value); err != nil {
+				break
+			}
+			metadata[i][key] = value
+		}
+		err = errors.Join(err, rows.Err(), rows.Close(), db.Close())
+		if err != nil {
+			return err
+		}
+	}
+	journal, control := metadata[0], metadata[1]
+	if journal["journal_layout"] != "separate-control-v1" || journal["journal_source_id"] == "" || control["local_control_source_id"] == "" ||
+		journal["journal_source_id"] != control["local_journal_source_id"] || journal["local_control_source_id"] != control["local_control_source_id"] {
+		return errors.New("backup control and journal identities do not match")
+	}
+	return nil
+}
+
 // The destination lock excludes any other active writer. Only the reserved
 // incomplete namespace is disposable; completed bundles follow retention.
 func removeIncompleteNativeBackups(directory string) error {
@@ -336,10 +377,10 @@ func removeIncompleteNativeBackups(directory string) error {
 }
 
 func validateNativeBackupManifest(m nativeBackupManifest) error {
-	if m.Format != "porcupine-native-v1" || !validNativeBackupID(m.ID) || m.SourceID == "" || !lakePrefixSegmentPattern.MatchString(m.SourceID) || len(m.Files) > nativeBackupFileLimit {
+	if m.Format != "porcupine-native-v2" || !validNativeBackupID(m.ID) || m.SourceID == "" || !lakePrefixSegmentPattern.MatchString(m.SourceID) || len(m.Files) > nativeBackupFileLimit {
 		return errors.New("unsupported native backup manifest")
 	}
-	if err := validateNativeBackupStorageIdentity(m.SourceStorage, true); err != nil {
+	if err := validateNativeBackupStorageIdentity(m.SourceStorage, false); err != nil {
 		return err
 	}
 	files := map[string]bool{}
@@ -349,7 +390,7 @@ func validateNativeBackupManifest(m nativeBackupManifest) error {
 		}
 		files[f.Path] = true
 	}
-	if !files["acceptance.sqlite"] || !files["ducklake/registry.sqlite"] {
+	if m.SQLitePath != "acceptance.sqlite" || m.ControlSQLitePath != "control.sqlite" || m.DuckLakeDirectory != "ducklake" || !files["acceptance.sqlite"] || !files["control.sqlite"] || !files["ducklake/registry.sqlite"] {
 		return errors.New("incomplete backup inventory")
 	}
 	projects := map[string]bool{}

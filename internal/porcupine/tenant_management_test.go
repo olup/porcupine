@@ -115,8 +115,11 @@ func TestTenantBudgetChangesPreserveMonthlyUsage(t *testing.T) {
 	s := service(t, 20)
 	id := tenantTestCreate(t, s, "Metered")
 	start, end := tenantMonth(s.clock())
-	if _, err := s.db.Exec(`INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES(?,?,?)`, id, start.Format(time.RFC3339), 7); err != nil {
-		t.Fatal(err)
+	_, ingest := tenantJourneyProject(t, s, id)
+	for i := range 7 {
+		request(t, s, "POST", "/capture/", "", tenantTestBody(t, map[string]any{
+			"api_key": ingest, "uuid": fmt.Sprintf("usage-%d", i), "event": "usage", "distinct_id": "actor",
+		}), 200)
 	}
 	path := "/api/v1/tenants/" + id
 	usagePath := path + "/usage"
@@ -211,7 +214,7 @@ func TestTenantProjectScopeOwnershipAndOperatorOnlyManagement(t *testing.T) {
 	}
 	request(t, s, "PATCH", "/api/v1/projects/"+projectA, adminToken, `{"name":"move","tenant_id":"`+b+`"}`, 422)
 	var owner string
-	if err := s.db.QueryRow(`SELECT tenant_id FROM projects WHERE id=?`, projectA).Scan(&owner); err != nil || owner != a {
+	if err := s.control.QueryRow(`SELECT tenant_id FROM projects WHERE id=?`, projectA).Scan(&owner); err != nil || owner != a {
 		t.Fatalf("project ownership mutated: %q %v", owner, err)
 	}
 	request(t, s, "DELETE", "/api/v1/access-keys/"+keyID, adminToken, "", 204)
