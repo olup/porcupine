@@ -115,7 +115,8 @@ func (s *DuckLakeStore) StageCheckpoint(ctx context.Context, acceptance func(con
 	// A failed deletion may already have removed some remote files. Its durable
 	// fence must be resolved before a complete checkpoint can be captured.
 	var deleting int
-	if err := s.Registry.QueryRowContext(ctx, "SELECT count(*) FROM deleting_projects").Scan(&deleting); err != nil || deleting != 0 {
+	if err := s.Registry.QueryRowContext(ctx, `SELECT count(*) FROM deleting_projects d WHERE NOT EXISTS
+(SELECT 1 FROM cleanup_progress p WHERE p.project_id=d.project_id AND p.state='deleted')`).Scan(&deleting); err != nil || deleting != 0 {
 		s.Mu.Unlock()
 		if err != nil {
 			return nil, err

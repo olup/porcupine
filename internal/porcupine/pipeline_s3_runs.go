@@ -79,7 +79,16 @@ func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.S
 	if err != nil {
 		return err
 	}
+	var project string
+	if len(files) != 0 {
+		if err := s.db.QueryRowContext(ctx, `SELECT p.project_id FROM pipelines p JOIN pipeline_s3_runs r ON r.pipeline_id=p.id WHERE r.id=$1`, id).Scan(&project); err != nil {
+			return err
+		}
+	}
 	for _, f := range files {
+		if err := s.retainArtifactOwnership(ctx, project, "pipeline_unpublished", store, f.key, f.upload); err != nil {
+			return err
+		}
 		if f.upload != "" {
 			if err = store.Abort(ctx, f.key, f.upload); err != nil {
 				return err

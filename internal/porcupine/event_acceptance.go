@@ -159,6 +159,10 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 	}
 	if a.rules.prepareAcceptance != nil {
 		if err := a.rules.prepareAcceptance(ctx, batch.projectID); err != nil {
+			var managed *managementError
+			if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
+				return nil, managed
+			}
 			return nil, &acceptanceFailure{message: "ingestion policy unavailable", retry: true}
 		}
 	}

@@ -42,8 +42,14 @@ func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string)
 }
 
 func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error {
-	if err := purgeProjectHumanGrants(ctx, tx, projectID); err != nil {
+	var deletingTenant bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_id WHERE p.id=$1)`, projectID).Scan(&deletingTenant); err != nil {
 		return err
+	}
+	if !deletingTenant {
+		if err := purgeProjectHumanGrants(ctx, tx, projectID); err != nil {
+			return err
+		}
 	}
 	if err := purgeProjectTenantMemberships(ctx, tx, projectID); err != nil {
 		return err
@@ -71,6 +77,18 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 		return err
 	}
 	for _, p := range principals {
+		if deletingTenant {
+			// These are globally shared parents. Their existing update triggers
+			// revoke every derived connection, including unrelated tenants.
+			// Keep inert historical IDs here and prune each tool/token instead.
+			var sharedParent bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1 UNION ALL SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`, p.id).Scan(&sharedParent); err != nil {
+				return err
+			}
+			if sharedParent {
+				continue
+			}
+		}
 		var projects []string
 		if err := json.Unmarshal([]byte(p.projects), &projects); err != nil {
 			return fmt.Errorf("invalid stored principal projects: %w", err)

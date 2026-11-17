@@ -172,7 +172,10 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	var completed bool
 	err = s.db.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = s.stageProjectDeletion(ctx, id)
+		err = s.cleanupProjectPipelines(ctx, id)
+		if err == nil {
+			err = s.stageProjectDeletion(ctx, id)
+		}
 	}
 	if err == nil && !completed {
 		err = s.purgeProjectExports(ctx, id)
@@ -202,16 +205,20 @@ func (s *Service) startDeletionRecovery() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.deletionCancel = cancel
 	s.deletionDone = make(chan struct{})
+	s.deletionWake = make(chan struct{}, 1)
 	go func() {
 		defer close(s.deletionDone)
 		for ctx.Err() == nil {
 			s.resumeProjectDeletions(ctx)
+			s.resumeTenantDeletions(ctx)
 			t := time.NewTimer(time.Minute)
 			select {
 			case <-ctx.Done():
 				t.Stop()
 				return
 			case <-t.C:
+			case <-s.deletionWake:
+				t.Stop()
 			}
 		}
 	}()

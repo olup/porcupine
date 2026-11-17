@@ -98,7 +98,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	} else if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,'Default',$2,1,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT $1,'Default',$2,1,$3,$4,$5,$6 WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=$1) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_source_id',$1) ON CONFLICT(key) DO NOTHING`, eventapi.NewID()); err != nil {

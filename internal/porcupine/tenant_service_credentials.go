@@ -102,6 +102,9 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 	if err != nil {
 		return auth.Principal{}, err
 	}
+	if err := requireTenantActive(ctx, query, tenant); err != nil {
+		return auth.Principal{}, err
+	}
 	if a.Admin() || slices.Contains(a.Permissions, "tenant:admin") || len(a.Permissions) == 0 || len(a.Projects) == 0 || slices.Contains(a.Projects, "*") {
 		return auth.Principal{}, errors.New("invalid tenant machine authority")
 	}
@@ -150,6 +153,9 @@ func (s *Service) tenantMachineTransaction(ctx context.Context, tenant string) (
 }
 
 func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQueryer, caller auth.Principal, tenant string) error {
+	if err := requireTenantActive(ctx, query, tenant); err != nil {
+		return err
+	}
 	if !caller.CanAdminTenant(tenant) {
 		return apiError(403, "tenant administrator required")
 	}

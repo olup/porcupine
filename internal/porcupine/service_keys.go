@@ -54,6 +54,12 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 		return nil, apiError(503, "service key storage unavailable")
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return nil, apiError(503, "service key storage unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
+		return nil, err
+	}
 	parent, err := loadOAuthClient(ctx, tx, input.ID)
 	if err != nil || parent.ID != input.ID {
 		return nil, apiError(404, "active service account not found")
