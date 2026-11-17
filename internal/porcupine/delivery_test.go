@@ -15,6 +15,7 @@ func receiptCount(t *testing.T, s *Service) int {
 	return count
 }
 func TestDeliveryStatusProjectIsolation(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	a, ingestA := project(t, s)
 	b, ingestB := project(t, s)
@@ -38,6 +39,7 @@ func TestDeliveryStatusProjectIsolation(t *testing.T) {
 	}
 }
 func TestDeliveryLostAcknowledgmentRetryCleanupAndRestart(t *testing.T) {
+	t.Parallel()
 	s, config := nativeCoreService(t)
 	projectID, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "original"), 200)
@@ -90,6 +92,7 @@ func TestDeliveryLostAcknowledgmentRetryCleanupAndRestart(t *testing.T) {
 	}
 }
 func TestDeliveryBoundedBatchesAndProjectStatus(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	s.deliveryMaxEvents = 2
 	a, ingestA := project(t, s)

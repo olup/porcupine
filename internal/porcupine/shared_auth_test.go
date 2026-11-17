@@ -20,6 +20,7 @@ import (
 // This journey deliberately alternates public OAuth requests between independent
 // process-local runtimes. Only metadata and authentication state use PostgreSQL.
 func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	ctx := context.Background()
 	first, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})

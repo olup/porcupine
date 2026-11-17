@@ -13,6 +13,7 @@ func sourceCredentialBody(name, source string, permissions, projects []string) s
 	return string(encoded)
 }
 func TestCredentialSourceIDValidation(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{"", "Backend.orders:v1", "0", "a" + strings.Repeat("-", 127)} {
 		if !validSourceID(value) {
 			t.Fatalf("rejected valid source %q", value)
@@ -43,6 +44,7 @@ func TestCredentialSourceIDValidation(t *testing.T) {
 }
 
 func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	projectID, _ := project(t, s)
 	sourceID := "Orders.Backend:v1"
@@ -92,6 +94,7 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 }
 
 func TestCredentialSourceGrantAndDelegationBoundaries(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	projectID, _ := project(t, s)
 	other, _ := project(t, s)
@@ -123,6 +126,7 @@ func TestCredentialSourceGrantAndDelegationBoundaries(t *testing.T) {
 }
 
 func TestCredentialSourceMigrationPreservesExistingCredentials(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {

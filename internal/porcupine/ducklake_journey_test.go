@@ -68,6 +68,8 @@ func duckLakeJourneyProjections(t *testing.T, events []Event) []eventProjection 
 }
 
 func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s := duckLakeJourneyService(t)
 	a, ingestA := project(t, s)
 	b, ingestB := project(t, s)
@@ -184,6 +186,7 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 }
 
 func TestDuckLakeJourneyConfiguredRestart(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
 	s, err := Open(config)
@@ -218,6 +221,7 @@ func TestDuckLakeJourneyConfiguredRestart(t *testing.T) {
 }
 
 func TestDuckLakeJourneyLostAcknowledgment(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
 	s, err := Open(config)
@@ -273,6 +277,7 @@ func TestDuckLakeJourneyLostAcknowledgment(t *testing.T) {
 }
 
 func TestDuckLakeJourneyAnalyticalReferenceResults(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	projectID, ingest := project(t, s)
 	fixture := []struct {

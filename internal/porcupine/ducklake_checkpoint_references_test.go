@@ -44,6 +44,7 @@ func checkpointCurrentFileFixture(t *testing.T, store *duckLakeStore, project, k
 }
 
 func TestDuckLakeCheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"data", "delete"} {
 		t.Run(kind, func(t *testing.T) {
 			service, config := nativeBackupService(t)
@@ -72,6 +73,7 @@ func TestDuckLakeCheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T
 }
 
 func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"data", "delete"} {
 		t.Run(kind, func(t *testing.T) {
 			fixture := nativeS3Fixture(t)

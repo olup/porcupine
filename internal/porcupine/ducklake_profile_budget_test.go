@@ -10,6 +10,8 @@ import (
 )
 
 func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s := duckLakeJourneyService(t)
 	a, _ := project(t, s)
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)

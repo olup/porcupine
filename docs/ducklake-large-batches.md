@@ -27,7 +27,7 @@ Automatic chunk reduction improves recovery from a reported DuckDB memory error.
 Run the native race suite:
 
 ```sh
-make ducklake-test
+make test-race
 ```
 
 The tests distinguish the selected delivery batch from HTTP request batches and direct storage calls. They check native memory failures, durable retries, stable IDs and mutation behavior. Local fixture timings do not establish a hosting throughput guarantee.

@@ -3,6 +3,7 @@ package porcupine
 import "testing"
 
 func TestProjectArchiveCleanupRefusesMissingBoundStore(t *testing.T) {
+	t.Parallel()
 	s := service(t, 5)
 	if err := s.deleteProjectArchive(t.Context(), "queue-only"); err != nil {
 		t.Fatal(err)

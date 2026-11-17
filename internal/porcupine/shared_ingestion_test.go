@@ -66,6 +66,7 @@ func sharedUsageCount(t *testing.T, s *Service) int64 {
 }
 
 func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	a, b := sharedIngestionTestService(t, dsn, "writer-a"), sharedIngestionTestService(t, dsn, "writer-b")
 	sharedIngestionProject(t, a, "a")
@@ -122,6 +123,7 @@ func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
 }
 
 func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	s := sharedIngestionTestService(t, dsn, "persistent-writer")
 	sharedIngestionProject(t, s, "recover")
@@ -176,6 +178,7 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 }
 
 func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	a, b := sharedIngestionTestService(t, dsn, "cookie-a"), sharedIngestionTestService(t, dsn, "cookie-b")
 	for _, s := range []*Service{a, b} {
@@ -241,6 +244,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 }
 
 func TestSharedIngestionExplicitIDHookKeepsAtomicIdentity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	project, _ := project(t, s)
 	var next int64 = 100
@@ -260,6 +264,7 @@ func TestSharedIngestionExplicitIDHookKeepsAtomicIdentity(t *testing.T) {
 }
 
 func TestSharedIngestionConcurrentIDRangesAndUsagePublication(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	a, b := sharedIngestionTestService(t, dsn, "range-a"), sharedIngestionTestService(t, dsn, "range-b")
 	sharedIngestionProject(t, a, "range-a")
@@ -316,6 +321,7 @@ func TestSharedIngestionConcurrentIDRangesAndUsagePublication(t *testing.T) {
 }
 
 func TestSharedImportAuthorityRejectsStaleLocalGrant(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	s := sharedIngestionTestService(t, dsn, "import-authority")
 	sharedIngestionProject(t, s, "import")

@@ -13,6 +13,8 @@ import (
 )
 
 func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s, project, token := nativeBenchmarkServiceMemory(t, 128)
 	s.queueMax = 10000
 	s.deliveryMaxEvents, s.deliveryMaxBytes = 3000, 32<<20
@@ -86,6 +88,7 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 }
 
 func TestDuckLakeBatchNonAllocationFailureKeepsTransactionAtomic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	lake := openLakeStorageTest(t, t.TempDir(), 1)
 	existing := lakeStorageProjection(t, "project", "existing", 1)
@@ -108,6 +111,7 @@ func TestDuckLakeBatchNonAllocationFailureKeepsTransactionAtomic(t *testing.T) {
 }
 
 func TestDuckLakeBatchUnfitSingletonRemainsPending(t *testing.T) {
+	t.Parallel()
 	s, projectID, token := nativeBenchmarkServiceMemory(t, 64)
 	s.deliveryMaxEvents = 1
 	handler := s.Handler()
@@ -150,6 +154,8 @@ func TestDuckLakeBatchUnfitSingletonRemainsPending(t *testing.T) {
 }
 
 func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s, project, token := nativeBenchmarkServiceMemory(t, 128)
 	handler := s.Handler()
 	payload := nativeBenchmarkPayloads(1)[0]
@@ -226,6 +232,8 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 }
 
 func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	for _, candidate := range []struct {
 		name        string
 		rows, bytes int

@@ -7,6 +7,7 @@ import (
 )
 
 func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s3 := &exportTestS3{}
 	s, job := exportWorkerFixture(t, s3)

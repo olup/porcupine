@@ -8,6 +8,7 @@ import (
 )
 
 func TestSharedWorkerJournalCannotBecomeStandalone(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "journal.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -30,6 +31,7 @@ func TestSharedWorkerJournalCannotBecomeStandalone(t *testing.T) {
 }
 
 func TestSharedWorkerControlIdentityIsPinned(t *testing.T) {
+	t.Parallel()
 	local, control := service(t, 20), service(t, 20)
 	if _, err := control.db.Exec(`INSERT INTO metadata(key,value) VALUES('shared_source_id','cluster-one')`); err != nil {
 		t.Fatal(err)
@@ -50,6 +52,7 @@ func TestSharedWorkerControlIdentityIsPinned(t *testing.T) {
 }
 
 func TestSharedWorkerDoesNotMigrateLocalProjects(t *testing.T) {
+	t.Parallel()
 	local, control := service(t, 20), service(t, 20)
 	project(t, local)
 	if _, err := control.db.Exec(`INSERT INTO metadata(key,value) VALUES('shared_source_id','cluster-one')`); err != nil {

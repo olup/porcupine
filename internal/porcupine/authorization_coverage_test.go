@@ -18,6 +18,7 @@ import (
 )
 
 func TestEveryManagementOperationRejectsMissingInvalidAndInsufficientCredentials(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	operator := oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {j.issuer + "/api/v1"}, "scope": {"instance:admin"}}, 200)["access_token"].(string)
@@ -71,6 +72,7 @@ func TestEveryManagementOperationRejectsMissingInvalidAndInsufficientCredentials
 }
 
 func TestManagementPolicyValidationIncludesHTTPOnlyRoutes(t *testing.T) {
+	t.Parallel()
 	for i, access := range []any{nil, operationAccess{}, operationAccess{Permission: "not-a-permission"}, operationAccess{Permission: "events:read", ProjectParameter: "missing"}, operationAccess{Permission: "management:read", TenantParameter: "tenant_id"}} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			op := &huma.Operation{OperationID: "test-http-only", Method: "GET", Path: "/api/v1/tenants/{tenant_id}", Metadata: map[string]any{"http_only": true, "access": access}}
@@ -87,6 +89,7 @@ func TestManagementPolicyValidationIncludesHTTPOnlyRoutes(t *testing.T) {
 // Non-Huma endpoints use protocol-specific guards. A new registration must be
 // classified here instead of silently bypassing the management policy inventory.
 func TestRawHTTPRouteProtectionInventory(t *testing.T) {
+	t.Parallel()
 	policies := map[string]string{
 		"GET /healthz":           "public-health",
 		"GET /readyz":            "public-health",

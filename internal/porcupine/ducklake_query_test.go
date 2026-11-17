@@ -14,6 +14,7 @@ import (
 )
 
 func TestDuckLakeSQLGuardNativeGrammar(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +51,7 @@ func TestDuckLakeSQLGuardNativeGrammar(t *testing.T) {
 }
 
 func TestDuckLakeSQLGuardRejectsEscapeRoutes(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +99,7 @@ func TestDuckLakeSQLGuardRejectsEscapeRoutes(t *testing.T) {
 }
 
 func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	a := lakeStorageProjection(t, "query-a", "one", 1)
 	b := lakeStorageProjection(t, "query-a", "two", 2)
@@ -150,6 +153,7 @@ func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
 }
 
 func TestDuckLakeQueryNativeCancellationAndLimits(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	batch := make([]eventProjection, 100)
 	for i := range batch {
@@ -181,6 +185,7 @@ func TestDuckLakeQueryNativeCancellationAndLimits(t *testing.T) {
 }
 
 func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	item := lakeStorageProjection(t, "json", "precise", 9007199254740993)
 	item.Properties = json.RawMessage(`{"ids":[9007199254740993,18446744073709551615]}`)
@@ -208,6 +213,7 @@ func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
 }
 
 func TestDuckLakeQuerySerializationAliasesAndNonfiniteValues(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	result, err := store.Query(context.Background(), "aliases", "SELECT 1 AS _pc_result, 2 AS _PC_RESULT_1, 3 AS porcupine_query", nil, defaultQueryExecutionLimits())
 	if err != nil || len(result.Data) != 1 || len(result.Data[0]) != 3 || string(result.Data[0]["porcupine_query"]) != "3" {
@@ -222,6 +228,7 @@ func TestDuckLakeQuerySerializationAliasesAndNonfiniteValues(t *testing.T) {
 }
 
 func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := store.Apply(context.Background(), []eventProjection{lakeStorageProjection(t, "policy", "one", 1)}); err != nil {
 		t.Fatal(err)
@@ -260,6 +267,7 @@ func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
 }
 
 func TestDuckLakeSQLTextRoundTripBoundary(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		t.Fatal(err)

@@ -72,8 +72,8 @@ Import historical events with `porcupine import --project PROJECT_ID --format na
 `make build` builds the native server with CGO and a C/C++ toolchain. `make cli` builds the standalone client. You can also download the CLI for macOS, Linux or Windows. [CLI guide](cli/README.md)
 
 ```sh
-make check              # Go tests, vet, formatting and generated CLI catalog
-make ducklake-test      # native storage, queries and lifecycle tests
+make check              # fast loop: contracts, vet, formatting and short Go tests
+make check-full         # what CI requires: the same checks with every test under -race
 make integration        # native smoke, S3 and offline restore drills
 make integration-s3     # local HTTP/TLS S3-compatible fixtures
 make compat-install

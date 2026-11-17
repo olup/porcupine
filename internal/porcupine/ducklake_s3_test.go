@@ -14,6 +14,7 @@ import (
 )
 
 func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(root, "registry.db"))
@@ -56,6 +57,7 @@ func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
 }
 
 func TestDuckLakeS3StoragePinPreservesAWSPartition(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(root, "aws-registry.db"))
@@ -85,6 +87,7 @@ func TestDuckLakeS3StoragePinPreservesAWSPartition(t *testing.T) {
 }
 
 func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
+	t.Parallel()
 	c := validLakeS3Config()
 	lake := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &c}
 	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, "queue.db", localControlPath("queue.db"), &lake); err == nil {
@@ -93,6 +96,7 @@ func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
 }
 
 func TestDuckLakeOpeningReservationsDoNotHoldGlobalMutex(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 2)
 	ctx := context.Background()
 	_, release, err := store.leaseProject(ctx, "hot")
@@ -154,6 +158,7 @@ func (c *secretErrorConnection) ExecContext(_ context.Context, statement string,
 }
 
 func TestDuckLakeS3SecretBindErrorsCannotDiscloseCredentials(t *testing.T) {
+	t.Parallel()
 	reached := false
 	name := "s3-secret-error-" + newID()
 	sql.Register(name, secretErrorDriver{reached: &reached})
@@ -177,6 +182,7 @@ func TestDuckLakeS3SecretBindErrorsCannotDiscloseCredentials(t *testing.T) {
 }
 
 func TestDuckLakeS3SettingsReachAllConnections(t *testing.T) {
+	t.Parallel()
 	database, err := sql.Open("duckdb", "")
 	if err != nil {
 		t.Fatal(err)

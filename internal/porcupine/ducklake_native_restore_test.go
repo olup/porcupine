@@ -25,6 +25,8 @@ func nativeRestoreTarget(t *testing.T, id, bundle, source string) NativeRestoreR
 }
 
 func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s, config := nativeBackupService(t)
 	a, ingest := project(t, s)
 	b, otherIngest := project(t, s)
@@ -165,6 +167,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 }
 
 func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"fixture","actor_id":"person","name":"test"}`, 200)
@@ -255,6 +258,7 @@ func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *tes
 }
 
 func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	root := t.TempDir()
 	backup := fixture.storage
@@ -399,6 +403,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 }
 
 func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
+	t.Parallel()
 	backup := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "archive", Region: "us-east-1", Endpoint: "http://127.0.0.1:1/", UsePathStyle: true}
 	target := backup
 	target.Endpoint = "http://127.0.0.1:1"
@@ -410,6 +415,7 @@ func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
 }
 
 func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.T) {
+	t.Parallel()
 	target := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
 	if err := validateNativeRestoreSourceStorage(&target, nativeBackupStorageIdentity{}, false); err == nil {
 		t.Fatal("remote target without original storage identity accepted")
@@ -428,6 +434,7 @@ func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.
 }
 
 func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	projectID, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"absolute-source-probe","actor_id":"person","name":"probe"}`, 200)

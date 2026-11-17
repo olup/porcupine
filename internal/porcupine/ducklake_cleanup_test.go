@@ -96,6 +96,7 @@ func flushCleanupProject(t *testing.T, s *duckLakeStore, id string) {
 }
 
 func TestDuckLakeCleanupReclaimsDeletedPayloadAndPreservesRevisions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	directory := t.TempDir()
 	s := openLakeStorageTest(t, directory, 2)
@@ -171,6 +172,7 @@ func TestDuckLakeCleanupReclaimsDeletedPayloadAndPreservesRevisions(t *testing.T
 }
 
 func TestDuckLakeCleanupProtectsActiveSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	e := lakeStorageProjection(t, "a", "old", 1)
@@ -235,6 +237,8 @@ func TestDuckLakeCleanupProtectsActiveSnapshot(t *testing.T) {
 }
 
 func TestDuckLakeCleanupColdCatalogsDisableAndInterruptedRecovery(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	ctx := context.Background()
 	directory := t.TempDir()
 	s := openLakeStorageTest(t, directory, 1)
@@ -299,6 +303,8 @@ func TestDuckLakeCleanupColdCatalogsDisableAndInterruptedRecovery(t *testing.T) 
 }
 
 func TestDuckLakeCleanupStatusAgentPermissionsAndLifecycle(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s, a, ingest := maintenanceOpenService(t)
 	b, otherIngest := project(t, s)
 	_, reader := key(t, s, []string{"management:read"}, []string{a})
@@ -356,6 +362,7 @@ func TestDuckLakeCleanupStatusAgentPermissionsAndLifecycle(t *testing.T) {
 }
 
 func TestDuckLakeCleanupRetentionAndObsoleteFileGrace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	original := lakeStorageProjection(t, "a", "deleted", 1)
@@ -411,6 +418,7 @@ func TestDuckLakeCleanupRetentionAndObsoleteFileGrace(t *testing.T) {
 }
 
 func TestDuckLakeCleanupFailureAndBusyCatalogDoNotStarveOthers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	for i, id := range []string{"a", "b"} {
@@ -469,6 +477,7 @@ func TestDuckLakeCleanupFailureAndBusyCatalogDoNotStarveOthers(t *testing.T) {
 }
 
 func TestDuckLakeCleanupCancellationIsRetriable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := s.Apply(ctx, []eventProjection{lakeStorageProjection(t, "a", "a", 1)}); err != nil {

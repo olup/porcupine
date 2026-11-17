@@ -17,6 +17,7 @@ import (
 )
 
 func TestEmailCodeProofIsSingleUseAndBoundToOneSession(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	browser := newOAuthBrowser(false)
 	add := func(key, code string) {
@@ -62,6 +63,7 @@ func TestEmailCodeProofIsSingleUseAndBoundToOneSession(t *testing.T) {
 }
 
 func TestEmailSendAbuseLimits(t *testing.T) {
+	t.Parallel()
 	start := time.Now()
 	b := newOAuthBrowser(false)
 	for i := range 4 {
@@ -103,6 +105,7 @@ func TestEmailSendAbuseLimits(t *testing.T) {
 }
 
 func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
+	t.Parallel()
 	type delivery struct{ to, code string }
 	deliveries := make(chan delivery, 8)
 	finishSMTP := make(chan struct{})

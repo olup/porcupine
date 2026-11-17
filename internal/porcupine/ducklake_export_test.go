@@ -18,6 +18,7 @@ import (
 )
 
 func TestDuckLakeExportStreamWindowsAndConnectionIsolation(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 2)
 	start := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 	projections := make([]eventProjection, 0, 1105)
@@ -134,6 +135,7 @@ func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, stor
 }
 
 func TestDuckLakeExportWorkerPublicationAndRevocation(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
 		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
 			fake := &exportTestS3{}
@@ -186,6 +188,7 @@ func TestDuckLakeExportWorkerPublicationAndRevocation(t *testing.T) {
 }
 
 func TestDuckLakeConfiguredExportsOpen(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	server := httptest.NewServer(fake)
 	defer server.Close()
@@ -200,6 +203,7 @@ func TestDuckLakeConfiguredExportsOpen(t *testing.T) {
 }
 
 func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
 		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
 			s := duckLakeJourneyService(t)
@@ -335,6 +339,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 }
 
 func TestDuckLakeExportNativeValueParity(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := store.Apply(context.Background(), []eventProjection{lakeStorageProjection(t, "typed", "typed-row", 9007199254740993)}); err != nil {
 		t.Fatal(err)
@@ -368,6 +373,7 @@ func TestDuckLakeExportNativeValueParity(t *testing.T) {
 }
 
 func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	batch := make([]eventProjection, 100)
 	for i := range batch {
@@ -412,6 +418,7 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 }
 
 func TestDuckLakeExportEmptyAndRowBudgetIgnoresMetadataNames(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	result, err := store.Export(context.Background(), "empty", "SELECT uuid FROM events WHERE 1=0", nil, nil, 1024, exportStreamCallbacks{Columns: func(c []AnalyticsResultColumn) error {
 		if len(c) != 1 || c[0].Name != "uuid" {
@@ -434,6 +441,7 @@ func TestDuckLakeExportEmptyAndRowBudgetIgnoresMetadataNames(t *testing.T) {
 }
 
 func TestDuckLakeExportCancellationAroundWriterStartup(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := store.Apply(context.Background(), []eventProjection{lakeStorageProjection(t, "startup", "one", 1)}); err != nil {
 		t.Fatal(err)

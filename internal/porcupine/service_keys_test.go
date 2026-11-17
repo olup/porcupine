@@ -7,6 +7,7 @@ import (
 )
 
 func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
 	a, public := f.project(t, admin)
@@ -85,6 +86,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 }
 
 func TestServiceKeyServerOnlyAndParentChange(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
 	var project ProjectCreated

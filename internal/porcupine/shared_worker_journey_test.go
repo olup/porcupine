@@ -126,6 +126,7 @@ func sharedJourneyCount(t *testing.T, s *Service, project string) int {
 }
 
 func TestSharedWorkerHTTPAndMCPOwnerJourney(t *testing.T) {
+	t.Parallel()
 	a, b := sharedJourneyPair(t, nil)
 	tenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"Shared customer"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
 	sharedJourneyHTTP(t, b.host.URL, "GET", "/api/v1/tenants/"+tenant, adminToken, nil, nil, 200)
@@ -208,6 +209,7 @@ func sharedJourneyGzip(t *testing.T, raw string) []byte {
 }
 
 func TestSharedWorkerAdaptersGzipAndCookielessForwarding(t *testing.T) {
+	t.Parallel()
 	a, b := sharedJourneyPair(t, nil)
 	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Adapter owner")
 	native := `{"type":"track","message_id":"native-gzip","name":"backend_saved","actor_id":"visitor","timestamp":"2020-01-01T23:15:00.123456789-02:00"}`
@@ -249,6 +251,7 @@ func TestSharedWorkerAdaptersGzipAndCookielessForwarding(t *testing.T) {
 }
 
 func TestSharedWorkerIdentifyRetryAndSuspension(t *testing.T) {
+	t.Parallel()
 	a, b := sharedJourneyPair(t, nil)
 	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Identity owner")
 	body := `[{"type":"pageview","message_id":"anonymous-page","actor_id":"anonymous","context":{"page":{"url":"https://example.test"}}},{"type":"identify","message_id":"identify-once","user_id":"known","anonymous_id":"anonymous","set":{"plan":"pro"},"set_once":{"origin":"docs"}}]`
@@ -292,6 +295,7 @@ func TestSharedWorkerIdentifyRetryAndSuspension(t *testing.T) {
 }
 
 func TestSharedWorkerNativeCLIInterruptedImportResume(t *testing.T) {
+	t.Parallel()
 	var cut atomic.Bool
 	cut.Store(true)
 	committed := make(chan struct{})
@@ -395,6 +399,7 @@ type sharedJourneyProcessConfig struct {
 }
 
 func TestSharedWorkerProcessHelper(t *testing.T) {
+	t.Parallel()
 	config := os.Getenv("PORCUPINE_SHARED_JOURNEY_HELPER")
 	if config == "" {
 		t.Skip("subprocess helper")
@@ -502,6 +507,7 @@ func (worker *sharedJourneyProcess) stopProcess(t *testing.T, crash bool) {
 }
 
 func TestSharedWorkerTwoProcessCrashAndOwnerRestart(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	configA := sharedJourneyProcessConfig{DatabaseURL: dsn, DBPath: filepath.Join(t.TempDir(), "queue.db"), WorkerID: "process-a"}
 	configB := sharedJourneyProcessConfig{DatabaseURL: dsn, DBPath: filepath.Join(t.TempDir(), "queue.db"), WorkerID: "process-b"}
@@ -572,6 +578,7 @@ func sharedJourneyQuery(t *testing.T, origin, project, credential, sql string, w
 }
 
 func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	a, b := sharedNativeJourneyPair(t, fixture)
 	projectA, ingestA := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Shared native owner A")

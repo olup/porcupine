@@ -12,6 +12,7 @@ import (
 )
 
 func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
+	t.Parallel()
 	for _, rotate := range []bool{false, true} {
 		name := "first daily key"
 		if rotate {
@@ -80,6 +81,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 }
 
 func TestLiveAcceptanceHTTPDoesNotAcknowledgeFailedParticipant(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	projectID, ingest := project(t, s)
 	s.acceptance.enqueueWebhooks = func(context.Context, *sql.Tx, []Event) error { return errors.New("destination failure") }
@@ -90,6 +92,7 @@ func TestLiveAcceptanceHTTPDoesNotAcknowledgeFailedParticipant(t *testing.T) {
 }
 
 func TestLivePreparationPreservesSourceBoundPostHogResponse(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	_, ingest := project(t, s)
 	bindIngestionSource(t, s, ingest, "web")

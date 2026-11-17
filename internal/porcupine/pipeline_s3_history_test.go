@@ -12,6 +12,7 @@ import (
 )
 
 func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
+	t.Parallel()
 	var committed []byte
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {

@@ -6,6 +6,7 @@ import (
 )
 
 func TestSharedControlProjectDeletionRetainsTenantForRetries(t *testing.T) {
+	t.Parallel()
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			var s *Service
@@ -63,6 +64,7 @@ func TestSharedControlProjectDeletionRetainsTenantForRetries(t *testing.T) {
 }
 
 func TestSharedControlProjectDeletionDoesNotReassignTenantTombstone(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	other := tenantTestCreate(t, s, "Other team")

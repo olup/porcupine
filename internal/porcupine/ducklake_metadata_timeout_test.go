@@ -11,6 +11,7 @@ import (
 )
 
 func TestNativePostgresMetadataTimeoutPolicy(t *testing.T) {
+	t.Parallel()
 	base := "postgres://operator:test-secret@localhost/lake?sslmode=require&connect_timeout=0&keepalives=0&tcp_user_timeout=0"
 	parsed, err := url.Parse(base)
 	if err != nil {
@@ -59,6 +60,7 @@ func TestNativePostgresMetadataTimeoutPolicy(t *testing.T) {
 }
 
 func TestNativePostgresMetadataRejectsAmbiguousOptions(t *testing.T) {
+	t.Parallel()
 	base := "postgres://operator:test-secret@localhost/lake"
 	for _, raw := range []string{
 		base + "?host=first,second", base + "?hostaddr=127.0.0.1%2C127.0.0.2", base + "?port=5432,5433",
@@ -88,6 +90,7 @@ func TestNativePostgresMetadataRejectsAmbiguousOptions(t *testing.T) {
 }
 
 func TestSharedNativeMetadataLockTimeout(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 	defer cancel()
@@ -170,6 +173,7 @@ func TestSharedNativeMetadataLockTimeout(t *testing.T) {
 }
 
 func TestSharedNativeSourceIDMetadataProbeBounded(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	metadata, err := sql.Open("pgx", dsn)

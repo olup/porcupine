@@ -10,6 +10,7 @@ import (
 )
 
 func TestProjectionGuardCancellationAndNestedCalls(t *testing.T) {
+	t.Parallel()
 	if !projectionLockSupported() {
 		t.Skip("online checkpoint locks are unavailable on this platform")
 	}
@@ -55,6 +56,7 @@ func TestProjectionGuardCancellationAndNestedCalls(t *testing.T) {
 }
 
 func TestProjectionGuardLifetimeAllowsServicesAndExcludesRestore(t *testing.T) {
+	t.Parallel()
 	if !projectionLockSupported() {
 		t.Skip("online checkpoint locks are unavailable on this platform")
 	}

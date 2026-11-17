@@ -10,6 +10,7 @@ import (
 )
 
 func TestRetireManualInvitations(t *testing.T) {
+	t.Parallel()
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "test.db"), "admin@example.test")
 	_, err := s.control.Exec(`CREATE TABLE local_invitations(principal_id TEXT PRIMARY KEY,code_hash TEXT,expires_at_ms INTEGER,used_at_ms INTEGER);
  INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestEmailAddressIdentity(t *testing.T) {
+	t.Parallel()
 	for input, want := range map[string]string{
 		" Lea+ops@EXAMPLE.COM ": "Lea+ops@example.com", "a.b@company.internal": "a.b@company.internal",
 	} {
@@ -45,6 +46,7 @@ func accountTestToken(t *testing.T, s *Service) string {
 	return oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {s.oauth.apiResource}}, 200)["access_token"].(string)
 }
 func TestEmailHumansGrantLifecycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "operator@example.com")
 	admin := accountTestToken(t, s)
@@ -93,6 +95,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 	}
 }
 func TestEmailBootstrapPinAndBreakGlass(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db := filepath.Join(t.TempDir(), "state.db")
 	s := openAccountTest(t, db, "owner@example.com")
@@ -118,6 +121,7 @@ func TestEmailBootstrapPinAndBreakGlass(t *testing.T) {
 	}
 }
 func TestEmailBootstrapCannotPromoteExistingAccount(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "state.db")
 	s := openAccountTest(t, db, "")
 	api := accountTestToken(t, s)
@@ -131,6 +135,7 @@ func TestEmailBootstrapCannotPromoteExistingAccount(t *testing.T) {
 }
 
 func TestEmailInvitationDeliveryRecovery(t *testing.T) {
+	t.Parallel()
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
 	admin := accountTestToken(t, s)
 	pid := request(t, s, "POST", "/api/v1/projects", admin, `{"name":"Analytics"}`, 201)["project"].(map[string]any)["id"].(string)
@@ -193,6 +198,7 @@ func TestEmailInvitationDeliveryRecovery(t *testing.T) {
 }
 
 func TestEmailHumanProjectGrantChanges(t *testing.T) {
+	t.Parallel()
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
 	admin := accountTestToken(t, s)
 	mk := func(name string) string {
@@ -245,6 +251,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 }
 
 func TestEmailAdminInviteWithoutSeedMailbox(t *testing.T) {
+	t.Parallel()
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
 	ctx := context.Background()
 	client, err := loadOAuthClient(ctx, s.control, "porcupine-local-admin")

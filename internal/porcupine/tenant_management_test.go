@@ -31,6 +31,7 @@ func tenantJourneyProject(t *testing.T, s *Service, tenantID string) (string, st
 }
 
 func TestTenantManagementLifecycleAndPagination(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	first := request(t, s, "GET", "/api/v1/tenants", adminToken, "", 200)["tenants"].([]any)
 	if len(first) != 1 || first[0].(map[string]any)["id"] != defaultTenantID {
@@ -112,6 +113,7 @@ func TestTenantManagementLifecycleAndPagination(t *testing.T) {
 }
 
 func TestTenantBudgetChangesPreserveMonthlyUsage(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id := tenantTestCreate(t, s, "Metered")
 	start, end := tenantMonth(s.clock())
@@ -177,6 +179,7 @@ func TestTenantBudgetChangesPreserveMonthlyUsage(t *testing.T) {
 }
 
 func TestTenantProjectScopeOwnershipAndOperatorOnlyManagement(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, b := tenantTestCreate(t, s, "A"), tenantTestCreate(t, s, "B")
 	projectA, _ := tenantJourneyProject(t, s, a)

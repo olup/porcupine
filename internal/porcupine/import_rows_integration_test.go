@@ -15,6 +15,7 @@ import (
 )
 
 func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	enableTestPipelines(t, s)
 	host := httptest.NewServer(s.Handler())
@@ -184,6 +185,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 }
 
 func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	projectID, _ := project(t, s)
 	other, _ := project(t, s)

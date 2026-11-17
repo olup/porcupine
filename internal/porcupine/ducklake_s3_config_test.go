@@ -14,6 +14,7 @@ func validLakeS3Config() DuckLakeS3Config {
 }
 
 func TestDuckLakeS3ConfigValidationAndRedaction(t *testing.T) {
+	t.Parallel()
 	base := validLakeS3Config()
 	if normalized, err := normalizeDuckLakeS3(&base); err != nil || normalized.Prefix != base.Prefix {
 		t.Fatal("valid analytical object storage rejected", err)

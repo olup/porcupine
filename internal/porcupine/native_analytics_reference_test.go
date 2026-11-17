@@ -8,6 +8,7 @@ import (
 )
 
 func TestDuckLakeNativeAnalyticalReference(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	projectID, ingest := project(t, s)
 	otherProject, otherIngest := project(t, s)

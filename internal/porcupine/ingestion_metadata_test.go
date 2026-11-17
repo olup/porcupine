@@ -42,6 +42,7 @@ func bindIngestionSource(t *testing.T, s *Service, token, source string) {
 }
 
 func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	bindIngestionSource(t, s, token, "checkout")
@@ -88,6 +89,7 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 }
 
 func TestNormalizedMetadataPersistsWithoutChangingBusinessProperties(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "metadata")}, 200)
@@ -121,6 +123,7 @@ func TestNormalizedMetadataPersistsWithoutChangingBusinessProperties(t *testing.
 }
 
 func TestNormalizedNumericReceiptsSurviveNativeRestartAndDeletion(t *testing.T) {
+	t.Parallel()
 	s, config := nativeCoreService(t)
 	projectID, token := project(t, s)
 	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "stable"), normalizedTrack("native", "stable")}, 200)
@@ -164,6 +167,7 @@ func TestNormalizedNumericReceiptsSurviveNativeRestartAndDeletion(t *testing.T) 
 }
 
 func TestNormalizedAtomicAdmissionAndActorlessMutation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 2)
 	projectID, token := project(t, s)
 	invalid := normalizedTrack("native", "bad")
@@ -196,6 +200,7 @@ func TestNormalizedAtomicAdmissionAndActorlessMutation(t *testing.T) {
 }
 
 func TestNormalizedControlContextNeverReachesSQLiteWALOrProjection(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, token := project(t, s)
 	accepted := eventInput{Event: "$identify", DistinctID: "account", Properties: map[string]any{"$anon_distinct_id": "anon", "$set": map[string]any{"plan": "approved"}}, ingestion: &ingestionMetadata{Protocol: "native", MessageID: "accepted-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.81","private":"accepted-control-context-marker"}`)}}

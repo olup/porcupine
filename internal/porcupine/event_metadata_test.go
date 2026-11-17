@@ -17,6 +17,7 @@ func metadataProperties(t *testing.T, value any) json.RawMessage {
 	return raw
 }
 func TestLegacyPostHogMetadataCanonicalContext(t *testing.T) {
+	t.Parallel()
 	original := Event{UUID: "sdk-message", Event: "$pageview", Properties: metadataProperties(t, map[string]any{
 		"$current_url": "https://example.test/p?q=東京&n=1", "$referrer": "https://referrer.test/", "$title": "café 東京", "$pathname": "/p", "$search": "?q=東京&n=1",
 		"$browser": "Chrome", "$browser_version": 132, "$os": "Mac OS X", "$os_version": "15.1", "$device_type": "Desktop", "$browser_language": "fr-FR", "$session_id": "session-a", "secret-property": "not-a-context-field",
@@ -53,12 +54,14 @@ func TestLegacyPostHogMetadataCanonicalContext(t *testing.T) {
 	}
 }
 func TestLegacyMetadataCookielessPrivacy(t *testing.T) {
+	t.Parallel()
 	event := eventWithMetadata(Event{UUID: "id", Properties: json.RawMessage(`{"cookieless":true,"$session_id":"must-not-reappear","$ip":"192.0.2.1","$anon_distinct_id":"private","$current_url":"https://example.test/"}`)})
 	if strings.Contains(string(event.Context), "must-not") || strings.Contains(string(event.Context), "192.0.2.1") || strings.Contains(string(event.Context), "private") {
 		t.Fatal("known identifiers reintroduced through legacy context")
 	}
 }
 func TestMetadataNativeSQLColumnsAndProjectionRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	projectID, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", `{"api_key":"`+ingest+`","uuid":"producer","event":"$pageview","distinct_id":"anonymous","timestamp":"2026-01-01T00:00:00Z","properties":{"$current_url":"https://example.test/"}}`, 200)
@@ -87,6 +90,7 @@ func TestMetadataNativeSQLColumnsAndProjectionRoundTrip(t *testing.T) {
 }
 
 func TestStoredContextRequiresJSONObject(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"null", "[]", "false", "1", `"text"`, "{"} {
 		if validEventContext(json.RawMessage(raw)) {
 			t.Errorf("invalid canonical context %s", raw)

@@ -77,6 +77,7 @@ func profileJourneyFixture(t *testing.T) (*Service, string, string, string, stri
 }
 
 func TestDuckLakeEventProfileAgentHTTPMCPAndRevocation(t *testing.T) {
+	t.Parallel()
 	s, a, b, readerID, reader, event, _ := profileJourneyFixture(t)
 	path := profileRequestPath(a, event)
 	viaHTTP := request(t, s, http.MethodGet, path, reader, "", http.StatusOK)
@@ -111,6 +112,7 @@ func TestDuckLakeEventProfileAgentHTTPMCPAndRevocation(t *testing.T) {
 }
 
 func TestDuckLakeEventProfileSharesQueryBudget(t *testing.T) {
+	t.Parallel()
 	s, a, _, _, reader, event, _ := profileJourneyFixture(t)
 	s.querySlots <- struct{}{}
 	s.querySlots <- struct{}{}
@@ -119,6 +121,7 @@ func TestDuckLakeEventProfileSharesQueryBudget(t *testing.T) {
 }
 
 func TestDuckLakeEventProfileOccurrenceWindowsAndSample(t *testing.T) {
+	t.Parallel()
 	s, a, _, _, reader, event, now := profileJourneyFixture(t)
 	profile := readProfileHTTP(t, s, a, event, reader, "")
 	activity := profile.Activity
@@ -186,6 +189,7 @@ func TestDuckLakeEventProfileOccurrenceWindowsAndSample(t *testing.T) {
 }
 
 func TestDuckLakeEventProfileCurrentEditsDeletionAndTieOrder(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -220,6 +224,7 @@ func TestDuckLakeEventProfileCurrentEditsDeletionAndTieOrder(t *testing.T) {
 }
 
 func TestDuckLakeEventProfileLargePayloadsDoNotBecomeMissingProperties(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -254,6 +259,8 @@ func TestDuckLakeEventProfileLargePayloadsDoNotBecomeMissingProperties(t *testin
 }
 
 func TestDuckLakeEventProfileUsesOneSnapshotDuringConcurrentProjection(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s := duckLakeJourneyService(t)
 	a, _ := project(t, s)
 	base := lakeStorageProjection(t, a, "profile-snapshot-base", 900)

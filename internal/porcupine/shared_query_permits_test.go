@@ -58,6 +58,7 @@ func sharedQueryTestFixture(t *testing.T) (string, *Service, *Service) {
 }
 
 func TestSharedQueryPermitsAcrossServices(t *testing.T) {
+	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
 	ctx := context.Background()
 	_, _, release, err := a.beginInteractiveQuery(ctx, "a")
@@ -139,6 +140,7 @@ func TestSharedQueryPermitsAcrossServices(t *testing.T) {
 }
 
 func TestSharedQueryPermitLifetimeReleaseAndFailure(t *testing.T) {
+	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
 	a.lakeS3RequestTimeoutSeconds = 7
 	a.lakeMetadataTimeoutSeconds = 10
@@ -184,6 +186,7 @@ func TestSharedQueryPermitLifetimeReleaseAndFailure(t *testing.T) {
 
 // The helper intentionally leaves a permit behind when its process is killed.
 func TestSharedQueryPermitWorker(t *testing.T) {
+	t.Parallel()
 	dsn := os.Getenv("PORCUPINE_SHARED_QUERY_HELPER_DSN")
 	if dsn == "" {
 		t.Skip("subprocess helper")
@@ -197,6 +200,7 @@ func TestSharedQueryPermitWorker(t *testing.T) {
 }
 
 func TestSharedQueryPermitCrashRecovery(t *testing.T) {
+	t.Parallel()
 	dsn, a, b := sharedQueryTestFixture(t)
 	// The 30-second fixed native safety margin is kept in the real crash proof.
 	// There is no test-only short lease or production renewal shortcut.
@@ -269,6 +273,7 @@ func TestSharedQueryPermitCrashRecovery(t *testing.T) {
 }
 
 func TestSharedQueryProjectDeletionWaitsForReaders(t *testing.T) {
+	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

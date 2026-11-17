@@ -35,6 +35,7 @@ func mutationCount(t *testing.T, s *Service, table string) int {
 }
 
 func TestMutationQueuedReadCASIdempotencyAndPending(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	ctx := mutationContext("actor-one")
 	projectID, ingest := project(t, s)
@@ -98,6 +99,7 @@ func TestMutationQueuedReadCASIdempotencyAndPending(t *testing.T) {
 }
 
 func TestMutationCookielessSanitizationAndIdentifiedMarkers(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -142,6 +144,7 @@ func TestMutationCookielessSanitizationAndIdentifiedMarkers(t *testing.T) {
 }
 
 func TestMutationQueuedDeleteTombstoneAndDurableReceipt(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -177,6 +180,7 @@ func TestMutationQueuedDeleteTombstoneAndDurableReceipt(t *testing.T) {
 }
 
 func TestMutationRestartPreservesHeadAuditAndOutbox(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -212,6 +216,7 @@ func TestMutationRestartPreservesHeadAuditAndOutbox(t *testing.T) {
 }
 
 func TestMutationValidationAndAtomicWriteFailure(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -248,6 +253,7 @@ func TestMutationValidationAndAtomicWriteFailure(t *testing.T) {
 }
 
 func TestMutationOutboxGlobalCountAndByteBounds(t *testing.T) {
+	t.Parallel()
 	s := service(t, 1)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)

@@ -137,6 +137,7 @@ const segmentAnalyticsNode310Fixture = `{
 }`
 
 func TestSegmentRecordedAnalyticsNode310Batch(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, key := project(t, s)
 	payload := []byte(strings.ReplaceAll(segmentAnalyticsNode310Fixture, "FIXTURE_WRITE_KEY", key))

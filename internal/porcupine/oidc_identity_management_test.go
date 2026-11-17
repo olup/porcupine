@@ -88,6 +88,7 @@ func identityRecoveryOtherHuman(t *testing.T, f *oidcFixture) string {
 }
 
 func TestOIDCIdentityManagementHTTPAuthorizationAndPagination(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	f.login(t)
@@ -158,6 +159,7 @@ func TestOIDCIdentityManagementHTTPAuthorizationAndPagination(t *testing.T) {
 }
 
 func TestOIDCIdentityManagementMCPUsesOperatorPolicy(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.login(t)
 	operatorAPI := accountTestToken(t, f.s)
@@ -179,6 +181,7 @@ func TestOIDCIdentityManagementMCPUsesOperatorPolicy(t *testing.T) {
 }
 
 func TestOIDCIdentityRecoveryRevokesGrantsCodesAndPendingConsent(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	original := identityRecoveryIssue(t, f, "project-a")
@@ -224,6 +227,7 @@ func TestOIDCIdentityRecoveryRevokesGrantsCodesAndPendingConsent(t *testing.T) {
 }
 
 func TestOIDCIdentityRecoveryRollbackPreservesBindingAndGrants(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	tokens := identityRecoveryIssue(t, f, "project-a")
@@ -252,6 +256,7 @@ func TestOIDCIdentityRecoveryRollbackPreservesBindingAndGrants(t *testing.T) {
 }
 
 func TestOIDCIdentityRecoveryPreservesTenantMembershipsAndTeamCredentials(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	var tenants, projects []string

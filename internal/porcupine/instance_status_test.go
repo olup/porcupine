@@ -13,6 +13,7 @@ import (
 )
 
 func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, public := project(t, s)
 	b, _ := project(t, s)
@@ -67,6 +68,7 @@ func instanceStatusNativeStore(t *testing.T, s *Service) *duckLakeStore {
 }
 
 func TestInstanceStatusNativeChecks(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"healthy", "closed", "missing_registry"} {
 		t.Run(state, func(t *testing.T) {
 			s := service(t, 20)
@@ -123,6 +125,7 @@ func TestInstanceStatusNativeChecks(t *testing.T) {
 }
 
 func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	var sent atomic.Int32
 	s.exports = &exportRuntime{}
@@ -161,6 +164,7 @@ func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
 }
 
 func TestInstanceStatusBoundedProbesAndConcurrency(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	store := instanceStatusNativeStore(t, s)
 	if err := store.mu.Lock(t.Context()); err != nil {
@@ -206,6 +210,7 @@ func TestInstanceStatusBoundedProbesAndConcurrency(t *testing.T) {
 }
 
 func TestInstanceStatusCanceledContext(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	instanceStatusNativeStore(t, s)
 	ctx, cancel := context.WithCancel(instanceStatusReaderContext(context.Background()))
@@ -221,6 +226,7 @@ func TestInstanceStatusCanceledContext(t *testing.T) {
 }
 
 func TestInstanceStatusSQLiteFailure(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	s.db.Close()
 	result, err := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
@@ -230,6 +236,7 @@ func TestInstanceStatusSQLiteFailure(t *testing.T) {
 }
 
 func TestInstanceStatusMCPDiscoveryAndRevocation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	id, reader := key(t, s, []string{"management:read"}, []string{a})
@@ -256,6 +263,7 @@ func TestInstanceStatusMCPDiscoveryAndRevocation(t *testing.T) {
 }
 
 func TestInstanceStatusOAuthAudiences(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	apiResource, mcpResource := f.host.URL+"/api/v1", f.host.URL+"/mcp"
 	admin := f.token(t, "bootstrap", adminToken, apiResource)

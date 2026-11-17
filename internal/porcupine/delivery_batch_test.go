@@ -9,6 +9,7 @@ import (
 )
 
 func TestDeliveryBatchRowAndByteBudgets(t *testing.T) {
+	t.Parallel()
 	s := service(t, 500)
 	_, token := project(t, s)
 	events := make([]map[string]any, 250)

@@ -7,6 +7,7 @@ import (
 )
 
 func TestDuckLakeMissingArchiveDoesNotPoisonReopen(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken,
 		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 128, Threads: 1}}

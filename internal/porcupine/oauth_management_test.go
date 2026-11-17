@@ -41,6 +41,7 @@ func oauthClientInput(name string, permissions, projects []string) *OAuthClientC
 }
 
 func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	var original string
 	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&original); err != nil {
@@ -83,6 +84,7 @@ func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
 }
 
 func TestOAuthClientSecretIsIndependentAndListingScoped(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	b, _ := project(t, s)
@@ -132,6 +134,7 @@ func TestOAuthClientSecretIsIndependentAndListingScoped(t *testing.T) {
 }
 
 func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	b, _ := project(t, s)
@@ -178,6 +181,7 @@ func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
 }
 
 func TestOAuthClientRevocationAndLastAdministrator(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	admin := oauthManagementAdmin(t, s)
 	bootstrap := principal(admin).ID
@@ -217,6 +221,7 @@ func TestOAuthClientRevocationAndLastAdministrator(t *testing.T) {
 }
 
 func TestOAuthClientManagementDisabledDiscovery(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	admin := oauthManagementAdmin(t, s)
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
@@ -232,6 +237,7 @@ func TestOAuthClientManagementDisabledDiscovery(t *testing.T) {
 }
 
 func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
+	t.Parallel()
 	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oauth.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "http://localhost", AllowLegacyKeys: true}})
 	if err != nil {
 		t.Fatal(err)

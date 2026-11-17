@@ -41,6 +41,7 @@ func runProjectPurge(t *testing.T, s *Service, project string, commit bool) {
 }
 
 func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	remove, aKey := project(t, s)
 	keep, bKey := project(t, s)
@@ -111,6 +112,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 }
 
 func TestProjectPurgeCredentialScopes(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	remove, _ := project(t, s)
 	keep, _ := project(t, s)
@@ -155,6 +157,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 }
 
 func TestProjectPurgeMachineGrants(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
 	remove, _ := f.project(t, admin)
@@ -188,6 +191,7 @@ func TestProjectPurgeMachineGrants(t *testing.T) {
 }
 
 func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)

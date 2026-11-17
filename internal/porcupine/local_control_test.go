@@ -20,6 +20,7 @@ func databaseFile(t *testing.T, db *sql.DB) string {
 }
 
 func TestLocalControlIsSeparateFromDurableJournal(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "journal.sqlite")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -73,6 +74,7 @@ func TestLocalControlIsSeparateFromDurableJournal(t *testing.T) {
 }
 
 func TestLocalControlAndJournalPairCannotBeReplacedIndependently(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	configs := []Config{
 		{DBPath: filepath.Join(root, "one.sqlite"), ControlDBPath: filepath.Join(root, "one-control.sqlite"), BootstrapToken: adminToken},
@@ -115,6 +117,7 @@ func TestLocalControlAndJournalPairCannotBeReplacedIndependently(t *testing.T) {
 }
 
 func TestLocalControlDatabasePathBoundaries(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	journal := filepath.Join(root, "journal.sqlite")
 	for _, control := range []string{journal, journal + "-wal", journal + "-shm", ":memory:"} {
@@ -153,6 +156,7 @@ func TestLocalControlDatabasePathBoundaries(t *testing.T) {
 }
 
 func TestLocalControlFailureBlocksAcceptanceAndReadiness(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, _ := project(t, s)
 	if err := s.control.Close(); err != nil {
@@ -173,6 +177,7 @@ func TestLocalControlFailureBlocksAcceptanceAndReadiness(t *testing.T) {
 }
 
 func TestCombinedControlJournalLayoutRequiresFreshDirectory(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "old.sqlite")
 	db, err := openLocalSQLite(path)
 	if err != nil {

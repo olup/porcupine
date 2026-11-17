@@ -1,11 +1,16 @@
 name: Check
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_call:
+  schedule:
+    - cron: '17 3 * * *'
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   documentation:
     runs-on: ubuntu-latest
@@ -33,11 +38,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: make check
+      - run: make check-full
       - run: python3 scripts/standalone_cli_check.py
       - run: make build
-      - run: make test-race
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+  security:
+    # Vulnerability scan and fuzzing run on main, releases and nightly, not on every PR push.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: make security-check
   native-integration:
     runs-on: ubuntu-latest

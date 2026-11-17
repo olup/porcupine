@@ -15,6 +15,7 @@ import (
 )
 
 func TestSharedQueryWatchdogTimingProtocol(t *testing.T) {
+	t.Parallel()
 	started := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	for _, sqlMS := range []int{1, 250, 5000, 60000} {
 		for _, s3 := range []int{0, 5, 30} {
@@ -46,6 +47,7 @@ type blockedSharedWatchdogLog struct{}
 func (blockedSharedWatchdogLog) Write([]byte) (int, error) { select {} }
 
 func TestSharedQueryWatchdogScopeHelper(t *testing.T) {
+	t.Parallel()
 	dsn, mode := os.Getenv("PORCUPINE_SHARED_WATCHDOG_DSN"), os.Getenv("PORCUPINE_SHARED_WATCHDOG_MODE")
 	if dsn == "" || mode == "" {
 		t.Skip("watchdog subprocess helper")
@@ -150,6 +152,7 @@ func startSharedWatchdogProcess(t *testing.T, dsn, mode string) *sharedWatchdogP
 }
 
 func TestSharedQueryWatchdogStopsBeforePermitExpiry(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"hung", "hung-log-blocked"} {
 		t.Run(mode, func(t *testing.T) {
 			dsn, a, b := sharedQueryTestFixture(t)
@@ -186,6 +189,7 @@ func TestSharedQueryWatchdogStopsBeforePermitExpiry(t *testing.T) {
 	}
 }
 func TestSharedQueryWatchdogReleasedAndLocalScopesSurvive(t *testing.T) {
+	t.Parallel()
 	dsn, a, _ := sharedQueryTestFixture(t)
 	if _, err := a.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=250 WHERE id='one'`); err != nil {
 		t.Fatal(err)

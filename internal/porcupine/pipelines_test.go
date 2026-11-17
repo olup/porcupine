@@ -9,6 +9,7 @@ import (
 )
 
 func TestPipelineSecretsBoundToDestination(t *testing.T) {
+	t.Parallel()
 	rt, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{0x37}, 32)})
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +39,7 @@ func TestPipelineSecretsBoundToDestination(t *testing.T) {
 	}
 }
 func TestPipelineEndpointAllowlist(t *testing.T) {
+	t.Parallel()
 	rt, err := newPipelineRuntime(&PipelineConfig{Key: make([]byte, 32), AllowedS3Endpoints: []string{"https://STORAGE.example.org/"}})
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +57,7 @@ func TestPipelineEndpointAllowlist(t *testing.T) {
 	}
 }
 func TestExistingPipelinesRequireSameKeyAfterRestart(t *testing.T) {
+	t.Parallel()
 	c := Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: "test-pipeline-bootstrap", Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}}
 	s, err := Open(c)
 	if err != nil {
@@ -90,6 +93,7 @@ SELECT 'd',$1,id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1
 }
 
 func TestBatchQueriesShareOneSlot(t *testing.T) {
+	t.Parallel()
 	s := &Service{querySlots: make(chan struct{}, 2), batchSlot: make(chan struct{}, 1)}
 	ctx := context.Background()
 	release, ok := s.acquirePipelineExport(ctx)
@@ -117,6 +121,7 @@ func TestBatchQueriesShareOneSlot(t *testing.T) {
 }
 
 func TestClosedWindowWaitsForEarlierProjectAdmissions(t *testing.T) {
+	t.Parallel()
 	rt, err := newPipelineRuntime(&PipelineConfig{Key: make([]byte, 32)})
 	if err != nil {
 		t.Fatal(err)

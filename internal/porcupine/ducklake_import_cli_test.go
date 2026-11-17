@@ -18,6 +18,8 @@ import (
 )
 
 func TestDuckLakeCLIHistoricalFormatsAndInterruptedResume(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	binary := filepath.Join(t.TempDir(), "porcupine")
 	build := exec.Command("go", "build", "-o", binary, "./cmd/porcupine")
 	build.Dir = "../../cli"

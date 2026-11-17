@@ -49,6 +49,7 @@ func tenantServiceFixture(t *testing.T) (*oauthIntegration, string, string, stri
 }
 
 func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
+	t.Parallel()
 	f, admin, a, b, projectA, projectB := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + a + "/service-accounts"
 	body := TenantServiceAccountSpec{Name: "reports", Permissions: []string{"events:read", "events:write", "management:read"}, Projects: []string{projectA}}
@@ -97,6 +98,7 @@ func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 }
 
 func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T) {
+	t.Parallel()
 	f, admin, tenant, other, project, otherProject := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/service-accounts"
 	var account OAuthClientCreated
@@ -154,6 +156,7 @@ func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T
 }
 
 func TestTenantServiceCredentialCreationIsAtomicWithOwnership(t *testing.T) {
+	t.Parallel()
 	f, admin, tenant, _, project, _ := tenantServiceFixture(t)
 	var before, after int
 	if err := f.s.control.QueryRow(`SELECT count(*) FROM oauth_clients`).Scan(&before); err != nil {
@@ -169,6 +172,7 @@ func TestTenantServiceCredentialCreationIsAtomicWithOwnership(t *testing.T) {
 }
 
 func TestTenantServiceActorRejectsChangedOwnershipAndParent(t *testing.T) {
+	t.Parallel()
 	f, admin, tenant, other, project, _ := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/service-accounts"
 	var account OAuthClientCreated
@@ -187,6 +191,7 @@ func TestTenantServiceActorRejectsChangedOwnershipAndParent(t *testing.T) {
 }
 
 func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
+	t.Parallel()
 	f, _, tenant, other, project, _ := tenantServiceFixture(t)
 	ctx := f.ctx
 	root := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
@@ -224,6 +229,7 @@ func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
 }
 
 func TestTenantServiceProducerSourceAllowsReadOnlyChild(t *testing.T) {
+	t.Parallel()
 	f, admin, tenant, _, project, _ := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/service-accounts"
 	spec := TenantServiceAccountSpec{Name: "backend", SourceID: "backend", Permissions: []string{"events:write", "events:read"}, Projects: []string{project}}

@@ -31,6 +31,7 @@ func segmentEvent(t *testing.T, s *Service, project, messageID string) Event {
 	return event
 }
 func TestSegmentTrackAndPagePreserveBusinessValues(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, ingest := project(t, s)
 	track := []byte(`{"type":"track","messageId":"node-evt-1","userId":"account-7","anonymousId":"device-4","event":"Course Completed","timestamp":"2025-03-04T07:06:07.123+02:00","properties":{"token":"business-token","writeKey":"business-key","source_id":"custom-source","context":"custom-context","nested":{"unicode":"東京 🦔","items":[1,true,null]},"huge":9007199254740993},"context":{"library":{"name":"@segment/analytics-node","version":"3.1.0"},"locale":"fr-FR","browser":{"name":"Firefox","version":"132"},"custom":{"huge":9007199254740993}}}`)
@@ -68,6 +69,7 @@ func TestSegmentTrackAndPagePreserveBusinessValues(t *testing.T) {
 	}
 }
 func TestSegmentAnonymousIdentifyAndAtomicMixedBatch(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, ingest := project(t, s)
 	body := map[string]any{"writeKey": ingest, "context": map[string]any{"locale": "en", "device": map[string]any{"type": "phone", "manufacturer": "example"}}, "integrations": map[string]any{"All": false, "Vendor": map[string]any{"apiKey": "vendor-secret-sensitive"}}, "batch": []any{
@@ -133,6 +135,7 @@ func TestSegmentAnonymousIdentifyAndAtomicMixedBatch(t *testing.T) {
 	}
 }
 func TestSegmentMalformedBatchAndCredentialConflictsAreAtomic(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, a := project(t, s)
 	_, b := project(t, s)
@@ -180,6 +183,7 @@ func TestSegmentMalformedBatchAndCredentialConflictsAreAtomic(t *testing.T) {
 	}
 }
 func TestSegmentBodyWriteKeyGzipLimitsAndGeneratedIDs(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, ingest := project(t, s)
 	body := []byte(`{"writeKey":"` + ingest + `","userId":"u","event":"HTTP direct","context":{"browser":{"name":"Test"}}}`)
@@ -202,6 +206,7 @@ func TestSegmentBodyWriteKeyGzipLimitsAndGeneratedIDs(t *testing.T) {
 }
 
 func TestSegmentSharedContextAmplificationIsAtomic(t *testing.T) {
+	t.Parallel()
 	s := service(t, 1000)
 	_, ingest := project(t, s)
 	batch := make([]any, 64)
@@ -223,6 +228,7 @@ func TestSegmentSharedContextAmplificationIsAtomic(t *testing.T) {
 }
 
 func TestSegmentTargetOnlyIdentifyAndOAuthPolicy(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
 	var created map[string]any

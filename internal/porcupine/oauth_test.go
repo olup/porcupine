@@ -79,6 +79,7 @@ func oauthProtocolRequest(t *testing.T, s *Service, id, secret string, form url.
 func oauthGrantForm() url.Values { return url.Values{"grant_type": {"client_credentials"}} }
 
 func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	projectID, _ := project(t, s)
 	clientID, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{projectID})
@@ -124,6 +125,7 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 }
 
 func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T) {
+	t.Parallel()
 	s, clock := oauthProtocolService(t)
 	projectID, _ := project(t, s)
 	otherProject, _ := project(t, s)
@@ -182,6 +184,7 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 }
 
 func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	form := oauthGrantForm()
 	form.Set("scope", "events:write events:read")
@@ -212,6 +215,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 }
 
 func TestOAuthRejectsMixedDuplicateAndUnsupportedRequests(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
 	cases := []struct {
@@ -270,6 +274,7 @@ func TestOAuthRejectsMixedDuplicateAndUnsupportedRequests(t *testing.T) {
 }
 
 func TestOAuthEndpointRateLimitAndPublicIngestClientRejection(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	_, public := project(t, s)
 	var id string
@@ -283,6 +288,7 @@ func TestOAuthEndpointRateLimitAndPublicIngestClientRejection(t *testing.T) {
 }
 
 func TestOAuthIgnoresUnknownParametersWithoutLibrarySideEffects(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
 	form := oauthGrantForm()
@@ -308,6 +314,7 @@ func TestOAuthIgnoresUnknownParametersWithoutLibrarySideEffects(t *testing.T) {
 }
 
 func TestOAuthInvalidTrafficCannotConsumeIssuanceBudget(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
 	s.oauth.limiter = rate.NewLimiter(0, 1)

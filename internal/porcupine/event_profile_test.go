@@ -17,6 +17,7 @@ func profileTestRead(rows ...eventProfileRow) eventProfileRead {
 }
 
 func TestEventProfileSampleSignalsAndNumericPrecision(t *testing.T) {
+	t.Parallel()
 	options := eventProfileOptions{event: "page", sampleLimit: 1000, exampleLimit: 3, propertyLimit: 100, propertyKind: "custom", includeValues: true}
 	read := profileTestRead(
 		profileTestRow("3", "latest", `{"a":null,"b":"fr","n":9007199254740993,"$sdk":false}`, 3000),
@@ -58,6 +59,7 @@ func TestEventProfileSampleSignalsAndNumericPrecision(t *testing.T) {
 }
 
 func TestEventProfilePayloadExclusionsDoNotBecomeMissingValues(t *testing.T) {
+	t.Parallel()
 	options := eventProfileOptions{event: "page", sampleLimit: 10, exampleLimit: 3, propertyLimit: 1, propertyKind: "all"}
 	oversized := profileTestRow("3", "oversized", "", 3000)
 	oversized.PropertyBytes = eventProfileFieldBytes + 1
@@ -82,6 +84,7 @@ func TestEventProfilePayloadExclusionsDoNotBecomeMissingValues(t *testing.T) {
 }
 
 func TestEventProfileValueLimitsKeepDistinctLongValues(t *testing.T) {
+	t.Parallel()
 	one, _ := json.Marshal(strings.Repeat("x", eventProfileValueBytes) + "one")
 	two, _ := json.Marshal(strings.Repeat("x", eventProfileValueBytes) + "two")
 	options := eventProfileOptions{event: "page", sampleLimit: 10, exampleLimit: 0, propertyLimit: 100, propertyKind: "all", includeValues: true}
@@ -101,6 +104,7 @@ func TestEventProfileValueLimitsKeepDistinctLongValues(t *testing.T) {
 }
 
 func TestEventProfileNormalizationAndMalformedStorage(t *testing.T) {
+	t.Parallel()
 	for _, input := range []EventProfileInput{{Event: ""}, {Event: strings.Repeat("é", 251)}, {Event: "ok", SampleLimit: 1001}, {Event: "ok", ExampleLimit: -1}, {Event: "ok", ExampleLimit: 6}, {Event: "ok", PropertyLimit: 101}, {Event: "ok", PropertyPrefix: strings.Repeat("é", 101)}, {Event: "ok", PropertyKind: "unknown"}} {
 		if _, err := normalizeEventProfileInput(input); queryStatus(err) != 400 {
 			t.Fatalf("accepted invalid options: %+v %v", input, err)

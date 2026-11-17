@@ -156,6 +156,7 @@ func (f *pipelineRecoveryFixture) state(t *testing.T) pipelineRecoveryState {
 }
 
 func TestPipelineS3RecoveryCommittedMarkerFinalizesWithoutRequery(t *testing.T) {
+	t.Parallel()
 	f := newPipelineRecoveryFixture(t, pipelineRecoveryBody(t))
 	var checkpointSeen atomic.Bool
 	f.s3.beforePut = func(marker []byte) {
@@ -213,6 +214,7 @@ func TestPipelineS3RecoveryCommittedMarkerFinalizesWithoutRequery(t *testing.T) 
 }
 
 func TestPipelineS3RecoveryNativeRowFailureDoesNotCommitWindow(t *testing.T) {
+	t.Parallel()
 	body := strings.Replace(pipelineRecoveryBody(t), strings.Repeat("c", 750), strings.Repeat("c", 8192), 1)
 	f := newPipelineRecoveryFixture(t, body)
 	f.s.pipelines.config.ExportLimits.MaxRowBytes = 1024
@@ -245,6 +247,7 @@ func TestPipelineS3RecoveryNativeRowFailureDoesNotCommitWindow(t *testing.T) {
 }
 
 func TestPipelineS3RecoveryForeignCommitMarkerIsNeverOverwritten(t *testing.T) {
+	t.Parallel()
 	f := newPipelineRecoveryFixture(t, pipelineRecoveryBody(t))
 	path := "/client-bucket/private/exports/" + f.pipeline + "/" + strconv.FormatInt(f.start.UnixMilli(), 10) + "/manifest.json"
 	foreign := []byte(`{"run_id":"unrelated-committed-run"}`)

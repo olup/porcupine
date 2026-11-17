@@ -61,6 +61,7 @@ func storedIdentitySnapshot(t *testing.T, s *Service, uuid string) identitySnaps
 }
 
 func TestIdentitySDKRootTraitsLinkingSetOnceAndRestart(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "identity.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -123,6 +124,7 @@ func TestIdentitySDKRootTraitsLinkingSetOnceAndRestart(t *testing.T) {
 }
 
 func TestIdentityNoAnonymousTargetProfilesProjectScopeAndNoFlips(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectA, tokenA := project(t, s)
 	projectB, tokenB := project(t, s)
@@ -168,6 +170,7 @@ func TestIdentityNoAnonymousTargetProfilesProjectScopeAndNoFlips(t *testing.T) {
 }
 
 func TestIdentityAnonymousTraitsMergeWithoutDemotingIdentifiedTargets(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	identityCapture(t, s, token, []map[string]any{setIdentityEvent("prelogin", "anon", map[string]any{"source": "anonymous", "shared": "anon"}, map[string]any{})}, 200)
@@ -189,6 +192,7 @@ func TestIdentityAnonymousTraitsMergeWithoutDemotingIdentifiedTargets(t *testing
 }
 
 func TestIdentityCookielessAndMalformedControlsAreIsolatedNoops(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	controls := []map[string]any{
@@ -217,6 +221,7 @@ func TestIdentityCookielessAndMalformedControlsAreIsolatedNoops(t *testing.T) {
 }
 
 func TestIdentityTraitAndQueueLimitsRollbackCanonicalState(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	identityCapture(t, s, token, []map[string]any{identifyEvent("initial", "account", "anon", map[string]any{"large": strings.Repeat("x", 30000)}, map[string]any{})}, 200)
@@ -256,6 +261,7 @@ func TestIdentityTraitAndQueueLimitsRollbackCanonicalState(t *testing.T) {
 }
 
 func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	// Enable capture fanout without starting any destination worker.
@@ -301,6 +307,7 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 }
 
 func TestIdentityControlPermanentReceiptRetryCannotReapply(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	projectID, token := project(t, s)
 	identityCapture(t, s, token, []map[string]any{identifyEvent("control", "account", "anon", map[string]any{"plan": "first"}, map[string]any{})}, 200)
@@ -320,6 +327,7 @@ func TestIdentityControlPermanentReceiptRetryCannotReapply(t *testing.T) {
 }
 
 func TestIdentityQueueAccountingMigratesExistingDatabase(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -353,6 +361,7 @@ func TestIdentityQueueAccountingMigratesExistingDatabase(t *testing.T) {
 }
 
 func TestIdentityConcurrentConflictsChooseOneCanonicalTarget(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	handler := s.Handler()
@@ -388,6 +397,7 @@ func TestIdentityConcurrentConflictsChooseOneCanonicalTarget(t *testing.T) {
 }
 
 func TestIdentityServerOnlyStillRequiresActualProjectOAuth(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
 	var created map[string]any
@@ -407,6 +417,7 @@ func TestIdentityServerOnlyStillRequiresActualProjectOAuth(t *testing.T) {
 }
 
 func TestIdentityControlsDiscardRawInputsBeforeSQLitePersistence(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	accepted := identifyEvent("accepted-control", "account", "bound-anon", map[string]any{"plan": "approved"}, map[string]any{})

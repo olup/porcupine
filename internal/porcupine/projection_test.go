@@ -17,6 +17,7 @@ func projectionFixture(t *testing.T) eventProjection {
 }
 
 func TestOriginalProjectionSnapshotPreservesOccurrenceAndBusinessJSON(t *testing.T) {
+	t.Parallel()
 	projection := projectionFixture(t)
 	if strings.Contains(projection.OriginalSnapshot, `\\u003c`) || !strings.Contains(projection.OriginalSnapshot, `<original>`) || !strings.Contains(projection.OriginalSnapshot, `9007199254740993`) {
 		t.Fatal("original snapshot changed HTML or large numeric JSON", projection.OriginalSnapshot)
@@ -36,6 +37,7 @@ func TestOriginalProjectionSnapshotPreservesOccurrenceAndBusinessJSON(t *testing
 }
 
 func TestOriginalProjectionSnapshotRejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
 	event := projectionFixture(t).Event
 	event.Properties = json.RawMessage(`{"broken"`)
 	if _, err := originalSnapshot(event); err == nil {

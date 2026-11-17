@@ -78,6 +78,7 @@ func assertCheckpointPins(t *testing.T, store *duckLakeStore, ctx context.Contex
 }
 
 func TestDuckLakeS3CheckpointPinsObjectsWithoutBlockingReadsOrWrites(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
 	s3FixtureError(t, fixture, "open checkpoint fixture", err)
@@ -237,6 +238,7 @@ func TestDuckLakeS3CheckpointPinsObjectsWithoutBlockingReadsOrWrites(t *testing.
 }
 
 func TestDuckLakeS3CheckpointCanceledInventoryReleasesProtections(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1})
 	s3FixtureError(t, fixture, "open canceled checkpoint fixture", err)

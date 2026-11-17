@@ -45,6 +45,7 @@ func enableTestExports(t *testing.T, s *Service, maxQueued int) {
 }
 
 func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -127,6 +128,7 @@ func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) 
 }
 
 func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	ctx := exportContext(t, s, adminToken)
 	projectID, _ := project(t, s)
@@ -183,6 +185,7 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 }
 
 func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
 	projectID, _ := project(t, s)
@@ -237,6 +240,7 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 }
 
 func TestExportConcurrentIdempotencyAndQueueAcceptance(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 1)
 	ctx := exportContext(t, s, adminToken)

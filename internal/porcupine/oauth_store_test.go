@@ -12,6 +12,7 @@ import (
 )
 
 func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "oauth.db")
 	config := Config{DBPath: path, BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example", AllowLegacyKeys: true}}
 	s, err := Open(config)
@@ -48,6 +49,7 @@ func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
 }
 
 func TestOAuthPerClientCapIsAtomicUnderConcurrentIssuance(t *testing.T) {
+	t.Parallel()
 	s, clock := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
 	for range 60 {
@@ -95,6 +97,7 @@ func TestOAuthPerClientCapIsAtomicUnderConcurrentIssuance(t *testing.T) {
 }
 
 func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
+	t.Parallel()
 	s, clock := oauthProtocolService(t)
 	ids := []string{}
 	for range 157 {
@@ -136,6 +139,7 @@ func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
 }
 
 func TestOAuthLibraryVerifierDoesNotExposeOrAcceptStoredDigest(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{"*"})
 	client, err := loadOAuthClient(context.Background(), s.control, id)

@@ -10,6 +10,7 @@ import (
 // The grant, tokens and project filter must hold at the public MCP boundary,
 // including after the client has already opened a session.
 func TestMCPInteractiveProjectIsolationAndRevocation(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	bearer := tokens["access_token"].(string)

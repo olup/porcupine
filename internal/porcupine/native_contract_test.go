@@ -51,6 +51,7 @@ func contractExample(t *testing.T, adapter string) []byte {
 }
 
 func TestNativeContractSchemasAndExamples(t *testing.T) {
+	t.Parallel()
 	live := resolveNativeContract(t, "native-message-v1.schema.json")
 	history := resolveNativeContract(t, "native-history-message-v1.schema.json")
 	var examples []map[string]any
@@ -99,6 +100,7 @@ func TestNativeContractSchemasAndExamples(t *testing.T) {
 }
 
 func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	a, writer := project(t, s)
 	b, _ := project(t, s)
@@ -139,6 +141,7 @@ func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
 }
 
 func TestNativeContractAdaptersAndCrossProtocolRetry(t *testing.T) {
+	t.Parallel()
 	for _, adapter := range []string{"native", "segment", "posthog"} {
 		t.Run(adapter, func(t *testing.T) {
 			s := service(t, 20)
@@ -195,6 +198,7 @@ func TestNativeContractAdaptersAndCrossProtocolRetry(t *testing.T) {
 }
 
 func TestNativeContractSemanticValidationAndActorlessEvents(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	projectID, ingest := project(t, s)
 	for _, message := range []map[string]any{
@@ -222,6 +226,7 @@ func TestNativeContractSemanticValidationAndActorlessEvents(t *testing.T) {
 }
 
 func TestPostHogContractPreservesNumbersInEveryEnvelope(t *testing.T) {
+	t.Parallel()
 	for _, envelope := range []string{"single", "array", "batch"} {
 		t.Run(envelope, func(t *testing.T) {
 			s := service(t, 10)

@@ -57,6 +57,7 @@ func historicalJourney(t *testing.T, format string) []byte {
 	return output.Bytes()
 }
 func TestHistoricalFormatsResumeAndCrossAdapterDedup(t *testing.T) {
+	t.Parallel()
 	for _, format := range []string{"native", "posthog", "segment"} {
 		t.Run(format, func(t *testing.T) {
 			config := Config{DBPath: filepath.Join(t.TempDir(), "imports.db"), BootstrapToken: adminToken, QueueMaxEvents: 100}
@@ -133,6 +134,7 @@ func TestHistoricalFormatsResumeAndCrossAdapterDedup(t *testing.T) {
 }
 
 func TestHistoricalFormatValidationAndProtectedLiveIdentity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 50)
 	enableTestPipelines(t, s)
 	a, ingest := project(t, s)
@@ -188,6 +190,7 @@ func TestHistoricalFormatValidationAndProtectedLiveIdentity(t *testing.T) {
 }
 
 func TestHistoricalFormatFrozenManifestAndRevocation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	a, _ := project(t, s)
 	id, token := key(t, s, []string{"imports:write", "events:write"}, []string{a})
@@ -203,6 +206,7 @@ func TestHistoricalFormatFrozenManifestAndRevocation(t *testing.T) {
 }
 
 func TestImportDeliveryCursorExcludesLaterTraffic(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingest := project(t, s)
 	data := historicalJourney(t, "native")

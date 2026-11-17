@@ -8,6 +8,7 @@ import (
 )
 
 func TestNativeRestoreMarkerRefusesOpenBeforeCreatingStorage(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	database := filepath.Join(dir, "recovery.sqlite")
 	if err := os.WriteFile(database+".native-restore-incomplete", []byte("partial"), 0600); err != nil {
@@ -49,6 +50,7 @@ func restoreGuardDatabase(t *testing.T) string {
 }
 
 func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
+	t.Parallel()
 	for _, reviewed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "blocked", true: "explicit_opt_in"}[reviewed], func(t *testing.T) {
 			cfg := Config{DBPath: restoreGuardDatabase(t), BootstrapToken: adminToken, OAuth: &OAuthConfig{
@@ -79,6 +81,7 @@ func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
 }
 
 func TestNativeRestoreDoesNotCreateOIDCAccountsOrLinks(t *testing.T) {
+	t.Parallel()
 	provider := newOIDCMock(t)
 	for _, reviewed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "blocked", true: "explicit_opt_in"}[reviewed], func(t *testing.T) {

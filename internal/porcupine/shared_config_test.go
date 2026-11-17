@@ -25,6 +25,7 @@ func assertPrivateSharedConfigError(t *testing.T, err error) {
 }
 
 func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		config Config
@@ -88,6 +89,7 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 }
 
 func TestSharedNativeConfigurationValidationWithoutEngine(t *testing.T) {
+	t.Parallel()
 	c := sharedConfigurationFixture().DuckLake
 	c.SharedSourceID = "12345678-1234-1234-1234-123456789abc"
 	if err := validateSharedNativeConfig(c); err != nil {

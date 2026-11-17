@@ -50,6 +50,7 @@ func agentAnalyticsFixture(t *testing.T) (*Service, string, string, string, stri
 }
 
 func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
+	t.Parallel()
 	s, a, b, readerID, reader := agentAnalyticsFixture(t)
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
@@ -193,6 +194,7 @@ func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
 }
 
 func TestDuckLakeCatalogEmptyKeyCursorAndProjectBinding(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	p := lakeStorageProjection(t, "a", "one", 1)
 	p.Properties = json.RawMessage(`{"":"secret","a":1,"b":true}`)
@@ -216,6 +218,7 @@ func TestDuckLakeCatalogEmptyKeyCursorAndProjectBinding(t *testing.T) {
 }
 
 func TestDuckLakeParameterDependentScalarMetadata(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	p := lakeStorageProjection(t, "a", "one", 1)
 	p.Properties = json.RawMessage(`{"language":"fr"}`)
@@ -229,6 +232,7 @@ func TestDuckLakeParameterDependentScalarMetadata(t *testing.T) {
 }
 
 func TestMCPReadOnlyAnalyticsTools(t *testing.T) {
+	t.Parallel()
 	s, a, b, _, reader := agentAnalyticsFixture(t)
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()

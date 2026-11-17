@@ -13,6 +13,7 @@ import (
 const adminToken = "test-admin-token-long-enough"
 
 func TestBootstrapRequiresTokenAndCanRetry(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
 	for _, token := range []string{"", "too-short"} {
 		result := make(chan error, 1)
@@ -97,6 +98,7 @@ func eventCount(t *testing.T, s *Service) int {
 }
 
 func TestRestartDedupAndBootstrap(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -133,6 +135,7 @@ func TestRestartDedupAndBootstrap(t *testing.T) {
 	}
 }
 func TestScopesRevocationAndEscalation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingestA := project(t, s)
 	b, ingestB := project(t, s)
@@ -158,6 +161,7 @@ func TestScopesRevocationAndEscalation(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(revokable, "revoked"), 401)
 }
 func TestAtomicBatchAndQueueCapacity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 2)
 	_, ingest := project(t, s)
 	request(t, s, "POST", "/batch/", "", `{"api_key":"`+ingest+`","batch":[{"uuid":"one","event":"ok","distinct_id":"user"},{"event":"bad"}]}`, 400)
@@ -177,6 +181,7 @@ func TestAtomicBatchAndQueueCapacity(t *testing.T) {
 	}
 }
 func TestConcurrentCapacity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 1)
 	_, ingest := project(t, s)
 	var wg sync.WaitGroup
@@ -206,6 +211,7 @@ func TestConcurrentCapacity(t *testing.T) {
 	}
 }
 func TestInputBoundaries(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	_, ingest := project(t, s)
 	for _, event := range []string{"$create_alias", "$groupidentify", "$unknown"} {

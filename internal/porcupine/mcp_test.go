@@ -81,6 +81,7 @@ func mcpTestCall(t *testing.T, ctx context.Context, session *mcp.ClientSession, 
 }
 
 func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, version := range []string{"2026-07-28", "2025-11-25"} {
 		t.Run("protocol-"+version, func(t *testing.T) {
 			s := service(t, 20)
@@ -217,6 +218,7 @@ func assertMCPIcons(t *testing.T, icons []mcp.Icon) {
 }
 
 func TestMCPProjectIsolationAndEscalation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingestA := project(t, s)
 	b, ingestB := project(t, s)
@@ -269,6 +271,7 @@ func TestMCPProjectIsolationAndEscalation(t *testing.T) {
 }
 
 func TestMCPValidationAndRoutingBoundaries(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	project, _ := project(t, s)
 	host := httptest.NewServer(s.Handler())
@@ -302,6 +305,7 @@ func TestMCPValidationAndRoutingBoundaries(t *testing.T) {
 }
 
 func TestMCPConcurrentCredentials(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingestA := project(t, s)
 	b, ingestB := project(t, s)
@@ -330,6 +334,7 @@ func TestMCPConcurrentCredentials(t *testing.T) {
 }
 
 func TestMCPHTTPBoundaries(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	handler := s.Handler()
 	for _, tc := range []struct {
@@ -380,6 +385,7 @@ func TestMCPHTTPBoundaries(t *testing.T) {
 }
 
 func TestMCPResponseBound(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingest := project(t, s)
 	for _, id := range []string{"large-a", "large-b", "large-c"} {

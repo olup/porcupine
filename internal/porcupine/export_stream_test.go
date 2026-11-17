@@ -10,6 +10,7 @@ import (
 )
 
 func TestExportJSONInputPreservesValues(t *testing.T) {
+	t.Parallel()
 	input := exportJSONInput{ctx: context.Background(), reader: bufio.NewReader(strings.NewReader(" {\"n\":18446744073709551615,\"s\":\"a\\\"b\",\"nested\":[null,true]}\n{\"n\":2}")), limit: 4096}
 	for _, want := range []string{`{"n":18446744073709551615,"s":"a\"b","nested":[null,true]}`, `{"n":2}`} {
 		raw, err := input.value(4096)
@@ -23,6 +24,7 @@ func TestExportJSONInputPreservesValues(t *testing.T) {
 }
 
 func TestExportJSONInputRejectsTruncationAndInvalidValues(t *testing.T) {
+	t.Parallel()
 	valid := `{"n":["value",18446744073709551615]}`
 	for n := range len(valid) {
 		input := exportJSONInput{ctx: context.Background(), reader: bufio.NewReader(strings.NewReader(valid[:n])), limit: 4096}
@@ -55,6 +57,7 @@ func (r *exportCountingReader) Read(p []byte) (int, error) {
 }
 
 func TestExportJSONInputBoundsValueAndCancellation(t *testing.T) {
+	t.Parallel()
 	reader := &exportCountingReader{reader: strings.NewReader(`{"value":"` + strings.Repeat("x", 1<<20) + `"}`)}
 	input := exportJSONInput{ctx: context.Background(), reader: bufio.NewReaderSize(reader, 64<<10), limit: 256}
 	if _, err := input.value(256); !errors.Is(err, errExportValueTooLarge) {

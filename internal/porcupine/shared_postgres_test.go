@@ -60,6 +60,7 @@ func sharedPostgresDSN(t *testing.T) string {
 }
 
 func TestSharedPostgresFixture(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	first, err := sql.Open("pgx", dsn)
 	if err != nil {

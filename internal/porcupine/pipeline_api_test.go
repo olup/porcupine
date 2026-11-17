@@ -32,6 +32,7 @@ func pipelineBody(endpoint string) string {
 	return string(data)
 }
 func TestPipelineHTTPPermissionIsolationRedactionAndRotation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestPipelines(t, s)
 	id, _ := project(t, s)
@@ -107,6 +108,7 @@ func TestPipelineHTTPPermissionIsolationRedactionAndRotation(t *testing.T) {
 }
 
 func TestPipelineValidationDoesNotEchoSecretsAndDisabledStatus(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	base := "/api/v1/projects/" + id + "/pipelines"
@@ -136,6 +138,7 @@ func TestPipelineValidationDoesNotEchoSecretsAndDisabledStatus(t *testing.T) {
 }
 
 func TestPipelineTransactionalQuotaAndRunMetadata(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestPipelines(t, s)
 	id, _ := project(t, s)
@@ -167,6 +170,7 @@ func TestPipelineTransactionalQuotaAndRunMetadata(t *testing.T) {
 }
 
 func TestPipelineMCPDiscoveryAndCallsUseCombinedPermissions(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestPipelines(t, s)
 	id, _ := project(t, s)
@@ -191,6 +195,7 @@ func TestPipelineMCPDiscoveryAndCallsUseCombinedPermissions(t *testing.T) {
 }
 
 func TestPipelineS3InspectableRuleAndWriteOnlyRotation(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	enableTestPipelines(t, s)
 	id, _ := project(t, s)
@@ -226,6 +231,7 @@ func TestPipelineS3InspectableRuleAndWriteOnlyRotation(t *testing.T) {
 }
 
 func TestPipelineOpenAPIOAuthScopesAndSecretSchemas(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	doc := request(t, s, "GET", "/openapi.json", "", "", 200)
 	components := doc["components"].(map[string]any)

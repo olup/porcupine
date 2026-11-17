@@ -13,6 +13,7 @@ import (
 )
 
 func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	firstHost := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + firstHost.Listener.Addr().String()

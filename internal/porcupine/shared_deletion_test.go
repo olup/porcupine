@@ -40,6 +40,7 @@ func sharedDeletionPrincipal(t *testing.T, db *sql.DB, id string, projects []str
 }
 
 func TestSharedProjectDeletionGrantsOwnershipAndUsage(t *testing.T) {
+	t.Parallel()
 	s := sharedDeletionFixture(t)
 	ctx := t.Context()
 	for _, spec := range []struct {
@@ -156,6 +157,7 @@ INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,p
 }
 
 func TestProjectPurgeLocalRecordsLeavesGrantAuthorityAlone(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	removed, ingest := project(t, s)
 	kept, _ := project(t, s)
@@ -191,6 +193,7 @@ func TestProjectPurgeLocalRecordsLeavesGrantAuthorityAlone(t *testing.T) {
 }
 
 func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
+	t.Parallel()
 	s := sharedDeletionFixture(t)
 	ctx := t.Context()
 	if err := s.completeControlProjectDeletion(ctx, "kept"); err == nil {
@@ -227,6 +230,7 @@ func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 }
 
 func TestSharedProjectDeletionRollsBackFenceOnGrantFailure(t *testing.T) {
+	t.Parallel()
 	s := sharedDeletionFixture(t)
 	sharedDeletionPrincipal(t, s.control, "corrupt", []string{"removed"})
 	if _, err := s.control.Exec(`UPDATE access_keys SET projects='invalid-json' WHERE id='corrupt'`); err != nil {

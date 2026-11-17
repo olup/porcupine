@@ -10,6 +10,7 @@ import (
 )
 
 func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
+	t.Parallel()
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("allow_legacy_%t", legacy), func(t *testing.T) {
 			f := newOAuthIntegration(t)
@@ -113,6 +114,7 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 }
 
 func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	for _, body := range []string{`{"name":"default"}`, `{"name":"explicit","ingestion_mode":"mixed"}`} {
 		created := request(t, s, "POST", "/api/v1/projects", adminToken, body, 201)
@@ -130,6 +132,7 @@ func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {
 }
 
 func TestPreTenantSchemaIsRejectedWithoutMigration(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "old-schema.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {

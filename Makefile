@@ -1,4 +1,4 @@
-.PHONY: build run test test-race check fmt integration integration-s3
+.PHONY: build run test test-full test-race check check-full lint fmt integration integration-s3
 
 build:
 	CGO_ENABLED=1 go build -trimpath -o bin/porcupine ./cmd/porcupine
@@ -6,16 +6,24 @@ build:
 run:
 	CGO_ENABLED=1 go run ./cmd/porcupine
 
+# Fast loop: skips the slowest journeys (testing.Short). CI runs everything.
 test:
+	CGO_ENABLED=1 go test -short ./... -timeout=300s
+
+test-full:
 	CGO_ENABLED=1 go test ./... -timeout=600s
 
 test-race:
 	CGO_ENABLED=1 go test -race ./... -count=1 -timeout=600s
 
-check: api-check cli-check
+lint: api-check cli-check
 	CGO_ENABLED=1 go vet ./...
-	CGO_ENABLED=1 go test ./... -timeout=600s
 	@test -z "$$(gofmt -l cmd internal)" || (echo 'Run make fmt'; exit 1)
+
+# check is the local loop; check-full is what CI requires before merge.
+check: lint test
+
+check-full: lint test-race
 
 fmt:
 	gofmt -w cmd internal cli/cmd

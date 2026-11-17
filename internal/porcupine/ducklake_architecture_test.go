@@ -387,6 +387,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 }
 
 func TestAnalyticsArchitectureExperiment(t *testing.T) {
+	t.Parallel()
 	phase := os.Getenv("PORCUPINE_ARCH_PHASE")
 	if phase == "" {
 		t.Skip("use make ducklake-architecture-test")
