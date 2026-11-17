@@ -9,7 +9,7 @@ import (
 
 func TestSnapshotIsScopedAndReadOnly(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "identity with spaces.db")
+	path := filepath.Join(t.TempDir(), "identity with spaces #%.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -37,5 +37,18 @@ func TestSnapshotIsScopedAndReadOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatal("read probe created file")
+	}
+}
+
+func TestReadOnlyURI(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ path, uri string }{
+		{`C:\identity with spaces #%.db`, "file:///C:/identity%20with%20spaces%20%23%25.db?mode=ro"},
+		{"C:/identity.db", "file:///C:/identity.db?mode=ro"},
+		{"/tmp/identity #%.db", "file:///tmp/identity%20%23%25.db?mode=ro"},
+	} {
+		if got := readOnlyURI(test.path); got != test.uri {
+			t.Errorf("%q: got %q, want %q", test.path, got, test.uri)
+		}
 	}
 }

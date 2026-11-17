@@ -1,6 +1,7 @@
 package docsite
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,7 +67,7 @@ func Build(ctx context.Context, root string) error {
 		}
 	}
 	config := map[string]any{
-		"baseURL": "https://olup.github.io/porcupine/docs/", "title": "Porcupine", "disableKinds": []string{"taxonomy", "term", "RSS", "sitemap", "404"},
+		"baseURL": "https://olup.github.io/porcupine/docs/", "title": "Porcupine", "disableKinds": []string{"taxonomy", "term", "RSS", "404"},
 		"params": map[string]any{"release_version": version, "navigation": navigation},
 		"markup": map[string]any{"goldmark": map[string]any{"renderer": map[string]bool{"unsafe": true}}, "highlight": map[string]bool{"codeFences": false}, "tableOfContents": map[string]int{"startLevel": 2, "endLevel": 2}},
 	}
@@ -90,6 +91,9 @@ func Build(ctx context.Context, root string) error {
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("render documentation: %w", err)
 	}
+	if err := compressSitemap(filepath.Join(output, "docs")); err != nil {
+		return err
+	}
 	if err := copyPublicAssets(root, output, version); err != nil {
 		return err
 	}
@@ -110,6 +114,28 @@ func Build(ctx context.Context, root string) error {
 		return err
 	}
 	return ValidateLinks(output)
+}
+
+func compressSitemap(directory string) error {
+	sitemap, err := os.ReadFile(filepath.Join(directory, "sitemap.xml"))
+	if err != nil {
+		return fmt.Errorf("read rendered sitemap: %w", err)
+	}
+	file, err := os.Create(filepath.Join(directory, "sitemap.xml.gz"))
+	if err != nil {
+		return err
+	}
+	writer := gzip.NewWriter(file)
+	_, writeErr := writer.Write(sitemap)
+	zipErr := writer.Close()
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if zipErr != nil {
+		return zipErr
+	}
+	return closeErr
 }
 
 func copyPublicAssets(root, output, version string) error {

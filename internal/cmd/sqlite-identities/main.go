@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -44,8 +45,7 @@ func snapshot(path, project string, controls []control) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	uri := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=ro"}
-	db, err := sql.Open("sqlite", uri.String())
+	db, err := sql.Open("sqlite", readOnlyURI(absolute))
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +73,15 @@ func snapshot(path, project string, controls []control) (map[string]any, error) 
 	result["control_events"] = found
 	return result, nil
 }
+
+func readOnlyURI(absolute string) string {
+	path := filepath.ToSlash(absolute)
+	if len(path) >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\') {
+		path = "/" + strings.ReplaceAll(path, "\\", "/")
+	}
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+}
+
 func readRows(db *sql.DB, table, project string) ([]map[string]any, error) {
 	rows, err := db.Query("SELECT * FROM "+table+" WHERE project_id=?", project)
 	if err != nil {

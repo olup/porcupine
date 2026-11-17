@@ -213,6 +213,28 @@ func TestMarkdownPreview(t *testing.T) {
 	}
 }
 
+func TestSitemapCompressedCopy(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := compressSitemap(root); err == nil {
+		t.Fatal("accepted missing rendered sitemap")
+	}
+	want := `<urlset><url><loc>https://olup.github.io/porcupine/docs/hosting/</loc></url></urlset>`
+	put(t, root, "sitemap.xml", want)
+	if err := compressSitemap(root); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(contents(t, root, "sitemap.xml.gz")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	got, err := io.ReadAll(reader)
+	if err != nil || string(got) != want {
+		t.Fatalf("compressed sitemap = %q, error = %v", got, err)
+	}
+}
+
 func TestBuiltLinkValidation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
