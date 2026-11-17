@@ -73,7 +73,7 @@ func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
 				t.Fatal("fresh administrator invitation failed", err)
 			}
 			human, err := loadEmailHuman(context.Background(), s.control, id)
-			if err != nil || !human.admin() {
+			if err != nil || !human.Admin() {
 				t.Fatal("fresh administrator lost its permissions", err)
 			}
 		})

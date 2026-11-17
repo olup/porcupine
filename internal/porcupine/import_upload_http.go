@@ -7,11 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/danielgtaylor/huma/v2"
 	"strconv"
 	"strings"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type ImportUploadCreateInput struct {
@@ -53,8 +54,8 @@ type ImportUploadList struct {
 }
 type ImportUploadListOutput struct{ Body ImportUploadList }
 
-func (s *Service) registerImportUploads(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	access := operationAccess{Permission: "imports:write", AdditionalPermissions: []string{"events:write"}, ProjectParameter: "id"}
+func (s *Service) registerImportUploads(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	access := auth.OperationAccess{Permission: "imports:write", AdditionalPermissions: []string{"events:write"}, ProjectParameter: "id"}
 	operation := func(id, method, path, summary string, status int) huma.Operation {
 		o := op(id, method, path, summary, access, status)
 		o.Metadata["http_only"] = true
@@ -71,7 +72,7 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 				}
 			}
 			if s.oauth != nil {
-				raw, err := bearerCredential(req)
+				raw, err := auth.BearerCredential(req)
 				if err != nil || (!strings.HasPrefix(raw, "pc_at_") && !strings.HasPrefix(raw, serviceKeyPrefix)) {
 					s.authChallenge(w, s.oauth.apiResource, true)
 					problem(w, 401, "imports require an API access token or service key")
@@ -249,12 +250,12 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 	return &ImportUploadListOutput{Body: result}, nil
 }
 
-func (m *importManager) loadImportFileForWrite(ctx context.Context, project, jobID, fileID string, a actor) (storedImportUploadFile, error) {
+func (m *importManager) loadImportFileForWrite(ctx context.Context, project, jobID, fileID string, a auth.Principal) (storedImportUploadFile, error) {
 	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, jobID))
 	if err != nil {
 		return storedImportUploadFile{}, importLookupError(err)
 	}
-	if job.ActorID != a.ID && !a.admin() {
+	if job.ActorID != a.ID && !a.Admin() {
 		return storedImportUploadFile{}, apiError(403, "only the import creator or an administrator can upload")
 	}
 	if job.State != "uploading" && job.State != "completed" {
@@ -401,7 +402,7 @@ func (m *importManager) finishImportUpload(ctx context.Context, input *ImportUpl
 	if err != nil {
 		return nil, importLookupError(err)
 	}
-	if job.ActorID != a.ID && !a.admin() {
+	if job.ActorID != a.ID && !a.Admin() {
 		return nil, apiError(403, "only the import creator or an administrator can complete or cancel it")
 	}
 	target := "completed"

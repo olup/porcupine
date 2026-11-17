@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/time/rate"
 )
 
@@ -80,7 +81,7 @@ func TestOAuthAuthorizationRejectsCallbackForgeryAndPKCEDowngrade(t *testing.T) 
 		})
 	}
 	for _, raw := range []string{"https://user:secret@example.com/cb", "https://example.com/cb#fragment", "http://example.com/cb", "https://example.com/cb?code=preloaded", "https://*.example.com/cb"} {
-		if validOAuthRedirect(raw) {
+		if auth.ValidOAuthRedirect(raw) {
 			t.Fatalf("unsafe registered redirect accepted: %s", raw)
 		}
 	}
@@ -298,7 +299,7 @@ func TestOAuthInteractiveMissingAuxiliaryMappingCannotBroadenAuthority(t *testin
 		t.Fatal(err)
 	}
 	after, err := f.s.authenticateOAuthToken(context.Background(), raw, f.host.URL+"/mcp")
-	if err != nil || after.ID != before.ID || authorize(after, "events:read", "project-b") {
+	if err != nil || after.ID != before.ID || auth.Authorize(after, "events:read", "project-b") {
 		t.Fatal("missing auxiliary map changed human token to machine authority", after, err)
 	}
 	interactiveEndpoint(t, f.s, "/oauth/revoke", url.Values{"client_id": {f.clientID}, "token": {raw}}, "", "", 200)

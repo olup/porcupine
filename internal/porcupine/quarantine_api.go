@@ -2,9 +2,10 @@ package porcupine
 
 import (
 	"context"
+	"github.com/danielgtaylor/huma/v2"
 	"strconv"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type QuarantinedEvent struct {
@@ -42,10 +43,10 @@ type QuarantinedEventRetry struct {
 
 type QuarantinedEventRetryOutput struct{ Body QuarantinedEventRetry }
 
-func (s *Service) registerQuarantine(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+func (s *Service) registerQuarantine(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	base := "/api/v1/projects/{id}/quarantined-events"
-	huma.Register(api, op("list-quarantined-events", "GET", base, "List retained quarantined delivery metadata using an event ID cursor", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.listQuarantinedEvents)
-	huma.Register(api, op("retry-quarantined-event", "POST", base+"/{event_id}/retry", "Restore an accepted original's delivery eligibility without claiming downstream acknowledgement", operationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.retryQuarantinedEvent)
+	huma.Register(api, op("list-quarantined-events", "GET", base, "List retained quarantined delivery metadata using an event ID cursor", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.listQuarantinedEvents)
+	huma.Register(api, op("retry-quarantined-event", "POST", base+"/{event_id}/retry", "Restore an accepted original's delivery eligibility without claiming downstream acknowledgement", auth.OperationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.retryQuarantinedEvent)
 }
 
 func (s *Service) listQuarantinedEvents(ctx context.Context, input *QuarantinedEventsInput) (*QuarantinedEventsOutput, error) {

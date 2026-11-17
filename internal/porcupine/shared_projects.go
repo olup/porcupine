@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 // Only foreign-key anchors are copied into the owner's local journal. Shared
 // credentials are authenticated against control storage, never against these
 // uncredentialed local actor records.
-func (s *Service) ensureProjectLocal(ctx context.Context, project string, a actor) error {
+func (s *Service) ensureProjectLocal(ctx context.Context, project string, a auth.Principal) error {
 	if s.shared != nil {
 		owner, _, err := s.sharedProjectOwner(ctx, project)
 		if err != nil {

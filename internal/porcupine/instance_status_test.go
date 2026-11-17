@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
@@ -56,7 +58,7 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 }
 
 func instanceStatusReaderContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, actorContextKey{}, actor{ID: "status-reader", Permissions: []string{"management:read"}, Projects: []string{"*"}})
+	return context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: "status-reader", Permissions: []string{"management:read"}, Projects: []string{"*"}})
 }
 
 func instanceStatusNativeStore(t *testing.T, s *Service) *duckLakeStore {

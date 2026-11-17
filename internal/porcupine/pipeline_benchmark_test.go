@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 // BenchmarkPipelineCaptureDurable measures the normal HTTP capture handler with
@@ -60,7 +62,7 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&operator); err != nil {
 		b.Fatal(err)
 	}
-	if err := s.ensureProjectLocal(ctx, projectID, actor{ID: operator}); err != nil {
+	if err := s.ensureProjectLocal(ctx, projectID, auth.Principal{ID: operator}); err != nil {
 		b.Fatal(err)
 	}
 	var noNetwork benchmarkNoNetwork

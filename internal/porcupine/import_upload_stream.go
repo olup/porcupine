@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type importChunkWork struct {
@@ -94,7 +96,7 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 	return work, nil
 }
 
-func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor actor, complete bool) error {
+func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor auth.Principal, complete bool) error {
 	if m.rules.admission != nil {
 		if err := m.rules.admission.Lock(ctx); err != nil {
 			return err
@@ -121,7 +123,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
 		return err
 	}
-	if job.ActorID != actor.ID && !actor.admin() {
+	if job.ActorID != actor.ID && !actor.Admin() {
 		return apiError(403, "only the import creator or an administrator can upload")
 	}
 	if job.State != "uploading" {
@@ -208,7 +210,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	return nil
 }
 
-func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fileID string, actor actor) error {
+func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fileID string, actor auth.Principal) error {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiError(503, "import storage unavailable")
@@ -224,7 +226,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	if err != nil {
 		return importLookupError(err)
 	}
-	if job.ActorID != actor.ID && !actor.admin() {
+	if job.ActorID != actor.ID && !actor.Admin() {
 		return apiError(403, "only the import creator or an administrator can complete it")
 	}
 	if job.State != "uploading" {

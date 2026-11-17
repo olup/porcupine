@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	_ "modernc.org/sqlite"
 )
@@ -423,8 +424,8 @@ func token() string {
 }
 func hash(v string) string { b := sha256.Sum256([]byte(v)); return hex.EncodeToString(b[:]) }
 
-func (s *Service) authenticate(ctx context.Context, raw string) (actor, error) {
-	var a actor
+func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal, error) {
+	var a auth.Principal
 	var permissions, projects string
 	if raw == "" || strings.HasPrefix(raw, serviceKeyPrefix) {
 		return a, errors.New("invalid access key")
@@ -663,24 +664,24 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			}
 		}
 	}
-	var a actor
+	var a auth.Principal
 	var err error
 	authenticatedAPI := false
 	if len(r.Header.Values("Authorization")) != 0 {
 		var access string
-		access, err = bearerCredential(r)
+		access, err = auth.BearerCredential(r)
 		if err == nil {
 			resource := ""
 			if s.oauth != nil {
 				resource = s.oauth.apiResource
 			}
 			a, err = s.authenticateResource(r.Context(), access, resource)
-			authenticatedAPI = err == nil && s.oauth != nil && (a.serviceKey || strings.HasPrefix(access, "pc_at_"))
+			authenticatedAPI = err == nil && s.oauth != nil && (a.ServiceKey || strings.HasPrefix(access, "pc_at_"))
 		}
 		if err == nil && rawKey != "" {
-			var selector actor
+			var selector auth.Principal
 			selector, err = s.authenticate(r.Context(), rawKey)
-			if err == nil && selector.can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
+			if err == nil && selector.Can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && auth.Authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
 				a.Projects = []string{selector.Projects[0]}
 				if selector.SourceID != "" {
 					a.SourceID = selector.SourceID
@@ -696,7 +697,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 401, "invalid ingestion credential")
 		return
 	}
-	if !a.can("events:write") || len(a.Projects) != 1 || a.Projects[0] == "*" {
+	if !a.Can("events:write") || len(a.Projects) != 1 || a.Projects[0] == "*" {
 		problem(w, 403, "ingestion requires a key scoped to one project with events:write")
 		return
 	}

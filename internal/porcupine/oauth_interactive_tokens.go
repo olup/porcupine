@@ -9,46 +9,48 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 var errInteractiveGrant = errors.New("invalid interactive grant")
 var errInteractiveTarget = errors.New("invalid interactive resource")
 
-func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQueryer, grantID string) (actor, error) {
+func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQueryer, grantID string) (auth.Principal, error) {
 	if !s.interactiveOAuthEnabled() {
-		return actor{}, errInteractiveGrant
+		return auth.Principal{}, errInteractiveGrant
 	}
 	var principalID, humanID, clientID, resource string
 	var expires int64
 	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,resource,expires_at_ms FROM oauth_interactive_grants WHERE id=$1`, grantID).Scan(&principalID, &humanID, &clientID, &resource, &expires)
 	if err != nil || expires <= s.clock().UnixMilli() {
-		return actor{}, errInteractiveGrant
+		return auth.Principal{}, errInteractiveGrant
 	}
-	var a actor
+	var a auth.Principal
 	var permissions, projects string
 	err = query.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, principalID).Scan(&a.ID, &permissions, &projects)
 	if err != nil || json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
-		return actor{}, errInteractiveGrant
+		return auth.Principal{}, errInteractiveGrant
 	}
 	human, err := s.loadOAuthHuman(ctx, query, humanID)
 	if err != nil {
-		return actor{}, errInteractiveGrant
+		return auth.Principal{}, errInteractiveGrant
 	}
 	client, err := loadOAuthClient(ctx, query, clientID)
 	if err != nil || !slices.Contains(client.GrantTypes, "authorization_code") {
-		return actor{}, errInteractiveGrant
+		return auth.Principal{}, errInteractiveGrant
 	}
 	if tenantAdminConsent(a.Permissions) {
 		if !s.interactiveScopesAllowed(human, client, resource, a.Permissions) {
-			return actor{}, errInteractiveGrant
+			return auth.Principal{}, errInteractiveGrant
 		}
 		var tenantID string
 		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM oauth_grant_tenants WHERE grant_id=$1`, grantID).Scan(&tenantID); err != nil {
-			return actor{}, errInteractiveGrant
+			return auth.Principal{}, errInteractiveGrant
 		}
 		narrowed, err := s.tenantAdminActor(ctx, query, human, tenantID)
 		if err != nil {
-			return actor{}, errInteractiveGrant
+			return auth.Principal{}, errInteractiveGrant
 		}
 		narrowed.ID = principalID
 		return narrowed, nil
@@ -61,20 +63,20 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	}
 	a.Permissions = filtered
 	a.Projects = oauthProjectIntersection(oauthProjectIntersection(a.Projects, human.Projects), client.Projects)
-	if len(a.Permissions) == 0 || !interactiveProjectsAllowed(human, client.actor, a.Permissions, a.Projects) {
-		return actor{}, errInteractiveGrant
+	if len(a.Permissions) == 0 || !auth.InteractiveProjectsAllowed(human, client.Principal, a.Permissions, a.Projects) {
+		return auth.Principal{}, errInteractiveGrant
 	}
-	if human.projectPermissions != nil {
-		a.projectPermissions = make(map[string][]string, len(a.Projects))
+	if human.ProjectPermissions != nil {
+		a.ProjectPermissions = make(map[string][]string, len(a.Projects))
 		for _, project := range a.Projects {
 			for _, permission := range a.Permissions {
-				if human.admin() || slices.Contains(human.projectPermissions[project], permission) {
-					a.projectPermissions[project] = append(a.projectPermissions[project], permission)
+				if human.Admin() || slices.Contains(human.ProjectPermissions[project], permission) {
+					a.ProjectPermissions[project] = append(a.ProjectPermissions[project], permission)
 				}
 			}
 		}
 	}
-	a.interactive = true
+	a.Interactive = true
 	return a, nil
 }
 
@@ -90,12 +92,12 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 	}
 	permissions := strings.Fields(scope)
 	for _, permission := range permissions {
-		if !current.can(permission) {
+		if !current.Can(permission) {
 			return nil, errInteractiveGrant
 		}
 	}
-	tenantRole := tenantAdminConsent(permissions) && len(current.tenantAdmins) == 1
-	if len(permissions) == 0 || !tenantRole && (len(projects) == 0 || !current.containsProjects(projects)) {
+	tenantRole := tenantAdminConsent(permissions) && len(current.TenantAdmins) == 1
+	if len(permissions) == 0 || !tenantRole && (len(projects) == 0 || !current.ContainsProjects(projects)) {
 		return nil, errInteractiveGrant
 	}
 	if err = s.pruneInteractiveOAuth(ctx, tx); err != nil {
@@ -111,11 +113,11 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 	if !s.oauth.limiter.Allow() {
 		return nil, errOAuthCapacity
 	}
-	access, err := oauthRandom("pc_at_")
+	access, err := auth.RandomSecret("pc_at_")
 	if err != nil {
 		return nil, err
 	}
-	refresh, err := oauthRandom("pc_rt_")
+	refresh, err := auth.RandomSecret("pc_rt_")
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +194,7 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 		return nil, err
 	}
 	scope := strings.Join(a.Permissions, " ")
-	if len(a.tenantAdmins) == 1 {
+	if len(a.TenantAdmins) == 1 {
 		scope = tenantAdminScope
 	}
 	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, resource, scope, a.Projects, refreshExpiry)
@@ -269,13 +271,13 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	}
 	current := []string{}
 	for _, permission := range allowed {
-		if a.can(permission) {
+		if a.Can(permission) {
 			current = append(current, permission)
 		}
 	}
 	slices.Sort(current)
 	current = slices.Compact(current)
-	if len(current) == 0 || len(projects) == 0 && !(tenantAdminConsent(current) && len(a.tenantAdmins) == 1) {
+	if len(current) == 0 || len(projects) == 0 && !(tenantAdminConsent(current) && len(a.TenantAdmins) == 1) {
 		return nil, errInteractiveGrant
 	}
 	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, familyID, resource, strings.Join(current, " "), projects, expires)
@@ -331,14 +333,14 @@ func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
-func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQueryer, principal actor) (actor, error) {
+func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQueryer, principal auth.Principal) (auth.Principal, error) {
 	var grantID string
 	err := query.QueryRowContext(ctx, `SELECT id FROM oauth_interactive_grants WHERE principal_id=$1`, principal.ID).Scan(&grantID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return principal, nil
 	}
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	return s.loadInteractiveOAuthActor(ctx, query, grantID)
 }

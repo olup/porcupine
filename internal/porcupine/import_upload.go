@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const importMaxChunkBytes = 256 << 10
@@ -165,11 +167,11 @@ func importCheckAuthority(ctx context.Context, query oauthQueryer, actorID, proj
 	if err != nil {
 		return apiError(403, "import credential is no longer authorized")
 	}
-	var a actor
+	var a auth.Principal
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return apiError(503, "import authorization unavailable")
 	}
-	if !authorize(a, "imports:write", project) || !authorize(a, "events:write", project) {
+	if !auth.Authorize(a, "imports:write", project) || !auth.Authorize(a, "events:write", project) {
 		return apiError(403, "import credential is no longer authorized")
 	}
 	return nil

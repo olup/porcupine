@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func oauthManagementActor(id string, permissions, projects []string) context.Context {
-	return context.WithValue(context.Background(), actorContextKey{}, actor{ID: id, Permissions: permissions, Projects: projects})
+	return context.WithValue(context.Background(), actorContextKey{}, auth.Principal{ID: id, Permissions: permissions, Projects: projects})
 }
 
 func oauthManagementAdmin(t *testing.T, s *Service) context.Context {

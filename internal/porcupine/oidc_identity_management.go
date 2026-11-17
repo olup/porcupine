@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type HumanIdentity struct {
@@ -34,8 +35,8 @@ type HumanIdentityDeleteInput struct {
 	IdentityID string `path:"identity_id" maxLength:"128" doc:"The binding ID returned by list-human-identities."`
 }
 
-func (s *Service) registerOIDCIdentityManagement(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	operator := operationAccess{Permission: "instance:admin"}
+func (s *Service) registerOIDCIdentityManagement(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	operator := auth.OperationAccess{Permission: "instance:admin"}
 	huma.Register(api, op("list-human-identities", "GET", "/api/v1/humans/{id}/identities", "List upstream sign-in identity bindings for a human; deployment operator only", operator, 200), s.managementListHumanIdentities)
 	operation := op("unlink-human-identity", "DELETE", "/api/v1/humans/{id}/identities/{identity_id}", "Unlink one upstream identity and revoke this human's interactive connections; deployment operator only", operator, 204)
 	operation.Description = "Recovery operation for one global human account, across all its tenants. Atomically removes the selected binding, revokes all issued interactive grants and invalidates existing browser sign-in proofs and pending email codes. Keeps the human, memberships and team service credentials. Unknown human: 404. Absent binding: 204 without further revocation. Retrying an old binding ID cannot remove a fresh relink. A fresh verified invited sign-in may link again; revoke the human to prevent further sign-in. Requires an independent operator recovery credential."
@@ -43,7 +44,7 @@ func (s *Service) registerOIDCIdentityManagement(api huma.API, op func(string, s
 }
 
 func (s *Service) managementListHumanIdentities(ctx context.Context, input *HumanIdentityListInput) (*HumanIdentityListOutput, error) {
-	if !principal(ctx).admin() {
+	if !principal(ctx).Admin() {
 		return nil, apiError(403, "deployment operator required")
 	}
 	limit := input.Limit
@@ -84,7 +85,7 @@ func (s *Service) managementListHumanIdentities(ctx context.Context, input *Huma
 }
 
 func (s *Service) managementUnlinkHumanIdentity(ctx context.Context, input *HumanIdentityDeleteInput) (*struct{}, error) {
-	if !principal(ctx).admin() {
+	if !principal(ctx).Admin() {
 		return nil, apiError(403, "deployment operator required")
 	}
 	tx, err := s.control.BeginTx(ctx, nil)
@@ -96,7 +97,7 @@ func (s *Service) managementUnlinkHumanIdentity(ctx context.Context, input *Huma
 		return nil, apiError(503, "identity storage unavailable")
 	}
 	current, err := s.loadCredentialActorFrom(ctx, tx, principal(ctx).ID)
-	if err != nil || !current.admin() {
+	if err != nil || !current.Admin() {
 		return nil, apiError(403, "current deployment operator required")
 	}
 	var human string

@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/danielgtaylor/huma/v2"
 	"slices"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type TenantMemberInviteInput struct {
@@ -45,8 +46,8 @@ type TenantProjectRolesOutput struct {
 	}
 }
 
-func (s *Service) registerTenantMembers(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	access := operationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
+func (s *Service) registerTenantMembers(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	access := auth.OperationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
 	if s.oauth != nil && s.oauth.config.Email != nil {
 		base := "/api/v1/tenants/{tenant_id}/members"
 		huma.Register(api, op("invite-tenant-member", "POST", base, "Invite an email human to this tenant as administrator or project-scoped member; sends a notice, not a login code", access, 201), s.inviteTenantMember)
@@ -99,7 +100,7 @@ func sameMembership(a, b TenantMembership) bool {
 }
 
 func (s *Service) inviteTenantMember(ctx context.Context, input *TenantMemberInviteInput) (*TenantMemberOutput, error) {
-	email, err := normalizeEmail(input.Body.Email)
+	email, err := auth.NormalizeEmail(input.Body.Email)
 	if err != nil {
 		return nil, apiError(400, "invalid email address")
 	}

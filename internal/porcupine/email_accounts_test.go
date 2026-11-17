@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestEmailAddressIdentity(t *testing.T) {
@@ -18,13 +20,13 @@ func TestEmailAddressIdentity(t *testing.T) {
 	for input, want := range map[string]string{
 		" Lea+ops@EXAMPLE.COM ": "Lea+ops@example.com", "a.b@company.internal": "a.b@company.internal",
 	} {
-		normalized, err := normalizeEmail(input)
+		normalized, err := auth.NormalizeEmail(input)
 		if err != nil || normalized != want {
 			t.Fatalf("address %q returned %q, %v", input, normalized, err)
 		}
 	}
 	for _, input := range []string{"Name <a@example.com>", "a@example.com\r\nBcc: abuse@example.com", "a@example☃.com", "a@ex_ample.com", "a@localhost..", "a@.local", "a@[127.0.0.1]", "a@example.com,a@evil.com", "a@-bad.example", "a@bad-.example", strings.Repeat("a", 65) + "@example.com"} {
-		if _, err := normalizeEmail(input); err == nil {
+		if _, err := auth.NormalizeEmail(input); err == nil {
 			t.Errorf("accepted malformed mailbox %q", input)
 		}
 	}
@@ -57,7 +59,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	operator, err := loadEmailHuman(ctx, s.control, principalID)
-	if err != nil || !operator.admin() || !operator.emailHuman {
+	if err != nil || !operator.Admin() || !operator.EmailHuman {
 		t.Fatalf("seed admin: %+v %v", operator, err)
 	}
 	input := `{"email":"lea@example.com","projects":["` + p1 + `"],"permissions":["events:read"]}`
@@ -71,7 +73,7 @@ func TestEmailHumansGrantLifecycle(t *testing.T) {
 		t.Fatal("retry assigned a different principal ID")
 	}
 	actor, err := loadEmailHuman(ctx, s.control, id)
-	if err != nil || !authorize(actor, "events:read", p1) || authorize(actor, "events:read", p2) || authorize(actor, "events:write", p1) {
+	if err != nil || !auth.Authorize(actor, "events:read", p1) || auth.Authorize(actor, "events:read", p2) || auth.Authorize(actor, "events:write", p1) {
 		t.Fatal("account project or permission escaped")
 	}
 	request(t, s, "POST", "/api/v1/humans", admin, strings.Replace(input, p1, p2, 1), 409)
@@ -217,7 +219,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 	}
 	ctx := context.Background()
 	h, err := loadEmailHuman(ctx, s.control, id)
-	if err != nil || !slices.Equal(h.projectPermissions[a], []string{"events:read"}) || !slices.Equal(h.projectPermissions[b], []string{"events:write"}) {
+	if err != nil || !slices.Equal(h.ProjectPermissions[a], []string{"events:read"}) || !slices.Equal(h.ProjectPermissions[b], []string{"events:write"}) {
 		t.Fatal("incorrect stored project grants", err)
 	}
 	request(t, s, "POST", "/api/v1/humans", admin, `{"email":"lea@example.test","grants":`+grants(b, a)+`}`, 409)
@@ -255,7 +257,7 @@ func TestEmailAdminInviteWithoutSeedMailbox(t *testing.T) {
 	s := openAccountTest(t, filepath.Join(t.TempDir(), "db"), "")
 	ctx := context.Background()
 	client, err := loadOAuthClient(ctx, s.control, "porcupine-local-admin")
-	if err != nil || !client.permitsInteractiveScope("instance:admin") {
+	if err != nil || !client.Principal.PermitsInteractiveScope("instance:admin", client.GrantTypes) {
 		t.Fatal("admin PKCE client must be available without a seeded mailbox")
 	}
 	admin := accountTestToken(t, s)

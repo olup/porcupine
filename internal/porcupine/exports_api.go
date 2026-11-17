@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/danielgtaylor/huma/v2"
 	"strings"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type ExportCreateBody struct {
@@ -78,8 +79,8 @@ type ExportFiles struct {
 
 type ExportFilesOutput struct{ Body ExportFiles }
 
-func (s *Service) registerExports(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	access := operationAccess{Permission: "events:read", ProjectParameter: "id"}
+func (s *Service) registerExports(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	access := auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}
 	base := "/api/v1/projects/{id}/exports"
 	huma.Register(api, op("create-event-export", "POST", base, "Queue a private streamed SQL export with idempotency and a delivery barrier", access, 202), s.createEventExport)
 	huma.Register(api, op("list-event-exports", "GET", base, "List project export jobs and operator resource limits", access, 200), s.listEventExports)
@@ -256,7 +257,7 @@ func (s *Service) cancelEventExport(ctx context.Context, input *ExportGetInput) 
 		return nil, exportLookupError(err)
 	}
 	caller := principal(ctx)
-	if caller.ID != job.ActorID && !caller.admin() {
+	if caller.ID != job.ActorID && !caller.Admin() {
 		return nil, apiError(403, "only the export creator or an administrator can cancel it")
 	}
 	if job.State != ExportQueued && job.State != ExportRunning {

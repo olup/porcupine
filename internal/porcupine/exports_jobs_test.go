@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func exportContext(t *testing.T, s *Service, token string) context.Context {
@@ -174,7 +176,7 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 	}
 	keyID, token := key(t, s, []string{"events:read"}, []string{projectID})
 	creator, err := s.exportActor(ctx, keyID)
-	if err != nil || !authorize(creator, "events:read", projectID) {
+	if err != nil || !auth.Authorize(creator, "events:read", projectID) {
 		t.Fatal("worker cannot resolve current creator grants", err)
 	}
 	request(t, s, "DELETE", "/api/v1/access-keys/"+keyID, adminToken, "", 204)

@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/danielgtaylor/huma/v2"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type TenantListInput struct {
@@ -61,10 +62,10 @@ type TenantUsage struct {
 }
 type TenantUsageOutput struct{ Body TenantUsage }
 
-func (s *Service) registerTenants(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	operator := operationAccess{Permission: "instance:admin"}
-	tenantAdmin := operationAccess{Permission: tenantAdminScope, TenantParameter: "tenant_id", TenantAdmin: true}
-	huma.Register(api, op("list-tenants", "GET", "/api/v1/tenants", "List tenants administered by this caller; operators can list the deployment", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 200), s.managementListTenants)
+func (s *Service) registerTenants(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	operator := auth.OperationAccess{Permission: "instance:admin"}
+	tenantAdmin := auth.OperationAccess{Permission: tenantAdminScope, TenantParameter: "tenant_id", TenantAdmin: true}
+	huma.Register(api, op("list-tenants", "GET", "/api/v1/tenants", "List tenants administered by this caller; operators can list the deployment", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 200), s.managementListTenants)
 	huma.Register(api, op("create-tenant", "POST", "/api/v1/tenants", "Create a tenant with optional budgets; deployment operator only", operator, 201), s.managementCreateTenant)
 	huma.Register(api, op("get-tenant", "GET", "/api/v1/tenants/{tenant_id}", "Read configuration of a tenant administered by this caller", tenantAdmin, 200), s.managementGetTenant)
 	huma.Register(api, op("update-tenant", "PATCH", "/api/v1/tenants/{tenant_id}", "Rename this tenant; only instance operators may change ingestion_allowed", tenantAdmin, 200), s.managementUpdateTenant)
@@ -75,7 +76,7 @@ func (s *Service) registerTenants(api huma.API, op func(string, string, string, 
 }
 
 func tenantOperator(ctx context.Context) error {
-	if !principal(ctx).admin() {
+	if !principal(ctx).Admin() {
 		return apiError(403, "deployment operator required for tenant management")
 	}
 	return nil
@@ -91,8 +92,8 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 	}
 	args := []any{input.Cursor}
 	filter := ""
-	if !principal(ctx).admin() {
-		admins := principal(ctx).tenantAdmins
+	if !principal(ctx).Admin() {
+		admins := principal(ctx).TenantAdmins
 		if len(admins) == 0 {
 			return nil, apiError(403, "tenant administrator required")
 		}
@@ -146,7 +147,7 @@ func (s *Service) managementCreateTenant(ctx context.Context, input *TenantCreat
 }
 
 func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput) (*TenantOutput, error) {
-	if !principal(ctx).canAdminTenant(input.TenantID) {
+	if !principal(ctx).CanAdminTenant(input.TenantID) {
 		return nil, apiError(403, "tenant administrator required")
 	}
 	t, err := s.loadTenant(ctx, input.TenantID)
@@ -159,10 +160,10 @@ func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput)
 }
 
 func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdateInput) (*TenantOutput, error) {
-	if !principal(ctx).canAdminTenant(input.TenantID) {
+	if !principal(ctx).CanAdminTenant(input.TenantID) {
 		return nil, apiError(403, "tenant administrator required")
 	}
-	if input.Body.IngestionAllowed != nil && !principal(ctx).admin() {
+	if input.Body.IngestionAllowed != nil && !principal(ctx).Admin() {
 		return nil, apiError(403, "only instance operators may change ingestion admission")
 	}
 	if s.shared == nil {
@@ -233,7 +234,7 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 }
 
 func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageInput) (*TenantUsageOutput, error) {
-	if !principal(ctx).canAdminTenant(input.TenantID) {
+	if !principal(ctx).CanAdminTenant(input.TenantID) {
 		return nil, apiError(403, "tenant administrator required")
 	}
 	if err := s.publishLocalUsage(ctx); err != nil {

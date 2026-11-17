@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 var oidcConsentPage = template.Must(template.New("consent").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Porcupine access</title><style>body{max-width:38rem;margin:3rem auto;padding:0 1rem;font:17px/1.5 system-ui;color:#161616;background:white}fieldset{margin:1rem 0}label{display:block;padding:.4rem}button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0}code{overflow-wrap:anywhere}</style><main><h1>Authorize access</h1><p><strong>{{.ClientName}}</strong> requests access to Porcupine.</p><p>Client: <code>{{.ClientID}}</code></p><p>Return address: <code>{{.RedirectURI}}</code></p><p>Resource: <code>{{.Resource}}</code></p><p>Permissions: <code>{{.Scope}}</code></p>{{if .Admin}}<p><strong>Grant full instance administration, including management of all people, clients and projects.</strong></p>{{end}}<form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><fieldset><legend>Select projects to share</legend>{{range .Projects}}<label><input type="checkbox" name="project" value="{{.}}"> {{if eq . "*"}}All projects (instance-wide administrator){{else}}{{.}}{{end}}</label>{{end}}</fieldset><button type="submit" name="decision" value="approve">Approve access</button><button type="submit" name="decision" value="deny">Deny</button></form></main></html>`))
@@ -35,8 +37,8 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	permissions := strings.Fields(request.Scope)
-	if human.emailHuman && onlyInteractiveReadScopes(permissions) {
-		permissions = slices.DeleteFunc(permissions, func(permission string) bool { return !human.can(permission) })
+	if human.EmailHuman && auth.OnlyInteractiveReadScopes(permissions) {
+		permissions = slices.DeleteFunc(permissions, func(permission string) bool { return !human.Can(permission) })
 	}
 	if !s.interactiveScopesAllowed(human, client, request.Resource, permissions) {
 		http.Error(w, "Requested permissions are not granted", 403)
@@ -74,7 +76,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 
 	}
 	projectsOffered = slices.DeleteFunc(projectsOffered, func(project string) bool {
-		return !interactiveProjectsAllowed(human, client.actor, permissions, []string{project})
+		return !auth.InteractiveProjectsAllowed(human, client.Principal, permissions, []string{project})
 	})
 	if len(projectsOffered) == 0 {
 		http.Error(w, "No shared projects are granted", 403)
@@ -137,7 +139,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.String(), http.StatusSeeOther)
 		return
 	}
-	approved := actor{ID: human.ID, Permissions: permissions, Projects: projects}
+	approved := auth.Principal{ID: human.ID, Permissions: permissions, Projects: projects}
 	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.proof, approved)
 	if err != nil {
 		http.Error(w, "Authorization could not be completed", 403)

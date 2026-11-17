@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type identityRecoveryTokens struct{ access, refresh string }
@@ -285,7 +287,7 @@ func TestOIDCIdentityRecoveryPreservesTenantMembershipsAndTeamCredentials(t *tes
 	}
 	for _, credential := range []string{machineToken, serviceKey} {
 		principal, err := f.s.authenticateResource(t.Context(), credential, f.host.URL+"/api/v1")
-		if err != nil || !authorize(principal, "events:read", projects[0]) || authorize(principal, "events:read", projects[1]) {
+		if err != nil || !auth.Authorize(principal, "events:read", projects[0]) || auth.Authorize(principal, "events:read", projects[1]) {
 			t.Fatal("identity recovery changed independent team credentials", err)
 		}
 	}
@@ -296,7 +298,7 @@ func TestOIDCIdentityRecoveryPreservesTenantMembershipsAndTeamCredentials(t *tes
 		}
 	}
 	current, err := loadEmailHuman(t.Context(), f.s.control, f.humanID)
-	if err != nil || !authorize(current, "events:read", projects[0]) || !authorize(current, "events:read", projects[1]) {
+	if err != nil || !auth.Authorize(current, "events:read", projects[0]) || !auth.Authorize(current, "events:read", projects[1]) {
 		t.Fatal("identity recovery changed the human's standing project permissions", err)
 	}
 	var revoked *string

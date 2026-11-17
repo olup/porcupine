@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"bytes"
+	"github.com/danielgtaylor/huma/v2"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -14,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestEveryManagementOperationRejectsMissingInvalidAndInsufficientCredentials(t *testing.T) {
@@ -73,7 +74,7 @@ func TestEveryManagementOperationRejectsMissingInvalidAndInsufficientCredentials
 
 func TestManagementPolicyValidationIncludesHTTPOnlyRoutes(t *testing.T) {
 	t.Parallel()
-	for i, access := range []any{nil, operationAccess{}, operationAccess{Permission: "not-a-permission"}, operationAccess{Permission: "events:read", ProjectParameter: "missing"}, operationAccess{Permission: "management:read", TenantParameter: "tenant_id"}} {
+	for i, access := range []any{nil, auth.OperationAccess{}, auth.OperationAccess{Permission: "not-a-permission"}, auth.OperationAccess{Permission: "events:read", ProjectParameter: "missing"}, auth.OperationAccess{Permission: "management:read", TenantParameter: "tenant_id"}} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			op := &huma.Operation{OperationID: "test-http-only", Method: "GET", Path: "/api/v1/tenants/{tenant_id}", Metadata: map[string]any{"http_only": true, "access": access}}
 			defer func() {

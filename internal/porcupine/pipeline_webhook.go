@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 )
 
@@ -132,7 +133,7 @@ func (s *Service) pipelineCreatorAuthorized(ctx context.Context, id, project str
 	if err != nil {
 		return false, err
 	}
-	return authorize(a, "pipelines:write", project) && authorize(a, "events:read", project), nil
+	return auth.Authorize(a, "pipelines:write", project) && auth.Authorize(a, "events:read", project), nil
 }
 
 func (s *Service) claimWebhook(ctx context.Context) (*webhookDelivery, error) {

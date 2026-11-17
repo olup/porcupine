@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func recoveryOperatorContext(t *testing.T, s *Service) context.Context {
@@ -65,7 +67,7 @@ func assertLateSavedProofCannotIssue(t *testing.T, f *oidcFixture, unlinkWorker,
 	}
 	f.client.Jar.SetCookies(mustRecoveryURL(t, f.host.URL), []*http.Cookie{{Name: issueWorker.oauth.browser.cookieName(), Value: raw, Path: "/"}})
 	f.submit(t, url.Values{"csrf": {csrf}, "decision": {"approve"}, "project": {"project-a"}}, f.host.URL, http.StatusForbidden)
-	approved := actor{ID: f.humanID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}}
+	approved := auth.Principal{ID: f.humanID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}}
 	if _, err := issueWorker.issueOAuthAuthorizationCode(t.Context(), request, f.humanID, old.proof, approved); err == nil {
 		t.Fatal("stale proof minted authorization code")
 	}

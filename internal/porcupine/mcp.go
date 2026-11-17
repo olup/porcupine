@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/danielgtaylor/huma/v2"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,14 +14,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const maxMCPResponseBytes = 2 << 20
 
 type mcpCredential struct {
-	Actor actor
+	Actor auth.Principal
 	Token string
 }
 type mcpCredentialKey struct{}
@@ -84,7 +85,7 @@ type mcpSchemaOutput struct {
 
 // mcpProject lets single-project credentials omit the project. It selects no
 // authority of its own: the dispatched route still authorizes the project.
-func mcpProject(a actor, project string) (string, error) {
+func mcpProject(a auth.Principal, project string) (string, error) {
 	if project != "" {
 		return project, nil
 	}
@@ -212,12 +213,12 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 	})
 	protected := http.NewCrossOriginProtection().Handler(transport)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, err := bearerCredential(r)
+		raw, err := auth.BearerCredential(r)
 		resource := ""
 		if s.oauth != nil {
 			resource = s.oauth.mcpResource
 		}
-		var a actor
+		var a auth.Principal
 		if err == nil {
 			a, err = s.authenticateResource(r.Context(), raw, resource)
 		}
@@ -236,7 +237,7 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 	})
 }
 
-func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a actor, input mcpDocsInput) (*mcp.CallToolResult, mcpDocsOutput, error) {
+func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a auth.Principal, input mcpDocsInput) (*mcp.CallToolResult, mcpDocsOutput, error) {
 	output := mcpDocsOutput{Operations: []mcpOperationSummary{}, Projects: a.Projects}
 	if input.Offset < 0 || input.Limit < 0 || input.Limit > 20 || len(input.Query) > 200 || len(input.OperationID) > 200 {
 		return nil, output, errors.New("invalid catalog parameters: offset >= 0, limit 1..20, query and operation_id <= 200 bytes")
@@ -246,8 +247,8 @@ func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a actor, 
 	}
 	matches := []*huma.Operation{}
 	for _, op := range operations {
-		access := op.Metadata["access"].(operationAccess)
-		if !access.visible(a) {
+		access := op.Metadata["access"].(auth.OperationAccess)
+		if !access.Visible(a) {
 			continue
 		}
 		if input.OperationID != "" && op.OperationID != input.OperationID {
@@ -303,7 +304,7 @@ func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a actor, 
 	for _, op := range matches {
 		output.Operations = append(output.Operations, mcpOperationSummary{
 			OperationID: op.OperationID, Method: op.Method, Path: op.Path, Summary: op.Summary,
-			Permission: op.Metadata["access"].(operationAccess).Permission, ReadOnly: op.Method == "GET" || op.OperationID == "query-events",
+			Permission: op.Metadata["access"].(auth.OperationAccess).Permission, ReadOnly: op.Method == "GET" || op.OperationID == "query-events",
 		})
 	}
 	return nil, output, nil
@@ -316,7 +317,7 @@ func mcpCall(ctx context.Context, native http.Handler, operations map[string]*hu
 	if !exists {
 		return mcpCallFailure(404, "unknown operation")
 	}
-	if !op.Metadata["access"].(operationAccess).visible(credential.Actor) {
+	if !op.Metadata["access"].(auth.OperationAccess).Visible(credential.Actor) {
 		return mcpCallFailure(403, "required permission and project access missing")
 	}
 	path := op.Path

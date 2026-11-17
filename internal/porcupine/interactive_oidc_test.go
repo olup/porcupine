@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/golang-jwt/jwt/v5"
 	"io"
 	"math/big"
 	"net/http"
@@ -23,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/oauth2"
 	"golang.org/x/time/rate"
 )
@@ -443,7 +444,7 @@ func TestInteractiveOIDCConsentProjectIsolationAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !authorize(principal, "events:read", "project-a") || authorize(principal, "events:read", "project-b") || authorize(principal, "events:write", "project-a") {
+	if !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 		t.Fatalf("project or permission escalation: %+v", principal)
 	}
 	human, err := f.s.oidcHuman(context.Background(), "operator-subject", "operator@example.test")
@@ -648,7 +649,7 @@ func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
 			t.Fatal(err)
 		}
 		expected := strings.TrimSuffix(issuer, "/")
-		if runtime.issuer != expected || runtime.config.Issuer != expected || runtime.oidc.oauth.RedirectURL != expected+"/oauth/oidc/callback" {
+		if runtime.issuer != expected || runtime.config.Issuer != expected || !strings.Contains(runtime.oidc.provider.AuthorizationURL("state", "nonce", "verifier"), "redirect_uri="+url.QueryEscape(expected+"/oauth/oidc/callback")) {
 			t.Fatal("metadata, Origin comparison and callback issuer disagree")
 		}
 		recorder := httptest.NewRecorder()
@@ -738,7 +739,7 @@ func TestInteractiveOIDCAPIResourceUsesInvitedPermissions(t *testing.T) {
 	f.resource = f.host.URL + "/api/v1"
 	access := f.issueToken(t, "project-a")
 	principal, err := f.s.authenticateResource(t.Context(), access, f.resource)
-	if err != nil || principal.ID == f.humanID || !authorize(principal, "events:read", "project-a") || authorize(principal, "events:read", "project-b") || authorize(principal, "events:write", "project-a") {
+	if err != nil || principal.ID == f.humanID || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 		t.Fatalf("invalid attenuated API grant: %+v %v", principal, err)
 	}
 	if _, err := f.s.authenticateResource(t.Context(), access, f.host.URL+"/mcp"); err == nil {
@@ -759,7 +760,7 @@ func TestInteractiveOIDCAdministratorUsesSameDurableAccount(t *testing.T) {
 	f.resource = f.host.URL + "/api/v1"
 	access := f.issueToken(t, "*")
 	principal, err := f.s.authenticateResource(t.Context(), access, f.resource)
-	if err != nil || !principal.admin() {
+	if err != nil || !principal.Admin() {
 		t.Fatal("invited administrator could not authorize a tool", err)
 	}
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), f.humanID); err != nil {
@@ -796,7 +797,7 @@ func TestInteractiveOIDCStatusTracksConfiguredLoginMethods(t *testing.T) {
 	t.Parallel()
 	for _, otp := range []bool{false, true} {
 		f := newOIDCFixtureWithOTP(t, otp)
-		ctx := context.WithValue(t.Context(), actorContextKey{}, actor{Permissions: []string{"management:read"}})
+		ctx := context.WithValue(t.Context(), actorContextKey{}, auth.Principal{Permissions: []string{"management:read"}})
 		status, err := f.s.getInstanceStatus(ctx, &struct{}{})
 		if err != nil {
 			t.Fatal(err)
@@ -823,7 +824,7 @@ func TestInteractiveOIDCConfiguredAdministratorWithoutSMTP(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	human, err := s.oidcHuman(t.Context(), "operator-subject", "operator@example.test")
-	if err != nil || !human.admin() || s.oauth.config.Email.SendCode != nil {
+	if err != nil || !human.Admin() || s.oauth.config.Email.SendCode != nil {
 		t.Fatal("configured OIDC-only administrator unavailable", err)
 	}
 	if _, err := s.oidcHuman(t.Context(), "uninvited-subject", "uninvited@example.test"); err == nil {
@@ -846,7 +847,7 @@ func TestOIDCVerifiedEmailAuthority(t *testing.T) {
 		{"configured-provider", "https://sso.example", "reader@company.example", "", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			email, err := oidcVerifiedEmail(tc.issuer, upstreamOIDCClaims{Email: tc.email, EmailVerified: tc.verified, HostedDomain: tc.domain})
+			email, err := auth.VerifiedOIDCEmail(tc.issuer, auth.OIDCClaims{Email: tc.email, EmailVerified: tc.verified, HostedDomain: tc.domain})
 			if (err == nil) != tc.allowed || tc.allowed && email != tc.email {
 				t.Fatalf("email authority result=%q, %v", email, err)
 			}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
@@ -63,7 +65,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ensureProjectLocal(t.Context(), project, actor{ID: consent}); err != nil {
+	if err := s.ensureProjectLocal(t.Context(), project, auth.Principal{ID: consent}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`UPDATE pipelines SET actor_id=$1 WHERE id=$2`, consent, expiredPipeline); err != nil {

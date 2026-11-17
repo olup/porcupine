@@ -141,7 +141,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 		}
 	}
 	record, err := loadEmailHuman(t.Context(), s.control, h.ID)
-	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.projectPermissions) != 1 {
+	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.ProjectPermissions) != 1 {
 		t.Fatal(record, err)
 	}
 	runProjectPurge(t, s, keep, true)
@@ -209,7 +209,12 @@ func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: &interactiveOIDC{issuer: "https://identity.example"}}}
+	provider := newOIDCMock(t)
+	upstream, err := newInteractiveOIDC(&OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"}, "http://127.0.0.1:9000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: upstream}}
 	if _, err := seeder.oidcHuman(t.Context(), "member", human.Email); err != nil {
 		t.Fatal(err)
 	}

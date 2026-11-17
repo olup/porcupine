@@ -108,7 +108,7 @@ func (s *Service) oauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, scopePresent := form["scope"]
-	scope, err := oauthScope(client.actor, form.Get("scope"), scopePresent)
+	scope, err := oauthScope(client.Principal, form.Get("scope"), scopePresent)
 	if err != nil {
 		oauthTokenError(w, 400, "invalid_scope")
 		return

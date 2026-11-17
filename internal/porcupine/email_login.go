@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const (
@@ -97,7 +99,7 @@ func (s *Service) startEmailLogin(w http.ResponseWriter, request oauthAuthorizat
 	provider := ""
 	if s.oauth.oidc != nil {
 		provider = "identity provider"
-		if s.oauth.oidc.issuer == "https://accounts.google.com" {
+		if s.oauth.oidc.provider.Issuer() == "https://accounts.google.com" {
 			provider = "Google"
 		}
 	}
@@ -144,7 +146,7 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 		expiry = session.expires
 	}
 	challenge := emailChallenge{attemptsLeft: emailCodeAttempts, expires: expiry, digest: sha256.Sum256([]byte(session.csrf + code))}
-	email, err := normalizeEmail(r.PostForm.Get("email"))
+	email, err := auth.NormalizeEmail(r.PostForm.Get("email"))
 	ip, ipErr := s.clientIP(r)
 	send := false
 	var finishDelivery func()

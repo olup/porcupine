@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/danielgtaylor/huma/v2"
 	"strings"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 )
 
@@ -74,9 +75,9 @@ type PipelineRetry struct {
 }
 type PipelineRetryOutput struct{ Body PipelineRetry }
 
-func (s *Service) registerPipelines(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
-	read := operationAccess{Permission: "pipelines:read", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}
-	write := operationAccess{Permission: "pipelines:write", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}
+func (s *Service) registerPipelines(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	read := auth.OperationAccess{Permission: "pipelines:read", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}
+	write := auth.OperationAccess{Permission: "pipelines:write", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}
 	base := "/api/v1/projects/{id}/pipelines"
 	huma.Register(api, op("create-pipeline", "POST", base, "Create a project egress pipeline; credentials are encrypted and never returned", write, 201), s.createPipeline)
 	huma.Register(api, op("list-pipelines", "GET", base, "List project pipeline metadata without destination URLs or credentials", read, 200), s.listPipelines)

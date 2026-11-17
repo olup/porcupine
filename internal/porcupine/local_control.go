@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func validateLocalDatabasePaths(journal, control string) error {
@@ -144,7 +146,7 @@ func (s *Service) bindLocalControl(ctx context.Context) error {
 // The admission lock covers this refresh and the journal commit, so competing
 // requests cannot replace a newer policy snapshot with an older one.
 func (s *Service) prepareLocalAcceptance(ctx context.Context, project string) error {
-	return s.ensureProjectLocal(ctx, project, actor{})
+	return s.ensureProjectLocal(ctx, project, auth.Principal{})
 }
 
 // The journal is the durable accounting ledger. Control holds only its replayable

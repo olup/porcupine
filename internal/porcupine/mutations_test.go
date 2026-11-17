@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func mutationContext(id string) context.Context {
-	return context.WithValue(context.Background(), actorContextKey{}, actor{ID: id, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
+	return context.WithValue(context.Background(), actorContextKey{}, auth.Principal{ID: id, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
 }
 
 func mutationErrorStatus(t *testing.T, err error, status int) {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
-func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (actor, error) {
+func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (auth.Principal, error) {
 	if s.oauth == nil || s.oauth.browser == nil {
-		return actor{}, errors.New("interactive authorization disabled")
+		return auth.Principal{}, errors.New("interactive authorization disabled")
 	}
 	return loadEmailHuman(ctx, query, humanID)
 }
@@ -17,7 +19,7 @@ func (s *Service) oidcHuman(ctx context.Context, subject, email string) (authent
 	if s.oauth == nil || s.oauth.oidc == nil || subject == "" || len(subject) > 512 {
 		return authenticatedHuman{}, errors.New("identity provider login unavailable")
 	}
-	email, err := normalizeEmail(email)
+	email, err := auth.NormalizeEmail(email)
 	if err != nil {
 		return authenticatedHuman{}, errors.New("invalid verified identity")
 	}
@@ -32,7 +34,7 @@ func (s *Service) oidcHuman(ctx context.Context, subject, email string) (authent
 	var id, linkedEmail, invitedEmail string
 	err = tx.QueryRowContext(ctx, `SELECT i.principal_id,i.linked_email,h.email
 FROM oidc_identities i JOIN email_humans h ON h.principal_id=i.principal_id
-WHERE i.issuer=$1 AND i.subject=$2`, s.oauth.oidc.issuer, subject).Scan(&id, &linkedEmail, &invitedEmail)
+WHERE i.issuer=$1 AND i.subject=$2`, s.oauth.oidc.provider.Issuer(), subject).Scan(&id, &linkedEmail, &invitedEmail)
 	switch {
 	case err == nil:
 		if email != linkedEmail || email != invitedEmail {
@@ -45,7 +47,7 @@ JOIN access_keys k ON k.id=h.principal_id WHERE h.email=$1 AND k.revoked_at IS N
 			return authenticatedHuman{}, errors.New("account is not authorized")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO oidc_identities(id,issuer,subject,principal_id,linked_email,created_at)
-VALUES($1,$2,$3,$4,$5,$6)`, newID(), s.oauth.oidc.issuer, subject, id, email, now()); err != nil {
+VALUES($1,$2,$3,$4,$5,$6)`, newID(), s.oauth.oidc.provider.Issuer(), subject, id, email, now()); err != nil {
 			return authenticatedHuman{}, errors.New("provider identity cannot be linked")
 		}
 	default:
@@ -62,7 +64,7 @@ VALUES($1,$2,$3,$4,$5,$6)`, newID(), s.oauth.oidc.issuer, subject, id, email, no
 	if err := tx.Commit(); err != nil {
 		return authenticatedHuman{}, err
 	}
-	return authenticatedHuman{actor: human, proof: humanLoginProof{Version: version, Verified: true}}, nil
+	return authenticatedHuman{Principal: human, proof: humanLoginProof{Version: version, Verified: true}}, nil
 }
 
 type humanLoginProof struct {
@@ -71,7 +73,7 @@ type humanLoginProof struct {
 }
 
 type authenticatedHuman struct {
-	actor
+	auth.Principal
 	proof humanLoginProof
 }
 

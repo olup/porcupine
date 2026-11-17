@@ -120,7 +120,7 @@ AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND grant
 			result.Status = "degraded"
 		}
 	}
-	if s.lake != nil && principal(ctx).admin() {
+	if s.lake != nil && principal(ctx).Admin() {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
 		status, err := s.lake.CleanupStatus(probe)
 		cancel()
@@ -133,7 +133,7 @@ AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND grant
 			result.Status = "degraded"
 		}
 	}
-	if s.backups != nil && principal(ctx).admin() {
+	if s.backups != nil && principal(ctx).Admin() {
 		result.NativeBackup = s.nativeBackupStatus()
 		if result.NativeBackup != nil && (result.NativeBackup.State == "failed" || result.NativeBackup.State == "interrupted") {
 			result.Status = "degraded"

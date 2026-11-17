@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 // Native tools on the user's device can start PKCE without a client secret.
@@ -19,7 +21,7 @@ func (s *Service) initializeLocalEmailClients(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := registerLocalEmailClient(ctx, tx, "porcupine-local", "Porcupine local project access", projectPermissionNames); err != nil {
+	if err := registerLocalEmailClient(ctx, tx, "porcupine-local", "Porcupine local project access", auth.ProjectPermissions()); err != nil {
 		return err
 	}
 	if err := registerLocalEmailClient(ctx, tx, "porcupine-local-admin", "Porcupine local administration", []string{"instance:admin"}); err != nil {

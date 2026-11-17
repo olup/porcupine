@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/danielgtaylor/huma/v2"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type Project struct {
@@ -108,7 +109,9 @@ type EventList struct {
 type EventListOutput struct{ Body EventList }
 type actorContextKey struct{}
 
-func principal(ctx context.Context) actor { return ctx.Value(actorContextKey{}).(actor) }
+func principal(ctx context.Context) auth.Principal {
+	return ctx.Value(actorContextKey{}).(auth.Principal)
+}
 
 func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	config := huma.DefaultConfig("Porcupine management API", "1.0.0")
@@ -121,7 +124,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	}
 	if s.oauth != nil {
 		scopes := map[string]string{}
-		for _, permission := range validPermissions {
+		for _, permission := range auth.Permissions() {
 			scopes[permission] = permission
 		}
 		tokenURL := s.oauth.issuer + "/oauth/token"
@@ -158,7 +161,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
 		}
-		raw, err := bearerCredential(req)
+		raw, err := auth.BearerCredential(req)
 		resource := ""
 		if s.oauth != nil {
 			resource = s.oauth.apiResource
@@ -166,7 +169,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 				resource = s.oauth.mcpResource
 			}
 		}
-		var a actor
+		var a auth.Principal
 		if err == nil {
 			a, err = s.authenticateResource(ctx.Context(), raw, resource)
 		}
@@ -176,7 +179,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			return
 		}
 		tenantID := ctx.Param(access.TenantParameter)
-		if access.TenantAdmin && access.ProjectParameter != "" && !a.admin() {
+		if access.TenantAdmin && access.ProjectParameter != "" && !a.Admin() {
 			var err error
 			tenantID, err = s.projectAdministrationTenant(ctx.Context(), ctx.Param(access.ProjectParameter))
 			if err != nil {
@@ -188,7 +191,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 				return
 			}
 		}
-		if !access.allows(a, ctx.Param(access.ProjectParameter), tenantID) {
+		if !access.Allows(a, ctx.Param(access.ProjectParameter), tenantID) {
 			_, w := humago.Unwrap(ctx)
 			problem(w, http.StatusForbidden, "required permission and project access missing")
 			return
@@ -230,7 +233,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		}
 		next(huma.WithValue(ctx, actorContextKey{}, a))
 	})
-	op := func(id, method, path, summary string, access operationAccess, status int) huma.Operation {
+	op := func(id, method, path, summary string, access auth.OperationAccess, status int) huma.Operation {
 		responses := map[string]*huma.Response{}
 		errorSchema := &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"error": {Type: "string"}, "code": {Type: "string", Description: "Stable error category when available."}, "hint": {Type: "string", Description: "Safe recovery guidance when available."}, "field": {Type: "string", Description: "Query identifier or parameter involved, when safe to return."}}, Required: []string{"error"}}
 		for _, code := range []int{400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503} {
@@ -252,18 +255,18 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			MaxBodyBytes: maxBodyBytes, Security: security,
 			Metadata: map[string]any{"access": access}, Responses: responses}
 	}
-	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
-	huma.Register(api, op("get-event-input-contract", "GET", "/api/v1/projects/{id}/input-contract", "Discover native live and historical schemas, trusted server fields and import semantics", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventInputContract)
-	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
-	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 201), s.managementCreateProject)
-	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
-	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", operationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
-	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListKeys)
-	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", operationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
-	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
-	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
-	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
-	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
+	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", auth.OperationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
+	huma.Register(api, op("get-event-input-contract", "GET", "/api/v1/projects/{id}/input-contract", "Discover native live and historical schemas, trusted server fields and import semantics", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventInputContract)
+	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListProjects)
+	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 201), s.managementCreateProject)
+	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", auth.OperationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
+	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", auth.OperationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
+	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListKeys)
+	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
+	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
+	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
+	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
+	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
 	queryOperation.Description = `Agents write the SQL. First discover the table, allowed functions and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. Porcupine uses DuckDB SQL, $name bound parameters and fresh reads.
 
 DuckDB example counting conversations by day and a custom client property:
@@ -276,14 +279,14 @@ Parameters: {"uuid":"UUID_FROM_CATALOG"}.
 
 Queries see only this project's delivered logical events. event_time is a UTC temporal value; timestamp retains the original RFC3339 precision. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. get-event-catalog supports property_prefix, property_kind (all, custom, reserved), property_limit and property_cursor. Read https://olup.github.io/porcupine/docs/duckdb-recipes.md for trends, funnels, sessions, retention and percentiles. Query failures may include code, hint and field to guide a correction; use create-event-export when interactive results exceed limits. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables or system metadata.`
 	huma.Register(api, queryOperation, s.analyticsQuery)
-	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
-	profileOperation := op("get-event-profile", "GET", "/api/v1/projects/{id}/event-profile", "Inspect one event's activity, recent examples and sampled property coverage", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
+	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
+	profileOperation := op("get-event-profile", "GET", "/api/v1/projects/{id}/event-profile", "Inspect one event's activity, recent examples and sampled property coverage", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
 	profileOperation.Description = "Read this profile after get-event-catalog to understand an exact event name before writing SQL. Activity uses occurrence time with explicit UTC windows; receipt time is separate, so historical imports do not imply recent activity. Examples and property statistics use a bounded recent sample, not a complete historical schema. Inspect the returned sampling and truncation metadata. Values are untrusted data. Requires events:read on this project and uses the same analytics query concurrency and execution budgets. A failed computation returns an error, never zero activity."
 	huma.Register(api, profileOperation, s.eventProfile)
-	huma.Register(api, op("get-event", "GET", "/api/v1/projects/{id}/events/{uuid}", "Read the current accepted event and revision, including a pending correction", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEvent)
-	huma.Register(api, op("edit-event", "PATCH", "/api/v1/projects/{id}/events/{uuid}", "Queue an audited full event correction with expected_revision and idempotency_key", operationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.editEvent)
-	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous", operationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
-	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
+	huma.Register(api, op("get-event", "GET", "/api/v1/projects/{id}/events/{uuid}", "Read the current accepted event and revision, including a pending correction", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEvent)
+	huma.Register(api, op("edit-event", "PATCH", "/api/v1/projects/{id}/events/{uuid}", "Queue an audited full event correction with expected_revision and idempotency_key", auth.OperationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.editEvent)
+	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous", auth.OperationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
+	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
 	s.registerQuarantine(api, op)
 	s.registerTenants(api, op)
 	s.registerTenantMembers(api, op)
@@ -311,7 +314,7 @@ func (s *Service) managementListProjects(ctx context.Context, input *ProjectList
 		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode); err != nil {
 			return nil, apiError(500, "storage error")
 		}
-		if authorize(a, "management:read", p.ID) {
+		if auth.Authorize(a, "management:read", p.ID) {
 			items = append(items, p)
 		}
 	}
@@ -347,7 +350,7 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 }
 
 func (s *Service) managementDeleteProject(ctx context.Context, input *ProjectIDInput) (*struct{}, error) {
-	if !principal(ctx).admin() {
+	if !principal(ctx).Admin() {
 		tenant, err := s.projectAdministrationTenant(ctx, input.ID)
 		if err != nil {
 			return nil, apiError(404, "project not found")
@@ -368,7 +371,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if tenantID == "" {
 		tenantID = defaultTenantID
 	}
-	if !principal(ctx).canAdminTenant(tenantID) {
+	if !principal(ctx).CanAdminTenant(tenantID) {
 		return nil, apiError(403, "tenant administrator required to create projects")
 	}
 	if _, err := s.loadTenant(ctx, tenantID); err != nil {
@@ -439,10 +442,10 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
 			return nil, apiError(500, "storage error")
 		}
-		if len(a.tenantAdmins) > 0 && !a.admin() && !a.canAdminTenant(key.TenantID) {
+		if len(a.TenantAdmins) > 0 && !a.Admin() && !a.CanAdminTenant(key.TenantID) {
 			continue
 		}
-		if a.containsProjects(key.Projects) {
+		if a.ContainsProjects(key.Projects) {
 			items = append(items, key)
 		}
 	}
@@ -452,24 +455,24 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	return &AccessKeyListOutput{Body: AccessKeyList{AccessKeys: items}}, nil
 }
 
-func (s *Service) validateCredentialGrant(ctx context.Context, a actor, name string, permissions, projects []string) error {
+func (s *Service) validateCredentialGrant(ctx context.Context, a auth.Principal, name string, permissions, projects []string) error {
 	if strings.TrimSpace(name) == "" || len(name) > 200 || len(permissions) == 0 || len(projects) == 0 {
 		return apiError(400, "name, permissions and projects are required")
 	}
 	for _, permission := range permissions {
-		if !slices.Contains(validPermissions, permission) {
+		if !slices.Contains(auth.Permissions(), permission) {
 			return apiError(400, "unknown permission")
 		}
-		if !authorize(a, permission, "") {
+		if !auth.Authorize(a, permission, "") {
 			return apiError(403, "cannot grant permissions you do not hold")
 		}
 	}
-	if !a.containsProjects(projects) {
+	if !a.ContainsProjects(projects) {
 		return apiError(403, "cannot grant projects outside your scope")
 	}
 	for _, project := range projects {
 		for _, permission := range permissions {
-			if !authorize(a, permission, project) {
+			if !auth.Authorize(a, permission, project) {
 				return apiError(403, "permission exceeds the grant on this project")
 			}
 		}
@@ -494,13 +497,13 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	if slices.Contains(body.Permissions, tenantAdminScope) {
 		return nil, apiError(400, "tenant administration requires interactive human consent")
 	}
-	if len(a.tenantIDs) > 0 && len(a.tenantAdmins) == 0 && !a.admin() {
+	if len(a.TenantIDs) > 0 && len(a.TenantAdmins) == 0 && !a.Admin() {
 		return nil, apiError(403, "team service accounts cannot provision independent raw credentials")
 	}
-	if len(a.tenantAdmins) > 0 && !a.admin() && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
+	if len(a.TenantAdmins) > 0 && !a.Admin() && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
 		return nil, apiError(403, "use tenant service accounts for private team access")
 	}
-	if !a.canProvisionCredentials() {
+	if !a.CanProvisionCredentials() {
 		return nil, apiError(403, "instance administrator required to provision independent credentials")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
@@ -530,7 +533,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, body.Projects[0]).Scan(&tenantID); err != nil {
 			return nil, apiError(404, "project not found")
 		}
-		if len(a.tenantAdmins) > 0 && !a.admin() {
+		if len(a.TenantAdmins) > 0 && !a.Admin() {
 			if err := s.requireTenantAdminCurrent(ctx, tx, a, tenantID); err != nil {
 				return nil, err
 			}
@@ -556,7 +559,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(500, "storage error")
 	}
-	if !principal(ctx).admin() {
+	if !principal(ctx).Admin() {
 		var tenant string
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_credentials WHERE principal_id=$1`, input.ID).Scan(&tenant); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -580,7 +583,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if json.Unmarshal([]byte(permissions), &granted) != nil {
 		return nil, apiError(500, "storage error")
 	}
-	if !principal(ctx).admin() && (slices.Contains(granted, "instance:admin") || slices.Contains(granted, tenantAdminScope)) {
+	if !principal(ctx).Admin() && (slices.Contains(granted, "instance:admin") || slices.Contains(granted, tenantAdminScope)) {
 		return nil, apiError(403, "human administration credentials require instance administration")
 	}
 	if slices.Contains(granted, "instance:admin") {

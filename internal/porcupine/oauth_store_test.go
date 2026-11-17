@@ -35,7 +35,7 @@ func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
 	}
 	defer s.Close()
 	loaded, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
-	if err != nil || loaded.ID != principal.ID || !loaded.admin() {
+	if err != nil || loaded.ID != principal.ID || !loaded.Admin() {
 		t.Fatal("OAuth persistence lost original principal or grants", err)
 	}
 	oauthProtocolRequest(t, s, "bootstrap", config.BootstrapToken, oauthGrantForm(), 401)

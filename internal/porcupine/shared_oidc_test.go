@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/oauth2"
 )
 
@@ -112,7 +113,7 @@ func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
 	access := fixture.issueToken(t, "project-a")
 	for _, worker := range []*Service{a, b} {
 		principal, err := worker.authenticateResource(ctx, access, issuer+"/mcp")
-		if err != nil || !authorize(principal, "events:read", "project-a") || authorize(principal, "events:read", "project-b") || authorize(principal, "events:write", "project-a") {
+		if err != nil || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 			t.Fatalf("cross-worker OIDC grant escaped scope: %+v %v", principal, err)
 		}
 		linked, err := worker.oidcHuman(ctx, "operator-subject", human.Email)

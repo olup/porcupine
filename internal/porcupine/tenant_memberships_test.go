@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) {
@@ -21,7 +23,7 @@ func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) 
 	if other := invite(b, tenantTestBody(t, map[string]any{"email": "analyst@example.test", "role": "member", "project_scope": "selected", "grants": []map[string]string{{"project_id": projectB, "role": "contributor"}}})); other != human {
 		t.Fatal("one mailbox created separate human identities for two tenants")
 	}
-	load := func() actor {
+	load := func() auth.Principal {
 		t.Helper()
 		a, err := loadEmailHuman(t.Context(), f.s.control, human)
 		if err != nil {
@@ -34,7 +36,7 @@ func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) 
 		permission, project string
 		want                bool
 	}{{"events:read", projectA, true}, {"events:write", projectA, false}, {"events:write", projectB, true}, {"events:delete", projectB, false}, {"management:write", projectA, false}} {
-		if got := authorize(current, tc.permission, tc.project); got != tc.want {
+		if got := auth.Authorize(current, tc.permission, tc.project); got != tc.want {
 			t.Fatalf("permission union crossed a project boundary: %s %s=%v", tc.permission, tc.project, got)
 		}
 	}
@@ -43,7 +45,7 @@ func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) 
 	}
 	var future ProjectCreated
 	f.call(t, "POST", "/api/v1/projects", operator, map[string]string{"name": "future", "tenant_id": a}, 201, &future)
-	if authorize(load(), "events:read", future.Project.ID) {
+	if auth.Authorize(load(), "events:read", future.Project.ID) {
 		t.Fatal("selected-project membership included a future project")
 	}
 	request(t, f.s, "DELETE", "/api/v1/projects/"+projectA, operator, "", 204)
@@ -52,12 +54,12 @@ func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) 
 		t.Fatal("project deletion retained a dangling membership grant")
 	}
 	request(t, f.s, "PUT", "/api/v1/tenants/"+a+"/members/"+human, operator, `{"role":"member","project_scope":"all","project_role":"reader"}`, 200)
-	if !authorize(load(), "events:read", future.Project.ID) || authorize(load(), "events:write", future.Project.ID) {
+	if !auth.Authorize(load(), "events:read", future.Project.ID) || auth.Authorize(load(), "events:write", future.Project.ID) {
 		t.Fatal("all-project membership lost its default read-only permissions")
 	}
 	request(t, f.s, "DELETE", "/api/v1/tenants/"+a+"/members/"+human, operator, "", 204)
 	current = load()
-	if authorize(current, "events:read", projectA) || !authorize(current, "events:write", projectB) {
+	if auth.Authorize(current, "events:read", projectA) || !auth.Authorize(current, "events:write", projectB) {
 		t.Fatal("revoking one membership changed another tenant's authority")
 	}
 	var revoked *string
@@ -151,8 +153,8 @@ func TestTenantMembershipConcurrentLastAdminProtectionAndScopeAttenuation(t *tes
 	if err := f.s.control.QueryRow(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND role='admin' AND revoked_at IS NULL`, tenant).Scan(&active); err != nil || active != 1 {
 		t.Fatal("tenant lost its last active administrator")
 	}
-	current := actor{Permissions: []string{"events:read", "management:read"}, tenantAdmins: []string{tenant}, tenantIDs: []string{tenant}, interactive: true}
-	if current.canAdminTenant(tenant) || current.canProvisionCredentials() {
+	current := auth.Principal{Permissions: []string{"events:read", "management:read"}, TenantAdmins: []string{tenant}, TenantIDs: []string{tenant}, Interactive: true}
+	if current.CanAdminTenant(tenant) || current.CanProvisionCredentials() {
 		t.Fatal("a read token retained administrative authority from role metadata")
 	}
 	page := request(t, f.s, "GET", base+"?limit=1", operator, "", 200)

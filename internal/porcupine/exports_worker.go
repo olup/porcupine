@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 var (
@@ -76,7 +78,7 @@ func (s *Service) exportsLoop(ctx context.Context) {
 			continue
 		}
 		actor, err := s.exportActor(ctx, job.ActorID)
-		if err != nil || !authorize(actor, "events:read", job.ProjectID) {
+		if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 			s.terminalExport(job, ExportCanceled, "creator_revoked")
 			continue
 		}
@@ -241,7 +243,7 @@ func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error
 		return errExportCanceled
 	}
 	actor, err := s.exportActor(ctx, job.ActorID)
-	if err != nil || !authorize(actor, "events:read", job.ProjectID) {
+	if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 		return errExportRevoked
 	}
 	pressure, err := s.exportPressure(ctx)
@@ -295,7 +297,7 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 	if err != nil {
 		return errExportSink
 	}
-	if !authorize(current, "events:read", job.ProjectID) {
+	if !auth.Authorize(current, "events:read", job.ProjectID) {
 		return errExportRevoked
 	}
 	completed := s.clock().UTC()
@@ -323,7 +325,7 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 	switch {
 	case err == nil && current.CancelRequested:
 		state, code = ExportCanceled, "canceled"
-	case actorErr != nil || !authorize(actor, "events:read", job.ProjectID):
+	case actorErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID):
 		state, code = ExportCanceled, "creator_revoked"
 	case errors.Is(failure, errExportRevoked):
 		state, code = ExportCanceled, "creator_revoked"
