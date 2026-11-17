@@ -107,6 +107,10 @@ func TestDuckLakeS3SharedPostgresRecoverySealAndACK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var legacyGeneration uint64
+	if err := a.Projects[key.ProjectID].DB.QueryRowContext(ctx, "SELECT generation FROM lake.project_write_guard WHERE id=1").Scan(&legacyGeneration); err != nil {
+		t.Fatal(err)
+	}
 	owner := acquireFenceSession(t, coordinator, key)
 	fence := owner.Fence(scope.StreamID)
 	if err := a.AdvanceWriteFence(ctx, fence); err != nil {
@@ -172,6 +176,13 @@ func TestDuckLakeS3SharedPostgresRecoverySealAndACK(t *testing.T) {
 		t.Fatal(page, err)
 	}
 	p := b.Projects[key.ProjectID]
+	var currentLegacyGeneration uint64
+	if err := p.DB.QueryRowContext(ctx, "SELECT generation FROM lake.project_write_guard WHERE id=1").Scan(&currentLegacyGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if currentLegacyGeneration != legacyGeneration {
+		t.Fatalf("a hosted write rewrote the legacy guard: generation %d to %d", legacyGeneration, currentLegacyGeneration)
+	}
 	var proofs int
 	if err := p.DB.QueryRowContext(ctx, `SELECT count(*) FROM lake.native_commit_proofs`).Scan(&proofs); err != nil || proofs != 2 {
 		t.Fatal("ACK pruned proof", proofs, err)
