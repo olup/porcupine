@@ -456,8 +456,9 @@ func TestDuckLakeS3SlowProjectDeletionLeavesOtherProjectsAvailable(t *testing.T)
 	}
 }
 
+// Serial: a 300 ms deadline must reach the remote read before CPU contention
+// from parallel tests delays the catalog open.
 func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
-	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
