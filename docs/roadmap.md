@@ -14,6 +14,7 @@
 - Read-only MCP tools `porcupine_schema` and `porcupine_query` for analysis. Clients can approve them without approving the generic `porcupine_call`. [MCP](mcp.md)
 - Removed inert ClickHouse-era API fields: `use_cache` in `query-events` (now rejected), `sql.result_cache` and the zero scan-quota limits in `get-event-schema`, and the zero read and temporary-disk limits in exports.
 - Versioned schema migrations for the journal, local control and shared control databases. Newer or unknown databases are refused before any change, and restores accept older versions. [Schema versions](storage.md#unreleased-schema-versions)
+- Bounded retry receipts: `PORCUPINE_RECEIPT_RETENTION` (default 30 days, `0` keeps all). Older events are deduplicated against DuckLake event heads, including during imports. [Receipts](receipts.md#bounded-receipts)
 - A fresh data directory is required. Pre-tenant SQLite databases are rejected; no legacy migration or compatibility layer is included.
 
 The default remains a single-process SQLite deployment. Optional shared mode is implementation work, not a released hosting guarantee. Hosted billing, tenant-wide rate limiting, replicated acceptance, automatic owner failover, and separately provisioned analytical compute remain future work below. None of these unreleased changes is included in the published v0.14.0 release.
@@ -82,6 +83,7 @@ database writes. Payment integration follows that contract validation.
 
 ## Other planned improvements
 
+- Per-project fairness in the shared ingestion queue: a burst from one project can fill the instance-wide event and byte budget and make every project receive 503. Monthly tenant allowances do not prevent this.
 - Editable documentation for event definitions and their properties, scoped to a
   project and available through API, CLI, MCP, and existing discovery responses.
   Record the author and last modification time. Documentation remains optional

@@ -89,7 +89,12 @@ func main() {
 		slog.Error("shared deployment configuration", "error", err)
 		os.Exit(1)
 	}
-	s, err := porcupine.Open(porcupine.Config{DBPath: os.Getenv("PORCUPINE_DB"), ControlDBPath: os.Getenv("PORCUPINE_CONTROL_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig})
+	receiptRetention, err := receiptRetentionFromEnvironment()
+	if err != nil {
+		slog.Error("receipt configuration", "error", err)
+		os.Exit(1)
+	}
+	s, err := porcupine.Open(porcupine.Config{ReceiptRetention: receiptRetention, DBPath: os.Getenv("PORCUPINE_DB"), ControlDBPath: os.Getenv("PORCUPINE_CONTROL_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig})
 	if err != nil {
 		slog.Error("open storage", "error", err)
 		os.Exit(1)
@@ -121,6 +126,22 @@ func queueMaxBytesFromEnvironment() (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
 		return 0, errors.New("PORCUPINE_QUEUE_MAX_BYTES must be a positive integer")
+	}
+	return value, nil
+}
+
+// receiptRetentionFromEnvironment bounds local retry receipts; "0" keeps them all.
+func receiptRetentionFromEnvironment() (time.Duration, error) {
+	raw := os.Getenv("PORCUPINE_RECEIPT_RETENTION")
+	if raw == "" {
+		return 30 * 24 * time.Hour, nil
+	}
+	if raw == "0" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 24*time.Hour {
+		return 0, errors.New("PORCUPINE_RECEIPT_RETENTION must be 0 or a duration of at least 24h")
 	}
 	return value, nil
 }

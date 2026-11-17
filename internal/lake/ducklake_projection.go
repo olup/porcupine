@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -398,4 +399,43 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 	}
 	projection.IdentitySnapshot = identity
 	return projection, nil
+}
+
+// KnownEvents returns the event IDs of the given UUIDs already projected in a
+// project, deleted events included. Acceptance uses it once local receipts
+// have been pruned.
+func (s *DuckLakeStore) KnownEvents(ctx context.Context, project string, uuids []string) (map[string]int64, error) {
+	known := map[string]int64{}
+	if len(uuids) == 0 {
+		return known, nil
+	}
+	p, release, err := s.LeaseProject(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	for start := 0; start < len(uuids); start += 500 {
+		chunk := uuids[start:min(start+500, len(uuids))]
+		args := make([]any, len(chunk))
+		for i, uuid := range chunk {
+			args[i] = uuid
+		}
+		rows, err := p.DB.QueryContext(ctx, "SELECT uuid,event_id FROM lake.heads WHERE uuid IN (?"+strings.Repeat(",?", len(chunk)-1)+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var uuid string
+			var id int64
+			if err := rows.Scan(&uuid, &id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			known[uuid] = id
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+	}
+	return known, nil
 }

@@ -19,13 +19,6 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 		}
 		return nil
 	}
-	var foreignBackendState bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key IN ('projection_table_uuid','query_master_key'))").Scan(&foreignBackendState); err != nil {
-		return err
-	}
-	if foreignBackendState {
-		return errors.New("DuckLake requires a dedicated SQLite database; automatic migration from another analytical backend is not implemented")
-	}
 	actual, err := s.lake.SourceID(ctx)
 	if err != nil || actual == "" || (expected != "" && expected != actual) {
 		return errors.New("DuckLake archive identity does not match the acceptance database")
@@ -46,6 +39,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 		defer close(s.lakeMaintenanceDone)
 		timer := time.NewTimer(interval)
 		defer timer.Stop()
+		var lastPrune time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -56,6 +50,12 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 				stop()
 				if ctx.Err() != nil {
 					return
+				}
+				if time.Since(lastPrune) >= time.Hour {
+					lastPrune = time.Now()
+					if pruneErr := s.pruneReceipts(ctx); pruneErr != nil && err == nil {
+						err = pruneErr
+					}
 				}
 				if err != nil {
 					s.db.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('ducklake_maintenance_error','maintenance failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
