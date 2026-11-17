@@ -205,7 +205,10 @@ func TestReceiptPruningRequiresConfirmedAnalyticalHeads(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	s.receiptRetention = time.Nanosecond
+	s.receiptRetention = time.Hour
+	if _, err := s.db.Exec("UPDATE event_receipts SET recorded_at_ms=0 WHERE project_id=?", projectID); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.pruneReceipts(context.Background()); err != nil {
 		t.Fatal(err)
 	}

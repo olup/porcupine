@@ -154,7 +154,10 @@ func TestReceiptPruningCanceledLookupKeepsReceiptAndMarker(t *testing.T) {
 	a, writer := project(t, s)
 	nativeRequest(t, s, writer, `{"type":"track","message_id":"stable","name":"original"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	s.receiptRetention = time.Nanosecond
+	s.receiptRetention = time.Hour
+	if _, err := s.db.Exec("UPDATE event_receipts SET recorded_at_ms=0 WHERE project_id=?", a); err != nil {
+		t.Fatal(err)
+	}
 	blocked := &blockedReceiptLookup{LakeStore: s.lake, project: a, entered: make(chan struct{}), resume: make(chan struct{})}
 	s.lake = blocked
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,7 +189,10 @@ func TestReceiptPruningRechecksCandidatesAfterRemoteLookup(t *testing.T) {
 	a, writer := project(t, s)
 	nativeRequest(t, s, writer, `{"type":"track","message_id":"stable","name":"original"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	s.receiptRetention = time.Nanosecond
+	s.receiptRetention = time.Hour
+	if _, err := s.db.Exec("UPDATE event_receipts SET recorded_at_ms=0 WHERE project_id=?", a); err != nil {
+		t.Fatal(err)
+	}
 	resume := make(chan struct{})
 	var release sync.Once
 	defer release.Do(func() { close(resume) })
