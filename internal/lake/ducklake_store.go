@@ -466,6 +466,9 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	if _, err = db.ExecContext(ctx, duckLakeSchema); err != nil {
 		return fail(err)
 	}
+	if err = migrateLakeCatalog(ctx, db); err != nil {
+		return fail(err)
+	}
 	if s.SharedCatalog != nil {
 		if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.project_write_guard AS SELECT 1::INTEGER AS id, 0::UBIGINT AS generation, false AS deleted"); err != nil {
 			return fail(err)

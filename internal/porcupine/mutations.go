@@ -174,11 +174,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 				return eventProjection{}, false, apiError(503, "event storage unavailable")
 			}
 			event.Properties = json.RawMessage(properties)
-			snapshot, err := originalSnapshot(event)
-			if err != nil {
-				return eventProjection{}, false, apiError(503, "event storage unavailable")
-			}
-			return eventProjection{Event: event, OriginalSnapshot: snapshot}, false, nil
+			return eventProjection{Event: event}, false, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return eventProjection{}, false, apiError(503, "event storage unavailable")

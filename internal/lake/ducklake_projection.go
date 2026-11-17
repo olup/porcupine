@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ CREATE TABLE IF NOT EXISTS lake.current_events (
  properties VARCHAR, timestamp VARCHAR, timestamp_ms BIGINT, event_time TIMESTAMPTZ,
  received_at VARCHAR, received_at_ms BIGINT, revision UBIGINT,
  source_id VARCHAR, message_id VARCHAR, event_type VARCHAR, context VARCHAR, is_imported UTINYINT,
- identity_snapshot VARCHAR, payload VARCHAR
+ identity_snapshot VARCHAR, original_snapshot VARCHAR
 );
 CREATE TABLE IF NOT EXISTS lake.identity_profiles (
  identified_id VARCHAR, version UBIGINT, traits VARCHAR
@@ -44,7 +45,6 @@ CREATE OR REPLACE VIEW events AS
 
 type PreparedLakeProjection struct {
 	projection EventProjection
-	payload    string
 	timestamp  time.Time
 	received   time.Time
 	identity   *IdentitySnapshot
@@ -67,7 +67,7 @@ func PrepareLakeProjection(p EventProjection) (PreparedLakeProjection, error) {
 	}
 	p.Event = EventWithMetadata(p.Event)
 	timestamp, err := time.Parse(time.RFC3339Nano, p.Timestamp)
-	if err != nil || !json.Valid(p.Properties) || !validEventContext(p.Context) || !json.Valid([]byte(p.OriginalSnapshot)) {
+	if err != nil || !json.Valid(p.Properties) || !validEventContext(p.Context) || (p.OriginalSnapshot != "" && !json.Valid([]byte(p.OriginalSnapshot))) {
 		return PreparedLakeProjection{}, errors.New("invalid DuckLake projection payload")
 	}
 	p.Timestamp = timestamp.UTC().Format(time.RFC3339Nano)
@@ -87,11 +87,7 @@ func PrepareLakeProjection(p EventProjection) (PreparedLakeProjection, error) {
 		}
 		prepared.identity = &snapshot
 	}
-	payload, err := json.Marshal(p)
-	if err != nil {
-		return PreparedLakeProjection{}, errors.New("cannot encode DuckLake projection")
-	}
-	prepared.projection, prepared.payload, prepared.timestamp = p, string(payload), timestamp.UTC()
+	prepared.projection, prepared.timestamp = p, timestamp.UTC()
 	return prepared, nil
 }
 
@@ -170,7 +166,7 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 			Timestamp: projection.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano),
 			ReceivedAtMS: prepared.received.UnixMilli(), SourceID: projection.SourceID, MessageID: projection.MessageID,
 			EventType: projection.EventType, Context: string(projection.Context), Imported: boolByte(projection.Imported),
-			Identity: projection.IdentitySnapshot, Payload: prepared.payload,
+			Identity: projection.IdentitySnapshot, OriginalSnapshot: projection.OriginalSnapshot,
 		}
 		if projection.IsDeleted {
 			row.EventTime, row.TimestampMS = "1970-01-01T00:00:00Z", 0
@@ -250,7 +246,7 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
  INSERT INTO lake.heads SELECT uuid,id,revision,is_deleted,received_at FROM _pc_changes;
  INSERT INTO lake.current_events
  SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,
- received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,payload
+ received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot
  FROM _pc_changes WHERE NOT is_deleted;
  DROP TABLE _pc_changes;
  DROP TABLE _pc_incoming;
@@ -261,26 +257,26 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 }
 
 type lakeProjectionRow struct {
-	UUID         string `json:"uuid"`
-	ID           int64  `json:"id"`
-	ProjectID    string `json:"project_id"`
-	Revision     uint64 `json:"revision"`
-	Deleted      bool   `json:"is_deleted"`
-	Event        string `json:"event"`
-	DistinctID   string `json:"distinct_id"`
-	Properties   string `json:"properties"`
-	Timestamp    string `json:"timestamp"`
-	TimestampMS  int64  `json:"timestamp_ms"`
-	EventTime    string `json:"event_time"`
-	ReceivedAt   string `json:"received_at"`
-	ReceivedAtMS int64  `json:"received_at_ms"`
-	SourceID     string `json:"source_id"`
-	MessageID    string `json:"message_id"`
-	EventType    string `json:"event_type"`
-	Context      string `json:"context"`
-	Imported     uint8  `json:"is_imported"`
-	Identity     string `json:"identity_snapshot"`
-	Payload      string `json:"payload"`
+	UUID             string `json:"uuid"`
+	ID               int64  `json:"id"`
+	ProjectID        string `json:"project_id"`
+	Revision         uint64 `json:"revision"`
+	Deleted          bool   `json:"is_deleted"`
+	Event            string `json:"event"`
+	DistinctID       string `json:"distinct_id"`
+	Properties       string `json:"properties"`
+	Timestamp        string `json:"timestamp"`
+	TimestampMS      int64  `json:"timestamp_ms"`
+	EventTime        string `json:"event_time"`
+	ReceivedAt       string `json:"received_at"`
+	ReceivedAtMS     int64  `json:"received_at_ms"`
+	SourceID         string `json:"source_id"`
+	MessageID        string `json:"message_id"`
+	EventType        string `json:"event_type"`
+	Context          string `json:"context"`
+	Imported         uint8  `json:"is_imported"`
+	Identity         string `json:"identity_snapshot"`
+	OriginalSnapshot string `json:"original_snapshot"`
 }
 
 const lakeStageProjections = `CREATE OR REPLACE TEMP TABLE _pc_incoming AS SELECT
@@ -304,7 +300,7 @@ const lakeStageProjections = `CREATE OR REPLACE TEMP TABLE _pc_incoming AS SELEC
  json_extract_string(value,'$.context') AS context,
  CAST(json_extract_string(value,'$.is_imported') AS UTINYINT) AS is_imported,
  json_extract_string(value,'$.identity_snapshot') AS identity_snapshot,
- json_extract_string(value,'$.payload') AS payload
+ json_extract_string(value,'$.original_snapshot') AS original_snapshot
  FROM json_each(CAST(? AS JSON))`
 
 func boolByte(v bool) uint8 {
@@ -388,16 +384,22 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 	if deleted {
 		return EventProjection{Event: Event{ID: id, ProjectID: project, UUID: uuid, ReceivedAt: received}, Revision: revision, IsDeleted: true}, nil
 	}
-	var payload, identity string
-	if err = tx.QueryRowContext(ctx, "SELECT payload,identity_snapshot FROM lake.current_events WHERE uuid=?", uuid).Scan(&payload, &identity); err != nil {
+	var e Event
+	var properties, context, original string
+	var storedRevision uint64
+	var imported uint8
+	err = tx.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,revision,
+ source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot FROM lake.current_events WHERE uuid=?`, uuid).Scan(
+		&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &properties, &e.Timestamp, &e.ReceivedAt, &storedRevision,
+		&e.SourceID, &e.MessageID, &e.EventType, &context, &imported, &e.IdentitySnapshot, &original)
+	if err != nil {
 		return EventProjection{}, err
 	}
-	var projection EventProjection
-	if json.Unmarshal([]byte(payload), &projection) != nil || projection.ProjectID != project || projection.UUID != uuid || projection.ID != id || projection.Revision != revision || projection.IsDeleted {
+	if e.ProjectID != project || e.ID != id || storedRevision != revision || !json.Valid([]byte(properties)) || !json.Valid([]byte(context)) {
 		return EventProjection{}, errors.New("invalid stored DuckLake projection")
 	}
-	projection.IdentitySnapshot = identity
-	return projection, nil
+	e.Properties, e.Context, e.Imported = json.RawMessage(properties), json.RawMessage(context), imported == 1
+	return EventProjection{Event: e, Revision: revision, OriginalSnapshot: original}, nil
 }
 
 // KnownEvents returns the event IDs of the given UUIDs already projected in a
@@ -437,4 +439,53 @@ func (s *DuckLakeStore) KnownEvents(ctx context.Context, project string, uuids [
 		}
 	}
 	return known, nil
+}
+
+// lakeSchemaVersion 2 replaced the duplicated payload column with
+// original_snapshot and partitions current events by month of occurrence.
+const lakeSchemaVersion = 2
+
+// migrateLakeCatalog upgrades one project catalog to lakeSchemaVersion. It is
+// a single read once the catalog is current.
+func migrateLakeCatalog(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.schema_version (version INTEGER NOT NULL)"); err != nil {
+		return err
+	}
+	var stored sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT max(version) FROM lake.schema_version").Scan(&stored); err != nil {
+		return err
+	}
+	version := int(stored.Int64)
+	if version > lakeSchemaVersion {
+		return fmt.Errorf("DuckLake catalog schema version %d is newer than this server supports (%d)", version, lakeSchemaVersion)
+	}
+	if version == lakeSchemaVersion {
+		return nil
+	}
+	// Each step is safe to repeat if the process stops before the version is
+	// recorded. DuckLake cannot repartition a table changed in the same transaction.
+	var legacy bool
+	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_columns() WHERE database_name='lake' AND table_name='current_events' AND column_name='payload'").Scan(&legacy); err != nil {
+		return err
+	}
+	if legacy {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, `ALTER TABLE lake.current_events ADD COLUMN IF NOT EXISTS original_snapshot VARCHAR;
+ UPDATE lake.current_events SET original_snapshot=coalesce(json_extract_string(payload,'$.OriginalSnapshot'),'');
+ ALTER TABLE lake.current_events DROP COLUMN payload`); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if _, err := db.ExecContext(ctx, "ALTER TABLE lake.current_events SET PARTITIONED BY (year(event_time), month(event_time))"); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "INSERT INTO lake.schema_version VALUES(?)", lakeSchemaVersion)
+	return err
 }
