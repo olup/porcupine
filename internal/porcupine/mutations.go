@@ -73,9 +73,10 @@ type MutationResponse struct {
 	UUID       string `json:"uuid"`
 	Revision   string `json:"revision"`
 	Operation  string `json:"operation"`
-	State      string `json:"state" doc:"pending means durably queued; applied means DuckLake committed the projection."`
+	State      string `json:"state" doc:"pending means durably queued; applied means DuckLake committed the projection; failed means a terminal error was recorded."`
 	CreatedAt  string `json:"created_at"`
 	AppliedAt  string `json:"applied_at,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty" doc:"Stable code for a terminal mutation failure."`
 }
 
 type MutationOutput struct{ Body MutationResponse }
@@ -135,9 +136,16 @@ func validateEventSnapshotActor(snapshot EventSnapshot, allowEmpty bool) (EventS
 }
 
 func (s *Service) getEvent(ctx context.Context, input *EventGetInput) (*EventGetOutput, error) {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
-	projection, pending, err := s.currentEvent(ctx, input.ID, input.UUID)
+	var projection lakeapi.EventProjection
+	var pending bool
+	var err error
+	if s.hostedMutations != nil {
+		projection, pending, err = s.hostedMutations.currentHostedEvent(ctx, input.ID, input.UUID)
+	} else {
+		s.mutationMu.Lock()
+		defer s.mutationMu.Unlock()
+		projection, pending, err = s.currentEvent(ctx, input.ID, input.UUID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +239,13 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 		return nil, apiError(400, "invalid event snapshot")
 	}
 	requestHash, keyHash := hash(string(canonical)), hash(key)
+	if s.hostedMutations != nil {
+		response, err := s.hostedMutations.acceptHostedMutation(ctx, project, uuid, operation, keyHash, requestHash, revision, snapshot, s.authorizeHostedMutation)
+		if err != nil {
+			return nil, err
+		}
+		return &MutationOutput{Body: response}, nil
+	}
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	previous, previousHash, err := s.findMutation(ctx, project, "idempotency_key_hash", keyHash)
@@ -250,21 +265,29 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	if err != nil {
 		return nil, err
 	}
+	projection, err := prepareMutation(current, pending, operation, revision, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	return s.commitMutation(ctx, projection, actorID, operation, keyHash, requestHash, revision)
+}
+
+func prepareMutation(current lakeapi.EventProjection, pending bool, operation string, revision uint64, snapshot *EventSnapshot) (lakeapi.EventProjection, error) {
 	if current.IdentitySnapshot != "" {
-		return nil, apiError(409, "identity control records cannot be edited or deleted")
+		return lakeapi.EventProjection{}, apiError(409, "identity control records cannot be edited or deleted")
 	}
 	if current.IsDeleted {
-		return nil, apiError(410, "event was deleted")
+		return lakeapi.EventProjection{}, apiError(410, "event was deleted")
 	}
 	if pending {
-		return nil, apiError(409, "an event mutation is already pending")
+		return lakeapi.EventProjection{}, apiError(409, "an event mutation is already pending")
 	}
 	if current.Revision != revision {
-		return nil, apiError(409, "expected_revision does not match the current event")
+		return lakeapi.EventProjection{}, apiError(409, "expected_revision does not match the current event")
 	}
 	current.Event = lakeapi.EventWithMetadata(current.Event)
 	if snapshot != nil && strings.TrimSpace(snapshot.DistinctID) == "" && !(current.DistinctID == "" && current.SourceID != "posthog" && (current.EventType == "track" || current.EventType == "pageview")) {
-		return nil, apiError(400, "distinct_id is required for this event")
+		return lakeapi.EventProjection{}, apiError(400, "distinct_id is required for this event")
 	}
 
 	projection := current
@@ -277,10 +300,10 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	} else {
 		var originalProperties map[string]any
 		if json.Unmarshal(current.Properties, &originalProperties) != nil {
-			return nil, apiError(503, "event storage unavailable")
+			return lakeapi.EventProjection{}, apiError(503, "event storage unavailable")
 		}
 		if current.SourceID != "posthog" && snapshot.Event != current.Event.Event && lakeapi.EventWithMetadata(eventapi.Event{Event: snapshot.Event}).EventType != current.EventType {
-			return nil, apiError(400, "event category cannot be changed")
+			return lakeapi.EventProjection{}, apiError(400, "event category cannot be changed")
 		}
 		if current.SourceID == "posthog" {
 			delete(snapshot.Properties, "token")
@@ -288,11 +311,11 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 		properties, _ := json.Marshal(snapshot.Properties)
 		if originalProperties["cookieless"] == true && (current.SourceID == "posthog" || strings.HasPrefix(current.DistinctID, "cookieless_")) {
 			if snapshot.DistinctID != current.DistinctID {
-				return nil, apiError(400, "cookieless distinct_id cannot be changed")
+				return lakeapi.EventProjection{}, apiError(400, "cookieless distinct_id cannot be changed")
 			}
 			day, ok := originalProperties["identity_day"].(string)
 			if !ok || day == "" {
-				return nil, apiError(503, "cookieless identity metadata is unavailable")
+				return lakeapi.EventProjection{}, apiError(503, "cookieless identity metadata is unavailable")
 			}
 			properties = cookielessProperties(properties, current.DistinctID, day)
 		} else {
@@ -305,13 +328,14 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 		projection.Event.Event, projection.DistinctID = snapshot.Event, snapshot.DistinctID
 		projection.Properties, projection.Timestamp = properties, snapshot.Timestamp
 		if projection.OriginalSnapshot == "" {
-			projection.OriginalSnapshot, err = lakeapi.OriginalSnapshot(current.Event)
+			original, err := lakeapi.OriginalSnapshot(current.Event)
 			if err != nil {
-				return nil, apiError(503, "event storage unavailable")
+				return lakeapi.EventProjection{}, apiError(503, "event storage unavailable")
 			}
+			projection.OriginalSnapshot = original
 		}
 	}
-	return s.commitMutation(ctx, projection, actorID, operation, keyHash, requestHash, revision)
+	return projection, nil
 }
 
 func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventProjection, actorID, operation, keyHash, requestHash string, expected uint64) (*MutationOutput, error) {
@@ -405,6 +429,13 @@ func (s *Service) findMutation(ctx context.Context, project, field, value string
 }
 
 func (s *Service) getEventMutation(ctx context.Context, input *EventMutationInput) (*EventMutationOutput, error) {
+	if s.hostedMutations != nil {
+		response, err := s.hostedMutations.hostedMutationStatus(ctx, input.ID, input.MutationID)
+		if err != nil {
+			return nil, err
+		}
+		return &EventMutationOutput{Body: response}, nil
+	}
 	response, _, err := s.findMutation(ctx, input.ID, "mutation_id", input.MutationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "mutation not found")
