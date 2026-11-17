@@ -23,7 +23,18 @@ type PipelinePublication struct {
 	Outputs     []PipelineOutput
 }
 
-func PipelinePreparedSHA256(outputs []PipelineOutput) string { return pipelineDigest(outputs) }
+// PipelinePreparedSHA256 binds content known before PUT. Version IDs returned by
+// storage are retained in publication, but cannot be part of pre-upload capacity.
+func PipelinePreparedSHA256(outputs []PipelineOutput) string {
+	prepared := append([]PipelineOutput(nil), outputs...)
+	if outputs != nil && prepared == nil {
+		prepared = []PipelineOutput{}
+	}
+	for i := range prepared {
+		prepared[i].Body.VersionID = ""
+	}
+	return pipelineDigest(prepared)
+}
 
 // PublishReservedEffectsTx does not commit. The publisher must call the real
 // usage.PublishSourceTotalsTx on this same TX before committing and ACKing native.
@@ -115,7 +126,7 @@ func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sq
 	if residual.ArtifactBytes < b.PlanRef.Bytes+b.ManifestBytesLimit {
 		return false, ErrPipelineCapacity
 	}
-	if e = p.transferCleanup(ctx, tx, b, residual); e != nil {
+	if e = p.transferCleanup(ctx, tx, b, residual, b.BatchID); e != nil {
 		return false, e
 	}
 	a := append(pipelineScopeArgs(b.Scope), v.Sequence, v.ProofSHA256)
@@ -150,7 +161,7 @@ func (p *PGPipelineEffects) currentTarget(ctx context.Context, tx *sql.Tx, b Pip
 	}
 	return "pending", nil
 }
-func (p *PGPipelineEffects) transferCleanup(ctx context.Context, tx *sql.Tx, b PipelineBinding, d PipelineDemand) error {
+func (p *PGPipelineEffects) transferCleanup(ctx context.Context, tx *sql.Tx, b PipelineBinding, d PipelineDemand, owner string) error {
 	var checkpointRows int64
 	if e := tx.QueryRowContext(ctx, `SELECT checkpoint_rows FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere, pipelineScopeArgs(b.Scope)...).Scan(&checkpointRows); e != nil {
 		return e
@@ -159,7 +170,12 @@ func (p *PGPipelineEffects) transferCleanup(ctx context.Context, tx *sql.Tx, b P
 		return ErrPipelineCapacity
 	}
 	d.MetadataRows -= checkpointRows
-	a := append(pipelineScopeArgs(b.Scope), b.TenantID, b.BatchID, b.AcquisitionID, b.ArtifactPrefix, d.References, d.QueuedBytes, d.MetadataRows, d.ArtifactBytes)
+	if d.ArtifactBytes == 0 && d.References == 0 && d.QueuedBytes == 0 {
+		// Verified zero selected outputs own no external artifact. Release transient
+		// plan/reservation metadata while the stream checkpoint stays charged.
+		return p.charge(ctx, tx, b, d, -1)
+	}
+	a := append(pipelineScopeArgs(b.Scope), b.TenantID, owner, b.AcquisitionID, b.ArtifactPrefix, d.References, d.QueuedBytes, d.MetadataRows, d.ArtifactBytes)
 	_, e := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_cleanup(source_id,project_id,catalog_id,stream_id,tenant_id,owner_id,generation,prefix,refs,bytes,rows,artifacts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, a...)
 	return e
 }
@@ -195,7 +211,7 @@ func (p *PGPipelineEffects) ReleaseAbsentReservationTx(ctx context.Context, tx *
 	}
 	d := b.Demand
 	d.ProofSlots = 0
-	if e := p.transferCleanup(ctx, tx, b, d); e != nil {
+	if e := p.transferCleanup(ctx, tx, b, d, b.AcquisitionID); e != nil {
 		return e
 	}
 	return p.finishReservation(ctx, tx, b)
