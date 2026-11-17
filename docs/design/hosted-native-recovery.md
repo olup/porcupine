@@ -65,9 +65,13 @@ transaction. The refusal keeps those callers from bypassing a hosted seal. It is
 a temporary activation gate until those callers use the common coordinator and
 recoverable native outcome protocol.
 
-No guarded compaction implementation or cross-worker reader-drain protocol is
-claimed here. Physical hosted deletion must retain control intent, seal and
-publish through the final sequence, join actual writers and readers across
+`MaintainHostedProject` now supplies a separate explicit guarded compaction path
+under the caller's existing session. Its [native snapshot fence](hosted-maintenance-fence.md)
+reads the epoch in the CALL's transaction, disables native commit retries on a
+dedicated bounded engine, and revalidates the held session for external retries.
+The old entry points remain closed. No background maintenance activation or
+cross-worker reader-drain protocol is claimed here. Physical hosted deletion
+must retain control intent, seal and publish through the final sequence, join actual writers and readers across
 workers, preserve restore/object holds, then prove catalog/object removal. The
 legacy direct hosted deletion path refuses the operation before modifying native
 or registry deletion state. Registry tombstones remain authoritative.
