@@ -34,7 +34,11 @@ func (s *DuckLakeStore) CurrentParquetBytes(ctx context.Context, project string)
 	}
 	defer tx.Rollback()
 	files := map[string]int64{}
-	for _, table := range []string{"catalog_identity", "heads", "current_events", "identity_profiles", "identity_links"} {
+	tables, err := nativeDataTables(ctx, tx, "lake")
+	if err != nil {
+		return 0, err
+	}
+	for _, table := range tables {
 		rows, e := tx.QueryContext(ctx, `SELECT data_file,data_file_size_bytes,delete_file,delete_file_size_bytes FROM ducklake_list_files('lake',?)`, table)
 		if e != nil {
 			return 0, e

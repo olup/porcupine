@@ -332,3 +332,34 @@ func TestExecutionObservationsAreCumulativeAndCrashRemainsIncomplete(t *testing.
 		t.Fatal("crash fabricated completion or lost the admitted count", lost, err)
 	}
 }
+
+func TestStorageSampleAgeUsesOneFrozenSnapshotCutoff(t *testing.T) {
+	t.Parallel()
+	db := usageDB(t, ControlSchema)
+	if _, e := db.Exec(`INSERT INTO projects VALUES('q','t','2026-11-01T00:00:00Z')`); e != nil {
+		t.Fatal(e)
+	}
+	now := clock()
+	s := NewStore(db, false, config(), func() time.Time { v := now; now = now.Add(time.Second); return v })
+	for _, project := range []string{"p", "q"} {
+		if e := s.RecordStorageSample(t.Context(), StorageSample{TenantID: "t", ProjectID: project, Day: Day(clock()), ObservedAt: Stamp(clock()), Bytes: 10}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	page, e := s.ReadSnapshot(t.Context(), Query{Start: Day(clock()), End: Day(clock().AddDate(0, 0, 1))})
+	if e != nil {
+		t.Fatal(e)
+	}
+	created, e := time.Parse(time.RFC3339Nano, page.CreatedAt)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatal(page)
+	}
+	for _, row := range page.Rows {
+		if row.Storage.AgeSeconds == nil || *row.Storage.AgeSeconds != int64(created.Sub(clock())/time.Second) {
+			t.Fatal("sample age differs from frozen snapshot cutoff", page.CreatedAt, row)
+		}
+	}
+}

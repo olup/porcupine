@@ -53,7 +53,7 @@ func maxString(a, b string) string {
 	return b
 }
 
-func (s *Store) materialize(ctx context.Context, q Query, budget int64) ([]UsageRow, error) {
+func (s *Store) materialize(ctx context.Context, q Query, budget int64, asOf time.Time) ([]UsageRow, error) {
 	options := &sql.TxOptions{ReadOnly: true}
 	if s.Postgres {
 		options.Isolation = sql.LevelRepeatableRead
@@ -182,7 +182,7 @@ UNION SELECT tenant_id,project_id,MIN(day_start) AS first_day FROM usage_storage
 		at, _ := time.Parse(time.RFC3339Nano, v.ObservedAt)
 		values := totals[v.TenantID+"\x00"+v.ProjectID]
 		for i, b := range bs {
-			cutoff := minTime(b.end, s.Clock())
+			cutoff := minTime(b.end, asOf)
 			if !at.After(cutoff) {
 				values[i].sample = v
 			}
@@ -203,7 +203,7 @@ UNION SELECT tenant_id,project_id,MIN(day_start) AS first_day FROM usage_storage
 				continue
 			}
 			v := totals[p.tenant+"\x00"+p.id][i]
-			r := UsageRow{TenantID: p.tenant, ProjectID: p.id, TenantDeleted: !p.tenantPresent, ProjectDeleted: !p.present, PeriodStart: b.start.Format(time.RFC3339), PeriodEnd: b.end.Format(time.RFC3339), AvailableSince: available, Partial: Stamp(b.start) < available, AcceptanceBasis: "durable_commit", Counters: v.c.Wire(), QueryDuration: &UsageQueryDuration{Quality: "observed", Unresolved: strconv.FormatInt(v.unresolved, 10), LastObserved: v.observed}, Storage: storageFor(v.sample, minTime(b.end, s.Clock()))}
+			r := UsageRow{TenantID: p.tenant, ProjectID: p.id, TenantDeleted: !p.tenantPresent, ProjectDeleted: !p.present, PeriodStart: b.start.Format(time.RFC3339), PeriodEnd: b.end.Format(time.RFC3339), AvailableSince: available, Partial: Stamp(b.start) < available, AcceptanceBasis: "durable_commit", Counters: v.c.Wire(), QueryDuration: &UsageQueryDuration{Quality: "observed", Unresolved: strconv.FormatInt(v.unresolved, 10), LastObserved: v.observed}, Storage: storageFor(v.sample, minTime(b.end, asOf))}
 			if v.unresolved > 0 {
 				r.QueryDuration.Quality = "lower_bound"
 			}

@@ -88,11 +88,11 @@ func (s *Store) ReadSnapshot(ctx context.Context, q Query) (UsagePage, error) {
 	defer s.releaseBuild(context.WithoutCancel(ctx), token)
 	build, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rows, err := s.materialize(build, q, budget)
+	created := s.Clock()
+	rows, err := s.materialize(build, q, budget, created)
 	if err != nil {
 		return UsagePage{}, err
 	}
-	created := s.Clock()
 	query, hash := queryIdentity(q)
 	m := snapshotMeta{id: NewID(), epoch: epoch, hash: hash, query: query, created: Stamp(created), expires: Stamp(created.Add(SnapshotTTL)), limit: q.Limit}
 	pages := []string{}

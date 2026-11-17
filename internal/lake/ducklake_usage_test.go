@@ -32,6 +32,31 @@ func TestDuckLakeCurrentParquetUsageExcludesObsoleteAndUnknownProjects(t *testin
 	if e != nil || before <= 0 {
 		t.Fatal(before, e)
 	}
+	// A new managed base table must contribute without a hand-maintained list.
+	// Checking its exact independently queried increment prevents omitted current
+	// files from being mistaken for obsolete physical files later in this test.
+	p, release, e := s.LeaseProject(ctx, "a")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = p.DB.Exec(`CREATE TABLE lake.extra_numeric_evidence(n INTEGER); INSERT INTO lake.extra_numeric_evidence VALUES(1)`); e != nil {
+		release()
+		t.Fatal(e)
+	}
+	if e = p.MaintenanceCommand(ctx, `CALL ducklake_flush_inlined_data('lake')`, &DuckLakeMaintenanceStats{}); e != nil {
+		release()
+		t.Fatal(e)
+	}
+	var extra int64
+	if e = p.DB.QueryRow(`SELECT COALESCE(SUM(data_file_size_bytes),0) FROM ducklake_list_files('lake','extra_numeric_evidence')`).Scan(&extra); e != nil || extra <= 0 {
+		release()
+		t.Fatal(extra, e)
+	}
+	release()
+	withExtra, e := s.CurrentParquetBytes(ctx, "a")
+	if e != nil || withExtra != before+extra {
+		t.Fatal("new managed table Parquet was omitted", before, extra, withExtra, e)
+	}
 	edited := original
 	edited.Revision = 1
 	edited.Event.Event = "corrected"
@@ -39,7 +64,7 @@ func TestDuckLakeCurrentParquetUsageExcludesObsoleteAndUnknownProjects(t *testin
 		t.Fatal(e)
 	}
 	flushCleanupProject(t, s, "a")
-	p, release, e := s.LeaseProject(ctx, "a")
+	p, release, e = s.LeaseProject(ctx, "a")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -70,5 +95,14 @@ func TestDuckLakeCurrentParquetUsageExcludesObsoleteAndUnknownProjects(t *testin
 	}
 	if physical <= current {
 		t.Fatalf("obsolete Parquet was included or fixture did not retain history: current=%d physical=%d", current, physical)
+	}
+	// Checkpoint verification uses the same complete inventory with its archive
+	// alias; it must retain and verify the added table as well as the core tables.
+	checkpoint, e := s.StageCheckpoint(ctx, func(context.Context, string) error { return nil })
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = checkpoint.Close(); e != nil {
+		t.Fatal(e)
 	}
 }

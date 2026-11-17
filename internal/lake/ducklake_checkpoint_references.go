@@ -41,7 +41,11 @@ func verifyCheckpointCatalogReferences(ctx context.Context, checkpoint *NativeCh
 			return checkpointReferenceError(ctx)
 		}
 	}
-	for _, table := range []string{"catalog_identity", "heads", "current_events", "identity_profiles", "identity_links"} {
+	tables, err := nativeDataTables(ctx, db, "archive")
+	if err != nil {
+		return checkpointReferenceError(ctx)
+	}
+	for _, table := range tables {
 		rows, err := db.QueryContext(ctx, "SELECT data_file,data_file_size_bytes,delete_file,delete_file_size_bytes FROM ducklake_list_files('archive',?)", table)
 		if err != nil {
 			return checkpointReferenceError(ctx)
