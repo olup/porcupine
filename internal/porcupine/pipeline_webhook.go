@@ -39,8 +39,8 @@ func (h webhookHost) BeginWebhookActivity(ctx context.Context, project string) (
 	return h.service.activity.begin(ctx, project)
 }
 
-func configureWebhooks(s *Service, runtime *pipelineRuntime) {
-	s.acceptance.enqueueWebhooks = nil
+func configureWebhooks(s *Service, acceptance *durableAcceptance, runtime *pipelineRuntime) {
+	acceptance.enqueueWebhooks = nil
 	if runtime == nil {
 		return
 	}
@@ -56,5 +56,5 @@ func configureWebhooks(s *Service, runtime *pipelineRuntime) {
 	clock := &s.eventRules.clock
 	now := func() time.Time { return (*clock)() }
 	runtime.webhooks = delivery.NewWebhookQueue(s.db, limits, now, webhookHost{s})
-	s.acceptance.enqueueWebhooks = runtime.webhooks.Enqueuer().Enqueue
+	acceptance.enqueueWebhooks = runtime.webhooks.Enqueuer().Enqueue
 }

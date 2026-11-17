@@ -110,7 +110,9 @@ func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
 	if body["version"] != "1" || body["native_historical_import_available"] != true || body["historical_schema_status"] != "stable" || body["live_endpoint"] != "/ingest/v1/events" {
 		t.Fatalf("misleading contract: %v", body)
 	}
-	live, _ := nativeContractSchema("native-message-v1.schema.json")
+	live, _ := s.nativeInputSchema()
+	liveRaw, _ := json.Marshal(live)
+	_ = json.Unmarshal(liveRaw, &live)
 	if !reflect.DeepEqual(body["live_schema"], live) {
 		t.Fatal("discovery schema diverged from embedded source")
 	}
@@ -121,8 +123,9 @@ func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ingest/v1/schema", nil)
 	req.Header.Set("Origin", "https://producer.example")
 	s.Handler().ServeHTTP(public, req)
-	raw, _ := nativeContracts.ReadFile("contracts/native-message-v1.schema.json")
-	if public.Code != 200 || public.Header().Get("Content-Type") != "application/schema+json" || public.Header().Get("Access-Control-Allow-Origin") != "*" || !bytes.Equal(public.Body.Bytes(), raw) {
+	var published map[string]any
+	_ = json.Unmarshal(public.Body.Bytes(), &published)
+	if public.Code != 200 || public.Header().Get("Content-Type") != "application/schema+json" || public.Header().Get("Access-Control-Allow-Origin") != "*" || !reflect.DeepEqual(published, live) {
 		t.Fatalf("public schema unavailable: %d %s", public.Code, public.Body.String())
 	}
 	host := httptest.NewServer(s.Handler())

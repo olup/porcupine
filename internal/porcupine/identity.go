@@ -46,15 +46,11 @@ func identityLink(ctx context.Context, tx *sql.Tx, project, id string) (string, 
 	return target, version, err
 }
 
-// applyIdentityControl runs after stable UUID deduplication and insertion, in the
-// capture transaction. Invalid or conflicting controls retain a durable no-op
-// marker and cannot change any profile or link, including a competing target.
-func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *eventapi.Event) (bool, error) {
-	if !isIdentityControl(event.Event) {
-		return false, nil
-	}
+// applyParsedIdentityControl commits a canonical snapshot after UUID deduplication.
+// Invalid or conflicting controls retain a no-op marker without changing identity.
+func applyParsedIdentityControl(ctx context.Context, tx *sql.Tx, event *eventapi.Event, control identityControl) (bool, error) {
 	snapshot := lakeapi.IdentitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []lakeapi.IdentityLinkSnapshot{}}
-	ignored, err := applyIdentityState(ctx, tx, *event, &snapshot)
+	ignored, err := applyParsedIdentityState(ctx, tx, *event, control, &snapshot)
 	if err != nil {
 		return false, err
 	}
@@ -69,30 +65,78 @@ func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *eventapi.Event
 }
 
 func applyIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, snapshot *lakeapi.IdentitySnapshot) (bool, error) {
+	control, err := parseIdentityControl(event)
+	if err != nil {
+		return false, err
+	}
+	return applyParsedIdentityState(ctx, tx, event, control, snapshot)
+}
+
+type identityControlKind uint8
+
+const (
+	identityControlIgnored identityControlKind = iota
+	identityControlIdentify
+	identityControlSet
+)
+
+type identityControl struct {
+	kind              identityControlKind
+	target, anonymous string
+	set, setOnce      json.RawMessage
+}
+
+func parseIdentityControl(event eventapi.Event) (identityControl, error) {
 	if !validIdentityID(event.DistinctID) {
-		return true, nil
+		return identityControl{}, nil
 	}
 	var properties map[string]any
 	if err := ingestfmt.DecodeJSON(event.Properties, &properties); err != nil {
-		return false, err
+		return identityControl{}, err
 	}
 	for _, key := range []string{"$set", "$set_once"} {
 		if value, exists := properties[key]; exists && value == nil {
-			return true, nil
+			return identityControl{}, nil
 		}
 	}
 	set, validSet := ingestfmt.Traits(properties["$set"])
 	once, validOnce := ingestfmt.Traits(properties["$set_once"])
 	if !validSet || !validOnce {
+		return identityControl{}, nil
+	}
+	control := identityControl{kind: identityControlSet, target: event.DistinctID}
+	if event.Event == "$identify" {
+		control.kind = identityControlIdentify
+		if raw, exists := properties["$anon_distinct_id"]; exists {
+			anonymous, ok := raw.(string)
+			if !ok || !validIdentityID(anonymous) {
+				return identityControl{}, nil
+			}
+			control.anonymous = anonymous
+		}
+	}
+	control.set, _ = json.Marshal(set)
+	control.setOnce, _ = json.Marshal(once)
+	return control, nil
+}
+func applyParsedIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, control identityControl, snapshot *lakeapi.IdentitySnapshot) (bool, error) {
+	if control.kind == identityControlIgnored {
 		return true, nil
 	}
-	target := event.DistinctID
+	var set, once map[string]any
+	if err := ingestfmt.DecodeJSON(control.set, &set); err != nil {
+		return false, err
+	}
+	if err := ingestfmt.DecodeJSON(control.setOnce, &once); err != nil {
+		return false, err
+	}
+	target := control.target
 	boundTarget, _, err := identityLink(ctx, tx, event.ProjectID, target)
 	if err != nil {
 		return false, err
 	}
 	if boundTarget != "" {
-		if event.Event == "$identify" {
+		if control.kind == identityControlIdentify {
 			return true, nil
 		}
 		target = boundTarget
@@ -103,14 +147,8 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, s
 	}
 	var anonymous string
 	var linkVersion int64
-	if event.Event == "$identify" {
-		if raw, exists := properties["$anon_distinct_id"]; exists {
-			var ok bool
-			anonymous, ok = raw.(string)
-			if !ok || !validIdentityID(anonymous) {
-				return true, nil
-			}
-		}
+	if control.kind == identityControlIdentify {
+		anonymous = control.anonymous
 		if anonymous != "" && anonymous != target {
 			anonymousTraits, sourceIdentified, err := identityProfile(ctx, tx, event.ProjectID, anonymous)
 			if err != nil {

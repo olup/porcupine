@@ -121,6 +121,20 @@ A missing message ID means a new event on every submission, even for identical p
 
 Success confirms the SQLite acceptance transaction. It does not mean analytical delivery has completed. Readers check delivery progress before validating a complete batch.
 
+### Unreleased acknowledgment metadata
+
+Development builds add the required response field `durability: "durable"` to the existing standalone response. All existing counts and receipt fields retain their meaning. The published v0.14.0 response predates this field.
+
+The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted architecture target](../design/hosted-architecture.md). Buffered production configuration is unavailable until its durable writer and shared state providers are implemented. It uses the same route and HTTP 200, with this response:
+
+```json
+{"status":1,"durability":"buffered","received":1,"receipts":[{"message_id":"msg-001","uuid":"opaque-server-uuid"}]}
+```
+
+`received` counts validated input rows admitted to bounded worker memory, including retries and duplicates. It does not count unique committed events. Buffered receipts contain only `message_id` and `uuid`, in input order. The response omits `accepted`, `duplicates`, `identity_ignored`, `event_id`, and `duplicate` because their committed outcomes are unknown. Pending events can be lost on worker failure. A flush timer does not bound their age or loss window during a storage outage.
+
+`get-event-input-contract` returns this instance's `live_acknowledgment` and the `live_response_schema`. Its `live_schema` matches the instance's public `GET /ingest/v1/schema`, including `x-porcupine-acknowledgment`. The published producer schema describes both acknowledgment contracts. Producers cannot select a durability mode or add `durability` to an input message. Historical uploads keep their separate durable checkpoint contract.
+
 ## Server-managed representation
 
 Producers cannot choose `project_id`, `source_id`, `event_id`, `uuid`, `received_at`, `revision`, or the historical import marker. Authentication and server processing supply them. A top-level attempt to send these fields through native capture is rejected.
