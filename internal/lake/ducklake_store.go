@@ -234,13 +234,21 @@ func (s *DuckLakeStore) LeaseProject(ctx context.Context, project string) (*Proj
 // Caller holds s.mu on entry and return. Cold initialization reserves its
 // engine slot, then releases the mutex during credential/file/network work.
 func (s *DuckLakeStore) leaseProjectLocked(ctx context.Context, project string) (*ProjectLake, func(), error) {
+	return s.leaseProjectModeLocked(ctx, project, false)
+}
+
+func (s *DuckLakeStore) leaseProjectModeLocked(ctx context.Context, project string, existingOnly bool) (*ProjectLake, func(), error) {
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if s.SharedCatalog != nil {
+	if existingOnly {
+		if _, err := s.existingHostedRecord(ctx, project); err != nil {
+			return nil, nil, err
+		}
+	} else if s.SharedCatalog != nil {
 		if _, _, err := s.sharedNativeProject(ctx, project); err != nil {
 			return nil, nil, err
 		}
@@ -265,7 +273,7 @@ func (s *DuckLakeStore) leaseProjectLocked(ctx context.Context, project string) 
 		if pending.err != nil {
 			return nil, nil, pending.err
 		}
-		return s.leaseProjectLocked(ctx, project)
+		return s.leaseProjectModeLocked(ctx, project, existingOnly)
 	}
 	if p := s.Projects[project]; p != nil {
 		if s.SharedCatalog == nil {
@@ -295,7 +303,7 @@ func (s *DuckLakeStore) leaseProjectLocked(ctx context.Context, project string) 
 	pending := &projectOpening{done: make(chan struct{})}
 	s.opening[project] = pending
 	s.Mu.Unlock()
-	p, err := s.openProject(ctx, project)
+	p, err := s.openProjectMode(ctx, project, nil, existingOnly)
 	_ = s.Mu.Lock(context.Background())
 	delete(s.opening, project)
 	pending.err = err
@@ -334,11 +342,19 @@ func (s *DuckLakeStore) openProject(ctx context.Context, project string) (*Proje
 // The offline restore initializer runs only while creating a fresh catalog,
 // before its configuration is sealed or published through opening reservations.
 func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project string, initialize func(context.Context, *sql.DB) error) (*ProjectLake, error) {
+	return s.openProjectMode(ctx, project, initialize, false)
+}
+
+func (s *DuckLakeStore) openProjectMode(ctx context.Context, project string, initialize func(context.Context, *sql.DB) error, existingOnly bool) (*ProjectLake, error) {
 	directory := s.ProjectDirectory(project)
 	var catalogID string
 	var ready bool
 	var err error
-	if s.SharedCatalog != nil {
+	if existingOnly {
+		var record nativeProjectRecord
+		record, err = s.existingHostedRecord(ctx, project)
+		catalogID, ready = record.CatalogID, record.Ready
+	} else if s.SharedCatalog != nil {
 		if initialize != nil {
 			return nil, errors.New("offline native restore is unavailable for shared catalogs")
 		}
@@ -417,6 +433,9 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	if s.SharedCatalog != nil {
 		attach = "ATTACH 'ducklake:postgres:' AS lake (DATA_PATH " + LakeLiteral(dataPath) + ", METADATA_SCHEMA " + LakeLiteral(SharedNativeSchema(catalogID)) + ", META_SECRET 'pc_analytics_postgres', DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false)"
 	}
+	if existingOnly {
+		attach = strings.TrimSuffix(attach, ")") + ", CREATE_IF_NOT_EXISTS false)"
+	}
 	for _, statement := range []string{
 		fmt.Sprintf("SET memory_limit='%dMiB'", s.Config.MemoryLimitMB),
 		fmt.Sprintf("SET threads=%d", s.Config.Threads),
@@ -432,7 +451,7 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	if _, err = lakeCatalogVersion(ctx, db, !ready); err != nil {
 		return fail(err)
 	}
-	if s.SharedCatalog != nil {
+	if s.SharedCatalog != nil && !existingOnly {
 		if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','data_inlining_row_limit','0')"); err != nil {
 			return fail(err)
 		}
@@ -466,19 +485,21 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 			return fail(err)
 		}
 	}
-	if _, err = db.ExecContext(ctx, duckLakeSchema); err != nil {
-		return fail(err)
-	}
-	if err = migrateLakeCatalog(ctx, db); err != nil {
-		return fail(err)
-	}
-	if s.SharedCatalog != nil {
-		if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.project_write_guard AS SELECT 1::INTEGER AS id, 0::UBIGINT AS generation, false AS deleted"); err != nil {
+	if !existingOnly {
+		if _, err = db.ExecContext(ctx, duckLakeSchema); err != nil {
 			return fail(err)
 		}
-	}
-	if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
-		return fail(err)
+		if err = migrateLakeCatalog(ctx, db); err != nil {
+			return fail(err)
+		}
+		if s.SharedCatalog != nil {
+			if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.project_write_guard AS SELECT 1::INTEGER AS id, 0::UBIGINT AS generation, false AS deleted"); err != nil {
+				return fail(err)
+			}
+		}
+		if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
+			return fail(err)
+		}
 	}
 	if initialize != nil {
 		if err = initialize(ctx, db); err != nil {
@@ -512,8 +533,10 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		}
 	}
 
-	if err = s.registry.markReady(ctx, project); err != nil {
-		return fail(err)
+	if !existingOnly {
+		if err = s.registry.markReady(ctx, project); err != nil {
+			return fail(err)
+		}
 	}
 	if s.SharedCatalog != nil {
 		return &ProjectLake{DB: db, directory: directory, leases: make(map[*projectLease]struct{}), lastUsed: time.Now(), shared: true, sharedStore: s, projectID: project}, nil
@@ -735,6 +758,11 @@ func (p *ProjectLake) maintainPolicy(ctx context.Context, maxCompactions int, se
 }
 
 func (p *ProjectLake) MaintenanceCommand(ctx context.Context, statement string, stats *DuckLakeMaintenanceStats) error {
+	if p.shared {
+		if err := rejectHostedLegacyOperation(ctx, p.DB); err != nil {
+			return err
+		}
+	}
 	if !p.shared {
 		return retryNativeTransaction(ctx, func() error {
 			next := *stats

@@ -220,3 +220,53 @@ func TestSharedControlRefusesUnknownUnversionedSchemas(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedControlHostedEpochAppendsAfterAuthAndUsage(t *testing.T) {
+	t.Parallel()
+	for _, start := range []int{5, 6} {
+		t.Run(fmt.Sprint(start), func(t *testing.T) {
+			t.Parallel()
+			db, _ := sharedControlFixture(t)
+			ctx := t.Context()
+			for _, step := range sharedControlSteps[:start] {
+				if _, err := db.ExecContext(ctx, step); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('schema_version',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, fmt.Sprint(start)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('unit_a_preserve','original')`); err != nil {
+				t.Fatal(err)
+			}
+			migrate := func() error {
+				tx, err := db.BeginTx(ctx, nil)
+				if err != nil {
+					return err
+				}
+				defer tx.Rollback()
+				if err := migrateSharedControl(ctx, tx); err != nil {
+					return err
+				}
+				return tx.Commit()
+			}
+			if err := migrate(); err != nil {
+				t.Fatal(err)
+			}
+			var epoch int64
+			if err := db.QueryRowContext(ctx, `SELECT nextval('shared_native_write_epoch')`).Scan(&epoch); err != nil || epoch != 1 {
+				t.Fatal("appended epoch sequence unavailable", epoch, err)
+			}
+			var value string
+			if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='unit_a_preserve'`).Scan(&value); err != nil || value != "original" {
+				t.Fatal("migration changed released control state", value, err)
+			}
+			if err := migrate(); err != nil {
+				t.Fatal("epoch migration retry", err)
+			}
+			if err := db.QueryRowContext(ctx, `SELECT nextval('shared_native_write_epoch')`).Scan(&epoch); err != nil || epoch != 2 {
+				t.Fatal("migration retry reset epoch", epoch, err)
+			}
+		})
+	}
+}

@@ -71,7 +71,7 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 		return HostedProjectScope{}, err
 	}
 	defer tx.Rollback()
-	if err := p.acquireNativeWrite(ctx, tx); err != nil {
+	if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
 		return HostedProjectScope{}, err
 	}
 	var populated bool
@@ -112,6 +112,12 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 func readHostedProjectScope(ctx context.Context, query interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, key ProjectWriteKey) (HostedProjectScope, error) {
+	return readHostedProjectScopeState(ctx, query, key, false)
+}
+
+func readHostedProjectScopeState(ctx context.Context, query interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, key ProjectWriteKey, sealedAllowed bool) (HostedProjectScope, error) {
 	scope := HostedProjectScope{Key: key}
 	var count int
 	if err := query.QueryRowContext(ctx, "SELECT count(*) FROM lake.hosted_write_guard").Scan(&count); err != nil {
@@ -126,7 +132,10 @@ func readHostedProjectScope(ctx context.Context, query interface {
 	if err != nil || scope.CatalogID != SharedNativeCatalogID(key.SourceID, key.ProjectID) || scope.StreamID == "" {
 		return HostedProjectScope{}, ErrProjectWriteFenceStale
 	}
-	if state != "open" {
+	if state != "open" && state != "sealed" {
+		return HostedProjectScope{}, errors.New("invalid hosted native stream state")
+	}
+	if state == "sealed" && !sealedAllowed {
 		return HostedProjectScope{}, ErrProjectWriteSealed
 	}
 	if !ready {

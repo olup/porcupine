@@ -70,6 +70,9 @@ type ProjectWriteSession struct {
 	done         chan struct{}
 	stopProbe    chan struct{}
 	operations   sync.Mutex
+	callsMu      sync.Mutex
+	nativeCalls  sync.WaitGroup
+	closing      bool
 	release      sync.Once
 	releaseError error
 }
@@ -124,6 +127,40 @@ func (s *ProjectWriteSession) Context() context.Context { return s.ctx }
 func (s *ProjectWriteSession) Fence(streamID string) ProjectWriteFence {
 	return ProjectWriteFence{Key: s.key, StreamID: streamID, Epoch: s.epoch, AcquisitionID: s.acquisition}
 }
+
+// RunNative joins the actual native callback before Release unlocks the physical
+// control session. Cancellation or lease expiry alone never counts as a return.
+// Keep the entire native operation, including cold open and retries, inside it.
+func (s *ProjectWriteSession) RunNative(ctx context.Context, call func(context.Context) error) error {
+	if call == nil {
+		return ErrProjectWriteFenceStale
+	}
+	s.callsMu.Lock()
+	if s.closing || s.ctx.Err() != nil || ctx.Err() != nil {
+		s.callsMu.Unlock()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ErrProjectWriteSessionLost
+	}
+	s.nativeCalls.Add(1)
+	s.callsMu.Unlock()
+	defer s.nativeCalls.Done()
+	nativeCtx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(s.ctx, func() { cancel(ErrProjectWriteSessionLost) })
+	defer func() { stop(); cancel(context.Canceled) }()
+	s.operations.Lock()
+	bounded, finish := context.WithTimeout(nativeCtx, s.owner.config.ProbeTimeout)
+	err := s.checkPhysicalSession(bounded)
+	finish()
+	s.operations.Unlock()
+	if err != nil {
+		s.cancel(ErrProjectWriteSessionLost)
+		return err
+	}
+	return call(nativeCtx)
+}
+
 func (s *ProjectWriteSession) checkPhysicalSession(ctx context.Context) error {
 	var owned bool
 	high, low := int64(uint64(s.lock)>>32), int64(uint64(s.lock)&0xffffffff)
@@ -171,8 +208,12 @@ func (s *ProjectWriteSession) Release() error {
 		// Cancelling an active pgx query can discard its physical connection.
 		// Stop scheduling probes and join the bounded current probe before
 		// cancelling operation contexts, so a healthy lock can still be released.
+		s.callsMu.Lock()
+		s.closing = true
 		close(s.stopProbe)
+		s.callsMu.Unlock()
 		<-s.done
+		s.nativeCalls.Wait()
 		s.operations.Lock()
 		defer s.operations.Unlock()
 		s.cancel(ErrProjectWriteSessionLost)

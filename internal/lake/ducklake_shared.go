@@ -142,7 +142,18 @@ func (s *DuckLakeStore) sharedNativeInitialization(ctx context.Context, project 
 	}, nil
 }
 
+// Legacy mutation/import paths have no hosted epoch or durable effect outcome.
+// They cannot bypass hosted sealing by updating only the old project guard.
 func (p *ProjectLake) acquireNativeWrite(ctx context.Context, tx *sql.Tx) error {
+	if p.shared {
+		if err := rejectHostedLegacyOperation(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return p.acquireNativeProjectGuard(ctx, tx)
+}
+
+func (p *ProjectLake) acquireNativeProjectGuard(ctx context.Context, tx *sql.Tx) error {
 	if !p.shared {
 		return nil
 	}
@@ -233,6 +244,9 @@ func (s *DuckLakeStore) deleteSharedNativeProject(ctx context.Context, project s
 }
 
 func (p *ProjectLake) markSharedDeleted(ctx context.Context) error {
+	if err := rejectHostedLegacyOperation(ctx, p.DB); err != nil {
+		return err
+	}
 	return retryNativeTransaction(ctx, func() error {
 		tx, err := p.DB.BeginTx(ctx, nil)
 		if err != nil {
