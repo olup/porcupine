@@ -64,7 +64,7 @@ func assertCheckpointPins(t *testing.T, store *duckLakeStore, ctx context.Contex
 	deadline, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	var detail *managementError
-	if err := store.DeleteProject(deadline, project); !errors.As(err, &detail) || detail.Code != "backup_in_progress" || detail.status != 503 {
+	if err := store.DeleteProject(deadline, project); !errors.As(err, &detail) || detail.Code != "backup_in_progress" || detail.GetStatus() != 503 {
 		t.Fatalf("checkpoint did not return a retryable deletion error: %v", err)
 	}
 	cleanup, stop := context.WithTimeout(ctx, 25*time.Millisecond)

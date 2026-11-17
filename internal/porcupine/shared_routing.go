@@ -442,7 +442,7 @@ func (s *Service) forwardSharedProject(w http.ResponseWriter, r *http.Request, p
 func writeSharedRouteProblem(w http.ResponseWriter, err error) {
 	var managed *managementError
 	if errors.As(err, &managed) {
-		write(w, managed.status, managed)
+		write(w, managed.GetStatus(), managed)
 		return
 	}
 	problem(w, http.StatusServiceUnavailable, "project owner unavailable")
