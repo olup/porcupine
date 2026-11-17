@@ -27,7 +27,7 @@ Tests must cover valid/expired tokens, issuer/audience/signature errors, key rot
 
 ## Operator usage contract
 
-Add an operator-only, paginated `list-usage` operation with period, optional tenant and day/month granularity, grouped by tenant/project. Define units and precision before implementing counters:
+**Unreleased implementation:** the operator-only, paginated [`list-usage`](../reference/usage.md) operation accepts a period, optional tenant and day/month granularity, grouped by tenant/project. Its [measurement contract](usage-contract.md) fixes units, numerical retention, actual-return boundaries and replay behavior. Hosted native-commit publication remains a future phase:
 
 | Measure | Required definition |
 | --- | --- |

@@ -506,6 +506,19 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "list-usage", Method: "GET", Path: "/api/v1/usage",
+		Summary: "Read replayable numerical consumption by tenant/project and UTC day/month; deployment operator only",
+		Params: []parameter{
+			{Name: "cursor", In: "query", Type: "string", Description: "Opaque continuation cursor; replayable for 15 minutes. Other filters may be omitted on subsequent pages.", Required: false},
+			{Name: "end", In: "query", Type: "string", Description: "Exclusive UTC midnight; default tomorrow. At most 366 days.", Required: false},
+			{Name: "granularity", In: "query", Type: "string", Description: "UTC calendar buckets; default day.", Required: false},
+			{Name: "group_by", In: "query", Type: "string", Description: "Project rows or disjoint tenant aggregates; default project.", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "Rows per page; default 100. Keep unchanged across snapshot pages.", Required: false},
+			{Name: "start", In: "query", Type: "string", Description: "Inclusive UTC midnight; default current UTC month start.", Required: false},
+			{Name: "tenant_id", In: "query", Type: "string", Description: "Optional tenant ID; omitted includes all tenants.", Required: false},
+		},
+	},
+	{
 		ID: "pause-pipeline", Method: "POST", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}/pause",
 		Summary: "Pause new webhook enqueueing and hold pending work; no retrospective backfill",
 		Params: []parameter{

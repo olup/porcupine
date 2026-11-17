@@ -128,6 +128,8 @@ Source: `internal/porcupine/journal_schema.sql` and all numbered `journalSchema.
 | `webhook_queue_usage` | PostgreSQL | Exactly once | Transactional pending output-job counts, distinct from memory acceptance. |
 | `shared_tenant_cache` | Removed | Best effort | Disposable worker cache, never durable truth or revocation authority. |
 | `project_deletion_files` | PostgreSQL | At least once | Durable object/upload cleanup inventory respecting restore retention. |
+| `usage_rollups` | PostgreSQL | Exactly once | Source/project/day cumulative totals with a monotone revision; native commit evidence reconciles them before acknowledgment. Equal revision requires identical totals. No permanent per-batch ledger or event payload. |
+| `usage_executions` | PostgreSQL | At least once | Durable admitted count before native dispatch, cumulative observations and actual-return completion. A crash leaves a lower bound and unresolved tail; lease expiry never fabricates completion. |
 <!-- journal-inventory:end -->
 
 SQLite's generated `sqlite_sequence` disappears with the journal; it is not an application table. Hosted event identity allocation and exported positions must be independent of worker-local integer sequences.

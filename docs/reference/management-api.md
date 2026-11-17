@@ -12,6 +12,8 @@ Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-prof
 
 ## Authentication and scope
 
+**Unreleased:** [`list-usage`](usage.md) at `GET /api/v1/usage` exposes replayable numerical consumption by tenant/project and UTC day/month. It requires the instance operator; tenant administrators retain their separate `get-tenant-usage` allowance view.
+
 Send a Bearer credential for the instance's `/api/v1` resource. In builtin mode, a person authorizes the [CLI](../../cli/README.md) with email sign-in. A machine uses an [API-audience service key](service-keys.md) or exchanges its client credentials for a short-lived [OAuth access token](oauth.md).
 
 **Unreleased external mode:** [externally issued access JWTs](external-auth.md) use the configured API audience. Native service keys remain available. Local token exchange, human invitations, memberships, and consent management are absent. Machine-account operations remain available, but return no local OAuth secret in this mode.

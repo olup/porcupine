@@ -1,0 +1,17 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+cpu: Apple M1 Pro
+BenchmarkUsageCaptureAcceptance/events_1/meter_false-10         	     100	    536288 ns/op	   45560 B/op	     885 allocs/op
+BenchmarkUsageCaptureAcceptance/events_1/meter_false-10         	     100	    503075 ns/op	   44350 B/op	     882 allocs/op
+BenchmarkUsageCaptureAcceptance/events_1/meter_false-10         	     100	    565946 ns/op	   44444 B/op	     882 allocs/op
+BenchmarkUsageCaptureAcceptance/events_1/meter_true-10          	     100	    599441 ns/op	   45440 B/op	     912 allocs/op
+BenchmarkUsageCaptureAcceptance/events_1/meter_true-10          	     100	    609182 ns/op	   45263 B/op	     911 allocs/op
+BenchmarkUsageCaptureAcceptance/events_1/meter_true-10          	     100	    618698 ns/op	   45268 B/op	     911 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_false-10       	     100	   8736691 ns/op	 1177575 B/op	   17860 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_false-10       	     100	   8918084 ns/op	 1175539 B/op	   17860 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_false-10       	     100	  10687417 ns/op	 1174228 B/op	   17860 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_true-10        	     100	   8909567 ns/op	 1179899 B/op	   17890 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_true-10        	     100	   8958542 ns/op	 1173074 B/op	   17888 allocs/op
+BenchmarkUsageCaptureAcceptance/events_100/meter_true-10        	     100	   8739697 ns/op	 1178289 B/op	   17891 allocs/op
+PASS

@@ -28,6 +28,10 @@ func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
 	if err != nil || len(artifacts) != 1 || !artifacts[0].Complete {
 		t.Fatal("complete artifact missing", err)
 	}
+	var published int64
+	if err = s.db.QueryRow(`SELECT COALESCE(SUM(export_bytes),0) FROM usage_rollups WHERE project_id=?`, job.ProjectID).Scan(&published); err != nil || published != current.Bytes {
+		t.Fatal("published compressed bytes not metered exactly once", published, current.Bytes, err)
+	}
 }
 
 func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
@@ -53,6 +57,10 @@ func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
 		}
 		if current.State != ExportCanceled || current.CleanupPending {
 			t.Fatalf("cancellation/revocation lost publication race: %+v", current)
+		}
+		var published int64
+		if err = s.db.QueryRow(`SELECT COALESCE(SUM(export_bytes),0) FROM usage_rollups WHERE project_id=?`, job.ProjectID).Scan(&published); err != nil || published != 0 {
+			t.Fatal("canceled or revoked output was metered", published, err)
 		}
 		fake.mu.Lock()
 		if len(fake.objects) != 0 {

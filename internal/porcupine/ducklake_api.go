@@ -62,16 +62,17 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 }
 
 func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryInput) (*AnalyticsQueryOutput, error) {
-	native, limits, finish, err := s.beginInteractiveQuery(ctx, input.ID)
+	native, limits, scope, err := s.beginUsageQuery(ctx, input.ID, "sql")
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer scope.Finish()
 	deadline, _ := native.Deadline()
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	scope.Begin()
 	result, err := s.lake.Query(native, input.ID, input.Body.SQL, input.Body.Parameters, limits.executionLimits())
-	err = interactiveQueryResultError(native, finish(), err)
+	err = interactiveQueryResultError(native, scope.Finish(), err)
 	if err != nil {
 		return nil, err
 	}
@@ -88,16 +89,17 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 }
 
 func (s *Service) lakeEventCatalog(ctx context.Context, input lakeapi.EventCatalogInput) (*EventCatalogOutput, error) {
-	native, limits, finish, err := s.beginInteractiveQuery(ctx, input.ID)
+	native, limits, scope, err := s.beginUsageQuery(ctx, input.ID, "catalog")
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer scope.Finish()
 	deadline, _ := native.Deadline()
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	scope.Begin()
 	result, err := s.lake.Catalog(native, input)
-	err = interactiveQueryResultError(native, finish(), err)
+	err = interactiveQueryResultError(native, scope.Finish(), err)
 	if err != nil {
 		return nil, err
 	}

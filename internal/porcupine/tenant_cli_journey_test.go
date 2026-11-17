@@ -62,6 +62,11 @@ func TestTenantGeneratedCLIManagementJourney(t *testing.T) {
 		t.Fatalf("CLI usage contract lost: %v", result)
 	}
 	_, scoped := key(t, s, []string{"management:read", "events:read"}, []string{id})
+	result = run(adminToken, true, "list-usage", "--tenant-id", tenantID, "--group-by", "tenant", "--limit", "1")
+	if rows := result["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["tenant_id"] != tenantID {
+		t.Fatalf("CLI numerical usage scope lost: %v", result)
+	}
+	run(scoped, false, "list-usage", "--tenant-id", tenantID)
 	run(scoped, true, "list-projects", "--tenant-id", tenantID)
 	run(scoped, false, "get-tenant-usage", "--tenant-id", tenantID)
 	run(scoped, false, "update-tenant", "--tenant-id", tenantID, "--body", `{"ingestion_allowed":false}`)

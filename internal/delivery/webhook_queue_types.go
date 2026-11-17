@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/olup/porcupine/internal/usage"
 	"net/http"
 	"time"
 )
@@ -51,6 +52,7 @@ type WebhookQueue struct {
 	clock  func() time.Time
 	host   WebhookHost
 	Client *http.Client
+	Usage  *usage.Recorder
 }
 
 func NewWebhookQueue(db *sql.DB, limits *WebhookLimits, clock func() time.Time, host WebhookHost) *WebhookQueue {
