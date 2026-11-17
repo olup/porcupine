@@ -88,11 +88,11 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 		t.Fatal("expired consent did not produce the domain authorization error", err)
 	}
 	var destinations []string
-	s.pipelines.webhookClient = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
+	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
 		destinations = append(destinations, r.URL.Host)
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
-	if progress, err := s.stepWebhook(t.Context()); !progress || err != nil {
+	if progress, err := s.pipelines.webhooks.Step(t.Context()); !progress || err != nil {
 		t.Fatal("expired creator stayed a transient queue error", progress, err)
 	}
 	var state, code string
@@ -102,7 +102,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if len(destinations) != 0 {
 		t.Fatal("expired consent sent a webhook", destinations)
 	}
-	if progress, err := s.stepWebhook(t.Context()); !progress || err != nil {
+	if progress, err := s.pipelines.webhooks.Step(t.Context()); !progress || err != nil {
 		t.Fatal("expired creator blocked healthy destination", progress, err)
 	}
 	if len(destinations) != 1 || destinations[0] != "healthy.example.test" {

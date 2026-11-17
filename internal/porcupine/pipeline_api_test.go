@@ -11,11 +11,7 @@ import (
 
 func attachTestPipelines(s *Service, runtime *pipelineRuntime) {
 	s.pipelines = runtime
-	s.acceptance.enqueueWebhooks = nil
-	if runtime != nil {
-		participant := &webhookAcceptance{config: &runtime.config, rules: s.eventRules}
-		s.acceptance.enqueueWebhooks = participant.Enqueue
-	}
+	configureWebhooks(s, runtime)
 }
 
 func enableTestPipelines(t *testing.T, s *Service) {

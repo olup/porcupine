@@ -11,12 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
@@ -38,15 +38,15 @@ type pipelineRuntime struct {
 	admissionsMu sync.Mutex
 	admissions   map[*pipelineAdmission]struct{}
 
-	config        PipelineConfig
-	aead          cipher.AEAD
-	fingerprint   string
-	s3Origins     map[string]bool
-	webhookClient *http.Client
-	webhookWake   chan struct{}
-	s3Wake        chan struct{}
-	cancel        context.CancelFunc
-	workers       sync.WaitGroup
+	config      PipelineConfig
+	aead        cipher.AEAD
+	fingerprint string
+	s3Origins   map[string]bool
+	webhooks    *delivery.WebhookQueue
+	webhookWake chan struct{}
+	s3Wake      chan struct{}
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
 }
 
 func newPipelineRuntime(input *PipelineConfig) (*pipelineRuntime, error) {
@@ -156,7 +156,7 @@ func (s *Service) initializePipelines(ctx context.Context) error {
 	if err := s.verifyPipelineConfig(ctx); err != nil {
 		return err
 	}
-	if err := s.initializeWebhook(ctx); err != nil {
+	if err := delivery.InitializeWebhooks(ctx, s.db); err != nil {
 		return err
 	}
 	return s.initializeS3Pipelines(ctx)
@@ -268,7 +268,7 @@ func (s *Service) startPipelines() {
 			}
 		}()
 	}
-	start("webhook", rt.webhookWake, s.stepWebhook)
+	start("webhook", rt.webhookWake, rt.webhooks.Step)
 	if s.lake != nil {
 		start("s3", rt.s3Wake, s.stepPipelineS3)
 	}

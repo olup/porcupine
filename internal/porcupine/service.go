@@ -214,10 +214,7 @@ func Open(c Config) (*Service, error) {
 	}
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
-	if pipelines != nil {
-		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
-		s.acceptance.enqueueWebhooks = webhooks.Enqueue
-	}
+	configureWebhooks(s, pipelines)
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100

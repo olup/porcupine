@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/delivery"
 )
 
 // BenchmarkPipelineCaptureDurable measures the normal HTTP capture handler with
@@ -72,8 +73,8 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 		if err != nil {
 			b.Fatal(err)
 		}
-		rt.webhookClient = &http.Client{Transport: &noNetwork}
 		attachTestPipelines(s, rt)
+		rt.webhooks.Client = &http.Client{Transport: &noNetwork}
 		spec := WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"purchase"}}
 		if mode == "unmatched" {
 			spec.DeliveryMode, spec.IncludeEvents = "event", []string{"other-event"}
@@ -146,7 +147,7 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 		}
 		wantRows := accepted
 		if mode == "batch" {
-			wantRows = (accepted + webhookChunkEvents - 1) / webhookChunkEvents
+			wantRows = (accepted + delivery.WebhookChunkEvents - 1) / delivery.WebhookChunkEvents
 		}
 		if queuedRows != wantRows {
 			b.Fatalf("wrong delivery mode grouping: got %d rows, want %d", queuedRows, wantRows)

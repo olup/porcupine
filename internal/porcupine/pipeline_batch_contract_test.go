@@ -52,7 +52,7 @@ func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
 	// No destinations exist yet. Join the initial workers before replacing their
 	// outbound client, then run the real workers for the entire API contract.
 	service.stopPipelines()
-	service.pipelines.webhookClient = &http.Client{Transport: pipelineBatchContractTransport(func(request *http.Request) (*http.Response, error) {
+	service.pipelines.webhooks.Client = &http.Client{Transport: pipelineBatchContractTransport(func(request *http.Request) (*http.Response, error) {
 		defer request.Body.Close()
 		body, err := io.ReadAll(io.LimitReader(request.Body, 2<<20))
 		if err != nil {

@@ -37,12 +37,14 @@ Each project has a durable owner. Public workers forward owner-bound requests; d
 | `internal/event` | Canonical event model and IDs, independent of storage and adapters |
 | `internal/ingest` | Native/Segment live input decoding, normalization, traits, and privacy filtering |
 | `internal/importer` | Historical native/PostHog/Segment decoding, manifests, and bounded JSONL parsing |
-| `internal/delivery` | Webhook destination/DNS policy, HTTP delivery, and CSV/JSONL row encoding |
+| `internal/delivery` | Durable webhook enqueueing, batching, attempts, retries and history; webhook destination/DNS policy and HTTP delivery; CSV/JSONL row encoding |
 | `internal/s3client` | Common S3 client construction, with separate credentials and transports for each destination |
 | `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
 | `internal/exportstore` | Export object storage |
 
-This table describes the unreleased stabilization work. The service still owns durable jobs, retry state, checkpoint commits, quotas, and the atomic acceptance transaction. The input and delivery modules do not commit events or own that transaction. Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
+This table describes the unreleased stabilization work. The service owns analytical delivery, exports and S3 pipeline jobs, checkpoint commits, quotas, and the atomic acceptance transaction. The webhook queue owns its attempt and retry transactions. Its enqueuer and event-cancellation function instead use the caller's SQLite transaction, so event acceptance and mutation remain atomic with their webhook effects. A three-method host contract supplies current authorization, destination decryption, and the project activity lease. See the [webhook module record](design/webhook-module.md) for the ownership map and verification.
+
+Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
 
 ## Isolation and limits
 
