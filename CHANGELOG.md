@@ -10,6 +10,9 @@
 - Versioned operational database schemas. Startup refuses newer and unknown databases before changing them.
 - Faster local checks and parallel test execution, with complete race/integration suites retained for validation.
 - DuckLake engine extracted into `internal/lake`. Canonical event types, live input normalization, historical parsing, webhook/row delivery, and S3 client construction have separate modules while durable transaction ownership stays in the service.
+- Receipt retention defaults to 30 days. Pruning verifies analytical heads first; after a project's first prune, new producer-ID batches check DuckLake regardless of retry timestamps. Lookup failures refuse the batch for retry. Setting retention to zero stops future pruning without disabling historical checks.
+- DuckLake schema v2 stores the current event once, retains an original snapshot only when corrected, and partitions by month. It preserves source timestamp precision, rejects unsupported formats before writes, and resumes interrupted recognized upgrades. No general storage-savings or throughput guarantee follows from the schema change.
+- Authentication policy, upstream provider verification, and login/email admission limits have a separate `internal/auth` package. Persistence, consent issuance, and revocation keep their existing transaction owners. No sign-in mode is removed.
 - Documentation reorganized into task guides, detailed reference, and design/validation records. The agent entry point describes the current contract rather than cumulative release history.
 
 Tenant-enabled deployments require fresh storage. The published v0.14.0 binaries do not include these changes. Additional stabilization work is tracked in the [review follow-up](docs/design/review-v0.14.md).

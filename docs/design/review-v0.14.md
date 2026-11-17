@@ -1,6 +1,6 @@
 # v0.14.0 review follow-up
 
-The review covered the published v0.14.0 tree. Work listed below is on the development branch or under review; no newer release or deployment is implied.
+The review covered the published v0.14.0 tree. The implementation now combines the earlier merged work and the stabilization commits on a review branch. Final combined checks are pending. No newer release or deployment is implied.
 
 The review found sound acceptance and SQL-isolation boundaries alongside an oversized operational and documentation footprint. Faster CI was the first response because every later refactor needs frequent feedback. It improves the cost of checking changes. It does not establish throughput, availability, or production maturity.
 
@@ -14,15 +14,17 @@ The review found sound acceptance and SQL-isolation boundaries alongside an over
 | MCP forces destructive-tool approval for SQL | Read-only schema and query tools | Merged, #44 |
 | Inert backend/cache settings | Removed obsolete inputs and fields; `use_cache` is rejected | Merged, #45 |
 | Dispersed schema alterations | Numbered schemas; refuse unknown/newer databases before writes | Merged, #47 |
-| Large mixed package | DuckLake extraction; authentication and delivery boundaries follow | Lake merged, #48; remaining work under review |
-| Permanent SQLite retry receipts | Retention window plus historical deduplication that preserves edits, tombstones, and stable IDs | #49 under review |
-| Duplicate analytical payload and missing time partitioning | One current event representation, original snapshot only after correction, monthly partitions | #50 under review |
-| Large authentication surface | Extract code and document simplification options without silently removing login modes | In progress; API removals need a decision |
+| Large mixed package | Lake, authentication policy, canonical events, input/import parsing, delivery, and S3 construction have separate packages; service retains durable transactions | Integrated; final combined checks pending |
+| Permanent SQLite retry receipts | Retention window plus historical deduplication that preserves edits, tombstones, and stable IDs | Integrated with timestamp-independent retry checks; final combined checks pending |
+| Duplicate analytical payload and missing time partitioning | One current event representation, original snapshot only after correction, monthly partitions | Integrated with format checks and interrupted-upgrade recovery; final combined checks pending |
+| Large authentication surface | Extract code and document simplification options without silently removing login modes | Extraction integrated; mode removal remains a proposal |
 | Many environment variables/Compose overlays | One configuration file, init/check, validated overrides, and consolidated Compose entry point | In progress |
-| Product guides mixed with experiments | Task guides, detailed reference, separate design records, changelog, shorter agent guide | This documentation change |
+| Product guides mixed with experiments | Task guides, detailed reference, separate design records, changelog, shorter agent guide | Integrated; strict HTML/Markdown build and link tests passed |
 | Hosted sizing assumption | Shared cells are an option; use measured active-engine/workload limits, not a promised tenants-per-process figure | Architecture to validate |
 
 ## Verification required before release
+
+The combined branch adds receipt-pruning regression tests for historical imports and storage failures, as well as schema format and restart tests. These focused tests do not replace the final combined race, SDK, S3, and restore runs. Their final results belong in the release review, not an assumed blanket pass.
 
 Receipt pruning must never reaccept an old stable ID because its current event was edited or deleted. A failed historical lookup cannot mean "new event". Test retries with changed timestamps, crash recovery, imports, identity controls, and storage unavailability.
 

@@ -15,13 +15,14 @@ Completed on the development branch, not yet released:
 - Faster short tests and full race/integration checks, with versioned operational schema migrations.
 - A separate `internal/lake` engine package.
 
-Work being integrated and verified:
+Integrated on the stabilization branch, pending final combined validation:
 
-- Bounded local retry receipts with safe historical deduplication.
-- A leaner, monthly-partitioned DuckLake schema.
-- Smaller authentication and delivery modules without changing permission boundaries.
-- One self-host configuration file, setup checks, and a consolidated Compose entry point.
+- Bounded local retry receipts with timestamp-independent historical deduplication, including import retries and refusal during analytical lookup failures.
+- DuckLake schema v2 with monthly partitions, no full duplicated current payload, format checks, and interrupted-upgrade recovery.
+- Smaller authentication, canonical-event, input, import, delivery, and S3 modules while keeping durable transaction ownership in the service.
 - Focused product guides, detailed references, and separate design records.
+
+Still being completed: one self-host configuration file, setup checks, and a consolidated Compose entry point. Authentication-mode removal remains a proposal rather than part of the extraction.
 
 ## Validate the complete team workflow
 

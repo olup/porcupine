@@ -32,7 +32,7 @@ For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audi
 
 ## Import event history
 
-Development builds after v0.13.0 add one-command imports for native, PostHog, and Segment JSONL files or directories:
+Import native, PostHog, and Segment JSONL files or directories in one command:
 
 ```sh
 porcupine import --project PROJECT_ID --format native ./events.jsonl
@@ -60,7 +60,7 @@ Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to
 
 Since v0.13.0, run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/reference/event-discovery.md) for sampling and payload limits.
 
-Development after v0.13.0 adds `porcupine restore`, an offline operation that runs the matching native server image through Docker. It restores into a fresh volume, resets old access and delivery jobs, and reads the recovery secret from a private file. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
+`porcupine restore` is an offline operation that runs the matching native server image through Docker. It restores into a fresh volume, resets old access and delivery jobs, and reads the recovery secret from a private file. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
 
 ## Develop
 
