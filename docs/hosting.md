@@ -62,12 +62,12 @@ docker compose stop porcupine
 docker compose cp porcupine:/data/porcupine.json ./porcupine.private.json
 chmod 600 ./porcupine.private.json
 # Edit porcupine.private.json with your local editor.
-docker compose cp ./porcupine.private.json porcupine:/data/porcupine.json
+docker compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < porcupine.private.json
 docker compose --profile tools run --rm config-check
 docker compose up -d porcupine
 ```
 
-Preserve the generated secrets when editing. Keep the private copy outside source control and remove it when no longer needed. The image runs as user 65532, so any host-mounted private file must be readable by that container user. Preserve the configuration with recovery material. Do not apply the v0.14.0 release overlay to this source-build setup; that published image does not understand the new config commands.
+`config install` validates stdin and replaces the private file atomically as the container user. Invalid input leaves the previous file in place. Preserve generated secrets when editing. Keep the private copy outside source control and remove it when no longer needed. The image runs as user 65532, so any host-mounted private file must be readable by that container user. Preserve the configuration with recovery material. Do not apply the v0.14.0 release overlay to this source-build setup; that published image does not understand the new config commands.
 
 Use the quickstart's tagged checkout for the older v0.14.0 Compose workflow.
 
