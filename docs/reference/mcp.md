@@ -41,7 +41,7 @@ Most analysis needs two calls. Both tools are annotated as read-only, idempotent
 
 `project_id` is optional when the credential grants exactly one project. Credentials with several projects, or with every project, must name one; use `list-projects` through `porcupine_docs` and `porcupine_call` to find it.
 
-`porcupine_schema` returns `schema` (the `get-event-schema` body: dialect, columns, functions, limits and delivery status) and `catalog` (the `get-event-catalog` body: observed event names):
+`porcupine_schema` returns `schema` (the `get-event-schema` body: dialect, columns, functions, limits and delivery status) and `catalog` (the `get-event-catalog` body: observed event names with optional user-authored descriptions):
 
 ```json
 {"name":"porcupine_schema","arguments":{}}

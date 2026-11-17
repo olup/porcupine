@@ -212,6 +212,8 @@ readers and retry to callers with `events:edit`.
 The [analytics API reference](analytics.md) describes `get-event-schema`,
 `get-event-catalog`, and `query-events`, including SQL examples, fixed quotas,
 and eventual consistency. All three require one permitted project per request.
+Use [set-catalog-description](event-discovery.md#document-an-event-or-property)
+to edit optional event and property descriptions in the catalog.
 
 The [event mutation reference](../events.md) describes current-event reads, full
 replacement corrections, deletion tombstones, revision checks, idempotency, and

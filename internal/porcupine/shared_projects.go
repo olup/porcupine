@@ -81,7 +81,7 @@ func (s *Service) projectOperationNeedsOwner(operation string) bool {
 	switch operation {
 	case "get-event-schema":
 		return s.hostedQueries == nil
-	case "query-events", "get-event-catalog", "get-event-profile", "get-event-input-contract", "rename-project":
+	case "query-events", "get-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project":
 		return false
 	default:
 		return true
