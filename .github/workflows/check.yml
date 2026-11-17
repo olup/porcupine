@@ -11,6 +11,8 @@ permissions:
 concurrency:
   group: check-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  GOFLAGS: -trimpath
 jobs:
   documentation:
     runs-on: ubuntu-latest
@@ -20,6 +22,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/docsite/hugo.go
       - run: CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite
       - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
@@ -31,7 +37,7 @@ jobs:
     uses: ./.github/workflows/cli.yml
     with:
       version: dev
-  go:
+  go-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -42,11 +48,79 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/cmd/genapi/main.go
       - name: Test independent modules without the native engine
         run: make test-core
-      - run: make check-full
+      - run: make lint
+      - name: Race-test every other package
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages="$(go list ./... | grep -v '^github.com/olup/porcupine/internal/porcupine$')"
+          go test -race $packages -count=1 -timeout=600s
       - run: make build
       - run: CGO_ENABLED=0 go run ./internal/cmd/standalone-cli-check --server bin/porcupine
+  backend:
+    name: Backend race ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/cmd/test-shard/main.go
+      - run: mkdir -p bin/test-results
+      - name: Run the discovered backend race shard
+        run: CGO_ENABLED=0 go run ./internal/cmd/test-shard -index ${{ matrix.shard }} -count 2 -report bin/test-results/shard-${{ matrix.shard }}.json -log bin/test-results/shard-${{ matrix.shard }}.jsonl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: backend-race-${{ matrix.shard }}
+          path: bin/test-results/
+          if-no-files-found: error
+  go:
+    # Preserve the existing gate, including every shard and artifact journey.
+    needs: [go-checks, backend, documentation, cli, native-integration, restore-integration, shared-integration, sdk-compat, security]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validation job to succeed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -e 'to_entries | all(.[];
+            .value.result == "success" or
+            (.key == "cli" and env.GITHUB_REF_TYPE == "tag" and .value.result == "skipped") or
+            (.key == "security" and env.GITHUB_EVENT_NAME == "pull_request" and .value.result == "skipped")
+          )' <<< "$JOB_RESULTS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/cmd/test-shard/main.go
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: backend-race-*
+          merge-multiple: true
+          path: bin/test-results
+      - name: Require complete, non-overlapping backend test execution
+        run: CGO_ENABLED=0 go run ./internal/cmd/test-shard verify bin/test-results/shard-*.json
   security:
     # Vulnerability scan and fuzzing run on main, releases and nightly, not on every PR push.
     if: github.event_name != 'pull_request'
@@ -60,6 +134,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/nativequery/policy.go
       - run: make security-check
   native-integration:
     runs-on: ubuntu-latest
@@ -70,8 +148,25 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # One make graph builds the standalone CLI once for both journeys.
-      - run: make ducklake-smoke ducklake-s3-test ducklake-restore-drill
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/cmd/ducklake-s3-integration/main.go
+      - run: make ducklake-smoke ducklake-s3-test
+  restore-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            Dockerfile
+      - run: make ducklake-restore-drill
   shared-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -81,6 +176,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            internal/cmd/shared-postgres-integration/main.go
       - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: ${{ runner.temp }}/porcupine-test-postgres
@@ -99,6 +198,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            Makefile
+            compat/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
