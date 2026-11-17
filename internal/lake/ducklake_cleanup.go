@@ -26,11 +26,8 @@ func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
 		s.Mu.Unlock()
 		return err
 	}
-	var id string
-	err := s.Registry.QueryRowContext(ctx, `SELECT c.project_id FROM catalogs c
- LEFT JOIN cleanup_progress p ON p.project_id=c.project_id
- WHERE c.ready=1 AND NOT EXISTS(SELECT 1 FROM deleting_projects d WHERE d.project_id=c.project_id) AND (p.next_attempt IS NULL OR p.next_attempt<=?)
- ORDER BY COALESCE(p.last_attempt,0),c.project_id LIMIT 1`, now.UnixMilli()).Scan(&id)
+	retry := min(s.Config.CleanupInterval, time.Minute)
+	attempt, err := s.registry.claimCleanup(ctx, now, now.Add(retry))
 	if errors.Is(err, sql.ErrNoRows) {
 		s.Mu.Unlock()
 		return nil
@@ -39,13 +36,7 @@ func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
 		s.Mu.Unlock()
 		return err
 	}
-	retry := min(s.Config.CleanupInterval, time.Minute)
-	_, err = s.Registry.ExecContext(ctx, `INSERT INTO cleanup_progress(project_id,next_attempt,last_attempt,state)
- VALUES(?,?,?,'running') ON CONFLICT(project_id) DO UPDATE SET next_attempt=excluded.next_attempt,last_attempt=excluded.last_attempt,state='running'`, id, now.Add(retry).UnixMilli(), now.UnixMilli())
-	if err != nil {
-		s.Mu.Unlock()
-		return err
-	}
+	id := attempt.ProjectID
 	// A future reader uses the current snapshot. Only readers that already hold
 	// a lease can require files scheduled for deletion before this point.
 	snapshotBefore, fileBefore := now.Add(-s.Config.SnapshotRetention), now.Add(-s.Config.CleanupGrace)
@@ -74,7 +65,7 @@ func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
 			state = "waiting"
 		}
 		record, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_, recordErr := s.Registry.ExecContext(record, "UPDATE cleanup_progress SET state=?,failed=CASE WHEN ?='failed' THEN 1 ELSE failed END WHERE project_id=?", state, state, id)
+		recordErr := s.registry.finishCleanup(record, attempt, state, time.Time{}, time.Time{})
 		cancel()
 		s.Mu.Unlock()
 		if state == "waiting" {
@@ -89,11 +80,11 @@ func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
 	record, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err != nil {
-		_, recordErr := s.Registry.ExecContext(record, "UPDATE cleanup_progress SET state='failed',failed=1 WHERE project_id=?", id)
+		recordErr := s.registry.finishCleanup(record, attempt, "failed", time.Time{}, time.Time{})
 		return errors.Join(err, recordErr)
 	}
 	completed := now.Add(time.Since(started))
-	_, err = s.Registry.ExecContext(record, `UPDATE cleanup_progress SET state='ok',failed=0,last_success=?,next_attempt=? WHERE project_id=?`, completed.UnixMilli(), completed.Add(s.Config.CleanupInterval).UnixMilli(), id)
+	err = s.registry.finishCleanup(record, attempt, "ok", completed, completed.Add(s.Config.CleanupInterval))
 	return err
 }
 
@@ -131,9 +122,10 @@ func (s *DuckLakeStore) CleanupStatus(ctx context.Context) (DuckLakeCleanupStatu
 	if _, err := s.sourceIDLocked(ctx); err != nil {
 		return status, err
 	}
-	var attempted, succeeded int64
-	err := s.Registry.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(p.last_success>0),0),COALESCE(sum(p.failed),0),COALESCE(sum(p.state='running'),0),COALESCE(max(p.last_attempt),0),COALESCE(max(p.last_success),0)
- FROM catalogs c LEFT JOIN cleanup_progress p ON p.project_id=c.project_id WHERE c.ready=1`).Scan(&status.RegisteredCatalogs, &status.CompletedCatalogs, &status.FailedCatalogs, &status.RunningCatalogs, &attempted, &succeeded)
+	summary, err := s.registry.cleanupSummary(ctx)
+	status.RegisteredCatalogs, status.CompletedCatalogs = summary.Registered, summary.Completed
+	status.FailedCatalogs, status.RunningCatalogs = summary.Failed, summary.Running
+	attempted, succeeded := summary.LastAttempt, summary.LastSuccess
 	if attempted > 0 {
 		status.LastAttempt = time.UnixMilli(attempted).UTC().Format(time.RFC3339Nano)
 	}
