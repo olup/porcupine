@@ -117,3 +117,38 @@ warm after maintenance. The middle query overlapped about 12 ms of the
 maintenance call, including its setup. Each timing represents a single query
 and the cold and warm calls have different cache conditions. The isolated
 before and after queries used five and one range GETs, respectively.
+
+## Legacy guard rewrite experiment
+
+The counting proxy also groups Parquet requests by data directory. For the
+one-event-per-minute cohort, AWS Emulator 1.0.497 confirmed the original
+480 PUTs across 48 nonempty flushes. Each flush wrote these files.
+
+| Native operation | Parquet files written per flush |
+| --- | --- |
+| Advance the recovery fence | 1 `hosted_write_guard`, 1 `project_write_guard` |
+| Commit the live batch | 1 each for `hosted_write_guard`, `project_write_guard`, `current_events`, `heads`, `native_usage_totals`, and `native_commit_proofs` |
+| Acknowledge external effects | 1 `hosted_write_guard`, 1 `project_write_guard` |
+
+`current_events` has year and month partitions. `native_usage_totals`
+retains the physical directory name `live_usage_totals` from before the
+catalog rename.
+
+After hosted cutover, the hosted guard orders native writes and seals.
+Hosted transactions still check the legacy guard's deletion marker.
+Removing its generation updates took three PUTs and six missing HEADs out
+of every flush in this cohort.
+
+| One-event-per-minute cohort, 48 flushes | Baseline | Legacy guard read only |
+| --- | ---: | ---: |
+| Parquet PUT | 480 | 336 |
+| Missing HEAD | 960 | 672 |
+| Range GET | 492 | 396 |
+| Modeled flush request cost per million events | $62.10 | $43.90 |
+| Modeled flush request cost per project per 30 days | $2.68 | $1.90 |
+
+The comparison uses the completed sparse phase from both emulator runs.
+The baseline later reached the emulator's 1,000-object bucket limit in the
+one-event-per-second phase. The updated flusher completed all three cohorts
+with seven PUTs and 14 missing HEADs per flush. The table models request cost
+using the published rates for both runs.

@@ -45,7 +45,7 @@ func (s *DuckLakeStore) advanceWriteFence(ctx context.Context, fence ProjectWrit
  AND (fence_epoch<? OR (fence_epoch=? AND fence_nonce=?))`, fence.Epoch, fence.AcquisitionID, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.Epoch, fence.AcquisitionID); err != nil {
 			return err
 		}
-		if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
+		if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -62,7 +62,7 @@ func (p *ProjectLake) acquireHostedNativeWrite(ctx context.Context, tx *sql.Tx, 
  WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state='open' AND identity_ready AND fence_epoch=? AND fence_nonce=?`, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID); err != nil {
 		return err
 	}
-	return p.acquireNativeProjectGuard(ctx, tx)
+	return checkNativeProjectNotDeleted(ctx, tx)
 }
 func nativeUpdateExactlyOne(ctx context.Context, tx *sql.Tx, statement string, args ...any) error {
 	result, err := tx.ExecContext(ctx, statement, args...)
