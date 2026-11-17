@@ -10,14 +10,16 @@ type NativeSourceTotals struct {
 type NativeCommitKind string
 
 const (
-	NativeCommitLive   NativeCommitKind = "live"
-	NativeCommitImport NativeCommitKind = "import"
+	NativeCommitLive     NativeCommitKind = "live"
+	NativeCommitImport   NativeCommitKind = "import"
+	NativeCommitMutation NativeCommitKind = "mutation"
 )
 
 type NativeCommitEvidence struct {
 	Kind                                            NativeCommitKind
 	AcceptedImport                                  int64
 	Import                                          *ImportChunkOutcome
+	Mutation                                        *HostedMutationOutcome `json:",omitempty"`
 	Scope                                           HostedProjectScope
 	TenantID                                        string
 	Sequence                                        int64
