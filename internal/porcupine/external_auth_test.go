@@ -1,0 +1,177 @@
+package porcupine
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/olup/porcupine/internal/auth"
+)
+
+type externalAuthFixture struct {
+	s      *Service
+	key    *rsa.PrivateKey
+	issuer string
+	broken atomic.Bool
+	clock  time.Time
+}
+
+func newExternalAuthFixture(t *testing.T) *externalAuthFixture {
+	t.Helper()
+	key, e := rsa.GenerateKey(rand.Reader, 2048)
+	if e != nil {
+		t.Fatal(e)
+	}
+	f := &externalAuthFixture{key: key, clock: time.Now().UTC().Truncate(time.Second)}
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.broken.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "one", Algorithm: "RS256", Use: "sig"}}})
+	}))
+	t.Cleanup(issuer.Close)
+	f.issuer = issuer.URL + "/realm"
+	f.s, e = Open(Config{DBPath: filepath.Join(t.TempDir(), "journal.db"), Clock: func() time.Time { return f.clock }, Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: auth.ExternalConfig{Issuer: f.issuer, JWKSURL: issuer.URL + "/keys", APIAudience: "https://data.test/api/v1", MCPAudience: "https://data.test/mcp"}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = f.s.Close() })
+	return f
+}
+func (f *externalAuthFixture) token(t *testing.T, subject, tenant, scope, audience string, projects ...string) string {
+	t.Helper()
+	authority := map[string]any{"tenant_id": tenant, "project_scope": "selected", "projects": projects}
+	if tenant == "" {
+		authority = map[string]any{"operator": true}
+	} else if projects == nil {
+		authority = map[string]any{"tenant_id": tenant, "project_scope": "all"}
+	}
+	c := jwt.MapClaims{"iss": f.issuer, "sub": subject, "aud": audience, "iat": f.clock.Unix(), "exp": f.clock.Add(5 * time.Minute).Unix(), "scope": scope, "porcupine": authority}
+	j := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+	j.Header["typ"] = "at+jwt"
+	j.Header["kid"] = "one"
+	raw, e := j.SignedString(f.key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return raw
+}
+func (f *externalAuthFixture) operator(t *testing.T) string {
+	return f.token(t, "operator", "", "instance:admin", f.s.resources.apiResource)
+}
+func externalBody(t *testing.T, value any) string {
+	t.Helper()
+	data, e := json.Marshal(value)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return string(data)
+}
+
+func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	s := f.s
+	if s.oauth != nil || !s.externalAuthEnabled() {
+		t.Fatal("external mode initialized builtin authority")
+	}
+	var accounts int
+	if e := s.control.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&accounts); e != nil || accounts != 0 {
+		t.Fatalf("fresh external instance has local identities: %d %v", accounts, e)
+	}
+	for _, route := range []struct{ method, path string }{{"POST", "/oauth/token"}, {"POST", "/oauth/revoke"}, {"GET", "/oauth/authorize"}, {"GET", "/oauth/consent"}, {"POST", "/oauth/consent"}, {"POST", "/oauth/email/request"}, {"POST", "/oauth/email/verify"}, {"POST", "/oauth/oidc/start"}, {"GET", "/oauth/oidc/callback"}, {"GET", "/.well-known/oauth-authorization-server"}, {"GET", "/api/v1/humans"}, {"GET", "/api/v1/oauth-grants"}} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		if w.Code != 404 {
+			t.Fatalf("builtin route remains: %s %s %d", route.method, route.path, w.Code)
+		}
+	}
+	for _, resource := range []string{"/api/v1", "/mcp"} {
+		metadata := request(t, s, "GET", "/.well-known/oauth-protected-resource"+resource, "", "", 200)
+		if metadata["resource"] != "https://data.test"+resource || metadata["authorization_servers"].([]any)[0] != f.issuer {
+			t.Fatal("wrong external metadata", metadata)
+		}
+	}
+	schema := request(t, s, "GET", "/openapi.json", "", "", 200)
+	paths := schema["paths"].(map[string]any)
+	for path := range paths {
+		if strings.Contains(path, "/humans") || strings.Contains(path, "/members") || strings.Contains(path, "/oauth-grants") {
+			t.Fatal("builtin management leaked", path)
+		}
+	}
+	operator := f.operator(t)
+	tenant := func(name string) string {
+		return request(t, s, "POST", "/api/v1/tenants", operator, externalBody(t, map[string]any{"name": name}), 201)["tenant"].(map[string]any)["id"].(string)
+	}
+	a, b := tenant("A"), tenant("B")
+	project := func(tenant string) map[string]any {
+		return request(t, s, "POST", "/api/v1/projects", operator, externalBody(t, map[string]any{"name": "project", "tenant_id": tenant}), 201)
+	}
+	pa, pb := project(a), project(b)
+	idA := pa["project"].(map[string]any)["id"].(string)
+	idB := pb["project"].(map[string]any)["id"].(string)
+	reader := f.token(t, "reader", a, "management:read events:read", s.resources.apiResource, idA)
+	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", reader, "", 200)
+	request(t, s, "GET", "/api/v1/projects/"+idB+"/events", reader, "", 403)
+	forged := f.token(t, "reader", a, "management:read events:read", s.resources.apiResource, idB)
+	request(t, s, "GET", "/api/v1/projects/"+idB+"/events", forged, "", 401)
+	mcp := f.token(t, "reader", a, "management:read events:read", s.resources.mcpResource, idA)
+	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", mcp, "", 401)
+	if _, e := s.authenticateResource(t.Context(), reader, s.resources.mcpResource); e == nil {
+		t.Fatal("API token used at MCP")
+	}
+	admin := f.token(t, "admin-a", a, "tenant:admin management:read management:write events:read events:write pipelines:write", s.resources.apiResource)
+	request(t, s, "POST", "/api/v1/projects", admin, externalBody(t, map[string]any{"tenant_id": b, "name": "wrong tenant"}), 403)
+	client := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts", admin, externalBody(t, map[string]any{"name": "Team", "permissions": []string{"events:read", "events:write", "pipelines:write"}, "projects": []string{idA}}), 201)
+	if client["client_secret"] != nil {
+		t.Fatal("unusable builtin OAuth secret exposed in external mode")
+	}
+	clientID := client["client_id"].(string)
+	key := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts/"+clientID+"/api-keys", admin, externalBody(t, map[string]any{"name": "worker", "audience": "api", "permissions": []string{"events:read", "events:write", "pipelines:write"}, "projects": []string{idA}}), 201)
+	native := key["token"].(string)
+	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", native, "", 200)
+	rejected := request(t, s, "POST", "/api/v1/projects/"+idA+"/pipelines", admin, `{"name":"schedule","kind":"webhook","credentials":{},"webhook":{"endpoint":"https://example.test"}}`, 403)
+	if rejected["code"] != "execution_credential_required" {
+		t.Fatal("missing execution credential guidance", rejected)
+	}
+	request(t, s, "DELETE", "/api/v1/tenants/"+a+"/service-accounts/"+clientID+"/api-keys/"+key["id"].(string), admin, "", 204)
+	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", native, "", 401)
+	// An external-AS outage never enters the public SDK acceptance path.
+	f.broken.Store(true)
+	request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"event":"click","distinct_id":"person"}`, pa["ingest_token"]), 200)
+	var humans int
+	if e := s.control.QueryRow(`SELECT count(*) FROM email_humans`).Scan(&humans); e != nil || humans != 0 {
+		t.Fatal("external mode persisted human account", e)
+	}
+}
+
+func TestExternalAuthConfigIsOfflineAndCannotAdoptBuiltin(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	c := Config{DBPath: filepath.Join(t.TempDir(), "unused.db"), Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: auth.ExternalConfig{Issuer: "https://offline.test/realm", JWKSURL: "https://offline.test/keys", APIAudience: "https://data.test/api/v1", MCPAudience: "https://data.test/mcp"}}}
+	if e := ValidateConfig(c); e != nil {
+		t.Fatal(e)
+	}
+	c.BootstrapToken = adminToken
+	if e := ValidateConfig(c); e == nil {
+		t.Fatal("external bootstrap secret accepted")
+	}
+	if e := checkControlAuthMode(t.Context(), f.s.control, false); e == nil {
+		t.Fatal("external database adopted by builtin")
+	}
+	builtin := service(t, 10)
+	if e := checkControlAuthMode(t.Context(), builtin.control, true); e == nil {
+		t.Fatal("builtin identities adopted by external")
+	}
+}

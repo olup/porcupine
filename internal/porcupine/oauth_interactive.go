@@ -98,7 +98,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resource == "" {
-		resource = s.oauth.mcpResource
+		resource = s.resources.mcpResource
 	}
 	if !s.interactiveResourceAllowed(resource) {
 		oauthTokenError(w, 400, "invalid_target")

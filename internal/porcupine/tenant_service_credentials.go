@@ -79,7 +79,7 @@ type TenantServiceKeyIDInput struct {
 }
 
 func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
-	if s.oauth == nil {
+	if s.resources == nil {
 		return
 	}
 	access := auth.OperationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
@@ -159,7 +159,7 @@ func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQuer
 	if !caller.CanAdminTenant(tenant) {
 		return apiError(403, "tenant administrator required")
 	}
-	current, err := s.loadCredentialActorFrom(ctx, query, caller.ID)
+	current, err := s.currentAuthority(ctx, query, caller)
 	if err != nil || !current.CanAdminTenant(tenant) {
 		return apiError(403, "current tenant administration required")
 	}
@@ -251,6 +251,9 @@ func (s *Service) createTenantServiceAccount(ctx context.Context, input *TenantS
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "team credential storage unavailable")
+	}
+	if s.externalAuthEnabled() {
+		secret = ""
 	}
 	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{TenantID: input.TenantID, ClientID: id, ClientSecret: secret, Name: spec.Name, SourceID: spec.SourceID, Permissions: spec.Permissions, Projects: spec.Projects, CreatedAt: created, GrantTypes: []string{"client_credentials"}, RedirectURIs: []string{}, TokenEndpointAuthMethod: "client_secret_basic"}}, nil
 }

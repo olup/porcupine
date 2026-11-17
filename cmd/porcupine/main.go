@@ -99,6 +99,10 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
+	authConfig, err := s.authConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
 	backupConfig, err := s.nativeBackupConfiguration()
 	if err != nil {
 		return "", porcupine.Config{}, err
@@ -111,7 +115,7 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
-	return addr, porcupine.Config{ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+	return addr, porcupine.Config{ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, Auth: authConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
 }
 
 func (s settings) receiptRetention() (time.Duration, error) {

@@ -60,7 +60,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if _, err := tx.Exec(`INSERT INTO oauth_clients(client_id,secret_hash,grant_types,redirect_uris,token_endpoint_auth_method) VALUES($1,'not-a-login-secret','["authorization_code","refresh_token"]','["https://client.example.test/callback"]','none')`, client); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES($1,$1,$2,$3,$4,$5,$6)`, consent, human.ID, client, s.oauth.mcpResource, now.UnixMilli(), now.Add(time.Minute).UnixMilli()); err != nil {
+	if _, err := tx.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES($1,$1,$2,$3,$4,$5,$6)`, consent, human.ID, client, s.resources.mcpResource, now.UnixMilli(), now.Add(time.Minute).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

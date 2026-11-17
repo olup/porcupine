@@ -74,15 +74,15 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 					return
 				}
 			}
-			if s.oauth != nil {
+			if s.resources != nil {
 				raw, err := auth.BearerCredential(req)
-				if err != nil || (!strings.HasPrefix(raw, "pc_at_") && !strings.HasPrefix(raw, serviceKeyPrefix)) {
-					s.authChallenge(w, s.oauth.apiResource, true)
+				if err != nil || (!s.externalAuthEnabled() && !strings.HasPrefix(raw, "pc_at_") && !strings.HasPrefix(raw, serviceKeyPrefix)) {
+					s.authChallenge(w, s.resources.apiResource, true)
 					problem(w, 401, "imports require an API access token or service key")
 					return
 				}
-				if _, err := s.authenticateResource(ctx.Context(), raw, s.oauth.apiResource); err != nil {
-					s.authChallenge(w, s.oauth.apiResource, true)
+				if _, err := s.authenticateResource(ctx.Context(), raw, s.resources.apiResource); err != nil {
+					s.authChallenge(w, s.resources.apiResource, true)
 					problem(w, 401, "imports require an API access token or service key")
 					return
 				}
@@ -151,7 +151,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if err := importWriteLock(ctx, tx); err != nil {
 		return nil, err
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a.ID, input.ID); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a, input.ID, m.rules.clock()); err != nil {
 		return nil, err
 	}
 	var id, previousHash string
@@ -398,7 +398,7 @@ func (m *importManager) finishImportUpload(ctx context.Context, input *ImportUpl
 	if err := importWriteLock(ctx, tx); err != nil {
 		return nil, err
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a.ID, input.ID); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a, input.ID, m.rules.clock()); err != nil {
 		return nil, err
 	}
 	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, input.ID, input.ImportID))

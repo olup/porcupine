@@ -42,6 +42,7 @@ type Config struct {
 	Pipelines          *PipelineConfig
 	Exports            *ExportConfig
 	OAuth              *OAuthConfig
+	Auth               *AuthConfig
 	NativeBackup       *lakeapi.NativeBackupConfig
 	InteractiveQueries *InteractiveQueryConfig
 	Shared             *SharedConfig
@@ -89,6 +90,7 @@ type Service struct {
 	batchSlot             chan struct{}
 	exports               *exportRuntime
 	oauth                 *oauthRuntime
+	resources             *resourceRuntime
 	projectionGuard       *projectionGuard
 }
 
@@ -143,12 +145,19 @@ func Open(c Config) (*Service, error) {
 		c.QueueMaxBytes = DefaultQueueMaxBytes
 	}
 	var oauth *oauthRuntime
-	if c.OAuth != nil {
+	var resources *resourceRuntime
+	if c.Auth != nil && c.Auth.Mode == "external" {
+		resources, err = normalizeExternalRuntime(*c.Auth)
+		if err != nil {
+			return nil, err
+		}
+	} else if c.OAuth != nil {
 		var err error
 		oauth, err = normalizeOAuthConfig(*c.OAuth)
 		if err != nil {
 			return nil, err
 		}
+		resources = &resourceRuntime{publicURL: oauth.issuer, apiResource: oauth.issuer + "/api/v1", mcpResource: oauth.issuer + "/mcp"}
 	}
 	pipelines, err := newPipelineRuntime(c.Pipelines)
 	if err != nil {
@@ -207,7 +216,7 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.control = control
 	if c.Shared != nil {
 		copyConfig := *c.Shared
@@ -240,9 +249,9 @@ func Open(c Config) (*Service, error) {
 		return nil, err
 	}
 	if c.Shared == nil {
-		err = initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig)
+		err = initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
 	} else {
-		err = initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig)
+		err = initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
 	}
 	if err != nil {
 		return fail(err)
@@ -684,11 +693,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		access, err = auth.BearerCredential(r)
 		if err == nil {
 			resource := ""
-			if s.oauth != nil {
-				resource = s.oauth.apiResource
+			if s.resources != nil {
+				resource = s.resources.apiResource
 			}
 			a, err = s.authenticateResource(r.Context(), access, resource)
-			authenticatedAPI = err == nil && s.oauth != nil && (a.ServiceKey || strings.HasPrefix(access, "pc_at_"))
+			authenticatedAPI = err == nil && s.resources != nil && (a.ServiceKey || a.External != nil || strings.HasPrefix(access, "pc_at_"))
 		}
 		if err == nil && rawKey != "" {
 			var selector auth.Principal

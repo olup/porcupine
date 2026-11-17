@@ -217,8 +217,8 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := auth.BearerCredential(r)
 		resource := ""
-		if s.oauth != nil {
-			resource = s.oauth.mcpResource
+		if s.resources != nil {
+			resource = s.resources.mcpResource
 		}
 		var a auth.Principal
 		if err == nil {

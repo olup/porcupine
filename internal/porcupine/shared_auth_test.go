@@ -104,7 +104,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	app := j.client("porcupine-local", localOAuthCallback, []string{"management:read", "events:read"})
 	token := j.browserLogin(t, app, human.Email, "/mcp", "project-a", "project-b", 200)
 	for _, worker := range []*Service{a, b} {
-		actor, err := worker.authenticateResource(ctx, token.AccessToken, worker.oauth.mcpResource)
+		actor, err := worker.authenticateResource(ctx, token.AccessToken, worker.resources.mcpResource)
 		if err != nil || !auth.Authorize(actor, "events:read", "project-a") || auth.Authorize(actor, "events:read", "project-b") {
 			t.Fatalf("shared OAuth lost project isolation: actor=%+v err=%v", actor, err)
 		}
@@ -150,7 +150,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	}
 	for _, worker := range []*Service{a, b} {
 		for _, secret := range []string{machineToken.AccessToken, key.Body.Token} {
-			principal, err := worker.authenticateResource(ctx, secret, worker.oauth.apiResource)
+			principal, err := worker.authenticateResource(ctx, secret, worker.resources.apiResource)
 			if err != nil || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") {
 				t.Fatalf("machine access lost shared scope: actor=%+v err=%v", principal, err)
 			}
@@ -161,7 +161,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	}
 	for _, worker := range []*Service{a, b} {
 		for _, secret := range []string{machineToken.AccessToken, key.Body.Token} {
-			if _, err := worker.authenticateResource(ctx, secret, worker.oauth.apiResource); err == nil {
+			if _, err := worker.authenticateResource(ctx, secret, worker.resources.apiResource); err == nil {
 				t.Fatal("revoked service account retained delegated access")
 			}
 		}
@@ -215,7 +215,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, worker := range []*Service{a, b} {
-		if _, err := worker.authenticateResource(ctx, token.AccessToken, worker.oauth.mcpResource); err == nil {
+		if _, err := worker.authenticateResource(ctx, token.AccessToken, worker.resources.mcpResource); err == nil {
 			t.Fatal("revoked human retained access on a worker")
 		}
 	}

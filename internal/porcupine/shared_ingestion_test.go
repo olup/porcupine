@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/olup/porcupine/internal/auth"
 	"net/netip"
 	"path/filepath"
 	"sync"
@@ -340,17 +341,17 @@ func TestSharedImportAuthorityRejectsStaleLocalGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if err = importCheckAuthority(t.Context(), s.imports.authorityQuery(tx), "import-actor", "import"); err != nil {
+	if err = importCheckAuthority(t.Context(), s.imports.authorityQuery(tx), auth.Principal{ID: "import-actor"}, "import", s.clock()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=$1 WHERE id='import-actor'`, now()); err != nil {
 		t.Fatal(err)
 	}
 	// The local row remains an FK anchor, never the authority for a shared key.
-	if err = importCheckAuthority(t.Context(), tx, "import-actor", "import"); err != nil {
+	if err = importCheckAuthority(t.Context(), tx, auth.Principal{ID: "import-actor"}, "import", s.clock()); err != nil {
 		t.Fatal("fixture did not keep a stale local grant", err)
 	}
-	if err = importCheckAuthority(t.Context(), s.imports.authorityQuery(tx), "import-actor", "import"); err == nil {
+	if err = importCheckAuthority(t.Context(), s.imports.authorityQuery(tx), auth.Principal{ID: "import-actor"}, "import", s.clock()); err == nil {
 		t.Fatal("shared revocation was hidden by the local grant anchor")
 	}
 }

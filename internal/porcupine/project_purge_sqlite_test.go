@@ -162,7 +162,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 func TestProjectPurgeMachineGrants(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	remove, _ := f.project(t, admin)
 	keep, _ := f.project(t, admin)
 	rights := []string{"events:read"}
@@ -179,15 +179,15 @@ func TestProjectPurgeMachineGrants(t *testing.T) {
 	}
 	multiKey := serviceKey(multi.ClientID)
 	keepKey := serviceKey(unaffected.ClientID)
-	multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.oauth.apiResource).AccessToken
-	singleToken := f.token(t, single.ClientID, single.ClientSecret, f.s.oauth.apiResource).AccessToken
+	multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.resources.apiResource).AccessToken
+	singleToken := f.token(t, single.ClientID, single.ClientSecret, f.s.resources.apiResource).AccessToken
 	runProjectPurge(t, f.s, remove, true)
 	path := "/api/v1/projects/" + keep + "/events"
 	f.call(t, "GET", path, multiKey, nil, 401, nil)
 	f.call(t, "GET", path, keepKey, nil, 200, nil)
 	f.call(t, "GET", path, singleToken, nil, 401, nil)
 	f.call(t, "GET", path, multiToken, nil, 200, nil)
-	actor, err := f.s.authenticateResource(t.Context(), multiToken, f.s.oauth.apiResource)
+	actor, err := f.s.authenticateResource(t.Context(), multiToken, f.s.resources.apiResource)
 	if err != nil || !slices.Equal(actor.Projects, []string{keep}) {
 		t.Fatal(actor, err)
 	}

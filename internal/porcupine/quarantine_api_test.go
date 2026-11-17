@@ -22,15 +22,15 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	}
 	f.s.lake = lake
 	f.s.lakeMemoryMB = 128
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
 	a, ingestA := f.project(t, admin.AccessToken)
 	b, ingestB := f.project(t, admin.AccessToken)
 	reader := f.createClient(t, admin.AccessToken, []string{"events:read"}, []string{a})
 	manager := f.createClient(t, admin.AccessToken, []string{"events:read", "events:edit"}, []string{a})
 	other := f.createClient(t, admin.AccessToken, []string{"events:read", "events:edit"}, []string{b})
-	readAPI := f.token(t, reader.ClientID, reader.ClientSecret, f.s.oauth.apiResource)
-	editAPI := f.token(t, manager.ClientID, manager.ClientSecret, f.s.oauth.apiResource)
-	otherAPI := f.token(t, other.ClientID, other.ClientSecret, f.s.oauth.apiResource)
+	readAPI := f.token(t, reader.ClientID, reader.ClientSecret, f.s.resources.apiResource)
+	editAPI := f.token(t, manager.ClientID, manager.ClientSecret, f.s.resources.apiResource)
+	otherAPI := f.token(t, other.ClientID, other.ClientSecret, f.s.resources.apiResource)
 	for _, seed := range []struct{ key, uuid string }{{ingestA, "quarantine-one"}, {ingestA, "quarantine-two"}, {ingestA, "quarantine-three"}, {ingestB, "foreign-quarantine"}} {
 		f.call(t, "POST", "/capture/", "", map[string]any{"api_key": seed.key, "uuid": seed.uuid, "event": "poison", "distinct_id": "private-person", "properties": map[string]string{"private-value": "must-not-appear"}}, 200, nil)
 	}
@@ -103,8 +103,8 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 		t.Fatal("denied repair changed accepted originals")
 	}
 
-	readMCP := f.token(t, reader.ClientID, reader.ClientSecret, f.s.oauth.mcpResource)
-	editMCP := f.token(t, manager.ClientID, manager.ClientSecret, f.s.oauth.mcpResource)
+	readMCP := f.token(t, reader.ClientID, reader.ClientSecret, f.s.resources.mcpResource)
+	editMCP := f.token(t, manager.ClientID, manager.ClientSecret, f.s.resources.mcpResource)
 	readCtx, readSession := mcpTestSession(t, f.host.URL, readMCP.AccessToken, "")
 	editCtx, editSession := mcpTestSession(t, f.host.URL, editMCP.AccessToken, "")
 	catalog := mcpTestTool(t, readCtx, readSession, "porcupine_docs", mcpDocsInput{Query: "quarantined"}, false)

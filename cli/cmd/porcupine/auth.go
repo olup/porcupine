@@ -89,13 +89,28 @@ func validSessionScopes(client string, scopes []string) bool {
 	}
 }
 
+func validProviderScopes(provider oauthProvider, client string, scopes []string) bool {
+	if !provider.External {
+		return validSessionScopes(client, scopes)
+	}
+	if client == "" || len(client) > 256 {
+		return false
+	}
+	if slices.Equal(scopes, []string{"instance:admin"}) || slices.Equal(scopes, []string{"tenant:admin"}) {
+		return true
+	}
+	_, err := projectLoginScopes(strings.Join(scopes, " "))
+	return err == nil
+}
+
 type oauthSession struct {
-	Origin  string    `json:"origin"`
-	Client  string    `json:"client"`
-	Access  string    `json:"access_token"`
-	Refresh string    `json:"refresh_token"`
-	Expires time.Time `json:"expires_at"`
-	Scopes  []string  `json:"scopes"`
+	Origin   string         `json:"origin"`
+	Client   string         `json:"client"`
+	Access   string         `json:"access_token"`
+	Refresh  string         `json:"refresh_token"`
+	Expires  time.Time      `json:"expires_at"`
+	Scopes   []string       `json:"scopes"`
+	Provider *oauthProvider `json:"provider,omitempty"`
 }
 
 func sessionFile(origin string) (string, error) {
@@ -172,14 +187,29 @@ func storedAccessToken(ctx context.Context, origin, path string) (string, error)
 		return "", err
 	}
 	var s oauthSession
-	if json.Unmarshal(raw, &s) != nil || s.Origin != origin ||
-		!validSessionScopes(s.Client, s.Scopes) || s.Refresh == "" || s.Access == "" {
+	if json.Unmarshal(raw, &s) != nil || s.Origin != origin || s.Access == "" {
+		return "", errors.New("invalid OAuth session for this instance; run porcupine login again")
+	}
+	provider := builtinProvider(origin)
+	if s.Provider != nil {
+		provider = *s.Provider
+		if err := provider.validate(); err != nil {
+			return "", errors.New("invalid OAuth provider in session; run porcupine login again")
+		}
+	}
+	if !validProviderScopes(provider, s.Client, s.Scopes) {
+		return "", errors.New("invalid OAuth session scopes; run porcupine login again")
+	}
+	if !provider.External && s.Refresh == "" {
 		return "", errors.New("invalid OAuth session for this instance; run porcupine login again")
 	}
 	if time.Now().Add(30 * time.Second).Before(s.Expires) {
 		return s.Access, nil
 	}
-	next, err := exchangeToken(ctx, origin, s.Client, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.Refresh}}, s.Scopes)
+	if s.Refresh == "" {
+		return "", errors.New("OAuth session expired; run porcupine login again")
+	}
+	next, err := exchangeProviderToken(ctx, origin, provider, s.Client, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.Refresh}}, s.Scopes)
 	if err != nil {
 		return "", err
 	}
@@ -189,14 +219,17 @@ func storedAccessToken(ctx context.Context, origin, path string) (string, error)
 	return next.Access, nil
 }
 
-func exchangeToken(ctx context.Context, origin, clientID string, form url.Values, allowed []string) (oauthSession, error) {
-	if !validSessionScopes(clientID, allowed) {
+func exchangeProviderToken(ctx context.Context, origin string, provider oauthProvider, clientID string, form url.Values, allowed []string) (oauthSession, error) {
+	if !validProviderScopes(provider, clientID, allowed) {
 		return oauthSession{}, errors.New("invalid requested OAuth scopes")
 	}
 	resource := origin + "/api/v1"
 	form.Set("resource", resource)
 	form.Set("client_id", clientID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/oauth/token", strings.NewReader(form.Encode()))
+	if err := provider.validate(); err != nil {
+		return oauthSession{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return oauthSession{}, err
 	}
@@ -225,8 +258,14 @@ func exchangeToken(ctx context.Context, origin, clientID string, form url.Values
 		return oauthSession{}, errors.New("invalid OAuth token response")
 	}
 	scopes := strings.Fields(token.Scope)
-	if !strings.EqualFold(token.Type, "Bearer") || token.Access == "" || token.Refresh == "" ||
-		token.Resource != resource || len(scopes) == 0 ||
+	if provider.External && token.Scope == "" {
+		scopes = slices.Clone(allowed)
+	}
+	if provider.External && form.Get("grant_type") == "refresh_token" && token.Refresh == "" {
+		token.Refresh = form.Get("refresh_token")
+	}
+	if !strings.EqualFold(token.Type, "Bearer") || token.Access == "" || !provider.External && token.Refresh == "" ||
+		(token.Resource != resource && !(provider.External && token.Resource == "")) || len(scopes) == 0 ||
 		token.Seconds < 1 || token.Seconds > math.MaxInt64/int64(time.Second) {
 		return oauthSession{}, errors.New("invalid OAuth token response")
 	}
@@ -237,10 +276,24 @@ func exchangeToken(ctx context.Context, origin, clientID string, form url.Values
 	}
 	slices.Sort(scopes)
 	scopes = slices.Compact(scopes)
-	return oauthSession{Origin: origin, Client: clientID, Access: token.Access, Refresh: token.Refresh, Expires: time.Now().Add(time.Duration(token.Seconds) * time.Second), Scopes: scopes}, nil
+	session := oauthSession{Origin: origin, Client: clientID, Access: token.Access, Refresh: token.Refresh, Expires: time.Now().Add(time.Duration(token.Seconds) * time.Second), Scopes: scopes}
+	if provider.External {
+		session.Provider = &provider
+	}
+	return session, nil
 }
 
-func login(ctx context.Context, origin, clientID string, scopes []string) error {
+func login(ctx context.Context, origin, clientID string, scopes []string, configuredClient string) error {
+	provider, err := discoverProvider(ctx, origin)
+	if err != nil {
+		return err
+	}
+	if provider.External && configuredClient == "" {
+		return errors.New("this instance uses an external identity provider; register a public PKCE client and pass --client-id")
+	}
+	if configuredClient != "" {
+		clientID = configuredClient
+	}
 	path, err := sessionFile(origin)
 	if err != nil {
 		return err
@@ -249,7 +302,7 @@ func login(ctx context.Context, origin, clientID string, scopes []string) error 
 	if err != nil {
 		return fmt.Errorf("open OAuth callback on %s: %w", localCallbackAddr, err)
 	}
-	return browserLogin(ctx, origin, clientID, scopes, path, listener, func(address string) {
+	return browserProviderLogin(ctx, origin, provider, clientID, scopes, path, listener, func(address string) {
 		fmt.Fprintln(os.Stderr, "Open this URL to authorize Porcupine:")
 		fmt.Fprintln(os.Stderr, address)
 		openLoginBrowser(address)
@@ -277,7 +330,7 @@ func oauthRandom() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes[:]), err
 }
 
-func browserLogin(ctx context.Context, origin, clientID string, scopes []string, path string, listener net.Listener, open func(string)) error {
+func browserProviderLogin(ctx context.Context, origin string, provider oauthProvider, clientID string, scopes []string, path string, listener net.Listener, open func(string)) error {
 	defer listener.Close()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -305,7 +358,7 @@ func browserLogin(ctx context.Context, origin, clientID string, scopes []string,
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		q, parseErr := url.ParseQuery(r.URL.RawQuery)
 		if r.Method != http.MethodGet || r.Host != callbackHost || r.URL.Path != "/callback" ||
-			parseErr != nil || len(q["iss"]) != 1 || q.Get("iss") != origin ||
+			parseErr != nil || len(q["iss"]) != 1 || q.Get("iss") != provider.Issuer ||
 			len(q["state"]) != 1 || subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
 			http.Error(w, "Invalid OAuth callback.", http.StatusBadRequest)
 			return
@@ -332,7 +385,7 @@ func browserLogin(ctx context.Context, origin, clientID string, scopes []string,
 		_ = server.Shutdown(stop)
 		_ = server.Close()
 	}()
-	open(origin + "/oauth/authorize?" + params.Encode())
+	open(provider.AuthorizationEndpoint + "?" + params.Encode())
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -347,7 +400,7 @@ func browserLogin(ctx context.Context, origin, clientID string, scopes []string,
 			return err
 		}
 		defer unlock()
-		s, err := exchangeToken(ctx, origin, clientID, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}}, scopes)
+		s, err := exchangeProviderToken(ctx, origin, provider, clientID, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}}, scopes)
 		if err != nil {
 			return err
 		}

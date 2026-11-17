@@ -21,14 +21,14 @@ type oauthAuthorizationRequest struct {
 func (s *Service) interactiveOAuthEnabled() bool { return s.oauth != nil && s.oauth.browser != nil }
 
 func (s *Service) interactiveResourceAllowed(resource string) bool {
-	return resource == s.oauth.mcpResource || s.oauth.config.Email != nil && resource == s.oauth.apiResource
+	return resource == s.resources.mcpResource || s.oauth.config.Email != nil && resource == s.resources.apiResource
 }
 
 func (s *Service) interactiveScopesAllowed(human auth.Principal, client *oauthClient, resource string, permissions []string) bool {
 	if len(permissions) == 0 || !s.interactiveResourceAllowed(resource) {
 		return false
 	}
-	if !human.EmailHuman && resource != s.oauth.mcpResource {
+	if !human.EmailHuman && resource != s.resources.mcpResource {
 		return false
 	}
 	for _, permission := range permissions {

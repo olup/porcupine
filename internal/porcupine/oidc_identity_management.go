@@ -36,6 +36,9 @@ type HumanIdentityDeleteInput struct {
 }
 
 func (s *Service) registerOIDCIdentityManagement(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	if s.externalAuthEnabled() {
+		return
+	}
 	operator := auth.OperationAccess{Permission: "instance:admin"}
 	huma.Register(api, op("list-human-identities", "GET", "/api/v1/humans/{id}/identities", "List upstream sign-in identity bindings for a human; deployment operator only", operator, 200), s.managementListHumanIdentities)
 	operation := op("unlink-human-identity", "DELETE", "/api/v1/humans/{id}/identities/{identity_id}", "Unlink one upstream identity and revoke this human's interactive connections; deployment operator only", operator, 204)

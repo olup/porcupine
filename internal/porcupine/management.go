@@ -139,6 +139,12 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			"oauth2":     {Type: "oauth2", Description: "Short-lived access token issued for the Porcupine API resource. Interactive clients request this exact resource with S256 PKCE.", Flows: flows},
 		}
 	}
+	if s.externalAuthEnabled() {
+		config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+			"serviceKey": {Type: "http", Scheme: "bearer", Description: "Native machine key for the API resource."},
+			"oauth2":     {Type: "http", Scheme: "bearer", BearerFormat: "JWT", Description: "Access token from the configured external issuer, with the exact API audience. See protected-resource metadata."},
+		}
+	}
 	// Keep the service's existing error envelope and avoid reflecting secret inputs.
 	config.Formats = map[string]huma.Format{"application/json": {
 		Marshal: func(w io.Writer, v any) error {
@@ -165,10 +171,10 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		}
 		raw, err := auth.BearerCredential(req)
 		resource := ""
-		if s.oauth != nil {
-			resource = s.oauth.apiResource
+		if s.resources != nil {
+			resource = s.resources.apiResource
 			if internal, _ := ctx.Context().Value(mcpDispatchKey{}).(bool); internal {
-				resource = s.oauth.mcpResource
+				resource = s.resources.mcpResource
 			}
 		}
 		var a auth.Principal
@@ -176,6 +182,11 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			a, err = s.authenticateResource(ctx.Context(), raw, resource)
 		}
 		if err != nil {
+			if errors.Is(err, auth.ErrExternalKeysUnavailable) {
+				w.Header().Set("Retry-After", "3")
+				problem(w, 503, "external authentication signing keys unavailable")
+				return
+			}
 			s.authChallenge(w, resource, req.Header.Get("Authorization") != "")
 			problem(w, http.StatusUnauthorized, "invalid access credential")
 			return
@@ -256,7 +267,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}}
 		}
 		security := []map[string][]string{{"bearerAuth": {}}}
-		if s.oauth != nil {
+		if s.resources != nil {
 			scopes := []string{access.Permission}
 			for _, permission := range append(append([]string{}, access.InstancePermissions...), access.AdditionalPermissions...) {
 				if !slices.Contains(scopes, permission) {
@@ -264,6 +275,9 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 				}
 			}
 			security = []map[string][]string{{"oauth2": scopes}, {"serviceKey": {}}}
+			if s.externalAuthEnabled() {
+				security = []map[string][]string{{"oauth2": {}}, {"serviceKey": {}}}
+			}
 		}
 		return huma.Operation{OperationID: id, Method: method, Path: path, Summary: summary, DefaultStatus: status,
 			MaxBodyBytes: maxBodyBytes, Security: security,
@@ -402,7 +416,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if mode != ingestionMixed && mode != ingestionServerOnly {
 		return nil, apiError(400, "ingestion_mode must be mixed or server_only")
 	}
-	if mode == ingestionServerOnly && s.oauth == nil {
+	if mode == ingestionServerOnly && s.resources == nil {
 		return nil, apiError(503, "server_only ingestion requires configured OAuth")
 	}
 	p := Project{ID: eventapi.NewID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
@@ -538,7 +552,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		return nil, err
 	}
 	body.SourceID = sourceID
-	if s.oauth != nil && !s.oauth.config.AllowLegacyKeys && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
+	if s.resources != nil && (s.oauth == nil || !s.oauth.config.AllowLegacyKeys) && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
 		return nil, apiError(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
 	id, raw := eventapi.NewID(), token()
@@ -613,7 +627,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if !principal(ctx).Admin() && (slices.Contains(granted, "instance:admin") || slices.Contains(granted, tenantAdminScope)) {
 		return nil, apiError(403, "human administration credentials require instance administration")
 	}
-	if slices.Contains(granted, "instance:admin") {
+	if slices.Contains(granted, "instance:admin") && !s.externalAuthEnabled() {
 		// Human grants, interactive-only client registrations, and service keys are
 		// dependent credentials. Keep an independent recovery administrator.
 		static := s.oauth == nil || s.oauth.config.AllowLegacyKeys

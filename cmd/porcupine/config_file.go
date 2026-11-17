@@ -55,6 +55,20 @@ type FileConfig struct {
 		AllowLegacyKeys          *bool  `json:"allow_legacy_keys,omitempty" env:"PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"`
 		RestoreIdentityBootstrap *bool  `json:"restore_identity_bootstrap,omitempty" env:"PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP"`
 	} `json:"oauth"`
+	Auth struct {
+		Mode      string `json:"mode,omitempty" env:"PORCUPINE_AUTH_MODE"`
+		PublicURL string `json:"public_url,omitempty" env:"PORCUPINE_AUTH_PUBLIC_URL"`
+		External  struct {
+			Issuer           string   `json:"issuer,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_ISSUER"`
+			JWKSURL          string   `json:"jwks_url,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_JWKS_URL"`
+			APIAudience      string   `json:"api_audience,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_API_AUDIENCE"`
+			MCPAudience      string   `json:"mcp_audience,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_MCP_AUDIENCE"`
+			Algorithms       []string `json:"algorithms,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_ALGORITHMS"`
+			TokenTypes       []string `json:"token_types,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_TOKEN_TYPES"`
+			ClockSkew        string   `json:"clock_skew,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_CLOCK_SKEW"`
+			MaxTokenLifetime string   `json:"max_token_lifetime,omitempty" env:"PORCUPINE_AUTH_EXTERNAL_MAX_TOKEN_LIFETIME"`
+		} `json:"external"`
+	} `json:"auth"`
 	OIDC struct {
 		Issuer           string `json:"issuer,omitempty" env:"PORCUPINE_OIDC_ISSUER"`
 		ClientID         string `json:"client_id,omitempty" env:"PORCUPINE_OIDC_CLIENT_ID"`

@@ -246,11 +246,11 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 func TestImportUploadOAuthRequiresAPIAudience(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
 	project, _ := f.project(t, admin.AccessToken)
 	client := f.createClient(t, admin.AccessToken, []string{"imports:write", "events:write"}, []string{project})
-	access := f.token(t, client.ClientID, client.ClientSecret, f.s.oauth.apiResource)
-	mcp := f.token(t, client.ClientID, client.ClientSecret, f.s.oauth.mcpResource)
+	access := f.token(t, client.ClientID, client.ClientSecret, f.s.resources.apiResource)
+	mcp := f.token(t, client.ClientID, client.ClientSecret, f.s.resources.mcpResource)
 	body := map[string]any{"idempotency_key": "oauth", "files": []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
 	base := "/api/v1/projects/" + project + "/imports"
 	f.call(t, "POST", base, mcp.AccessToken, body, 401, nil)

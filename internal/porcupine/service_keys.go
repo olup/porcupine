@@ -29,7 +29,7 @@ type ServiceKeySpec struct {
 }
 
 func (s *Service) registerServiceKeys(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
-	if s.oauth == nil {
+	if s.resources == nil {
 		return
 	}
 	huma.Register(api, op("create-service-api-key", "POST", "/api/v1/oauth-clients/{id}/api-keys",
@@ -110,14 +110,14 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 }
 
 func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource string) (auth.Principal, error) {
-	if s.oauth == nil || len(raw) != len(serviceKeyPrefix)+43 || !strings.HasPrefix(raw, serviceKeyPrefix) {
+	if s.resources == nil || len(raw) != len(serviceKeyPrefix)+43 || !strings.HasPrefix(raw, serviceKeyPrefix) {
 		return auth.Principal{}, errors.New("invalid service key")
 	}
 	var audience string
 	switch resource {
-	case s.oauth.apiResource:
+	case s.resources.apiResource:
 		audience = "api"
-	case s.oauth.mcpResource:
+	case s.resources.mcpResource:
 		audience = "mcp"
 	default:
 		return auth.Principal{}, errors.New("invalid service key resource")

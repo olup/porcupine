@@ -18,6 +18,9 @@ import (
 // initializeOAuthClients preserves principal IDs shared by grants and async jobs.
 // The bootstrap alias is pinned once and never rotates to a newer administrator.
 func (s *Service) initializeOAuthClients(ctx context.Context) error {
+	if s.externalAuthEnabled() {
+		return nil
+	}
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -124,7 +127,10 @@ func (s *Service) registerOAuthClients(api huma.API, op func(string, string, str
 }
 
 func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthClientCreateInput) (*OAuthClientCreateOutput, error) {
-	if s.oauth == nil {
+	if s.externalAuthEnabled() && (len(input.Body.GrantTypes) > 0 && !slices.Equal(input.Body.GrantTypes, []string{"client_credentials"}) || len(input.Body.RedirectURIs) > 0) {
+		return nil, apiError(400, "external mode supports native machine accounts only; register interactive applications at the external issuer")
+	}
+	if s.resources == nil {
 		return nil, apiError(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
@@ -146,7 +152,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err != nil {
 		return nil, apiError(400, "invalid OAuth client registration")
 	}
-	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
+	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth == nil || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
 		return nil, apiError(400, "tenant administration requires a dedicated interactive email client")
 	}
 	if slices.Contains(grants, "authorization_code") {
@@ -195,6 +201,9 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, apiError(500, "storage error")
+	}
+	if s.externalAuthEnabled() {
+		secret = ""
 	}
 	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created, GrantTypes: grants, RedirectURIs: redirects, TokenEndpointAuthMethod: authMethod}}, nil
 }

@@ -75,7 +75,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if err != nil {
 		return importLookupError(err)
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
 		return err
 	}
 	if job.ActorID != actor.ID && !actor.Admin() {
@@ -174,7 +174,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	if err := importWriteLock(ctx, tx); err != nil {
 		return err
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
 		return err
 	}
 	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, jobID))

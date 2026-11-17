@@ -16,6 +16,9 @@ import (
 )
 
 func (s *Service) initializeOAuth(ctx context.Context) error {
+	if s.externalAuthEnabled() {
+		return nil
+	}
 	if err := s.initializeInteractiveOAuth(ctx); err != nil {
 		return err
 	}
@@ -103,11 +106,11 @@ func (s *Service) oauthToken(w http.ResponseWriter, r *http.Request) {
 		clientID, _ = url.QueryUnescape(clientID)
 		secret, _ = url.QueryUnescape(secret)
 	}
-	resource := s.oauth.apiResource
+	resource := s.resources.apiResource
 	if values, present := form["resource"]; present {
 		resource = values[0]
 	}
-	if resource != s.oauth.apiResource && resource != s.oauth.mcpResource {
+	if resource != s.resources.apiResource && resource != s.resources.mcpResource {
 		oauthTokenError(w, 400, "invalid_target")
 		return
 	}

@@ -39,7 +39,7 @@ func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 	}
 	a := openWorker("tenant-machine-a", firstHost)
 	b := openWorker("tenant-machine-b", httptest.NewUnstartedServer(nil))
-	admin := a.token(t, "bootstrap", adminToken, a.s.oauth.apiResource).AccessToken
+	admin := a.token(t, "bootstrap", adminToken, a.s.resources.apiResource).AccessToken
 	var tenant struct {
 		Tenant Tenant `json:"tenant"`
 	}
@@ -52,7 +52,7 @@ func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 	var key AccessKeyCreated
 	b.call(t, "POST", base+"/"+machine.ClientID+"/api-keys", admin, ServiceKeySpec{Name: "shared key", Audience: "api", Projects: []string{project.Project.ID}, Permissions: []string{"events:read"}}, 201, &key)
 	path := "/api/v1/projects/" + project.Project.ID + "/events"
-	issued := a.token(t, machine.ClientID, machine.ClientSecret, a.s.oauth.apiResource).AccessToken
+	issued := a.token(t, machine.ClientID, machine.ClientSecret, a.s.resources.apiResource).AccessToken
 	for _, worker := range []*oauthIntegration{a, b} {
 		worker.call(t, "GET", path, key.Token, nil, 200, nil)
 		worker.call(t, "GET", path, issued, nil, 200, nil)
