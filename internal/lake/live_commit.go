@@ -1,0 +1,314 @@
+package lake
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	"github.com/olup/porcupine/internal/event"
+	identityapi "github.com/olup/porcupine/internal/identity"
+	"github.com/olup/porcupine/internal/ingest"
+)
+
+// CommitLive owns the native transaction. It never acknowledges volatile input
+// or publishes PG jobs; its proof makes those later effects recoverable.
+func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager) (LiveCommitResult, error) {
+	fingerprint, err := validateLiveCommitBatch(fence, batch, reservation)
+	if err != nil {
+		return nil, err
+	}
+	if stager == nil || s.Remote == nil || s.SharedCatalog == nil {
+		return nil, errors.New("hosted live commit requires immutable effects storage and shared native metadata")
+	}
+	p, release, err := s.LeaseProject(ctx, fence.Key.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := p.write.Lock(ctx); err != nil {
+		return nil, err
+	}
+	defer p.write.Unlock()
+	var result LiveCommitResult
+	err = retryNativeTransaction(ctx, func() error {
+		tx, err := p.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		sequence, err := p.beginHostedLiveWrite(ctx, tx, fence, batch.TenantID)
+		if err != nil {
+			return err
+		}
+		prior, found, err := readLiveCommitProof(ctx, tx, batch.Scope, batch.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			if prior.BatchFingerprint != fingerprint || prior.TenantID != batch.TenantID {
+				return errors.New("native batch identity was reused with different validated input")
+			}
+			result = CommittedLiveBatch{Evidence: prior}
+			return nil
+		}
+		known, err := liveHeads(ctx, tx, batch.Inputs)
+		if err != nil {
+			return err
+		}
+		selected := make([]PreparedLakeProjection, 0, len(batch.Inputs))
+		eligible := make([]event.Event, 0, len(batch.Inputs))
+		for position, input := range batch.Inputs {
+			if known[input.Event.UUID] {
+				continue
+			}
+			known[input.Event.UUID] = true
+			canonical := EventWithMetadata(input.Event)
+			canonical.ID = reservation.ids[position]
+			if input.Identity != nil {
+				canonical, err = p.applyHostedIdentity(ctx, tx, canonical, *input.Identity)
+				if err != nil {
+					return err
+				}
+			}
+			prepared, err := PrepareLakeProjection(EventProjection{Event: canonical})
+			if err != nil {
+				return err
+			}
+			if input.Identity == nil {
+				eligible = append(eligible, prepared.projection.Event)
+			}
+			selected = append(selected, prepared)
+		}
+		if len(selected) == 0 {
+			result = DuplicateLiveBatch{}
+			return nil
+		}
+		effects, err := stager.StageLiveEffects(ctx, SelectedLiveEffects{Scope: batch.Scope, TenantID: batch.TenantID, BatchID: batch.ID, Sequence: sequence, Events: eligible})
+		if err != nil {
+			return err
+		}
+		if err := s.validateStagedEffects(batch.Scope, effects); err != nil {
+			return err
+		}
+		accountedAt := s.liveCommitTime()
+		totals, err := updateNativeLiveTotals(ctx, tx, sequence, accountedAt, int64(len(selected)))
+		if err != nil {
+			return err
+		}
+		if err := insertLiveCanonicalEvents(ctx, tx, selected); err != nil {
+			return err
+		}
+		evidence := LiveCommitEvidence{Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, BatchID: batch.ID, BatchFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), Effects: effects, Totals: totals}
+		evidence.ProofFingerprint, err = liveEvidenceFingerprint(evidence)
+		if err != nil {
+			return err
+		}
+		if err := insertLiveCommitProof(ctx, tx, evidence); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		result = CommittedLiveBatch{Evidence: evidence}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+func (s *DuckLakeStore) liveCommitTime() time.Time {
+	if s.liveClock != nil {
+		return s.liveClock().UTC()
+	}
+	return time.Now().UTC()
+}
+func validateLiveCommitBatch(fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation) (string, error) {
+	if !validProjectWriteFence(fence) || batch.ID == "" || len(batch.ID) > 200 || batch.TenantID == "" || batch.Scope.Key != fence.Key || batch.Scope.StreamID != fence.StreamID || batch.Scope.CatalogID != SharedNativeCatalogID(fence.Key.SourceID, fence.Key.ProjectID) || len(batch.Inputs) == 0 || len(batch.Inputs) > 100000 || !reservation.matches(fence, batch.ID, len(batch.Inputs)) {
+		return "", errors.New("invalid hosted live batch scope or ID reservation")
+	}
+	for _, input := range batch.Inputs {
+		e := input.Event
+		control := e.Event == "$identify" || e.Event == "$set"
+		if e.ID != 0 || e.ProjectID != fence.Key.ProjectID || !ValidStoredEventUUID(e.UUID) || e.Imported || e.Delivered || e.IdentitySnapshot != "" || control != (input.Identity != nil) {
+			return "", errors.New("invalid validated live event state")
+		}
+		if control && (e.DistinctID != "" || string(e.Properties) != "{}") {
+			return "", errors.New("identity command inputs must be separate from canonical event fields")
+		}
+	}
+	// Reserved IDs and attempt clocks are deliberately absent from this versioned
+	// fingerprint. Input order, canonical commands and authoritative scope remain.
+	raw, err := json.Marshal(struct {
+		Version  int
+		Scope    HostedProjectScope
+		TenantID string
+		Inputs   []LiveCommitInput
+	}{1, batch.Scope, batch.TenantID, batch.Inputs})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
+}
+func (p *ProjectLake) beginHostedLiveWrite(ctx context.Context, tx *sql.Tx, fence ProjectWriteFence, tenant string) (int64, error) {
+	var previous int64
+	if err := tx.QueryRowContext(ctx, `SELECT CAST(next_effect_seq AS BIGINT) FROM lake.hosted_write_guard WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND identity_ready AND state='open' AND fence_epoch=? AND fence_nonce=? AND (tenant_id IS NULL OR tenant_id=?)`, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID, tenant).Scan(&previous); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrProjectWriteFenceStale
+		}
+		return 0, err
+	}
+	if previous == math.MaxInt64 {
+		return 0, errors.New("native effect sequence exhausted")
+	}
+	if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET generation=generation+1,next_effect_seq=next_effect_seq+1,tenant_id=coalesce(tenant_id,?) WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND identity_ready AND state='open' AND fence_epoch=? AND fence_nonce=? AND next_effect_seq=? AND (tenant_id IS NULL OR tenant_id=?)`, tenant, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID, previous, tenant); err != nil {
+		return 0, err
+	}
+	if err := p.acquireNativeWrite(ctx, tx); err != nil {
+		return 0, err
+	}
+	return previous + 1, nil
+}
+func liveHeads(ctx context.Context, tx *sql.Tx, inputs []LiveCommitInput) (map[string]bool, error) {
+	known := make(map[string]bool, len(inputs))
+	for offset := 0; offset < len(inputs); offset += 1000 {
+		end := min(len(inputs), offset+1000)
+		args := make([]any, 0, end-offset)
+		for _, input := range inputs[offset:end] {
+			args = append(args, input.Event.UUID)
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT uuid FROM lake.heads WHERE uuid IN (?"+strings.Repeat(",?", len(args)-1)+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var uuid string
+			if err := rows.Scan(&uuid); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			known[uuid] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return known, nil
+}
+
+type nativeIdentityReader struct{ tx *sql.Tx }
+
+func (r nativeIdentityReader) Profile(ctx context.Context, id string) (identityapi.Profile, error) {
+	var raw string
+	var result identityapi.Profile
+	err := r.tx.QueryRowContext(ctx, "SELECT traits,is_identified FROM lake.identity_profiles WHERE identified_id=?", id).Scan(&raw, &result.Identified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return identityapi.Profile{}, nil
+	}
+	if err != nil {
+		return identityapi.Profile{}, err
+	}
+	result.Traits = []byte(raw)
+	return result, nil
+}
+func (r nativeIdentityReader) Link(ctx context.Context, id string) (identityapi.Link, error) {
+	var result identityapi.Link
+	err := r.tx.QueryRowContext(ctx, "SELECT identified_id,version FROM lake.identity_links WHERE anonymous_id=?", id).Scan(&result.Target, &result.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return identityapi.Link{}, nil
+	}
+	return result, err
+}
+func (p *ProjectLake) applyHostedIdentity(ctx context.Context, tx *sql.Tx, e event.Event, command identityapi.Command) (event.Event, error) {
+	decision, err := identityapi.Evaluate(ctx, command, nativeIdentityReader{tx})
+	if err != nil {
+		return event.Event{}, err
+	}
+	snapshot := emptyLiveIdentitySnapshot(fmt.Sprint(e.ID))
+	if !decision.Ignored {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM lake.identity_profiles WHERE identified_id=?`, decision.Target); err != nil {
+			return event.Event{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO lake.identity_profiles (identified_id,version,traits,is_identified) VALUES(?,?,?,?)`, decision.Target, e.ID, string(decision.Traits), decision.Identified); err != nil {
+			return event.Event{}, err
+		}
+		snapshot.IdentifiedID, snapshot.Identified = decision.Target, decision.Identified
+		if err := ingest.DecodeJSON(decision.Traits, &snapshot.Traits); err != nil {
+			return event.Event{}, err
+		}
+		if link := decision.Link; link != nil {
+			version := link.Version
+			if link.Create {
+				version = uint64(e.ID)
+				if _, err := tx.ExecContext(ctx, `INSERT INTO lake.identity_links (anonymous_id,identified_id,version) VALUES(?,?,?)`, link.Anonymous, link.Target, version); err != nil {
+					return event.Event{}, err
+				}
+			}
+			snapshot.Links = append(snapshot.Links, IdentityLinkSnapshot{AnonymousID: link.Anonymous, IdentifiedID: link.Target, Version: fmt.Sprint(version)})
+		}
+	}
+	e.IdentitySnapshot, err = encodeNativeLiveSnapshot(snapshot)
+	return e, err
+}
+func insertLiveCanonicalEvents(ctx context.Context, tx *sql.Tx, events []PreparedLakeProjection) error {
+	rows := make([]lakeProjectionRow, 0, len(events))
+	for _, prepared := range events {
+		e := prepared.projection.Event
+		rows = append(rows, lakeProjectionRow{UUID: e.UUID, ID: e.ID, ProjectID: e.ProjectID, Event: e.Event, DistinctID: e.DistinctID, Properties: string(e.Properties), Timestamp: e.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano), ReceivedAt: e.ReceivedAt, ReceivedAtMS: prepared.received.UnixMilli(), SourceID: e.SourceID, MessageID: e.MessageID, EventType: e.EventType, Context: string(e.Context), Identity: e.IdentitySnapshot})
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, lakeStageProjections, string(encoded)); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO lake.heads (uuid,event_id,revision,is_deleted,received_at) SELECT uuid,id,0,false,received_at FROM _pc_incoming;
+INSERT INTO lake.current_events (id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot)
+ SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,0,source_id,message_id,event_type,context,0,identity_snapshot,'' FROM _pc_incoming;
+DROP TABLE _pc_incoming`)
+	return err
+}
+func updateNativeLiveTotals(ctx context.Context, tx *sql.Tx, sequence int64, at time.Time, count int64) ([]NativeSourceTotals, error) {
+	day := at.UTC().Format("2006-01-02T00:00:00Z")
+	total := NativeSourceTotals{Day: day, Revision: sequence}
+	err := tx.QueryRowContext(ctx, "SELECT accepted_live,accepted_import FROM lake.live_usage_totals WHERE day=?", day).Scan(&total.Live, &total.Import)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if total.Live > math.MaxInt64-count {
+		return nil, errors.New("native live usage counter exhausted")
+	}
+	total.Live += count
+	if _, err := tx.ExecContext(ctx, `DELETE FROM lake.live_usage_totals WHERE day=?`, day); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO lake.live_usage_totals (day,revision,accepted_live,accepted_import) VALUES(?,?,?,?)`, day, sequence, total.Live, total.Import); err != nil {
+		return nil, err
+	}
+	return []NativeSourceTotals{total}, nil
+}
+func (s *DuckLakeStore) validateStagedEffects(scope HostedProjectScope, effects StagedLiveEffects) error {
+	if effects.PlanID == "" || effects.OutputCount < 0 {
+		return errors.New("immutable effect plan is unavailable")
+	}
+	ref := effects.Manifest
+	if effects.OutputCount == 0 && ref.Key == "" && ref.Bytes == 0 && ref.SHA256 == "" && ref.VersionID == "" {
+		return nil
+	}
+	digest, err := hex.DecodeString(ref.SHA256)
+	if err != nil || len(digest) != sha256.Size || ref.Bytes <= 0 || !strings.HasPrefix(ref.Key, s.Remote.ProjectPrefix(scope.Key.ProjectID)+"effects/"+scope.StreamID+"/") {
+		return errors.New("invalid immutable effect manifest reference")
+	}
+	return nil
+}

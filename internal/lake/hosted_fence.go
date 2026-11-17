@@ -26,14 +26,14 @@ func (s *DuckLakeStore) AdvanceWriteFence(ctx context.Context, fence ProjectWrit
 		return err
 	}
 	defer p.write.Unlock()
-	return retrySharedNative(ctx, func() error {
+	return retryNativeTransaction(ctx, func() error {
 		tx, err := p.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 		if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET fence_epoch=?,fence_nonce=?,generation=generation+1
- WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state='open'
+ WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state='open' AND identity_ready
  AND (fence_epoch<? OR (fence_epoch=? AND fence_nonce=?))`, fence.Epoch, fence.AcquisitionID, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.Epoch, fence.AcquisitionID); err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func (p *ProjectLake) acquireHostedNativeWrite(ctx context.Context, tx *sql.Tx, 
 		return ErrProjectWriteFenceStale
 	}
 	if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET generation=generation+1
- WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state='open' AND fence_epoch=? AND fence_nonce=?`, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID); err != nil {
+ WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state='open' AND identity_ready AND fence_epoch=? AND fence_nonce=?`, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID); err != nil {
 		return err
 	}
 	return p.acquireNativeWrite(ctx, tx)

@@ -16,6 +16,7 @@ import (
 )
 
 type DuckLakeStore struct {
+	liveClock        func() time.Time
 	Root             string
 	Config           DuckLakeConfig
 	Registry         *sql.DB

@@ -68,6 +68,7 @@ type ProjectWriteSession struct {
 	ctx          context.Context
 	cancel       context.CancelCauseFunc
 	done         chan struct{}
+	stopProbe    chan struct{}
 	operations   sync.Mutex
 	release      sync.Once
 	releaseError error
@@ -96,7 +97,7 @@ func (c *PostgresProjectCoordinator) Acquire(ctx context.Context, key ProjectWri
 		<-c.slots
 		return nil, ErrProjectWriteSessionLost
 	}
-	session := &ProjectWriteSession{owner: c, conn: conn, key: key, lock: projectAdvisoryKey(key), done: make(chan struct{}), acquisition: event.NewID()}
+	session := &ProjectWriteSession{owner: c, conn: conn, key: key, lock: projectAdvisoryKey(key), done: make(chan struct{}), stopProbe: make(chan struct{}), acquisition: event.NewID()}
 	// Capture PID in the acquisition statement, before any second statement can
 	// be routed elsewhere by an unsupported transaction-pooling proxy.
 	var ignored any
@@ -141,10 +142,18 @@ func (s *ProjectWriteSession) probe() {
 	defer timer.Stop()
 	for {
 		select {
+		case <-s.stopProbe:
+			return
 		case <-s.ctx.Done():
 			return
 		case <-timer.C:
 			s.operations.Lock()
+			select {
+			case <-s.stopProbe:
+				s.operations.Unlock()
+				return
+			default:
+			}
 			ctx, cancel := context.WithTimeout(s.ctx, s.owner.config.ProbeTimeout)
 			err := s.checkPhysicalSession(ctx)
 			cancel()
@@ -159,10 +168,14 @@ func (s *ProjectWriteSession) probe() {
 
 func (s *ProjectWriteSession) Release() error {
 	s.release.Do(func() {
-		s.cancel(ErrProjectWriteSessionLost)
+		// Cancelling an active pgx query can discard its physical connection.
+		// Stop scheduling probes and join the bounded current probe before
+		// cancelling operation contexts, so a healthy lock can still be released.
+		close(s.stopProbe)
 		<-s.done
 		s.operations.Lock()
 		defer s.operations.Unlock()
+		s.cancel(ErrProjectWriteSessionLost)
 		cleanup, cancel := context.WithTimeout(context.Background(), s.owner.config.ProbeTimeout)
 		defer cancel()
 		var unlocked bool

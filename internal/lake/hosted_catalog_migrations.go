@@ -8,7 +8,8 @@ import (
 	"github.com/olup/porcupine/internal/event"
 )
 
-const hostedLakeSchemaVersion = 3
+const hostedFenceSchemaVersion = 3
+const hostedLakeSchemaVersion = 4
 
 // Version 3 is an explicit empty-catalog cutover, never an inferred legacy
 // identity backfill. Published native steps remain unchanged.
@@ -22,6 +23,15 @@ CREATE TABLE lake.hosted_write_guard (
  fence_epoch BIGINT,fence_nonce VARCHAR,generation UBIGINT,state VARCHAR,
  next_effect_seq UBIGINT,ack_effect_seq UBIGINT,sealed_effect_seq UBIGINT,identity_ready BOOLEAN
 )`},
+	{4, `ALTER TABLE lake.hosted_write_guard ADD COLUMN tenant_id VARCHAR;
+CREATE TABLE lake.live_commit_proofs (
+ proof_version INTEGER,effect_seq BIGINT,batch_id VARCHAR,batch_fingerprint VARCHAR,proof_fingerprint VARCHAR,
+ tenant_id VARCHAR,fence_epoch BIGINT,accounted_at VARCHAR,accepted_live BIGINT,
+ plan_id VARCHAR,manifest_key VARCHAR,manifest_version VARCHAR,manifest_sha256 VARCHAR,
+ manifest_bytes BIGINT,output_count BIGINT,totals_json VARCHAR
+);
+CREATE TABLE lake.live_usage_totals (day VARCHAR,revision BIGINT,accepted_live BIGINT,accepted_import BIGINT)
+`},
 }
 
 type HostedProjectScope struct {
@@ -53,7 +63,7 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 	if version == hostedLakeSchemaVersion {
 		return readHostedProjectScope(ctx, p.DB, key)
 	}
-	if version != lakeSchemaVersion {
+	if version != lakeSchemaVersion && version != hostedFenceSchemaVersion {
 		return HostedProjectScope{}, errors.New("hosted cutover requires a supported empty native catalog")
 	}
 	tx, err := p.DB.BeginTx(ctx, nil)
@@ -72,6 +82,12 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 		return HostedProjectScope{}, errors.New("hosted identity authority is unavailable for this legacy catalog; rebuild from the authoritative journal before cutover")
 	}
 	scope := HostedProjectScope{Key: key, CatalogID: SharedNativeCatalogID(key.SourceID, key.ProjectID), StreamID: event.NewID()}
+	if version == hostedFenceSchemaVersion {
+		scope, err = readHostedProjectScope(ctx, tx, key)
+		if err != nil {
+			return HostedProjectScope{}, err
+		}
+	}
 	for _, step := range hostedCatalogSteps {
 		if step.version <= version {
 			continue
@@ -79,8 +95,10 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 		if _, err := tx.ExecContext(ctx, step.sql); err != nil {
 			return HostedProjectScope{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO lake.hosted_write_guard VALUES(1,?,?,?,?,0,'',0,'open',0,0,NULL,true)`, key.SourceID, key.ProjectID, scope.CatalogID, scope.StreamID); err != nil {
-			return HostedProjectScope{}, err
+		if step.version == 3 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO lake.hosted_write_guard (id,source_id,project_id,catalog_id,stream_id,fence_epoch,fence_nonce,generation,state,next_effect_seq,ack_effect_seq,sealed_effect_seq,identity_ready) VALUES(1,?,?,?,?,0,'',0,'open',0,0,NULL,true)`, key.SourceID, key.ProjectID, scope.CatalogID, scope.StreamID); err != nil {
+				return HostedProjectScope{}, err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM lake.schema_version; INSERT INTO lake.schema_version VALUES(?)", step.version); err != nil {
 			return HostedProjectScope{}, err
@@ -102,9 +120,17 @@ func readHostedProjectScope(ctx context.Context, query interface {
 	if count != 1 {
 		return HostedProjectScope{}, errors.New("invalid hosted native write guard")
 	}
-	err := query.QueryRowContext(ctx, `SELECT catalog_id,stream_id FROM lake.hosted_write_guard WHERE id=1 AND source_id=? AND project_id=? AND identity_ready`, key.SourceID, key.ProjectID).Scan(&scope.CatalogID, &scope.StreamID)
+	var state string
+	var ready bool
+	err := query.QueryRowContext(ctx, `SELECT catalog_id,stream_id,state,identity_ready FROM lake.hosted_write_guard WHERE id=1 AND source_id=? AND project_id=?`, key.SourceID, key.ProjectID).Scan(&scope.CatalogID, &scope.StreamID, &state, &ready)
 	if err != nil || scope.CatalogID != SharedNativeCatalogID(key.SourceID, key.ProjectID) || scope.StreamID == "" {
 		return HostedProjectScope{}, ErrProjectWriteFenceStale
+	}
+	if state != "open" {
+		return HostedProjectScope{}, ErrProjectWriteSealed
+	}
+	if !ready {
+		return HostedProjectScope{}, errors.New("hosted identity authority is not ready")
 	}
 	return scope, nil
 }

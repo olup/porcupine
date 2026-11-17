@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -157,7 +158,7 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 			select {
 			case err := <-finished:
 				if point == "after guard" {
-					if !isSharedNativeConflict(err) {
+					if !isNativeTransactionConflict(err) {
 						t.Fatal("stale native commit was not a typed conflict", err)
 					}
 				} else if !errors.Is(err, ErrProjectWriteFenceStale) {
@@ -265,5 +266,169 @@ func TestProjectCoordinatorBounds(t *testing.T) {
 	t.Parallel()
 	if _, err := NewPostgresProjectCoordinator(nil, DefaultProjectCoordinatorConfig()); err == nil {
 		t.Fatal("nil control accepted")
+	}
+}
+
+func TestDuckLakeS3SharedPostgresHostedCutoverState(t *testing.T) {
+	t.Parallel()
+	ctx, a, _, config := sharedNativeStores(t)
+	_, coordinator := nativeFenceControl(t)
+	key := ProjectWriteKey{SourceID: config.SharedSourceID, ProjectID: "cutover-state"}
+	scope, err := a.InitializeHostedProject(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := acquireFenceSession(t, coordinator, key)
+	fence := session.Fence(scope.StreamID)
+	p, release, err := a.LeaseProject(ctx, key.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := p.DB.ExecContext(ctx, `UPDATE lake.hosted_write_guard SET identity_ready=false`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AdvanceWriteFence(ctx, fence); !errors.Is(err, ErrProjectWriteFenceStale) {
+		t.Fatal("unverified identity authority accepted fence", err)
+	}
+	if _, err := a.InitializeHostedProject(ctx, key); err == nil {
+		t.Fatal("bootstrap accepted missing identity authority")
+	}
+	if _, err := p.DB.ExecContext(ctx, `UPDATE lake.hosted_write_guard SET identity_ready=true`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AdvanceWriteFence(ctx, fence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DB.ExecContext(ctx, `UPDATE lake.hosted_write_guard SET state='sealed',sealed_effect_seq=next_effect_seq`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.InitializeHostedProject(ctx, key); !errors.Is(err, ErrProjectWriteSealed) {
+		t.Fatal("writable bootstrap accepted sealed stream", err)
+	}
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := p.acquireHostedNativeWrite(ctx, tx, fence); !errors.Is(err, ErrProjectWriteFenceStale) {
+		t.Fatal("sealed stream accepted writer", err)
+	}
+}
+
+func TestSharedPostgresCoordinatorReleaseJoinsPhysicalProbe(t *testing.T) {
+	t.Parallel()
+	for _, reservation := range []bool{false, true} {
+		name := "probe"
+		if reservation {
+			name = "reservation"
+		}
+		t.Run(name, func(t *testing.T) { t.Parallel(); testCoordinatorReleaseJoinsOperation(t, reservation) })
+	}
+}
+func testCoordinatorReleaseJoinsOperation(t *testing.T, reservation bool) {
+	t.Helper()
+	control, coordinator := nativeFenceControl(t)
+	coordinator.config.ProbeTimeout = 3 * time.Second
+	if reservation {
+		coordinator.config.ProbeInterval = time.Hour
+	}
+	key := ProjectWriteKey{SourceID: "release-source", ProjectID: "release-project"}
+	session := acquireFenceSession(t, coordinator, key)
+	barrier := projectAdvisoryKey(ProjectWriteKey{SourceID: "probe-barrier", ProjectID: "release-project"})
+	// Shadow this builtin only on the held test session. Its query remains a real
+	// PostgreSQL query, blocked on a test-owned advisory key rather than a global
+	// catalog lock that could interfere with unrelated native engines.
+	if _, err := control.ExecContext(t.Context(), fmt.Sprintf(`CREATE FUNCTION public.pg_backend_pid() RETURNS integer LANGUAGE plpgsql AS $body$ BEGIN PERFORM pg_catalog.pg_advisory_xact_lock(%d::bigint); RETURN pg_catalog.pg_backend_pid(); END $body$`, barrier)); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := control.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reserved chan error
+
+	defer blocker.Close()
+	var ignored any
+	if err := blocker.QueryRowContext(t.Context(), `SELECT pg_advisory_lock($1)`, barrier).Scan(&ignored); err != nil {
+		t.Fatal(err)
+	}
+	blocked := true
+	defer func() {
+		if blocked {
+			_, _ = blocker.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, barrier)
+		}
+	}()
+	session.operations.Lock()
+	_, err = session.conn.ExecContext(t.Context(), `SET search_path TO public,pg_catalog`)
+	session.operations.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reservation {
+		if _, err := control.ExecContext(t.Context(), `CREATE SEQUENCE shared_event_id_sequence AS BIGINT INCREMENT BY 1024 MINVALUE 1 CACHE 1 NO CYCLE`); err != nil {
+			t.Fatal(err)
+		}
+		reserved = make(chan error, 1)
+		go func() { _, err := session.ReserveEventIDs(t.Context(), "stream", "batch", 1); reserved <- err }()
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		if err := control.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted AND locktype='advisory')`, session.pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("physical session probe did not reach the PostgreSQL barrier")
+		case <-tick.C:
+		}
+	}
+	released := make(chan error, 1)
+	go func() { released <- session.Release() }()
+	select {
+	case <-session.stopProbe:
+	case <-time.After(time.Second):
+		t.Fatal("release did not stop probe scheduling")
+	}
+	if session.Context().Err() != nil {
+		t.Fatal("normal release cancelled the in-flight physical probe")
+	}
+	if _, err := session.ReserveEventIDs(t.Context(), "stream", "too-late", 1); !errors.Is(err, ErrProjectWriteSessionLost) {
+		t.Fatal("new operation entered releasing session", err)
+	}
+	var unlocked bool
+	if err := blocker.QueryRowContext(t.Context(), `SELECT pg_advisory_unlock($1)`, barrier).Scan(&unlocked); err != nil || !unlocked {
+		t.Fatal(unlocked, err)
+	}
+	blocked = false
+	if reserved != nil {
+		select {
+		case err := <-reserved:
+			if err != nil {
+				t.Fatal("release cancelled active reservation", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("active reservation did not return")
+		}
+	}
+	select {
+	case err := <-released:
+		if err != nil {
+			t.Fatal("healthy connection was lost during release", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("release did not join and unlock actual backend")
+	}
+	var held bool
+	high, low := int64(uint64(session.lock)>>32), int64(uint64(session.lock)&0xffffffff)
+	if err := control.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=$1 AND classid::bigint=$2 AND objid::bigint=$3 AND objsubid=1 AND granted)`, session.pid, high, low).Scan(&held); err != nil || held {
+		t.Fatal("released project lock remained held", held, err)
 	}
 }

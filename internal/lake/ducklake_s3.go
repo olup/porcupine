@@ -17,6 +17,7 @@ import (
 )
 
 type DuckLakeObjectStore struct {
+	sourceID  string
 	Config    DuckLakeS3Config
 	Namespace string
 	client    *s3.Client
@@ -33,7 +34,7 @@ func newDuckLakeObjectStore(ctx context.Context, c DuckLakeS3Config, source stri
 	if err != nil {
 		return nil, analyticalS3Error(ctx)
 	}
-	return &DuckLakeObjectStore{Config: c, Namespace: c.Prefix + "/" + source + "/", client: client, transport: transport}, nil
+	return &DuckLakeObjectStore{sourceID: source, Config: c, Namespace: c.Prefix + "/" + source + "/", client: client, transport: transport}, nil
 }
 
 func analyticalS3Error(ctx context.Context) error {

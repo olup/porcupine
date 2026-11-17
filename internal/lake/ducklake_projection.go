@@ -516,11 +516,21 @@ func applicationCatalogVersion(ctx context.Context, db *sql.DB, catalog string, 
 		}
 		version = int(stored.Int64)
 	}
-	if version >= hostedLakeSchemaVersion {
+	if version >= hostedFenceSchemaVersion {
 		expected["identity_profiles"]["is_identified"] = "BOOLEAN"
 		expected["hosted_write_guard"] = map[string]string{"id": "INTEGER", "source_id": "VARCHAR", "project_id": "VARCHAR", "catalog_id": "VARCHAR", "stream_id": "VARCHAR", "fence_epoch": "BIGINT", "fence_nonce": "VARCHAR", "generation": "UBIGINT", "state": "VARCHAR", "next_effect_seq": "UBIGINT", "ack_effect_seq": "UBIGINT", "sealed_effect_seq": "UBIGINT", "identity_ready": "BOOLEAN"}
 		if tables["hosted_write_guard"] == nil {
 			return 0, errors.New("hosted native write guard is missing")
+		}
+	}
+	if version >= hostedLakeSchemaVersion {
+		expected["hosted_write_guard"]["tenant_id"] = "VARCHAR"
+		expected["live_commit_proofs"] = map[string]string{"proof_version": "INTEGER", "effect_seq": "BIGINT", "batch_id": "VARCHAR", "batch_fingerprint": "VARCHAR", "proof_fingerprint": "VARCHAR", "tenant_id": "VARCHAR", "fence_epoch": "BIGINT", "accounted_at": "VARCHAR", "accepted_live": "BIGINT", "plan_id": "VARCHAR", "manifest_key": "VARCHAR", "manifest_version": "VARCHAR", "manifest_sha256": "VARCHAR", "manifest_bytes": "BIGINT", "output_count": "BIGINT", "totals_json": "VARCHAR"}
+		expected["live_usage_totals"] = map[string]string{"day": "VARCHAR", "revision": "BIGINT", "accepted_live": "BIGINT", "accepted_import": "BIGINT"}
+		for _, table := range []string{"live_commit_proofs", "live_usage_totals"} {
+			if tables[table] == nil {
+				return 0, fmt.Errorf("hosted native %s is missing", table)
+			}
 		}
 	}
 	if version < 2 && tables["current_events"]["payload"] == "VARCHAR" {
