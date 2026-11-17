@@ -30,7 +30,14 @@ type sharedQueryPermit struct {
 	id, worker, project string
 	control             *sql.DB
 	hosted              *hostedQueryRuntime
+	returned            sync.Once
 	once                sync.Once
+}
+
+func (p *sharedQueryPermit) recordReturn() {
+	if p.hosted != nil {
+		p.returned.Do(func() { p.hosted.noteReturn(p.id, p.project) })
+	}
 }
 
 func (p *sharedQueryPermit) release() {
@@ -38,9 +45,7 @@ func (p *sharedQueryPermit) release() {
 		cleanup, cancel := context.WithTimeout(context.Background(), sharedQueryControlTimeout)
 		defer cancel()
 		// An unavailable control store leaves a conservative reservation until TTL.
-		if p.hosted != nil {
-			p.hosted.noteReturn(p.id, p.project)
-		}
+		p.recordReturn()
 		_, _ = p.control.ExecContext(cleanup, `DELETE FROM shared_query_permits WHERE permit_id=$1 AND worker_id=$2`, p.id, p.worker)
 		if p.hosted != nil {
 			_ = p.hosted.acknowledgeReturn(cleanup, p.control, p.id, p.project)
