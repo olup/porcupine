@@ -123,6 +123,8 @@ porcupine get-tenant-deletion --tenant-id TENANT_ID
 
 `delete-tenant` returns HTTP `202` after a durable transaction blocks ingestion and project access, revokes credentials owned by the tenant, and records each project for cleanup. Repeat the same ID after a timeout. Status survives removal of the tenant row. An ID that never existed returns `404`. There is no cancellation or restoration operation.
 
+New resource admission stops when the fence commits. Cleanup cancels and drains already admitted project work before removing its managed state.
+
 Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
 
 `state=deleting` means cleanup remains pending and recovery retries it after restart and periodically. Current owner-local shared deployments remain in this state with `error_code=shared_local_cleanup_pending`; full shared cleanup requires the planned shared operational-state backend. A missing journal owner cannot be replaced by an empty journal.

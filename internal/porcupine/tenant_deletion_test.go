@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/olup/porcupine/internal/auth"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func waitTenantDeletion(t *testing.T, s *Service, tenant, state string) TenantDeletion {
@@ -372,6 +374,13 @@ func TestTenantDeletionRemovesNativeDataWithoutResurrection(t *testing.T) {
 	waitTenantDeletion(t, s, a, "logically_deleted")
 	if _, err := s.lake.Load(t.Context(), pa, "a-native-private-payload"); err == nil {
 		t.Fatal("native archive reopened a deleted tenant project")
+	}
+	store := s.lake.(*lakeapi.DuckLakeStore)
+	if _, err := os.Stat(store.ProjectDirectory(pa)); !os.IsNotExist(err) {
+		t.Fatal("A managed native directory survived cleanup", err)
+	}
+	if _, err := os.Stat(store.ProjectDirectory(pb)); err != nil {
+		t.Fatal("B managed native directory disappeared", err)
 	}
 	kept, err := s.lake.Load(t.Context(), pb, "b-native-kept")
 	if err != nil || kept.ProjectID != pb {
