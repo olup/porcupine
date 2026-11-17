@@ -114,9 +114,6 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO project_deletions(project_id,completed) VALUES($1,0)`, id); err != nil {
 		return err
 	}
-	if err = s.stageProjectExportCleanup(ctx, tx, id); err != nil {
-		return err
-	}
 	err = purgeProjectLocalRecords(ctx, tx, id)
 	if err != nil {
 		return err
@@ -178,7 +175,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		}
 	}
 	if err == nil && !completed {
-		err = s.purgeProjectExports(ctx, id)
+		err = s.exports.CleanupProject(ctx, id)
 		if err == nil {
 			err = s.deleteProjectArchive(ctx, id)
 		}

@@ -16,6 +16,7 @@ import (
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -453,23 +454,16 @@ func resetNativeRestoreJournal(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "export_files", "export_external_authority", "project_deletion_files", "import_upload_samples", "import_upload_files"} {
-		if table == "project_deletion_files" {
-			var exists bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				continue
-			}
-		}
+	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "import_upload_samples", "import_upload_files"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset restored %s: %w", table, err)
 		}
 	}
+	if err := output.ResetRestoredExportsTx(ctx, tx); err != nil {
+		return err
+	}
 	for _, statement := range []string{
 		`UPDATE pipelines SET state='paused',secret=X''`,
-		`UPDATE export_jobs SET state='canceled',cancel_requested=1,attempt_id='',cleanup_pending=0,file_count=0,error='cancelled by offline credential reset'`,
 		`UPDATE import_uploads SET state='cancelled',error='cancelled by offline credential reset' WHERE state NOT IN ('completed','failed','cancelled')`,
 		`DELETE FROM webhook_queue_usage`,
 		`DELETE FROM metadata WHERE key='native_backup_writer_id'`,

@@ -72,7 +72,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 
 	f.call(t, "DELETE", "/api/v1/access-keys/"+api.ID, admin, nil, 204, nil)
 	f.call(t, "GET", eventPath, api.Token, nil, 401, nil)
-	if _, err := f.s.exportActor(f.ctx, api.ID); err == nil {
+	if _, err := f.s.loadCredentialActor(f.ctx, api.ID); err == nil {
 		t.Fatal("revoked key could still own export work")
 	}
 	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": a}}, 200)
@@ -80,7 +80,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 	if _, err := f.s.authenticateResource(f.ctx, mcp.Token, f.s.resources.mcpResource); err == nil {
 		t.Fatal("revoked account still accepts service key")
 	}
-	if _, err := f.s.exportActor(f.ctx, mcp.ID); err == nil {
+	if _, err := f.s.loadCredentialActor(f.ctx, mcp.ID); err == nil {
 		t.Fatal("revoked parent left background work authorized")
 	}
 }

@@ -1,8 +1,6 @@
-package porcupine
+package output
 
 import (
-	"context"
-	"sync"
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
@@ -88,17 +86,6 @@ type ExportFile struct {
 	SHA256       string `json:"sha256"`
 	URL          string `json:"url"`
 	ExpiresAt    string `json:"expires_at"`
-}
-
-type exportRuntime struct {
-	config       ExportConfig
-	store        *exportstore.Store
-	cancel       context.CancelFunc
-	done         chan struct{}
-	wake         chan struct{}
-	activeMu     sync.Mutex
-	activeJob    string
-	activeCancel context.CancelFunc
 }
 
 const exportLinkTTL = 5 * time.Minute
