@@ -8,6 +8,7 @@
 - Separate SQLite control and ingestion databases. Optional shared PostgreSQL stores control and DuckLake catalog metadata; event payloads remain in owner-local SQLite before S3 Parquet.
 - Email OTP and optional trusted Google/OIDC sign-in for invited humans, with operator identity recovery and revocation of previous interactive grants.
 - Read-only MCP tools `porcupine_schema` and `porcupine_query`.
+- Project editors can document exact event names and top-level property keys. Catalog readers see the description, last editor ID, and edit time alongside observed data.
 - Removed inert `use_cache` input and obsolete result-cache/scan-limit fields. `use_cache` is now rejected. This is a breaking API change.
 - Versioned operational database schemas. Startup refuses newer and unknown databases before changing them.
 - Faster local checks and parallel test execution, with complete race/integration suites retained for validation.

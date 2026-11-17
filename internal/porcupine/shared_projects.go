@@ -79,7 +79,7 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 
 func projectOperationNeedsOwner(operation string) bool {
 	switch operation {
-	case "query-events", "get-event-catalog", "get-event-profile", "get-event-input-contract", "rename-project":
+	case "query-events", "get-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project":
 		return false
 	default:
 		return true

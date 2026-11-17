@@ -10,7 +10,7 @@ Completed on the development branch, not yet released:
 
 - Tenants, team administration, project grants, monthly ingestion allowances, and configurable interactive query limits.
 - Separate local SQLite control and ingestion databases, plus optional shared PostgreSQL control/catalog metadata and S3 analytical files.
-- Read-only MCP discovery and query tools.
+- Read-only MCP discovery and query tools, with [optional author-edited event and property descriptions](reference/event-discovery.md#document-an-event-or-property).
 - Removal of inert analytical cache fields and obsolete backend configuration.
 - Faster short tests and full race/integration checks, with versioned operational schema migrations.
 - A separate `internal/lake` engine package.
@@ -57,9 +57,10 @@ Before hosted guarantees, test crash-loss volume/age, graceful replacement, Post
 
 ## Product work after stabilization
 
+The historical import workflow proposed after v0.10.0 shipped in v0.14.0. The [import guide](imports.md) covers native, PostHog, and Segment formats, resumable CLI uploads, retry identity, and waiting for analytical delivery. The [analytics reference](reference/analytics.md) and [tested DuckDB recipes](reference/duckdb-recipes.md) cover SQL feedback and common analytical questions.
+
 The [control-plane contract work](design/control-plane-contracts.md) adds operator tenant deletion, optional external JWT authentication, and precise paginated usage, in that order. Integrated self-hosted identity and service credentials remain available; commercial pricing and UI stay outside Porcupine.
 
-- Optional editable documentation for event definitions and property meanings, through API, CLI, MCP, and discovery. Record author and modification time; never gate capture on documentation.
 - Expand import adapter coverage from actual export files. The native event contract stays the common format. A plugin framework and additional SDK adapters remain undecided.
 - Consider scheduled SQL-to-webhook delivery with alert conditions and suppression using existing durable destination jobs.
 

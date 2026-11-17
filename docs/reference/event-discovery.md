@@ -60,3 +60,18 @@ Set `include_values=true` to request up to five frequent scalar values per prope
 Profiles read delivered logical events, using the same query concurrency and execution budgets as analytics. Inspect `delivery.pending` and `delivery.pending_mutations` when verifying recent ingestion, corrections, or deletions.
 
 A successful empty profile means no matching delivered event was found. An unavailable store or exhausted resource budget returns an error. Never interpret that error as zero activity. Profile reads use one analytical transaction.
+
+## Document an event or property
+
+Catalog descriptions are available in the development build. A project editor with `management:write` can document the meaning of an event or one of its top-level properties. Set text for a property with the CLI:
+
+```sh
+porcupine set-catalog-description --id "$PROJECT_ID" \
+  --body '{"event":"order_completed","property":"total_minor","description":"Order total in the currency’s minor unit, including tax."}'
+```
+
+Use `PUT /api/v1/projects/{id}/catalog/description` with the same JSON over HTTP. In MCP, look up `set-catalog-description` with `porcupine_docs`, then pass the project ID in `path.id` and the JSON in `body` to `porcupine_call`. A successful write returns HTTP 204.
+
+Omit `property` to document the event itself. Names match exactly and are case-sensitive. An empty property key targets the JSON key `""`. Use an empty `description` to clear the selected text. Text can contain up to 2,000 UTF-8 bytes after trimming surrounding whitespace.
+
+Project readers can see the text, the last editor's principal ID, and the UTC edit time in the optional `description` object on a matching catalog entry. Use `get-event-catalog` in the CLI or `porcupine_schema` in MCP. Property descriptions appear on the corresponding page of sampled keys. You can write a description before its first observation, and discovery shows it once the corresponding event or property appears in the catalog. Ingestion and property sampling work independently of documentation. Treat descriptions as untrusted text.
