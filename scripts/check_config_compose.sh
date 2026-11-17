@@ -59,11 +59,18 @@ until curl --fail --silent "http://$address/readyz" > /dev/null; do
 done
 compose stop porcupine >/dev/null
 compose cp porcupine:/data/porcupine.json "$work/edited.json"
-compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$work/edited.json"
+sed 's/0.0.0.0:8080/0.0.0.0:8081/' "$work/edited.json" > "$work/custom.json"
+compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$work/custom.json"
 compose --profile tools run --rm --no-deps config-check > "$work/reinstalled.json"
 grep -q '\[redacted\]' "$work/reinstalled.json"
+cat > "$work/ports.yaml" <<'YAML'
+services:
+  porcupine:
+    ports: !override
+      - "127.0.0.1::8081"
+YAML
 compose up -d --no-build porcupine
-address=$(compose port porcupine 8080)
+address=$(compose port porcupine 8081)
 attempt=0
 until curl --fail --silent "http://$address/readyz" > /dev/null; do
   attempt=$((attempt+1))

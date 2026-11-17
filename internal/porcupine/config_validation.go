@@ -17,6 +17,11 @@ func ValidateConfig(c Config) error {
 	if _, err := normalizeInteractiveQueries(c.InteractiveQueries); err != nil {
 		return err
 	}
+	if c.Shared != nil {
+		if _, err := validateSharedRouteURL(c.Shared.RouteURL); err != nil {
+			return err
+		}
+	}
 	if c.QueueMaxBytes < 0 {
 		return errors.New("queue byte limit must be nonnegative")
 	}
@@ -33,6 +38,9 @@ func ValidateConfig(c Config) error {
 	}
 	if c.DuckLake != nil {
 		cleanup := *c.DuckLake
+		if err := lakeapi.ValidateSharedNativeSettings(&cleanup); err != nil {
+			return err
+		}
 		if err := lakeapi.NormalizeDuckLakeCleanup(&cleanup); err != nil {
 			return err
 		}

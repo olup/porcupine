@@ -195,6 +195,7 @@ func TestConfigCheckValidatesRuntimeSemantics(t *testing.T) {
 		`{"export":{"s3":{"bucket":"analytics","prefix":"results","region":"us-east-1"},"max_execution_seconds":999999999}}`,
 		`{"storage":{"ducklake":"data/lake"},"backup":{"directory":"data/lake/backup"}}`,
 		`{"bootstrap_token":"short"}`,
+		`{"ducklake":{"metadata_timeout_seconds":2}}`,
 		`{"export":{"s3":{"bucket":"invalid*bucket","prefix":"results","region":"us-east-1"}}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
@@ -227,7 +228,8 @@ func TestConfigInstallKeepsOldFileOnInvalidInput(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		`{"not_an_option":"secret-value"}`, `{"query":{"max_rows":-1}}`,
-		`{"bootstrap_token":"short"}`, strings.Repeat("x", (1<<20)+1),
+		`{"bootstrap_token":"short"}`,
+		`{"ducklake":{"metadata_timeout_seconds":2}}`, strings.Repeat("x", (1<<20)+1),
 	} {
 		var output bytes.Buffer
 		if err := run([]string{"config", "install", "--config", path}, strings.NewReader(invalid), &output); err == nil || output.Len() != 0 {
@@ -269,5 +271,30 @@ func TestConfigInstallReplacesPrivatelyAndMasksOutput(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil || len(entries) != 1 {
 		t.Fatal("temporary replacement file leaked")
+	}
+}
+
+func TestConfigInitConcurrentWritersKeepOneCompleteFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "porcupine.json")
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- writeInitialConfig(path, false) }()
+	}
+	succeeded := 0
+	for range 2 {
+		if <-results == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("expected one successful initialization, got %d", succeeded)
+	}
+	if _, err := loadSettings(path, true); err != nil {
+		t.Fatalf("initialization left an incomplete file: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatal("initialization left temporary files")
 	}
 }

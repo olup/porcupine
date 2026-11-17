@@ -82,7 +82,7 @@ jobs:
           trap cleanup EXIT
           # No outbound internet: the nonroot image must load its bundled extension.
           cid="$(docker run -d --name "$server" --network "$network" --memory=2g --cpus=2 \
-            -e PORCUPINE_BOOTSTRAP_TOKEN "$image")"
+            -e PORCUPINE_BOOTSTRAP_TOKEN -e PORCUPINE_ADDR=0.0.0.0:8080 "$image")"
           curl() { docker run --rm --network "$network" "$curl_image" "$@"; }
           origin="http://$server:8080"
           curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 1 "$origin/readyz" |

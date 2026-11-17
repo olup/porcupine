@@ -34,7 +34,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57
 COPY --from=build /porcupine /porcupine
 COPY --from=build --chown=65532:65532 /data /data
 COPY --from=build /root/.duckdb/extensions /home/nonroot/.duckdb/extensions
-ENV HOME=/home/nonroot PORCUPINE_ADDR=0.0.0.0:8080 PORCUPINE_DB=/data/porcupine.db PORCUPINE_DUCKLAKE_DIR=/data/ducklake
+ENV HOME=/home/nonroot
 EXPOSE 8080
 USER 65532:65532
 ENTRYPOINT ["/porcupine"]

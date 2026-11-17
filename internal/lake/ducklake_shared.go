@@ -21,7 +21,8 @@ const sharedNativeReaderHorizon = 8 * 24 * time.Hour
 
 var errSharedNativeDeleted = errors.New("DuckLake project is deleted")
 
-func ValidateSharedNativeConfig(c *DuckLakeConfig) error {
+// ValidateSharedNativeSettings checks operator input before the durable source ID exists.
+func ValidateSharedNativeSettings(c *DuckLakeConfig) error {
 	if c.PostgresURL == "" && c.SharedSourceID == "" {
 		if c.MetadataTimeoutSeconds != 0 {
 			return errors.New("DuckLake metadata timeout requires shared PostgreSQL metadata")
@@ -29,14 +30,24 @@ func ValidateSharedNativeConfig(c *DuckLakeConfig) error {
 		return nil
 	}
 	u, err := url.Parse(c.PostgresURL)
-	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" || c.S3 == nil || len(c.SharedSourceID) != 36 || !LakePrefixSegmentPattern.MatchString(c.SharedSourceID) {
-		return errors.New("shared DuckLake requires a PostgreSQL URL, stable source ID and analytical S3 storage")
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" || c.S3 == nil {
+		return errors.New("shared DuckLake requires a PostgreSQL URL and analytical S3 storage")
 	}
 	if c.MetadataTimeoutSeconds == 0 {
 		c.MetadataTimeoutSeconds = defaultDuckLakeMetadataTimeoutSeconds
 	}
 	if _, err := nativePostgresMetadataURL(c.PostgresURL, c.MetadataTimeoutSeconds); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ValidateSharedNativeConfig(c *DuckLakeConfig) error {
+	if err := ValidateSharedNativeSettings(c); err != nil {
+		return err
+	}
+	if c.PostgresURL != "" && (len(c.SharedSourceID) != 36 || !LakePrefixSegmentPattern.MatchString(c.SharedSourceID)) {
+		return errors.New("shared DuckLake requires a stable source ID")
 	}
 	return nil
 }

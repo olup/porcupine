@@ -147,13 +147,11 @@ func writeInitialConfig(path string, docker bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return errors.New("cannot create configuration directory")
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return errors.New("configuration file already exists; refusing to overwrite secrets")
-	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".porcupine-init-*")
 	if err != nil {
 		return errors.New("cannot create private configuration file")
 	}
+	defer os.Remove(f.Name())
 	defer f.Close()
 	if _, err := f.Write(append(content, '\n')); err != nil {
 		return errors.New("cannot write private configuration file")
@@ -161,7 +159,17 @@ func writeInitialConfig(path string, docker bool) error {
 	if err := f.Sync(); err != nil {
 		return errors.New("cannot sync private configuration file")
 	}
-	return nil
+	if err := f.Close(); err != nil {
+		return errors.New("cannot close private configuration file")
+	}
+	// A hard link installs the complete file atomically and never replaces a winner.
+	if err := os.Link(f.Name(), path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("configuration file already exists; refusing to overwrite secrets")
+		}
+		return errors.New("cannot install private configuration file")
+	}
+	return syncConfigDirectory(filepath.Dir(path))
 }
 
 func installConfig(path string, input io.Reader) error {
@@ -206,6 +214,10 @@ func installConfig(path string, input io.Reader) error {
 	if err := os.Rename(temp, path); err != nil {
 		return errors.New("cannot replace configuration file")
 	}
+	return syncConfigDirectory(directory)
+}
+
+func syncConfigDirectory(directory string) error {
 	dir, err := os.Open(directory)
 	if err != nil {
 		return errors.New("cannot sync configuration directory; replacement was installed")
