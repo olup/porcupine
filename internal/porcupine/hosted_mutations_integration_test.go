@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,9 +172,22 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	if err != nil || rawProof.Sequence != 3 || rawProof.AcceptedLive != 0 || rawProof.Totals[0].Live != 2 {
 		t.Fatal(rawProof, err)
 	}
-	// A cold worker publishes the committed original after response loss.
-	if err := fb.RecoverProject(ctx, scope.Key); err != nil {
+	// A cold worker publishes the original after native response loss. Lose the
+	// returned PostgreSQL COMMIT response after the receipt and cursor commit.
+	var losePublication atomic.Bool
+	lostDB, err := installLostHostedCommit(b.service.shared.config.DatabaseURL, fb.publisher, &losePublication)
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer lostDB.Close()
+	recoveryCoordinator, err := lakeapi.NewPostgresProjectCoordinator(lostDB, lakeapi.DefaultProjectCoordinatorConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb.coordinator = recoveryCoordinator
+	losePublication.Store(true)
+	if err := fb.RecoverProject(ctx, scope.Key); err != nil || losePublication.Load() {
+		t.Fatal("mutation publication response was not resolved", err)
 	}
 	after, err := b.service.getEventMutation(actorContext, &EventMutationInput{ID: project, MutationID: first.Body.MutationID})
 	if err != nil || after.Body.State != "applied" {
