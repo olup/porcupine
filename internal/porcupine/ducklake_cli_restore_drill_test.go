@@ -147,7 +147,7 @@ func TestDuckLakeCLIRestoreDrill(t *testing.T) {
 		t.Fatal("CLI recovery changed producer retry IDs")
 	}
 	for projectID, want := range map[string]string{a: "1", b: "1"} {
-		query := exec.CommandContext(ctx, binary, "query-events", "--id", projectID, "--body", `{"sql":"SELECT count(*) AS total FROM events","use_cache":false}`)
+		query := exec.CommandContext(ctx, binary, "query-events", "--id", projectID, "--body", `{"sql":"SELECT count(*) AS total FROM events"}`)
 		query.Env = append(restoreDrillEnvironment(), "PORCUPINE_URL="+origin, "PORCUPINE_API_KEY="+recoveryToken)
 		result, err := query.Output()
 		if err != nil {

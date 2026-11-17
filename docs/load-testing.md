@@ -57,7 +57,7 @@ replays one successful batch exactly once and requires zero newly accepted event
 on replay. `--run-id` can choose a marker, but preflight rejects an existing run.
 
 A concurrent query counts only this run's `porcupine_load` events using bound SQL
-parameters and `use_cache: false`. After ingestion, the script polls until the acknowledged unique event
+parameters. After ingestion, the script polls until the acknowledged unique event
 count matches delivered native data and the project's original and mutation queues are empty.
 It requires two matching observations because query results and delivery status
 do not share one database snapshot. Use a dedicated load project so unrelated

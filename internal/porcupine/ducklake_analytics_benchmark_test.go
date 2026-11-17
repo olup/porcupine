@@ -158,7 +158,7 @@ func nativeBenchmarkAccept(b testing.TB, handler http.Handler, token string, pay
 
 func nativeBenchmarkQuery(b testing.TB, handler http.Handler, project, sql string) AnalyticsResult {
 	b.Helper()
-	body, err := json.Marshal(map[string]any{"sql": sql, "use_cache": false})
+	body, err := json.Marshal(map[string]any{"sql": sql})
 	if err != nil {
 		b.Fatal(err)
 	}

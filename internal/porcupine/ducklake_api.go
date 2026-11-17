@@ -45,7 +45,6 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 	limits.MaxExecutionSeconds = (effective.TimeoutMS + 999) / 1000
 	limits.RequestTimeoutSeconds = limits.MaxExecutionSeconds + 5
 	limits.MaxRows, limits.MaxResultBytes = effective.MaxRows, effective.MaxResultBytes
-	limits.MaxReadRows, limits.MaxReadBytes = 0, 0
 	limits.ObjectStorageRequestTimeoutSeconds = s.lakeS3RequestTimeoutSeconds
 	limits.MetadataRequestTimeoutSeconds = s.lakeMetadataTimeoutSeconds
 	limits.RequestTimeoutSeconds += s.lakeMetadataTimeoutSeconds
@@ -56,9 +55,9 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 		limits.MaxMemoryBytes = s.lakeMemoryMB << 20
 	}
 	return &AnalyticsSchemaOutput{Body: AnalyticsSchema{Enabled: true, Tables: []AnalyticsTable{{Name: "events", Columns: columns}}, Limits: limits, TenantBudgets: tenant.Budgets, DeploymentLimits: s.interactiveConfig, Delivery: delivery,
-		SQL: AnalyticsSQL{Dialect: "duckdb", ResultCache: false, Functions: nativequery.Functions(),
+		SQL: AnalyticsSQL{Dialect: "duckdb", Functions: nativequery.Functions(),
 			Features:    []string{"SELECT", "GROUP BY", "CTEs", "subqueries", "joins", "UNION", "window functions", "scalar casts", "$name bound parameters"},
-			Unsupported: []string{"writes", "qualified tables", "private columns", "external sources", "table functions", "recursive CTEs", "time travel", "result cache", "physical scan row and byte quotas", "per-query memory and temporary-disk quotas", "remote catalogs"}}}}, nil
+			Unsupported: []string{"writes", "qualified tables", "private columns", "external sources", "table functions", "recursive CTEs", "time travel", "per-query memory and temporary-disk quotas", "remote catalogs"}}}}, nil
 }
 
 func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryInput) (*AnalyticsQueryOutput, error) {

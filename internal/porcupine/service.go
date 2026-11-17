@@ -302,9 +302,6 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	if err := s.initializeQueueUsage(context.Background()); err != nil {
 		return fail(err)
 	}
-	if err := s.initializeReceipts(context.Background()); err != nil {
-		return fail(err)
-	}
 	if err := s.initializeExports(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -317,8 +314,8 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 		tx.Rollback()
 		return fail(err)
 	}
-	var lakeBound, foreignBackendBound, sharedBound bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('query_master_key','projection_table_uuid')),EXISTS(SELECT 1 FROM metadata WHERE key='shared_worker_id')`).Scan(&lakeBound, &foreignBackendBound, &sharedBound); err != nil {
+	var lakeBound, sharedBound bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key='shared_worker_id')`).Scan(&lakeBound, &sharedBound); err != nil {
 		return txFail(err)
 	}
 	if sharedBound && s.shared == nil {
@@ -326,9 +323,6 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 	}
 	if lakeBound && c.DuckLake == nil {
 		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))
-	}
-	if foreignBackendBound {
-		return txFail(errors.New("this acceptance database belongs to an unsupported analytical backend; automatic migration is not supported"))
 	}
 	var initialized string
 	err = tx.QueryRow(`SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)

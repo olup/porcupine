@@ -76,7 +76,6 @@ nav:
       - Roadmap: roadmap.md
       - Publish a release: releasing.md
   - Historical measurements:
-      - Benchmark record: benchmarks.md
       - Initial DuckLake experiment: ducklake-experiment.md
       - Native validation record: ducklake-validation.md
       - Validation plan: ducklake-validation-plan.md

@@ -45,7 +45,7 @@ func lakeMaintenancePages(prefix string) string {
 
 func lakeMaintenanceQuery(t *testing.T, s *Service, project, sql string, parameters map[string]string) []any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"sql": sql, "parameters": parameters, "use_cache": false})
+	body, _ := json.Marshal(map[string]any{"sql": sql, "parameters": parameters})
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		code, raw, _ := architectureHTTP(s.Handler(), "POST", "/api/v1/projects/"+project+"/query", adminToken, body, false)
@@ -207,7 +207,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		go func(reader int) {
 			defer wg.Done()
 			for ctx.Err() == nil {
-				body, _ := json.Marshal(map[string]any{"sql": architectureQueries[reader+2].sql, "use_cache": false})
+				body, _ := json.Marshal(map[string]any{"sql": architectureQueries[reader+2].sql})
 				code, raw, elapsed := architectureHTTP(s.Handler(), "POST", "/api/v1/projects/"+projectID+"/query", adminToken, body, false)
 				failure := ""
 				if code == 200 {

@@ -96,7 +96,7 @@ jobs:
           first="$(curl --fail --silent --show-error "$origin/ingest/v1/events" \
             -H "X-Porcupine-Key: $ingest" -H 'Content-Type: application/json' --data "$payload")"
           event_id="$(printf '%s' "$first" | jq -er '.receipts[0].event_id | select(type == "string" and length > 0)')"
-          query='{"sql":"SELECT event_id,event FROM events WHERE event=$name","parameters":{"name":"release-smoke"},"use_cache":false}'
+          query='{"sql":"SELECT event_id,event FROM events WHERE event=$name","parameters":{"name":"release-smoke"}}'
           visible=false
           for attempt in $(seq 1 120); do
             if result="$(curl --fail --silent --show-error "$origin/api/v1/projects/$project/query" \

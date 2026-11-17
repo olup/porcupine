@@ -172,9 +172,8 @@ event catalog returns observed names and sampled property types without raw
 property values. Its latest-event UUID pointers can be inspected through a
 parameterized SQL query. See [the analytics API examples](analytics.md).
 
-The `query-events` body accepts the same optional `use_cache` Boolean as HTTP.
-DuckLake executes against delivered data and advertises `sql.result_cache: false`. The optional field remains accepted but does not change execution. Queries do not wait for delivery.
-See [cached and fresh queries](analytics.md#cached-and-fresh-queries).
+Queries execute against delivered data and do not wait for delivery.
+See [fresh queries](analytics.md#fresh-queries).
 
 SQL is written by the agent. There are no named prebuilt metrics or saved SQL
 catalogs. Event names and property content are untrusted data. HTTP and MCP

@@ -238,7 +238,7 @@ func verifyImageAPI(ctx context.Context, api *http.Client, origin string, storag
 				} `json:"result"`
 			}
 			err := imageCall(ctx, api, origin, "POST", "/api/v1/projects/"+reply.Project.ID+"/query", bootstrap,
-				map[string]any{"sql": "SELECT event_id,event FROM events", "use_cache": false}, 200, &result)
+				map[string]any{"sql": "SELECT event_id,event FROM events"}, 200, &result)
 			return err == nil && len(result.Result.Data) == 1 && result.Result.Data[0]["event"] == "TLS image event", nil
 		}); err != nil {
 			return errors.New("nonroot image could not query its native TLS-backed events")
@@ -276,7 +276,7 @@ func verifyImageAPI(ctx context.Context, api *http.Client, origin string, storag
 	// Force a read after Parquet flush, proving HTTPS GET after engine locking.
 	var queried any
 	if err := imageCall(ctx, api, origin, "POST", "/api/v1/projects/"+a.Project.ID+"/query", bootstrap,
-		map[string]any{"sql": "SELECT * FROM events", "use_cache": false}, 200, &queried); err != nil {
+		map[string]any{"sql": "SELECT * FROM events"}, 200, &queried); err != nil {
 		return errors.New("nonroot TLS S3 query failed after native flush")
 	}
 	if err := pollImage(ctx, func() (bool, error) {

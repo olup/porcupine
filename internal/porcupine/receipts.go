@@ -6,20 +6,6 @@ import (
 	"errors"
 )
 
-// Native receipts are a permanent local ledger. A database which previously
-// discarded them into another store cannot be opened without an explicit import.
-func (s *Service) initializeReceipts(ctx context.Context) error {
-	var foreign bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM metadata WHERE (key IN ('receipt_source_uuid','receipt_source_config') AND value!='') OR (key IN ('receipt_fallback_required','receipt_protocol_required') AND value='1'))`).Scan(&foreign); err != nil {
-		return err
-	}
-	if foreign {
-		return errors.New("this acceptance database requires unsupported archived receipt history")
-	}
-	_, err := s.db.ExecContext(ctx, `DROP TRIGGER IF EXISTS receipt_protocol_guard; DROP TRIGGER IF EXISTS receipt_head_protocol_guard; DROP TABLE IF EXISTS receipt_lookup_leases; DROP TABLE IF EXISTS receipt_provenance; DELETE FROM metadata WHERE key IN ('receipt_generation','receipt_reconcile_cursor');`)
-	return err
-}
-
 func localReceipt(ctx context.Context, q oauthQueryer, project, uuid string) (bool, error) {
 	var found bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE project_id=$1 AND uuid=$2) OR EXISTS(SELECT 1 FROM event_receipts WHERE project_id=$3 AND uuid=$4) OR EXISTS(SELECT 1 FROM event_heads WHERE project_id=$5 AND uuid=$6) OR EXISTS(SELECT 1 FROM mutation_outbox WHERE project_id=$7 AND uuid=$8)`, project, uuid, project, uuid, project, uuid, project, uuid).Scan(&found)

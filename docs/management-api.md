@@ -35,7 +35,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 The following table describes v0.14.0. The [unreleased tenant operations](#unreleased-tenant-operations) below include the change to project creation authority.
 
-`query-events` executes fresh DuckDB SQL against delivered state and reports `sql.result_cache: false`. The optional `use_cache` field remains accepted but does not change execution. See [query consistency](analytics.md#cached-and-fresh-queries).
+`query-events` executes fresh DuckDB SQL against delivered state. See [query consistency](analytics.md#fresh-queries).
 
 | Operation | Required authority | Success |
 | --- | --- | --- |

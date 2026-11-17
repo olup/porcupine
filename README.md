@@ -82,4 +82,4 @@ make compat             # pinned PostHog SDKs
 
 For the local documentation preview, install `docs-requirements.txt` in a Python virtual environment and run `make docs-preview`. The preview is available at `http://127.0.0.1:8787/porcupine/docs/`.
 
-[Architecture](docs/architecture.md) · [Benchmark workloads and results](docs/benchmarks.md) · [MIT license](LICENSE)
+[Architecture](docs/architecture.md) · [MIT license](LICENSE)

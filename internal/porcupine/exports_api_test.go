@@ -163,7 +163,7 @@ func TestExportListLimitsDoNotExposeOperatorSecretsAndRemainProjectScoped(t *tes
 		t.Fatalf("export limits/list page missing: %+v %v", page, err)
 	}
 	limits := page.Body.Limits
-	if limits.MaxReadBytes != 0 || limits.TemporaryBytes != 0 || limits.MemoryBytes != int64(s.lakeMemoryMB)<<20 || limits.MemoryScope != "per_resident_project_engine" {
+	if limits.MemoryBytes != int64(s.lakeMemoryMB)<<20 || limits.MemoryScope != "per_resident_project_engine" {
 		t.Fatalf("export limits misrepresented native enforcement: %+v", limits)
 	}
 	encoded, _ := json.Marshal(page.Body)

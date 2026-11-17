@@ -46,7 +46,7 @@ func duckLakeJourneyDrain(t *testing.T, s *Service) {
 
 func duckLakeJourneyQuery(t *testing.T, s *Service, project, token, sql string, parameters map[string]string) []any {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"sql": sql, "parameters": parameters, "use_cache": false})
+	body, err := json.Marshal(map[string]any{"sql": sql, "parameters": parameters})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
 	mcpCtx, session := mcpTestSession(t, host.URL, reader, "")
-	mcpCount := mcpTestCall(t, mcpCtx, session, mcpCallInput{OperationID: "query-events", Path: map[string]string{"id": a}, Body: map[string]any{"sql": "SELECT count(*) AS total FROM events", "use_cache": false}}, 200)
+	mcpCount := mcpTestCall(t, mcpCtx, session, mcpCallInput{OperationID: "query-events", Path: map[string]string{"id": a}, Body: map[string]any{"sql": "SELECT count(*) AS total FROM events"}}, 200)
 	if mcpCount["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "3" {
 		t.Fatal("MCP did not use native DuckLake analytics")
 	}

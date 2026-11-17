@@ -73,7 +73,7 @@ Profiles distinguish occurrence time from receipt time. Exact activity covers de
 
 ## SQL request and result
 
-A body contains `sql`, an optional `parameters` string map, and optional `use_cache`:
+A body contains `sql` and an optional `parameters` string map:
 
 ```json
 {
@@ -98,11 +98,9 @@ For example:
 }
 ```
 
-### Cached and fresh queries
+### Fresh queries
 
-Porcupine reports `sql.result_cache: false`. Every query executes against delivered data. The optional `use_cache` field is accepted but does not change execution.
-
-Queries do not wait for queued originals or corrections. Inspect delivery status before checking a recent capture.
+Every query executes against delivered data; there is no result cache. Queries do not wait for queued originals or corrections. Inspect delivery status before checking a recent capture.
 
 ### Group a custom property by day
 
@@ -122,8 +120,7 @@ The [DuckDB recipes](duckdb-recipes.md) cover trends, sessions, custom dimension
 ```json
 {
 	"sql": "SELECT uuid, event, timestamp, received_at, properties FROM events WHERE uuid=$uuid LIMIT 1",
-	"parameters": {"uuid": "UUID_FROM_CATALOG"},
-	"use_cache": false
+	"parameters": {"uuid": "UUID_FROM_CATALOG"}
 }
 ```
 

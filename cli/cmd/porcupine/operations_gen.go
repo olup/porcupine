@@ -508,8 +508,7 @@ var operations = []operation{
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"parameters (object) Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
-			"sql (string, required) One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
-			"use_cache (boolean) DuckDB always executes fresh queries. This preference has no effect while get-event-schema reports result_cache=false.",
+			"sql (string, required) One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden.",
 		},
 	},
 	{

@@ -73,7 +73,7 @@ The examples assume `PORCUPINE_URL`, an authorized `ACCESS_TOKEN`, an existing `
 
 An idempotency key contains 1 through 200 bytes and cannot be blank. Its scope is project and creator credential. An exact canonical SQL, parameters, and format retry returns the same job, including after terminal completion. Reusing the key for a different request returns `409`. SQLite retains the key hash, not the raw key.
 
-Job metadata includes `id`, `project_id`, `state`, `format`, row and byte progress, `file_count`, `attempts`, timestamps, optional generic `error`, `columns`, and `consistency`. It never returns SQL, parameters, actor IDs, internal object keys, or credentials. Columns describe result names and database types. Optional `totals`, `extremes`, and `rows_before_limit_at_least` describe supported result extras without adding them to exported data rows.
+Job metadata includes `id`, `project_id`, `state`, `format`, row and byte progress, `file_count`, `attempts`, timestamps, optional generic `error`, `columns`, and `consistency`. It never returns SQL, parameters, actor IDs, internal object keys, or credentials. Columns describe result names and database types.
 
 ### Download or cancel
 
@@ -171,7 +171,7 @@ Exports require a configured analytical backend and S3 result storage. Use [comp
 | `PORCUPINE_EXPORT_MAX_QUEUED_JOBS` | `100` | Maximum queued and running jobs combined, 1 through 100 |
 | `PORCUPINE_EXPORT_RETENTION_HOURS` | `168` | Availability after success, 1 through 720 hours |
 
-Native exports use the project's isolated engine and public view with the same AST guard as interactive queries. They share its configured memory and fixed temporary directory budget. Physical read-byte and per-query temporary-disk quotas are not implemented; effective limits report `max_read_bytes: 0` and `temporary_bytes: 0`. The reported `memory_bytes` is the shared engine setting, not a per-job or process RSS cap.
+Native exports use the project's isolated engine and public view with the same AST guard as interactive queries. They share its configured memory and fixed temporary directory budget. Physical read-byte and per-query temporary-disk quotas are not implemented. The reported `memory_bytes` is the shared engine setting, not a per-job or process RSS cap.
 
 Exports enforce the job deadline, single shared background-query slot, pressure checks, row and output limits, file limits, and sink bandwidth. Default sink bandwidth is 5 MiB/s, execution deadline is 24 hours, decoded output limit is 1 TiB, and per-row bound is 8 MiB. Clients cannot raise these settings through SQL.
 

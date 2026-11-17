@@ -58,7 +58,7 @@ def main():
     dialect = schema['sql']['dialect']
     check('supported SQL dialect', dialect == 'duckdb')
     marker = '$uuid'
-    query = {'sql': 'SELECT count(*) AS total FROM events WHERE uuid='+marker, 'parameters': {'uuid': run}, 'use_cache': False}
+    query = {'sql': 'SELECT count(*) AS total FROM events WHERE uuid='+marker, 'parameters': {'uuid': run}}
     for _ in range(60):
         status, response = request('POST', path + '/query', query, read_token())
         if status == 200 and response['result']['data'][0]['total'] == '1' and response['delivery']['pending'] == 0:
