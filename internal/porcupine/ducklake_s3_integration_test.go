@@ -346,6 +346,12 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	lake, err = newDuckLake(config)
 	s3FixtureError(t, fixture, "reopen S3 cancellation fixture", err)
 	store = lake.(*duckLakeStore)
+	// Opening validates catalog identity and schema through their own Parquet
+	// files. Finish that work before blocking event reads so this test measures
+	// interruption of an analytical query, not cleanup of a failed cold open.
+	_, release, err := store.LeaseProject(ctx, "a")
+	s3FixtureError(t, fixture, "open S3 cancellation query engine", err)
+	release()
 	paused.Store(true)
 	// Cancel when the remote read is in flight, not after a fixed delay, so
 	// CPU contention before the read cannot make the fixture miss it.

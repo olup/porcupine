@@ -430,6 +430,9 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 			return fail(err)
 		}
 	}
+	if _, err = lakeCatalogVersion(ctx, db); err != nil {
+		return fail(err)
+	}
 	if s.SharedCatalog != nil {
 		if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','data_inlining_row_limit','0')"); err != nil {
 			return fail(err)

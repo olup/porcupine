@@ -433,6 +433,10 @@ func (s *DuckLakeStore) KnownEvents(ctx context.Context, project string, uuids [
 				rows.Close()
 				return nil, err
 			}
+			if id <= 0 || known[uuid] != 0 && known[uuid] != id {
+				rows.Close()
+				return nil, errors.New("invalid DuckLake event receipt")
+			}
 			known[uuid] = id
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
@@ -446,22 +450,80 @@ func (s *DuckLakeStore) KnownEvents(ctx context.Context, project string, uuids [
 // original_snapshot and partitions current events by month of occurrence.
 const lakeSchemaVersion = 2
 
-// migrateLakeCatalog upgrades one project catalog to lakeSchemaVersion. It is
-// a single read once the catalog is current.
+// lakeCatalogVersion reads the format before any catalog DDL. Refusing a newer
+// or unknown layout must leave its persistent schema and snapshots untouched.
+func lakeCatalogVersion(ctx context.Context, db *sql.DB) (int, error) {
+	var hasVersion bool
+	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_tables() WHERE database_name='lake' AND table_name='schema_version'").Scan(&hasVersion); err != nil {
+		return 0, err
+	}
+	version := 0
+	if hasVersion {
+		var count int
+		var stored sql.NullInt64
+		if err := db.QueryRowContext(ctx, "SELECT count(*),max(version) FROM lake.schema_version").Scan(&count, &stored); err != nil {
+			return 0, err
+		}
+		if count > 1 || count == 1 && (!stored.Valid || stored.Int64 < 1) {
+			return 0, errors.New("invalid DuckLake catalog schema version")
+		}
+		if stored.Int64 > lakeSchemaVersion {
+			return 0, fmt.Errorf("DuckLake catalog schema version %d is newer than this server supports (%d)", stored.Int64, lakeSchemaVersion)
+		}
+		version = int(stored.Int64)
+	}
+	rows, err := db.QueryContext(ctx, "SELECT column_name,data_type FROM duckdb_columns() WHERE database_name='lake' AND table_name='current_events'")
+	if err != nil {
+		return 0, err
+	}
+	columns := map[string]string{}
+	for rows.Next() {
+		var name, kind string
+		if err := rows.Scan(&name, &kind); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		columns[name] = kind
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, err
+	}
+	if len(columns) == 0 && version == 0 {
+		return 0, nil
+	}
+	expected := map[string]string{
+		"id": "BIGINT", "project_id": "VARCHAR", "uuid": "VARCHAR", "event": "VARCHAR", "distinct_id": "VARCHAR",
+		"properties": "VARCHAR", "timestamp": "VARCHAR", "timestamp_ms": "BIGINT", "event_time": "TIMESTAMP WITH TIME ZONE",
+		"received_at": "VARCHAR", "received_at_ms": "BIGINT", "revision": "UBIGINT", "source_id": "VARCHAR", "message_id": "VARCHAR",
+		"event_type": "VARCHAR", "context": "VARCHAR", "is_imported": "UTINYINT", "identity_snapshot": "VARCHAR", "original_snapshot": "VARCHAR",
+	}
+	if version < 2 && columns["payload"] == "VARCHAR" {
+		delete(expected, "original_snapshot")
+		expected["payload"] = "VARCHAR"
+	}
+	if len(expected) != len(columns) {
+		return 0, errors.New("unknown DuckLake event schema")
+	}
+	for name, kind := range expected {
+		if columns[name] != kind {
+			return 0, errors.New("unknown DuckLake event schema")
+		}
+	}
+	return version, nil
+}
+
+// migrateLakeCatalog upgrades one project catalog. The column rewrite is one
+// transaction; partitioning and the version marker can be replayed after a crash.
 func migrateLakeCatalog(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.schema_version (version INTEGER NOT NULL)"); err != nil {
+	version, err := lakeCatalogVersion(ctx, db)
+	if err != nil {
 		return err
-	}
-	var stored sql.NullInt64
-	if err := db.QueryRowContext(ctx, "SELECT max(version) FROM lake.schema_version").Scan(&stored); err != nil {
-		return err
-	}
-	version := int(stored.Int64)
-	if version > lakeSchemaVersion {
-		return fmt.Errorf("DuckLake catalog schema version %d is newer than this server supports (%d)", version, lakeSchemaVersion)
 	}
 	if version == lakeSchemaVersion {
 		return nil
+	}
+	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.schema_version (version INTEGER NOT NULL)"); err != nil {
+		return err
 	}
 	// Each step is safe to repeat if the process stops before the version is
 	// recorded. DuckLake cannot repartition a table changed in the same transaction.
@@ -476,7 +538,7 @@ func migrateLakeCatalog(ctx context.Context, db *sql.DB) error {
 		}
 		defer tx.Rollback()
 		if _, err = tx.ExecContext(ctx, `ALTER TABLE lake.current_events ADD COLUMN IF NOT EXISTS original_snapshot VARCHAR;
- UPDATE lake.current_events SET original_snapshot=coalesce(json_extract_string(payload,'$.OriginalSnapshot'),'');
+ UPDATE lake.current_events SET original_snapshot=CASE WHEN revision>0 THEN coalesce(json_extract_string(payload,'$.OriginalSnapshot'),'') ELSE '' END;
  ALTER TABLE lake.current_events DROP COLUMN payload`); err != nil {
 			return err
 		}
@@ -487,6 +549,13 @@ func migrateLakeCatalog(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, "ALTER TABLE lake.current_events SET PARTITIONED BY (year(event_time), month(event_time))"); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, "INSERT INTO lake.schema_version VALUES(?)", lakeSchemaVersion)
-	return err
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM lake.schema_version; INSERT INTO lake.schema_version VALUES(?)", lakeSchemaVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

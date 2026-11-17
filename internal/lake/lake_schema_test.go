@@ -2,7 +2,10 @@ package lake
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -14,6 +17,8 @@ func TestLakeCatalogMigratesPayloadToOriginalSnapshot(t *testing.T) {
 	directory := t.TempDir()
 	store := openLakeStorageTest(t, directory, 2)
 	want := lakeStorageProjection(t, "a", "legacy", 1)
+	want.Revision = 3
+	want.Event.Event = "corrected"
 	if err := store.Apply(ctx, []EventProjection{want}); err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +83,93 @@ func TestLakeCatalogRefusesNewerSchema(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(store.ProjectDirectory("a"), "catalog.ducklake")
+	before := catalogDigest(t, path)
 	reopened := openLakeStorageTest(t, directory, 2)
 	if _, err := reopened.Load(ctx, "a", "x"); err == nil {
 		t.Fatal("opened a catalog written by a newer release")
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if catalogDigest(t, path) != before {
+		t.Fatal("refusing a newer catalog changed its persistent metadata")
+	}
+}
+
+func catalogDigest(t *testing.T, path string) [32]byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(data)
+}
+
+func TestLakeCatalogRefusesUnknownLayoutWithoutWrites(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	directory := t.TempDir()
+	store := openLakeStorageTest(t, directory, 1)
+	if err := store.Apply(ctx, []EventProjection{lakeStorageProjection(t, "a", "x", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	p, release, err := store.LeaseProject(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.DB.ExecContext(ctx, "ALTER TABLE lake.current_events ADD COLUMN unknown_future_column VARCHAR")
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.ProjectDirectory("a"), "catalog.ducklake")
+	before := catalogDigest(t, path)
+	reopened := openLakeStorageTest(t, directory, 1)
+	if _, err := reopened.Load(ctx, "a", "x"); err == nil {
+		t.Fatal("opened unknown event schema")
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if catalogDigest(t, path) != before {
+		t.Fatal("refusing an unknown schema changed persistent metadata")
+	}
+}
+
+func TestLakeCatalogResumesAfterColumnRewriteBeforeVersionCommit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	directory := t.TempDir()
+	store := openLakeStorageTest(t, directory, 1)
+	want := lakeStorageProjection(t, "a", "x", 1)
+	want.OriginalSnapshot = ""
+	if err := store.Apply(ctx, []EventProjection{want}); err != nil {
+		t.Fatal(err)
+	}
+	p, release, err := store.LeaseProject(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.DB.ExecContext(ctx, "DELETE FROM lake.schema_version; INSERT INTO lake.schema_version VALUES(1)")
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		reopened := openLakeStorageTest(t, directory, 1)
+		got, err := reopened.Load(ctx, "a", "x")
+		if err != nil || got.ID != want.ID || got.Timestamp != want.Timestamp {
+			t.Fatalf("interrupted migration lost event: %+v %v", got, err)
+		}
+		if err := reopened.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
