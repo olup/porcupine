@@ -8,11 +8,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 )
 
 func RestoreNativeProject(ctx context.Context, target *DuckLakeStore, reader NativeBackupReader, m NativeBackupManifest, c NativeBackupCatalog, stage string) error {
+	legacy, err := validateNativeRestoreCatalog(ctx, reader, m, c, stage)
+	if err != nil {
+		return err
+	}
 	project, err := target.openProjectInitialized(ctx, c.ProjectID, func(ctx context.Context, db *sql.DB) error {
 		dataPath := ""
 		archiveCA := ""
@@ -106,7 +109,7 @@ func RestoreNativeProject(ctx context.Context, target *DuckLakeStore, reader Nat
 			return errors.New("backup DuckLake format version differs from the new target; native restore does not migrate formats")
 		}
 		for _, table := range []string{"heads", "current_events", "identity_profiles", "identity_links"} {
-			if err = copyNativeRestoreTable(ctx, db, table); err != nil {
+			if err = copyNativeRestoreTable(ctx, db, table, legacy); err != nil {
 				return fmt.Errorf("restore project %q table %s: %w", c.ProjectID, table, err)
 			}
 		}
@@ -137,10 +140,67 @@ func RestoreNativeProject(ctx context.Context, target *DuckLakeStore, reader Nat
 	return verified.DB.Close()
 }
 
+// Validate the source before creating a target catalog. A dormant project can
+// still contain the previous application layout when a new binary captures it.
+// Attach its catalog read-only and translate rows while copying, leaving the
+// verified archive unchanged.
+func validateNativeRestoreCatalog(ctx context.Context, reader NativeBackupReader, m NativeBackupManifest, c NativeBackupCatalog, stage string) (legacy bool, result error) {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		return false, err
+	}
+	db.SetMaxOpenConns(1)
+	defer func() { result = errors.Join(result, db.Close()) }()
+	for _, statement := range []string{"SET memory_limit='64MiB'", "SET threads=1", "SET allow_persistent_secrets=false"} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return false, err
+		}
+	}
+	if _, err := db.ExecContext(ctx, "LOAD ducklake"); err != nil {
+		if _, err := db.ExecContext(ctx, "INSTALL ducklake; LOAD ducklake"); err != nil {
+			return false, errors.New("DuckLake extension is unavailable")
+		}
+	}
+	var dataPath, caFile string
+	switch archive := reader.(type) {
+	case *LocalNativeBackupReader:
+		dataPath = filepath.Join(archive.directory, m.ID, filepath.FromSlash(c.DataRoot))
+	case *NativeBackupS3:
+		helper := &DuckLakeObjectStore{Config: archive.config, Namespace: archive.Namespace + m.ID + "/ducklake/", client: archive.client, transport: archive.transport}
+		caFile, err = helper.configureNamed(ctx, db, c.ProjectID, "pc_restore_archive")
+		if err != nil {
+			return false, err
+		}
+		dataPath = "s3://" + archive.config.Bucket + "/" + archive.Namespace + m.ID + "/" + c.DataRoot
+	default:
+		return false, errors.New("unsupported native backup reader")
+	}
+	directories := []string{LakeLiteral(stage + string(os.PathSeparator)), LakeLiteral(strings.TrimRight(dataPath, "/") + "/")}
+	paths := "[]"
+	if caFile != "" {
+		paths = "[" + LakeLiteral(caFile) + "]"
+	}
+	for _, statement := range []string{
+		"SET allowed_directories=[" + strings.Join(directories, ",") + "]", "SET allowed_paths=" + paths, "SET enable_external_access=false",
+		"ATTACH " + LakeLiteral("ducklake:"+filepath.Join(stage, filepath.FromSlash(c.Path))) + " AS archive (DATA_PATH " + LakeLiteral(dataPath) + ", OVERRIDE_DATA_PATH true, READ_ONLY)",
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return false, err
+		}
+	}
+	if _, err := applicationCatalogVersion(ctx, db, "archive", false); err != nil {
+		return false, err
+	}
+	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_columns() WHERE database_name='archive' AND table_name='current_events' AND column_name='payload'").Scan(&legacy); err != nil {
+		return false, err
+	}
+	return legacy, nil
+}
+
 // DuckDB scans the archive and writes the new persistent target in one engine.
 // Exec exposes only the affected-row count, avoiding driver result materialization
 // and repeated remote scans from paginating an unordered analytical table.
-func copyNativeRestoreTable(ctx context.Context, db *sql.DB, table string) error {
+func copyNativeRestoreTable(ctx context.Context, db *sql.DB, table string, legacy bool) error {
 	sourceColumns, err := nativeRestoreLakeColumns(ctx, db, "archive", table)
 	if err != nil {
 		return err
@@ -149,10 +209,31 @@ func copyNativeRestoreTable(ctx context.Context, db *sql.DB, table string) error
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(sourceColumns, targetColumns) {
+	source := make(map[string]string, len(sourceColumns))
+	for _, column := range sourceColumns {
+		name, kind, _ := strings.Cut(column, ":")
+		source[name] = kind
+	}
+	if legacy && table == "current_events" {
+		delete(source, "payload")
+		source["original_snapshot"] = "VARCHAR"
+	}
+	if len(source) != len(targetColumns) {
 		return errors.New("backup analytical schema differs from this release")
 	}
-	result, err := db.ExecContext(ctx, "INSERT INTO lake."+table+" SELECT * FROM archive."+table)
+	names, expressions := make([]string, len(targetColumns)), make([]string, len(targetColumns))
+	for i, column := range targetColumns {
+		name, kind, _ := strings.Cut(column, ":")
+		if source[name] != kind {
+			return errors.New("backup analytical schema differs from this release")
+		}
+		names[i] = `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+		expressions[i] = names[i]
+		if legacy && table == "current_events" && name == "original_snapshot" {
+			expressions[i] = "CASE WHEN revision>0 THEN coalesce(json_extract_string(payload,'$.OriginalSnapshot'),'') ELSE '' END"
+		}
+	}
+	result, err := db.ExecContext(ctx, "INSERT INTO lake."+table+" ("+strings.Join(names, ",")+") SELECT "+strings.Join(expressions, ",")+" FROM archive."+table)
 	if err != nil {
 		return err
 	}
