@@ -1,7 +1,5 @@
 # Tenants and usage budgets
 
-**Unreleased.** This guide describes the tenant implementation in development. The published v0.14.0 release does not include these operations or settings.
-
 A tenant groups projects that share an ingestion allowance and interactive query limits. On a fresh installation, Porcupine creates the tenant `default`, named `Default`. You can keep every project there for a single-team deployment. No additional database or service is required.
 
 ## Ownership and access
@@ -39,7 +37,7 @@ porcupine get-tenant --tenant-id default
 porcupine get-tenant-usage --tenant-id default
 ```
 
-These commands are generated from the same API operations. The released v0.14.0 CLI does not contain them.
+These commands are generated from the same API operations.
 
 For example, create a tenant with this body for `create-tenant`:
 

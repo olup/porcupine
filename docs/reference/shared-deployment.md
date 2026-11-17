@@ -1,8 +1,8 @@
 # Shared PostgreSQL deployment
 
-**Unreleased.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the implemented deployment contract, not a production availability guarantee. For a single-server setup, compare the [SQLite and PostgreSQL modes](../hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
+This guide covers owner-routed shared deployments. Use a matching server and CLI. The separate [hosted profile](../design/hosted-profile-composition.md) uses replaceable workers and buffered live ingestion. For a single-server setup, compare the [SQLite and PostgreSQL modes](../hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
 
-The same server binary has two modes. The default keeps control metadata in one local SQLite file and accepted events and jobs in a separate SQLite journal, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
+Both standalone and owner-routed shared deployments acknowledge live ingestion after a local SQLite commit. The default keeps control metadata in one local SQLite file and accepted events and jobs in a separate SQLite journal, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
 
 Complete canonical events commit to the owner's SQLite queue, then project directly into S3 Parquet. No PostgreSQL event queue or staging table is introduced. DuckLake data inlining is disabled for PostgreSQL catalogs. Those catalogs still contain metadata and derived column statistics, which may include event-property, context, or trait values such as minima and maxima. Treat the catalog as part of the analytical data when choosing hosting, access, backups, and deletion policies. Control PostgreSQL holds accounts, grants, policies, counters, and coordination records.
 

@@ -12,9 +12,9 @@ Analytical storage, [destination pipelines](pipelines.md), [one-time exports](ex
 
 Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
-## Unreleased separate control and journal
+## Separate control and journal {#unreleased-separate-control-and-journal}
 
-The development server supports local and shared modes in the same binary. Both support tenants and projects. Local mode has one process and a persistent directory; shared mode has several workers with separate durable local volumes.
+Standalone and owner-routed shared deployments both use the SQLite acceptance journal. Both support tenants and projects. Local mode has one process and a persistent directory; shared mode has several workers with separate durable local volumes.
 
 | State | Local SQLite mode | Shared PostgreSQL mode |
 | --- | --- | --- |
@@ -27,11 +27,11 @@ The development server supports local and shared modes in the same binary. Both 
 
 The local databases have separate connections and schemas. Accepted-event rows, identity state, receipts, imports, and jobs never enter control storage. Uncredentialed actor/project anchors in the journal provide local foreign keys; authentication reads only control. Shared mode rejects a configured local control path. [Configuration rules](reference/configuration.md#configuration-sections)
 
-The files carry matching identities and cannot be replaced independently. Startup rejects a missing or unrelated replacement database. Preserve both databases, their SQLite auxiliary files, and DuckLake together. Native v2 backup bundles include `acceptance.sqlite` and `control.sqlite`; use the matching offline restore tool. This layout requires a fresh data directory and is not part of v0.14.0. See [deployment choices](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased).
+The files carry matching identities and cannot be replaced independently. Startup rejects a missing or unrelated replacement database. Preserve both databases, their SQLite auxiliary files, and DuckLake together. Native v2 backup bundles include `acceptance.sqlite` and `control.sqlite`; use the matching offline restore tool. Moving from v0.14.0 requires a fresh data directory. See [deployment choices](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased).
 
-## Unreleased shared metadata mode
+## Owner-routed shared metadata mode {#unreleased-shared-metadata-mode}
 
-The [shared deployment](reference/shared-deployment.md) adds optional control PostgreSQL, PostgreSQL DuckLake catalogs, and analytical S3 to the same binary. This is not included in v0.14.0. The default still needs neither PostgreSQL nor S3.
+The [shared deployment](reference/shared-deployment.md) adds optional control PostgreSQL, PostgreSQL DuckLake catalogs, and analytical S3 to the same binary. The default still needs neither PostgreSQL nor S3.
 
 Every project has a durable owner. Its accepted event payloads, identity state, retry receipts, import checkpoints, and destination jobs remain in that worker's SQLite database and managed local files. PostgreSQL stores control and catalog metadata, including DuckLake column statistics that can contain derived event values. Data inlining is disabled for PostgreSQL catalogs; complete event rows pass from SQLite directly into S3 Parquet files without a PostgreSQL event queue. Catalog metadata remains part of the analytical data for hosting, backup, and deletion policy.
 
@@ -39,7 +39,11 @@ Public requests may enter through any worker and are internally forwarded when t
 
 Shared mode requires a PostgreSQL catalog and S3 whenever analytics is enabled. Keep separate persistent local directories and stable identities for workers; never share a local SQLite database between processes. [Configuration and ownership](reference/shared-deployment.md#configure-workers)
 
-## Unreleased schema versions
+## Hosted profile
+
+The opt-in hosted profile keeps control metadata and DuckLake catalogs in PostgreSQL and analytical payloads in S3. Workers use disposable scratch space. Live ingress acknowledges admission to bounded memory. Until a flush commits, a worker crash or incomplete drain can lose an accepted event. Durable imports and event mutations use shared checkpoints and staged objects. [Profile setup and recovery](design/hosted-profile-composition.md)
+
+## Schema versions {#unreleased-schema-versions}
 
 Each operational database records a schema version: SQLite in `PRAGMA user_version`, shared PostgreSQL control in `metadata.schema_version`. On start, the server applies the missing numbered steps in one transaction. It refuses a database written by a newer release, and an unversioned database it does not recognize, before changing anything. A native backup restores at its own version; the next start upgrades it.
 
@@ -51,9 +55,9 @@ Live events have no automatic age limit. Edits and deletions change the current 
 
 DuckLake snapshots can retain old payloads. Porcupine schedules deleted-row rewrites, snapshot expiration, and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing obsolete files. Active readers, backup pins, and maintenance backlogs can delay reclamation. See [history cleanup](reference/ducklake-cleanup.md) for settings and progress.
 
-**Unreleased shared mode:** both snapshot retention and obsolete-file grace have an eight-day minimum to protect remote readers and exports. Shorter configured values are raised to that floor. Cleanup and physical deletion may therefore take longer than on a local catalog.
+In owner-routed shared mode, both snapshot retention and obsolete-file grace have an eight-day minimum to protect remote readers and exports. Shorter configured values are raised to that floor. Cleanup and physical deletion may therefore take longer than on a local catalog.
 
-Retry receipts are separate from payload history and stay in SQLite indefinitely by default. Unreleased builds can opt into pruning, which introduces an analytical dependency after the first prune. The [receipt reference](reference/receipts.md) describes that tradeoff and the effect of changing retention back to zero.
+Retry receipts are separate from payload history and stay in SQLite indefinitely by default. Journal deployments can opt into pruning, which introduces an analytical dependency after the first prune. The [receipt reference](reference/receipts.md) describes that tradeoff and the effect of changing retention back to zero.
 
 Logical deletion does not promise physical erasure within 30 days. SQLite free pages or WAL, snapshots, S3 noncurrent versions, backups, and external copies can retain earlier payloads. Their retention policies need to match the operator's requirements.
 
@@ -63,7 +67,7 @@ Whole-project deletion removes its SQLite state and managed analytical directory
 
 Use [coordinated native backups](reference/native-backup-recovery.md) for local or analytical S3 deployments. A local bundle scheduler alone is insufficient for analytical S3 because it does not include remote objects. Complete S3 backups use an independent destination and verify the copied catalog references and data inventory before publication.
 
-This native whole-instance backup and restore flow does not support unreleased shared mode. Shared recovery must coordinate both PostgreSQL metadata stores, S3 data, every owner's complete local volume, and deployment secrets. Restoring one worker cannot replace that plan or reset shared credentials. No automatic cross-worker recovery or data-loss bound is promised. [Shared recovery boundary](reference/shared-deployment.md#failure-and-recovery-boundary)
+This native whole-instance backup and restore flow does not support owner-routed shared mode. Shared recovery must coordinate both PostgreSQL metadata stores, S3 data, every owner's complete local volume, and deployment secrets. Restoring one worker cannot replace that plan or reset shared credentials. No automatic cross-worker recovery or data-loss bound is promised. [Shared recovery boundary](reference/shared-deployment.md#failure-and-recovery-boundary)
 
 A local-only deployment can also use a [stopped-volume copy](reference/restore.md). Copy the entire data volume after its single writer stops. A live copy of selected SQLite or catalog files is not a consistent recovery point. An S3 bucket listing alone is not a recovery procedure.
 

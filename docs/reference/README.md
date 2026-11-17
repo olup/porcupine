@@ -34,4 +34,4 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Local backup scheduler](native-backups.md), [S3 backups and offline restore](native-backup-recovery.md), and [Compose backup setup](backup-compose.md)
 - [Backup consistency](online-backup.md) and [stopped-volume recovery](restore.md)
 
-The published release is v0.14.0. Features marked Unreleased require matching development builds.
+The current release is v0.15.0. Use a matching server and CLI.

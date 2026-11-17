@@ -29,9 +29,7 @@ callback_port = 43179
 
 Run `codex mcp login porcupine_admin --scopes instance:admin`. Authenticate with your authorized administrator address on the Porcupine page and approve instance administration. Email sign-in requests a fresh inbox code; a configured Google or OIDC provider authenticates the same invited identity. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
 
-## Choose a tenant for your projects (unreleased)
-
-This workflow requires a matching development server and CLI. The published v0.14.0 release does not include tenant memberships.
+## Choose a tenant for your projects {#choose-a-tenant-for-your-projects-unreleased}
 
 Set up the team in this order:
 
@@ -53,7 +51,7 @@ A member can receive reader, contributor, or manager permissions on selected pro
 
 ## Invite someone once
 
-For the unreleased tenant workflow, use [tenant membership invitations](tenant-access.md#create-a-project-and-invite-a-reader). The `invite-human` workflow below is the operator-wide API available in v0.14.0.
+For team access, use [tenant membership invitations](tenant-access.md#create-a-project-and-invite-a-reader). The `invite-human` workflow below is the operator-wide API.
 
 Ask the connected admin agent to create a project if necessary, then invite the person's address with the required permissions for each project. For example:
 

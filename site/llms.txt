@@ -2,12 +2,12 @@
 
 Porcupine is a headless product analytics store. Use MCP, HTTP, or its standalone CLI to discover events and run project-scoped DuckDB SQL. Render charts with your client tools.
 
-This guide covers v0.14.0. The running instance's contracts are authoritative. Features marked Unreleased in the documentation require matching development builds. The public website serves documentation, not an analytics instance. Send credentials and events only to the trusted instance supplied by the user.
+This guide covers v0.15.0. The running instance's contracts are authoritative. The public website serves documentation, not an analytics instance. Send credentials and events only to the trusted instance supplied by the user.
 
 ## Connect
 
 - Person using an agent: connect the MCP client to `INSTANCE_ORIGIN/mcp` and complete OAuth with S256 PKCE. An administrator invites the email once; the person requests an email verification code when connecting a tool. Configured OIDC is another sign-in option.
-- Person using the CLI: install the matching [release](https://github.com/olup/porcupine/releases/tag/v0.14.0), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
+- Person using the CLI: install the matching [release](https://github.com/olup/porcupine/releases/tag/v0.15.0), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
 - Backend or shared agent: use a scoped service credential from private configuration. API and MCP credentials have separate audiences. Never put keys, codes, or token responses in prompts, logs, or URLs.
 
 [Connect tools](https://olup.github.io/porcupine/docs/connect-tools.md) · [Access](https://olup.github.io/porcupine/docs/access.md)
@@ -15,8 +15,8 @@ This guide covers v0.14.0. The running instance's contracts are authoritative. F
 ## Answer a question
 
 1. Resolve the intended project from the credential's projects or `list-projects`. Reading data requires `events:read`; listing projects requires `management:read`.
-2. Discover SQL columns, effective limits, event names, and property meanings before writing SQL. On development instances with read-only tools, call `porcupine_schema`. Otherwise inspect `get-event-schema` and `get-event-catalog` through `porcupine_docs`, then invoke them through `porcupine_call`.
-3. Query the public `events` view with bound `$name` parameters. Development instances provide `porcupine_query`; v0.14.0 uses `query-events` through `porcupine_call`. HTTP uses `POST /api/v1/projects/PROJECT_ID/query`. CLI: `porcupine query-events --id PROJECT_ID --body @query.json`.
+2. Discover SQL columns, effective limits, event names, and property meanings before writing SQL. Call `porcupine_schema`.
+3. Query the public `events` view with bound `$name` parameters. In MCP, call `porcupine_query`. HTTP uses `POST /api/v1/projects/PROJECT_ID/query`. CLI: `porcupine query-events --id PROJECT_ID --body @query.json`.
 4. Read rows from `body.result.data` in MCP or `result.data` in HTTP. Integers can be decimal strings. Check delivery status: accepted events become queryable after analytical projection.
 
 ```json
@@ -39,6 +39,6 @@ For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_
 
 ## Deploy
 
-Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a new local instance. Its tagged checkout and release overlay pin the server to v0.14.0. Use [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Development builds add tenant administration and optional PostgreSQL metadata; event payloads still pass through a durable local SQLite queue into DuckLake.
+Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a new local instance. Its tagged checkout and release overlay pin the server to v0.15.0. Use [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Standalone and owner-routed shared deployments commit accepted events to a local SQLite journal. The opt-in hosted profile acknowledges live admission to worker memory, so an acknowledged event can be lost before analytical commit. Read the running instance’s input contract for its acknowledgment mode.
 
 Fetch `/openapi.json` for HTTP contracts. In MCP, inspect each management operation with `porcupine_docs` before `porcupine_call`. On 401, check expiry and audience; on 403, project grants and permission; on 429/503, limits or unavailable storage. Honor Retry-After and use bounded retries with stable IDs.

@@ -1,8 +1,8 @@
-# Host Porcupine 0.14.0
+# Host Porcupine 0.15.0
 
-For the published [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0), start with the [quickstart](../README.md#quickstart). It starts the matching image, sends a test event, and waits for SQL visibility. The [release hosting reference](reference/hosting-options.md) covers HTTPS, offline images, and resource settings for that tagged checkout.
+For the [v0.15.0 release](https://github.com/olup/porcupine/releases/tag/v0.15.0), start with the [quickstart](../README.md#quickstart). It starts the matching image, sends a test event, and waits for SQL visibility. The [release hosting reference](reference/hosting-options.md) covers HTTPS, offline images, and resource settings for that tagged checkout.
 
-The configuration-file examples below are **Unreleased**. They require a current source build and fresh storage. Keep the server and CLI versions matched.
+Use a fresh data directory for a new installation. Keep the server and CLI versions matched. For an existing instance, follow the [upgrade steps](#move-from-v0140).
 
 ## Pick a deployment
 
@@ -15,7 +15,9 @@ The configuration-file examples below are **Unreleased**. They require a current
 
 Start with one server and local files. PostgreSQL is not required for tenants, people, budgets, the API, CLI, or MCP. [Storage](storage.md) describes the state owned by SQLite, DuckLake, PostgreSQL, and S3.
 
-## Configure the development build
+<a id="configure-the-development-build"></a>
+
+## Configure the server
 
 Build and initialize the server executable. These setup commands are separate from the standalone API client:
 
@@ -74,17 +76,19 @@ Use an existing private bucket and its actual region. Supply the server's creden
 
 Analytical S3 is separate from export results, pipeline destinations, and backups. Use an independent [S3 backup destination](reference/native-backup-recovery.md) to recover the complete instance. [Analytical S3 settings and permissions](reference/ducklake-s3.md)
 
-## Choose local SQLite or shared PostgreSQL (unreleased)
+<a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 
-The same binary supports both modes. Keep the default local mode for one server. Shared mode adds PostgreSQL control and catalog metadata, S3 Parquet, and stable worker identities. Each project still depends on its owner's local journal and volume; there is no automatic owner failover. The [storage mode comparison](storage.md#unreleased-separate-control-and-journal) and [shared setup](reference/shared-deployment.md) describe the boundary and required settings.
+## Choose a storage mode
 
-The [stateless hosted candidate](design/hosted-profile-composition.md) can validate configuration in development builds. Public startup remains gated.
+Standalone keeps the journal and control databases on the local volume. Owner-routed shared mode adds PostgreSQL control and catalog metadata, S3 Parquet, and stable worker identities. Each project depends on its owner’s local journal and volume for accepted data until analytical projection. [Owner-routed setup](reference/shared-deployment.md)
 
-A fresh development installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
+The opt-in hosted profile uses PostgreSQL and S3 with disposable worker storage. Live acknowledgment covers admission to bounded worker memory. A crash or incomplete drain can lose acknowledged events that have yet to commit, and the flush interval does not bound loss during an outage. Start with a fresh PostgreSQL database and dedicated analytical S3 prefix. Configure and exercise PostgreSQL and S3 recovery before admitting traffic. [Hosted setup and recovery requirements](design/hosted-profile-composition.md)
+
+A fresh installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
 
 ## Provision a tenant from a private service
 
-For one team, keep the built-in `default` tenant and use [team setup](reference/tenant-access.md). If you manage several teams from your own application, the matching development server exposes the same operator API used by the standalone CLI. Configure the OAuth issuer or [external authentication](reference/external-auth.md) first.
+For one team, keep the built-in `default` tenant and use [team setup](reference/tenant-access.md). If you manage several teams from your own application, the matching server exposes the same operator API used by the standalone CLI. Configure the OAuth issuer or [external authentication](reference/external-auth.md) first.
 
 1. As the instance operator, use `create-oauth-client` to create a machine account with `permissions: ["instance:admin"]` and `projects: ["*"]`. Issue its key with `create-service-api-key`, the same grant, and `audience: "api"`. Store the returned one-time token in the private service's secret store. Send it as an API bearer credential. [Machine credentials](reference/service-keys.md)
 2. From the service, call `POST /api/v1/tenants` with the team's name. Save the returned `tenant.id` in your application's customer record. If the team needs limits, send the complete policy to `PUT /api/v1/tenants/{tenant_id}/budgets`. [Tenant budgets](reference/tenants.md)
@@ -100,10 +104,19 @@ Run one server process per local data directory. Preserve both SQLite databases 
 
 The default Compose memory limit is 2 GiB, a test profile rather than a capacity guarantee. DuckDB's per-project memory setting does not cap process RSS. Size for resident engines, queries, ingestion, maintenance, and the operating system. [Resource settings](reference/hosting-options.md#persistent-storage-and-resources)
 
-`/readyz` checks SQLite. Before routing traffic, check the authenticated [instance report](reference/instance-status.md), capture a synthetic event, and verify SQL visibility. Monitor pending-event age, queue bytes, disk, memory, and delivery errors.
+`/readyz` checks the operational store. Before routing traffic, check the authenticated [instance report](reference/instance-status.md), capture a synthetic event, and verify SQL visibility. Monitor pending-event age, queue bytes, disk, memory, and delivery errors.
 
 ## Configure access and backups
 
 Configure [email or Google/OIDC sign-in](reference/connect-your-team.md), then [invite people and create service credentials](access.md). Keep the bootstrap secret privately.
 
-Record the image digest and private configuration before upgrading, and take a complete checkpoint. Cross-version rollback is not guaranteed. The unreleased tenant-enabled layout requires fresh storage; recognized later versions use numbered migrations and reject unfamiliar or newer schemas before writes. [Storage versions](storage.md#unreleased-schema-versions)
+## Move from v0.14.0
+
+v0.15.0 introduces separate acceptance and control databases and tenant ownership. Start it with fresh storage. Keep the v0.14.0 image digest, complete data and backup bundles, overlay files, and private configuration together for recovery. Restore v0.14.0 bundles with the matching v0.14.0 tools. An image swap on the old volume cannot migrate it.
+
+1. Pause producers at cutover and wait for pending writes to become queryable. Take a complete v0.14.0 checkpoint before changing credentials or routes.
+2. Initialize v0.15.0 in a separate volume or directory. Transfer required history with an explicit export and [historical import](imports.md), preserving original timestamps and stable producer IDs where available. Imports carry events. Recreate accounts, grants, credentials, and destination settings separately.
+3. Update clients to match the server. Remove the `use_cache` request field. Replace old Compose overlays with the [server configuration](reference/configuration.md) and review settings before enabling pipelines.
+4. Verify counts, event times, identity behavior, corrections and deletes, then switch producers and readers. Keep the old instance isolated with its recovery material until the new deployment is validated. Returning to the old instance requires reconciling writes accepted after cutover.
+
+Moving an owner-routed deployment to the hosted profile also requires fresh PostgreSQL metadata and a fresh S3 destination. Preserve the owner journals until their accepted work has reached DuckLake and you have verified the data you intend to transfer.

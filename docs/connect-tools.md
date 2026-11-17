@@ -6,7 +6,7 @@ If you are setting up the instance, start with [hosting](hosting.md) and [team s
 
 **Unreleased external mode:** if your administrator uses an [external identity provider](reference/external-auth.md), follow its invitation and authorization flow. Use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT` for the CLI. The email steps below apply to builtin mode.
 
-**Unreleased:** tenant members can use the instance's configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and explicitly select their team. These features require matching development builds; follow [tenant access](reference/tenant-access.md) and [sign-in configuration](reference/mcp-interactive-oauth.md). The email steps below also apply to v0.14.0.
+Tenant members can use the instance's configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and explicitly select their team. Follow [tenant access](reference/tenant-access.md) and [sign-in configuration](reference/mcp-interactive-oauth.md).
 
 ## Connect an agent through MCP
 
@@ -41,7 +41,7 @@ Login opens the browser for email verification and consent. The ordinary login r
 
 You should see only projects allowed by your account and the connection you approved. Copy a project ID and continue with [your first query](query-events.md).
 
-In v0.14.0, CLI browser login requires email sign-in. Development builds also allow the configured Google or OIDC provider. A tenant administrator uses `porcupine login --tenant-admin` and selects one tenant; `--admin` remains deployment administration. Ordinary CLI login requests read access. In development builds, a member can request permitted project writes explicitly with `porcupine login --scopes 'events:read events:write management:read'`. The browser shows those scopes and project choices. `--scopes` accepts project permissions only and cannot be combined with either administrative login flag. See [authentication options](reference/connect-your-team.md).
+CLI browser login uses the configured email or Google/OIDC sign-in. A tenant administrator uses `porcupine login --tenant-admin` and selects one tenant; `--admin` remains deployment administration. Ordinary CLI login requests read access. A member can request permitted project writes explicitly with `porcupine login --scopes 'events:read events:write management:read'`. The browser shows those scopes and project choices. `--scopes` accepts project permissions only and cannot be combined with either administrative login flag. See [authentication options](reference/connect-your-team.md).
 
 ## Connect a backend or shared agent
 

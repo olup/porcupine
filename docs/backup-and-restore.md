@@ -8,7 +8,8 @@ A query export is not a backup. A recoverable instance needs its operational dat
 | --- | --- |
 | Local analytics on one server | [Scheduled local recovery bundles](reference/native-backups.md), independent S3 backups, or a stopped-volume copy |
 | Analytical files on S3 | [Complete backups to an independent S3 destination](reference/native-backup-recovery.md) |
-| Shared PostgreSQL development mode | Coordinate PostgreSQL metadata, S3 files, and every owner's local volume; native whole-instance restore is unavailable |
+| Owner-routed shared mode | Coordinate PostgreSQL metadata, S3 files, and every owner's local volume; native whole-instance restore is unavailable |
+| Hosted profile | [Coordinate PostgreSQL point-in-time recovery with versioned S3 data](design/hosted-restore-drill.md) |
 
 Keep backups away from the source disk. Keep the pipeline encryption key and deployment secrets privately, separately from backup bundles. A live copy of selected database files is not a consistent checkpoint.
 
@@ -30,7 +31,7 @@ Use the exact server image and matching CLI that created the backup. Stop produc
 
 Restoration resets old credentials, rotates ingestion access, and pauses outgoing pipelines. Recreate human and machine access deliberately. Verify event counts, identity, corrections, deletions, and stable-ID retries before reconnecting producers.
 
-The unreleased tenant-enabled format contains **two** SQLite databases, `acceptance.sqlite` and `control.sqlite`, captured together. It does not restore v0.14.0's earlier single-database bundles. Preserve old bundles with their matching images.
+The v0.15.0 native bundle contains **two** SQLite databases, `acceptance.sqlite` and `control.sqlite`, captured together. Restore v0.14.0's earlier single-database bundles with the matching v0.14.0 image and CLI.
 
 ## Plan for copies outside the instance
 

@@ -1,6 +1,6 @@
 # Store analytical data on S3
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+This guide covers standalone deployments with local metadata and analytical S3.
 
 Available in v0.13.0 and later. A new DuckLake deployment can write its analytical data files to S3 or an S3-compatible service. SQLite and the per-project DuckLake catalogs remain on persistent local storage. No separate analytical database server is required.
 
@@ -8,22 +8,7 @@ Queries, ingestion, identify, corrections and deletion use the same API, CLI and
 
 ## Configure a new deployment
 
-Use an existing private bucket, its actual region, and a dedicated prefix. Porcupine does not create the bucket. Keep the populated environment file private:
-
-```sh
-umask 077
-cp deployment/.env.ducklake-s3.example .env.ducklake-s3
-```
-
-Set the bucket, region and prefix in `.env.ducklake-s3`. Supply credentials through the supported AWS credential chain, or through the explicit analytical access-key settings. Add the native S3 overlay to the deployment's existing list:
-
-```sh
-docker compose --env-file .env --env-file .env.ducklake-s3 \
-	-f compose.yaml -f compose.oauth.yaml -f compose.release.yaml \
-	-f compose.ducklake-s3.yaml up -d
-```
-
-Keep any proxy or other overlays already used by the instance. Start with a fresh data volume. An existing local archive cannot move to S3 by changing environment variables; the server rejects a storage-identity mismatch. Automatic migration from SSD to S3 is not part of this release.
+Use an existing private bucket, its actual region, and a dedicated prefix. Porcupine does not create the bucket. Adapt the [VM and S3 example](../hosting.md#one-vm-with-analytical-s3). Set `ducklake.s3.bucket`, `ducklake.s3.prefix`, and `ducklake.s3.region` in your private configuration. Supply credentials through the supported AWS credential chain or the explicit analytical access-key settings. Start with a fresh data volume. An existing local archive cannot move to S3 by changing environment variables; the server rejects a storage-identity mismatch. Automatic migration from SSD to S3 is not part of this release.
 
 The deployment operator chooses storage. Project credentials and agents cannot change the bucket, endpoint, prefix, credentials or region through the management API.
 
@@ -32,7 +17,7 @@ The deployment operator chooses storage. Project credentials and agents cannot c
 | Variable | Purpose |
 | --- | --- |
 | `PORCUPINE_DUCKLAKE_S3_BUCKET` | Existing analytical bucket. Required when S3 is enabled. |
-| `PORCUPINE_DUCKLAKE_S3_PREFIX` | Dedicated deployment prefix. Required; the Compose overlay defaults to `porcupine`. |
+| `PORCUPINE_DUCKLAKE_S3_PREFIX` | Dedicated deployment prefix. Required. |
 | `PORCUPINE_DUCKLAKE_S3_REGION` | Bucket region, such as `eu-west-3`. Required. |
 | `PORCUPINE_DUCKLAKE_S3_ENDPOINT` | Optional full HTTP or HTTPS origin for an S3-compatible service. Empty selects the regional AWS endpoint. |
 | `PORCUPINE_DUCKLAKE_S3_PATH_STYLE` | `true` for services requiring path-style addressing. Defaults to `false`. |
