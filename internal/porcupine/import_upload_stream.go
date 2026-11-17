@@ -20,6 +20,7 @@ type importChunkWork struct {
 	rows      []importer.Row
 	positions []int64
 	samples   []importer.ImportRowSample
+	failures  []importer.RowFailure
 }
 
 const importChunkCommitTimeout = 30 * time.Second
@@ -30,10 +31,14 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 		return importChunkWork{}, apiError(413, err.Error())
 	}
 	file.LineNumber, file.Tail, file.Discarding, file.Counts = chunk.State.LineNumber, chunk.State.Tail, chunk.State.Discarding, chunk.State.Counts
-	return importChunkWork{file: file, rows: chunk.Rows, positions: chunk.Positions, samples: chunk.Samples}, err
+	return importChunkWork{file: file, rows: chunk.Rows, positions: chunk.Positions, samples: chunk.Samples, failures: chunk.Failures}, err
 }
 
 func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor auth.Principal, complete bool) error {
+	if m.hosted != nil {
+		return m.commitHostedImportChunk(ctx, project, jobID, original, work, actor, complete)
+	}
+
 	ctx, cancelCommit := context.WithTimeout(ctx, importChunkCommitTimeout)
 	defer cancelCommit()
 	release, err := m.rules.receiptGates.lock(ctx, project)
@@ -69,7 +74,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		return apiError(503, "import storage unavailable")
 	}
 	defer tx.Rollback()
-	if err := importWriteLock(ctx, tx); err != nil {
+	if err := m.writeLock(ctx, tx); err != nil {
 		return err
 	}
 	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, jobID))
@@ -182,7 +187,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 		return apiError(503, "import storage unavailable")
 	}
 	defer tx.Rollback()
-	if err := importWriteLock(ctx, tx); err != nil {
+	if err := m.writeLock(ctx, tx); err != nil {
 		return err
 	}
 	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
@@ -202,7 +207,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET state='failed',error=$1,updated_at=$2,completed_at=$3 WHERE id=$4`, code, m.importTime(), m.importTime(), jobID); err != nil {
 		return apiError(503, "import storage unavailable")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0,error=CASE WHEN id=$1 THEN $2 ELSE error END,state=CASE WHEN id=$3 THEN 'failed' ELSE state END WHERE job_id=$4`, fileID, code, fileID, jobID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET `+m.clearImportParserSQL()+`,error=CASE WHEN id=$1 THEN $2 ELSE error END,state=CASE WHEN id=$3 THEN 'failed' ELSE state END WHERE job_id=$4`, fileID, code, fileID, jobID); err != nil {
 		return apiError(503, "import storage unavailable")
 	}
 	if actor.External != nil {
@@ -263,6 +268,7 @@ func prepareImportUploadWork(project, source string, work *importChunkWork) erro
 	for i := range rows {
 		if err := prepareImportUploadSource(project, source, rows[i:i+1]); err != nil {
 			work.file.Counts.Invalid++
+			work.failures = append(work.failures, importer.RowFailure{Position: positions[i], Reason: "invalid_metadata"})
 			if len(work.samples) < importer.MaxSamples {
 				work.samples = append(work.samples, importer.ImportRowSample{FileID: work.file.ID, RowNumber: positions[i], Reason: "invalid_metadata"})
 			}

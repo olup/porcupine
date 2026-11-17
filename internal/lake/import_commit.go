@@ -71,7 +71,7 @@ func validateImportInput(fence ProjectWriteFence, input ImportChunkInput, ids Ev
 	lastFailure := int64(0)
 	positions := map[int64]bool{}
 	for _, failure := range input.Failures {
-		if failure.Position <= lastFailure || failure.Position <= input.Previous.LineNumber || failure.Position > input.LineNumber+1 || !(failure.Reason == "invalid_row" || failure.Reason == "row_too_large") {
+		if failure.Position <= lastFailure || failure.Position <= input.Previous.LineNumber || failure.Position > input.LineNumber+1 || !(failure.Reason == "invalid_row" || failure.Reason == "row_too_large" || failure.Reason == "invalid_metadata") {
 			return "", errors.New("invalid native parse-failure position")
 		}
 		positions[failure.Position] = true
@@ -108,10 +108,10 @@ func addImportCounts(a, b importer.ImportCounts) (importer.ImportCounts, error) 
 	return importer.ImportCounts{Rows: av[0], Accepted: av[1], Duplicates: av[2], Ignored: av[3], Unresolved: av[4], Invalid: av[5]}, nil
 }
 func validateImportOutcome(o ImportChunkOutcome) error {
-	if o.Key.JobID == "" || len(o.Key.JobID) > 200 || o.Key.FileID == "" || len(o.Key.FileID) > 200 || !validNativeHash(o.ManifestSHA256) || o.SourceID == "" || o.AccountedAt.IsZero() {
+	if o.Key.JobID == "" || len(o.Key.JobID) > 200 || o.Key.FileID == "" || len(o.Key.FileID) > 200 || !validNativeHash(o.ManifestSHA256) || !validNativeHash(o.InputSHA256) || o.SourceID == "" || o.AccountedAt.IsZero() {
 		return errors.New("invalid original native import identity")
 	}
-	if o.Key.Start < 0 || o.Previous.Offset != o.Key.Start || o.Key.ExpectedEnd < o.Key.Start || o.Key.ExpectedEnd-o.Key.Start > importer.MaxChunkBytes || !(o.Key.Phase == "bytes" && o.Key.ExpectedEnd > o.Key.Start || o.Key.Phase == "finalize" && o.Key.ExpectedEnd == o.Key.Start) {
+	if o.Key.Start < 0 || o.Previous.Offset != o.Key.Start || o.Key.ExpectedEnd < o.Key.Start || o.Key.ExpectedEnd-o.Key.Start > importer.MaxChunkBytes || !(o.Key.Phase == "bytes" && o.Key.ExpectedEnd > o.Key.Start || o.Key.Phase == "finalize" && o.Key.ExpectedEnd == o.Key.Start && o.InputSHA256 == nativeDigest(nil)) {
 		return errors.New("invalid original native import range")
 	}
 	if o.Previous.Generation < 0 || o.Previous.Generation == math.MaxInt64 || o.Previous.Completed || o.Next.Generation != o.Previous.Generation+1 || o.Next.Offset != o.Key.ExpectedEnd || o.Previous.LineNumber < 0 || o.Next.LineNumber == math.MaxInt64 || o.Next.LineNumber < o.Previous.LineNumber || o.Next.Completed != (o.Key.Phase == "finalize") || !validImportParserRef(o.Next.Parser) || (o.Previous.Generation > 0 && !validImportParserRef(o.Previous.Parser)) {
@@ -195,7 +195,7 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 			return err
 		}
 		at := s.liveCommitTime()
-		outcome := ImportChunkOutcome{Key: input.Key, ManifestSHA256: input.ManifestSHA256, SourceID: input.SourceID, Format: input.Format, Previous: input.Previous, AccountedAt: at, Delta: input.Parsed, Rows: []ImportRowOutcome{}, Samples: append([]importer.ImportRowSample(nil), input.Samples...)}
+		outcome := ImportChunkOutcome{Key: input.Key, ManifestSHA256: input.ManifestSHA256, SourceID: input.SourceID, Format: input.Format, InputSHA256: input.InputSHA256, Previous: input.Previous, AccountedAt: at, Delta: input.Parsed, Rows: []ImportRowOutcome{}, Samples: append([]importer.ImportRowSample(nil), input.Samples...)}
 		outcome.Next = ImportFileCheckpoint{Generation: input.Previous.Generation + 1, Offset: input.Key.ExpectedEnd, LineNumber: input.LineNumber, Completed: input.Key.Phase == "finalize", Parser: input.Parser, Samples: append([]importer.ImportRowSample(nil), input.Previous.Samples...)}
 		for position, c := range input.Candidates {
 			rowResult := ImportRowOutcome{Position: c.Position, UUID: c.Row.Event.UUID, ReceivedAt: at, Counts: importer.ImportCounts{Rows: 1}}
@@ -286,6 +286,7 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 			return err
 		}
 		outcome.Samples = outcome.Samples[:min(len(outcome.Samples), budget)]
+		sort.Slice(outcome.Samples, func(i, j int) bool { return outcome.Samples[i].RowNumber < outcome.Samples[j].RowNumber })
 		outcome.Next.Samples = append(outcome.Next.Samples, outcome.Samples...)
 		totals, err := updateNativeSourceTotals(ctx, tx, sequence, at, 0, outcome.Delta.Accepted)
 		if err != nil {
