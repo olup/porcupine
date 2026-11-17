@@ -1,7 +1,6 @@
 package lake
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -22,23 +21,43 @@ func TestDuckLakeInlineFlushCreatesRollbackSafeConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	tx, err := p.DB.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
+	attempts := 0
+	err = retryNativeTransaction(ctx, func() error {
+		attempts++
+		tx, err := p.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, "UPDATE lake.current_events SET event='native-retry' WHERE uuid='event'"); err != nil {
+			return err
+		}
+		if attempts == 1 {
+			if _, err := p.DB.ExecContext(ctx, "CALL ducklake_flush_inlined_data('lake')"); err != nil {
+				return err
+			}
+		}
+		err = tx.Commit()
+		if attempts == 1 {
+			var native *duckdb.Error
+			if !errors.As(err, &native) || native.Type != duckdb.ErrorTypeTransaction {
+				t.Fatal("inline flush did not produce a typed transaction conflict", err)
+			}
+			t.Logf("rollback-safe native conflict: %v", err)
+			var name string
+			if readErr := p.DB.QueryRowContext(ctx, "SELECT event FROM events WHERE uuid='event'").Scan(&name); readErr != nil || name != event.Event.Event {
+				t.Fatal("failed attempt exposed an uncommitted correction", name, readErr)
+			}
+		}
+		return err
+	})
+	if err != nil || attempts != 2 {
+		t.Fatal("real native conflict was not replayed as a new transaction", attempts, err)
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM lake.current_events WHERE uuid='event'"); err != nil {
-		t.Fatal(err)
+	var name string
+	if err := p.DB.QueryRowContext(ctx, "SELECT event FROM events WHERE uuid='event'").Scan(&name); err != nil || name != "native-retry" {
+		t.Fatal("successful retry did not commit the complete correction", name, err)
 	}
-	if _, err := p.DB.ExecContext(ctx, "CALL ducklake_flush_inlined_data('lake')"); err != nil {
-		t.Fatal(err)
-	}
-	err = tx.Commit()
-	var native *duckdb.Error
-	if !errors.As(err, &native) || native.Type != duckdb.ErrorTypeTransaction {
-		t.Fatal("inline flush did not produce a typed transaction conflict", err)
-	}
-	t.Logf("rollback-safe native conflict: %v", err)
 	if count := lakeStorageCount(t, s, "a", "events"); count != 1 {
 		t.Fatal("failed mutation changed committed event visibility", count)
 	}
@@ -55,7 +74,7 @@ func TestDuckLakeInlineFlushCreatesRollbackSafeConflict(t *testing.T) {
 
 func TestDuckLakeLocalMutationAndInlineMaintenanceConverge(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx := t.Context()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	event := lakeStorageProjection(t, "a", "event", 1)
 	if err := s.Apply(ctx, []EventProjection{event}); err != nil {
@@ -67,31 +86,37 @@ func TestDuckLakeLocalMutationAndInlineMaintenanceConverge(t *testing.T) {
 	}
 	defer release()
 	finished := make(chan struct{})
+	started := make(chan struct{})
+	stop := make(chan struct{})
 	var maintenanceErr error
+	var failedStats DuckLakeMaintenanceStats
+	initialStats := DuckLakeMaintenanceStats{RowsFlushed: 7, FilesCreated: 3}
 	go func() {
 		defer close(finished)
-		for ctx.Err() == nil {
-			var stats DuckLakeMaintenanceStats
+		close(started)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			stats := initialStats
 			if err := p.MaintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &stats); err != nil {
-				if ctx.Err() == nil {
-					maintenanceErr = err
-				}
+				maintenanceErr, failedStats = err, stats
 				return
 			}
 		}
 	}()
-	defer func() {
-		cancel()
-		<-finished
-		if maintenanceErr != nil {
-			var native *duckdb.Error
-			if errors.As(maintenanceErr, &native) {
-				t.Errorf("concurrent inline maintenance failed, native type=%v: %v", native.Type, maintenanceErr)
-			} else {
-				t.Error("concurrent inline maintenance failed", maintenanceErr)
-			}
+	stopped := false
+	stopMaintenance := func() {
+		if !stopped {
+			close(stop)
+			stopped = true
 		}
-	}()
+		<-finished
+	}
+	defer stopMaintenance()
+	<-started
 	for revision := uint64(1); revision <= 40; revision++ {
 		event.Revision = revision
 		event.Event.Event = fmt.Sprintf("revision-%d", revision)
@@ -106,6 +131,22 @@ func TestDuckLakeLocalMutationAndInlineMaintenanceConverge(t *testing.T) {
 	}
 	if err := s.Apply(ctx, []EventProjection{lakeStorageProjection(t, "a", "event", 1)}); err != nil {
 		t.Fatal("stale original retry failed", err)
+	}
+	stopMaintenance()
+	if maintenanceErr != nil {
+		var exhausted *nativeConflictRetryLimit
+		var native *duckdb.Error
+		if !errors.As(maintenanceErr, &exhausted) || exhausted.attempts != 16 || !errors.As(maintenanceErr, &native) || native.Type != duckdb.ErrorTypeTransaction {
+			t.Fatal("maintenance returned an unexpected failure", maintenanceErr)
+		}
+		if failedStats != initialStats {
+			t.Fatal("exhausted maintenance published successful-attempt statistics", failedStats)
+		}
+		t.Logf("bounded maintenance conflict propagated: %v", maintenanceErr)
+	}
+	var quietStats DuckLakeMaintenanceStats
+	if err := p.MaintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &quietStats); err != nil {
+		t.Fatal("quiescent maintenance did not converge", err)
 	}
 	if count := lakeStorageCount(t, s, "a", "events"); count != 0 {
 		t.Fatal("maintenance or stale replay resurrected the deletion", count)
