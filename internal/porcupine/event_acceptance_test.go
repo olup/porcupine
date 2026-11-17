@@ -108,13 +108,13 @@ func TestLiveAcceptanceHTTPPreservesAuthorityFailureStatus(t *testing.T) {
 			s.eventRules.prepareAcceptance = func(context.Context, string) error {
 				return apiError(status, "project authority refused")
 			}
-			before := sharedAdmissionSnapshot(t, s)
+			before := journalAdmissionSnapshot(t, s)
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/capture/", strings.NewReader(captureBody(ingest, "refused"))))
 			if w.Code != status || (w.Header().Get("Retry-After") == "1") != (status == 503) {
 				t.Fatalf("status=%d retry=%q body=%s", w.Code, w.Header().Get("Retry-After"), w.Body.String())
 			}
-			if sharedAdmissionSnapshot(t, s) != before {
+			if journalAdmissionSnapshot(t, s) != before {
 				t.Fatal("refused HTTP admission changed durable state")
 			}
 		})
@@ -151,4 +151,53 @@ func durableResultForTest(t testing.TB, result liveAcceptanceResult) durableLive
 		t.Fatal("expected durable result", result)
 	}
 	return a
+}
+
+// Include complete rows so an overwritten identity or usage watermark is not
+// mistaken for an unchanged state merely because its row count stayed equal.
+func journalAdmissionSnapshot(t *testing.T, s *Service) string {
+	t.Helper()
+	var snapshot []any
+	for _, table := range []string{"queue_usage", "events", "event_receipts", "identity_profiles", "identity_links", "tenant_usage", "cookieless_keys", "webhook_deliveries"} {
+		rows, err := s.db.Query(`SELECT * FROM ` + table + ` ORDER BY 1,2`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			snapshot = append(snapshot, []any{table, values})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func sharedIdentityBatch(t *testing.T, project, prefix string) preparedLiveBatch {
+	t.Helper()
+	batch, err := prepareLiveBatch(project, "", eventBatch{
+		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},
+		{UUID: prefix + "-page", Event: "visited", DistinctID: "visitor", Properties: map[string]any{}},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return batch
 }

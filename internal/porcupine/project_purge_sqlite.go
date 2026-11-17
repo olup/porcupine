@@ -11,7 +11,7 @@ import (
 	"github.com/olup/porcupine/internal/output"
 )
 
-// purgeProjectLocalRecords removes only owner-local payloads and jobs. Shared
+// purgeProjectLocalRecords removes only local payloads and jobs. Shared
 // credential grants are pruned separately in the control transaction.
 func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string) error {
 	if err := output.StageExportProjectCleanupTx(ctx, tx, projectID); err != nil {

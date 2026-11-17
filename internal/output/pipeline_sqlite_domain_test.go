@@ -37,7 +37,7 @@ func isolatedPipelines(t *testing.T, client *http.Client, endpoints ...string) *
 	}
 	p, err := NewSQLitePipelines(PipelineDependencies{Journal: q.db, Control: q.db, Clock: func() time.Time { return *at }, Reader: pipelineTestReader{}, Usage: usage.NewRecorder(q.db, "isolated-pipelines", func() time.Time { return *at }), LoadActor: func(context.Context, string) (auth.Principal, error) {
 		return auth.Principal{ID: "actor", Permissions: []string{"events:read", "pipelines:write"}, Projects: []string{"project"}}, nil
-	}, RequireActive: func(context.Context, string) error { return nil }, RequireOwner: func(context.Context, string) error { return nil }, BeginActivity: func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true }, Acquire: func(context.Context) (func(), bool) { return func() {}, true }, WebhookClient: client}, &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: endpoints})
+	}, RequireActive: func(context.Context, string) error { return nil }, BeginActivity: func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true }, Acquire: func(context.Context) (func(), bool) { return func() {}, true }, WebhookClient: client}, &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: endpoints})
 	if err != nil {
 		t.Fatal(err)
 	}

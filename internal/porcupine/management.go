@@ -209,32 +209,13 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		}
 		if access.ProjectParameter != "" && ctx.Operation().OperationID != "delete-project" {
 			if err := s.requireProjectActive(ctx.Context(), ctx.Param(access.ProjectParameter)); err != nil {
-				writeSharedRouteProblem(w, err)
+				writeManagementProblem(w, err)
 				return
 			}
 		}
 		if access.TenantParameter != "" {
 			if err := requireTenantActive(ctx.Context(), s.control, tenantID); err != nil {
-				writeSharedRouteProblem(w, err)
-				return
-			}
-		}
-		needsOwner := s.projectOperationNeedsOwner(ctx.Operation().OperationID)
-		if access.Permission == "imports:write" && s.imports != nil && s.imports.hosted != nil {
-			needsOwner = false
-		}
-		if s.shared != nil && access.ProjectParameter != "" && needsOwner {
-			project := ctx.Param(access.ProjectParameter)
-			if ctx.Operation().OperationID == "delete-project" {
-				var completed bool
-				if err := s.control.QueryRowContext(ctx.Context(), `SELECT completed FROM project_deletions WHERE project_id=$1`, project).Scan(&completed); err == nil && completed {
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
-				ctx = huma.WithContext(ctx, allowSharedDeletedProject(ctx.Context()))
-				req = req.WithContext(ctx.Context())
-			}
-			if s.forwardSharedProject(w, req, project) {
+				writeManagementProblem(w, err)
 				return
 			}
 		}
@@ -246,9 +227,9 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if needsOwner {
+			if s.hosted == nil {
 				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
-					writeSharedRouteProblem(w, err)
+					writeManagementProblem(w, err)
 					return
 				}
 			}
@@ -452,11 +433,6 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 			return nil, apiError(503, "hosted project initialization unavailable")
 		}
 		return &ProjectCreateOutput{Body: ProjectCreated{Project: p, IngestToken: raw}}, nil
-	}
-	if s.shared != nil {
-		if err := s.assignSharedProjectOwner(ctx, p.ID); err != nil {
-			return nil, apiError(503, "project ownership registration unavailable")
-		}
 	}
 	if err := s.ensureProjectLocal(ctx, p.ID, principal(ctx)); err != nil {
 		return nil, err
@@ -737,4 +713,13 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		return nil, apiError(500, "storage error")
 	}
 	return &EventListOutput{Body: EventList{Events: events}}, nil
+}
+
+func writeManagementProblem(w http.ResponseWriter, err error) {
+	var managed *managementError
+	if errors.As(err, &managed) {
+		write(w, managed.GetStatus(), managed)
+		return
+	}
+	problem(w, http.StatusServiceUnavailable, "project metadata unavailable")
 }

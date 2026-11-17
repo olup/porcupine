@@ -15,6 +15,9 @@ const (
 func validateDeploymentProfile(c Config) error {
 	switch c.Profile {
 	case "", ProfileStandalone:
+		if c.Shared != nil || c.DuckLake != nil && c.DuckLake.PostgresURL != "" {
+			return errors.New("PostgreSQL control and DuckLake metadata require the hosted profile")
+		}
 		return validateAcceptanceMode(c.AcceptanceMode)
 	case ProfileHosted:
 		if c.AcceptanceMode != AcceptanceModeBuffered {
@@ -25,9 +28,6 @@ func validateDeploymentProfile(c Config) error {
 		}
 		if c.Shared == nil || c.DuckLake == nil || c.DuckLake.S3 == nil {
 			return errors.New("hosted profile requires PostgreSQL control and analytical S3 storage")
-		}
-		if c.Shared.RouteURL != "" || c.Shared.WorkerID != "" || len(c.Shared.RoutingSecret) != 0 {
-			return errors.New("hosted profile cannot use owner routing settings")
 		}
 		db, err := url.Parse(c.Shared.DatabaseURL)
 		if err != nil || db.Host == "" || (db.Scheme != "postgres" && db.Scheme != "postgresql") {

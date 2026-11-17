@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
 	"github.com/olup/porcupine/internal/usage"
 )
 
 // The project-row lock is also taken by shared query admission. Once this fence
-// commits, no worker can start another project query or owner operation.
+// commits, no worker can start another project query or operation.
 func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
@@ -51,8 +52,8 @@ ON CONFLICT(project_id) DO UPDATE SET tenant_id=excluded.tenant_id WHERE project
 	return tx.Commit()
 }
 
-// Finalization removes active ownership only after the owner has drained and
-// cleaned its payloads and external objects. The deletion tombstone is permanent.
+// Finalization removes the project after payload and object cleanup.
+// The deletion tombstone is permanent.
 func (s *Service) completeControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {

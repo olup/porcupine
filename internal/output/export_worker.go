@@ -238,11 +238,6 @@ func (s *ExportJobs) exportCanContinue(ctx context.Context, job storedExport) er
 	if err := s.requireActive(ctx, job.ProjectID); err != nil {
 		return err
 	}
-	if s.retained == nil {
-		if err := s.requireOwner(ctx, job.ProjectID); err != nil {
-			return err
-		}
-	}
 	current, err := s.loadExport(ctx, job.ProjectID, job.ID)
 	if err != nil {
 		return errExportPressure

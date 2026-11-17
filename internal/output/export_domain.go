@@ -20,50 +20,50 @@ import (
 // ExportDependencies are the surrounding resource authorization and native admission
 // boundaries. Export state and execution remain entirely inside ExportJobs.
 type ExportDependencies struct {
-	Journal, Control            *sql.DB
-	Clock                       func() time.Time
-	Reader                      ExportReader
-	ValidateSQL                 func(context.Context, string, string, map[string]string) (string, error)
-	SnapshotCut                 ExportSnapshotCut
-	Usage                       *usage.Recorder
-	Issuer                      string
-	LoadActor                   func(context.Context, string) (auth.Principal, error)
-	LoadActorTx                 func(context.Context, *sql.Tx, string) (auth.Principal, error)
-	BeginAttemptTx              func(context.Context, *sql.Tx, string, string) error
-	EndAttempt                  func(context.Context, string, string) error
-	CurrentActor                func(context.Context, auth.Principal) (auth.Principal, error)
-	CurrentActorTx              func(context.Context, *sql.Tx, auth.Principal) (auth.Principal, error)
-	RequireActive, RequireOwner func(context.Context, string) error
-	BeginActivity               func(context.Context, string) (context.Context, func(), bool)
-	Acquire                     func(context.Context) (func(), bool)
+	Journal, Control *sql.DB
+	Clock            func() time.Time
+	Reader           ExportReader
+	ValidateSQL      func(context.Context, string, string, map[string]string) (string, error)
+	SnapshotCut      ExportSnapshotCut
+	Usage            *usage.Recorder
+	Issuer           string
+	LoadActor        func(context.Context, string) (auth.Principal, error)
+	LoadActorTx      func(context.Context, *sql.Tx, string) (auth.Principal, error)
+	BeginAttemptTx   func(context.Context, *sql.Tx, string, string) error
+	EndAttempt       func(context.Context, string, string) error
+	CurrentActor     func(context.Context, auth.Principal) (auth.Principal, error)
+	CurrentActorTx   func(context.Context, *sql.Tx, auth.Principal) (auth.Principal, error)
+	RequireActive    func(context.Context, string) error
+	BeginActivity    func(context.Context, string) (context.Context, func(), bool)
+	Acquire          func(context.Context) (func(), bool)
 }
 
 type ExportJobs struct {
-	db, control                 *sql.DB
-	clock                       func() time.Time
-	lake                        ExportReader
-	retained                    RetainedExportReader
-	validateSQL                 func(context.Context, string, string, map[string]string) (string, error)
-	snapshotCut                 ExportSnapshotCut
-	usage                       *usage.Recorder
-	issuer                      string
-	loadActor                   func(context.Context, string) (auth.Principal, error)
-	loadActorTx                 func(context.Context, *sql.Tx, string) (auth.Principal, error)
-	beginAttemptTx              func(context.Context, *sql.Tx, string, string) error
-	endAttempt                  func(context.Context, string, string) error
-	currentActor                func(context.Context, auth.Principal) (auth.Principal, error)
-	currentActorTx              func(context.Context, *sql.Tx, auth.Principal) (auth.Principal, error)
-	requireActive, requireOwner func(context.Context, string) error
-	beginActivity               func(context.Context, string) (context.Context, func(), bool)
-	acquire                     func(context.Context) (func(), bool)
-	config                      ExportConfig
-	store                       *exportstore.Store
-	cancel                      context.CancelFunc
-	done                        chan struct{}
-	wake                        chan struct{}
-	activeMu                    sync.Mutex
-	activeJob                   string
-	activeCancel                context.CancelFunc
+	db, control    *sql.DB
+	clock          func() time.Time
+	lake           ExportReader
+	retained       RetainedExportReader
+	validateSQL    func(context.Context, string, string, map[string]string) (string, error)
+	snapshotCut    ExportSnapshotCut
+	usage          *usage.Recorder
+	issuer         string
+	loadActor      func(context.Context, string) (auth.Principal, error)
+	loadActorTx    func(context.Context, *sql.Tx, string) (auth.Principal, error)
+	beginAttemptTx func(context.Context, *sql.Tx, string, string) error
+	endAttempt     func(context.Context, string, string) error
+	currentActor   func(context.Context, auth.Principal) (auth.Principal, error)
+	currentActorTx func(context.Context, *sql.Tx, auth.Principal) (auth.Principal, error)
+	requireActive  func(context.Context, string) error
+	beginActivity  func(context.Context, string) (context.Context, func(), bool)
+	acquire        func(context.Context) (func(), bool)
+	config         ExportConfig
+	store          *exportstore.Store
+	cancel         context.CancelFunc
+	done           chan struct{}
+	wake           chan struct{}
+	activeMu       sync.Mutex
+	activeJob      string
+	activeCancel   context.CancelFunc
 }
 
 // NewSQLiteExports also constructs a read/cleanup domain when exports are disabled.
@@ -73,7 +73,7 @@ func NewSQLiteExports(d ExportDependencies, config *ExportConfig) (*ExportJobs, 
 }
 
 func newExports(d ExportDependencies, db *sql.DB, retained RetainedExportReader, config *ExportConfig) (*ExportJobs, error) {
-	e := &ExportJobs{db: db, retained: retained, validateSQL: d.ValidateSQL, snapshotCut: d.SnapshotCut, control: d.Control, clock: d.Clock, lake: d.Reader, usage: d.Usage, issuer: d.Issuer, loadActor: d.LoadActor, loadActorTx: d.LoadActorTx, beginAttemptTx: d.BeginAttemptTx, endAttempt: d.EndAttempt, currentActor: d.CurrentActor, currentActorTx: d.CurrentActorTx, requireActive: d.RequireActive, requireOwner: d.RequireOwner, beginActivity: d.BeginActivity, acquire: d.Acquire, wake: make(chan struct{}, 1)}
+	e := &ExportJobs{db: db, retained: retained, validateSQL: d.ValidateSQL, snapshotCut: d.SnapshotCut, control: d.Control, clock: d.Clock, lake: d.Reader, usage: d.Usage, issuer: d.Issuer, loadActor: d.LoadActor, loadActorTx: d.LoadActorTx, beginAttemptTx: d.BeginAttemptTx, endAttempt: d.EndAttempt, currentActor: d.CurrentActor, currentActorTx: d.CurrentActorTx, requireActive: d.RequireActive, beginActivity: d.BeginActivity, acquire: d.Acquire, wake: make(chan struct{}, 1)}
 	if e.clock == nil {
 		e.clock = time.Now
 	}

@@ -19,8 +19,6 @@ import (
 	"github.com/olup/porcupine/internal/output"
 )
 
-// Constructed only by an explicit hosted integration. The current owner-routed
-// Service continues to use its journal manager.
 func newHostedImportManager(rules *eventRules, flusher *hostedLiveFlusher) *importManager {
 	m := &importManager{db: flusher.publisher.control, control: flusher.publisher.control, rules: rules, deliveryEnabled: true, hosted: flusher}
 	flusher.publisher.checkpointImport = checkpointHostedImport

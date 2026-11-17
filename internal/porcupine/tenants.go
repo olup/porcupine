@@ -70,7 +70,7 @@ func (s *Service) initializeTenants(ctx context.Context) error {
 }
 
 func (s *Service) loadTenant(ctx context.Context, id string) (Tenant, error) {
-	if cleanup, _ := ctx.Value(sharedDeletedProjectContextKey{}).(bool); !cleanup {
+	if cleanup, _ := ctx.Value(projectCleanupContextKey{}).(bool); !cleanup {
 		if err := requireTenantActive(ctx, s.control, id); err != nil {
 			return Tenant{}, err
 		}

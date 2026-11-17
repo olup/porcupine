@@ -102,9 +102,9 @@ INSERT INTO access_keys VALUES('reader',NULL);
 		LoadActor: load, LoadActorTx: func(ctx context.Context, _ *sql.Tx, id string) (auth.Principal, error) { return load(ctx, id) },
 		CurrentActorTx: func(_ context.Context, _ *sql.Tx, actor auth.Principal) (auth.Principal, error) { return actor, nil },
 		RequireActive:  func(context.Context, string) error { return nil },
-		RequireOwner:   func(context.Context, string) error { t.Error("hosted export consulted local ownership"); return nil },
-		BeginActivity:  func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true },
-		Acquire:        func(context.Context) (func(), bool) { return func() {}, true },
+
+		BeginActivity: func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true },
+		Acquire:       func(context.Context) (func(), bool) { return func() {}, true },
 		BeginAttemptTx: func(ctx context.Context, tx *sql.Tx, project, attempt string) error {
 			if _, err := lockActiveExportProject(ctx, tx, project); err != nil {
 				return err

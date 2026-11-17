@@ -90,9 +90,6 @@ func (s *PipelineJobs) cleanupRetired(ctx context.Context, project, pipeline str
 		if err = s.requireActive(ctx, p.ProjectID); err != nil {
 			return false, err
 		}
-		if err = s.requireOwner(ctx, p.ProjectID); err != nil {
-			return false, err
-		}
 	}
 	p.Config = json.RawMessage(config)
 	var spec S3PipelineSpec

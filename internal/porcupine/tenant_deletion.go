@@ -40,7 +40,7 @@ func (s *Service) tenantOwnedPrincipals() string {
 func (s *Service) registerTenantDeletion(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	operator := auth.OperationAccess{Permission: "instance:admin"}
 	start := op("delete-tenant", "DELETE", "/api/v1/tenants/{tenant_id}", "Block this tenant immediately and start resumable deletion; deployment operator only", operator, 202)
-	start.Description = "The durable fence blocks ingestion and resource access before cleanup. Retry the same tenant ID. Shared owner-local deployments remain pending until shared operational-state cleanup is available. Customer-owned published pipeline outputs are excluded. logically_deleted never claims that S3 object versions or backups have been purged."
+	start.Description = "The durable fence blocks ingestion and resource access before cleanup. Retry the same tenant ID. Customer-owned published pipeline outputs are excluded. logically_deleted never claims that S3 object versions or backups have been purged."
 	huma.Register(api, start, s.managementDeleteTenant)
 	huma.Register(api, op("get-tenant-deletion", "GET", "/api/v1/tenants/{tenant_id}/deletion", "Read deletion progress after tenant removal; deployment operator only", operator, 200), s.managementTenantDeletion)
 }
@@ -205,22 +205,18 @@ func (s *Service) resumeTenantDeletions(ctx context.Context) {
 				code = "restored_artifacts_pending"
 			case s.sealHostedProject != nil:
 				code = "hosted_cleanup_pending"
-			case s.shared != nil:
-				code = "shared_local_cleanup_pending"
 			}
 		}
 		_, _ = s.control.ExecContext(ctx, `UPDATE tenant_deletions SET error_code=$1,updated_at=$2 WHERE tenant_id=$3`, code, s.clock().UTC().Format(time.RFC3339Nano), id)
 	}
 }
 
-// The owner-local shared backend cannot prove erasure of another worker's
-// journal/cache. Phase 5 replaces this limitation with shared operational state.
 func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error {
 	var remaining int
 	if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM project_deletions WHERE tenant_id=$1 AND completed=0`, tenant).Scan(&remaining); err != nil {
 		return err
 	}
-	if remaining != 0 || s.shared != nil && s.hosted == nil {
+	if remaining != 0 {
 		return errors.New("tenant local cleanup pending")
 	}
 	var held bool

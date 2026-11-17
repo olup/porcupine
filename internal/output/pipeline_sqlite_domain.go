@@ -20,16 +20,16 @@ type PipelineReader interface {
 // PipelineDependencies supplies resource authority and shared native admission.
 // Queue state, encryption, scheduling and output publication belong to PipelineJobs.
 type PipelineDependencies struct {
-	Journal, Control            *sql.DB
-	Clock                       func() time.Time
-	Reader                      PipelineReader
-	Usage                       *usage.Recorder
-	LoadActor                   func(context.Context, string) (auth.Principal, error)
-	CredentialMissing           func(error) bool
-	RequireActive, RequireOwner func(context.Context, string) error
-	BeginActivity               func(context.Context, string) (context.Context, func(), bool)
-	Acquire                     func(context.Context) (func(), bool)
-	WebhookClient               *http.Client
+	Journal, Control  *sql.DB
+	Clock             func() time.Time
+	Reader            PipelineReader
+	Usage             *usage.Recorder
+	LoadActor         func(context.Context, string) (auth.Principal, error)
+	CredentialMissing func(error) bool
+	RequireActive     func(context.Context, string) error
+	BeginActivity     func(context.Context, string) (context.Context, func(), bool)
+	Acquire           func(context.Context) (func(), bool)
+	WebhookClient     *http.Client
 }
 
 func NewSQLitePipelines(d PipelineDependencies, config *PipelineConfig) (*PipelineJobs, error) {
@@ -57,7 +57,7 @@ func newPipelineJobs(d PipelineDependencies, config *PipelineConfig) (*PipelineJ
 	}
 	s.db, s.control, s.clock, s.lake, s.usage = d.Journal, d.Control, d.Clock, d.Reader, d.Usage
 	s.loadActor, s.credentialMissing = d.LoadActor, d.CredentialMissing
-	s.requireActive, s.requireOwner = d.RequireActive, d.RequireOwner
+	s.requireActive = d.RequireActive
 	s.beginActivity, s.acquire = d.BeginActivity, d.Acquire
 	if s.clock == nil {
 		s.clock = time.Now
