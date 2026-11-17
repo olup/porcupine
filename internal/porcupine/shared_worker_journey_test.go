@@ -192,11 +192,14 @@ func TestSharedWorkerHTTPAndMCPOwnerJourney(t *testing.T) {
 	if replay := sharedJourneyNative(t, b.host.URL, ingestA, body, 200); sharedJourneyReceipt(t, replay) != sharedJourneyReceipt(t, first) {
 		t.Fatal("exhausted budget invalidated an existing receipt", replay)
 	}
-	for _, table := range []string{"events", "event_receipts", "event_heads", "identity_profiles", "identity_links", "mutation_outbox", "import_uploads", "webhook_deliveries"} {
+	for _, table := range []string{"events", "event_receipts", "event_heads", "identity_profiles", "identity_links", "mutation_outbox", "webhook_deliveries"} {
 		var absent bool
 		if err := a.service.control.QueryRow(`SELECT to_regclass($1) IS NULL`, table).Scan(&absent); err != nil || !absent {
 			t.Fatal("event payload state entered the operational PostgreSQL database", table, err)
 		}
+	}
+	if err := checkSharedImportMetadata(t.Context(), a.service.control); err != nil {
+		t.Fatal(err)
 	}
 }
 
