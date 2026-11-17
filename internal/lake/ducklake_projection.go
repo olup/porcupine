@@ -385,7 +385,7 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 	if deleted {
 		return EventProjection{Event: event.Event{ID: id, ProjectID: project, UUID: uuid, ReceivedAt: received}, Revision: revision, IsDeleted: true}, nil
 	}
-	var e Event
+	var e event.Event
 	var properties, context, original string
 	var storedRevision uint64
 	var imported uint8
