@@ -272,3 +272,63 @@ func TestBeforeInstrumentationIsUnknownRatherThanZero(t *testing.T) {
 		}
 	}
 }
+
+func TestExecutionObservationsAreCumulativeAndCrashRemainsIncomplete(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	db := usageDB(t, JournalSchema)
+	r := NewRecorder(db, "source", clock)
+	e, err := r.StartExecution(ctx, "t", "p", "sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model an invocation already running for ten seconds without a ten-second
+	// test sleep. Subsequent observations must add only the newly observed tail.
+	e.mu.Lock()
+	e.started = time.Now().Add(-10 * time.Second)
+	started := e.started
+	e.mu.Unlock()
+	if err = r.Observe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := r.Pending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Observe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.Pending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second[0].Counters.QueryMicros < first[0].Counters.QueryMicros || second[0].Counters.QueryMicros > time.Since(started).Microseconds() {
+		t.Fatal("cumulative observations were added twice", first, second)
+	}
+	e.Finish()
+	elapsed := e.elapsed
+	if err = r.Observe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Observe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := r.Pending(ctx)
+	if err != nil || finished[0].Counters.QueryMicros != elapsed || finished[0].Unresolved != 0 {
+		t.Fatal(finished, elapsed, err)
+	}
+	if _, err = r.StartExecution(ctx, "t", "p", "profile"); err != nil {
+		t.Fatal(err)
+	}
+	recovered := NewRecorder(db, "source", clock)
+	if err = recovered.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = recovered.Observe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lost, err := recovered.Pending(ctx)
+	if err != nil || lost[0].Counters.Queries != 2 || lost[0].Counters.QueryMicros != elapsed || lost[0].Unresolved != 1 {
+		t.Fatal("crash fabricated completion or lost the admitted count", lost, err)
+	}
+}

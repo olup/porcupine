@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -39,13 +40,13 @@ func (s *Service) managementUsage(ctx context.Context, input *UsageListInput) (*
 	if err != nil {
 		switch {
 		case errors.Is(err, usage.ErrExpired):
-			return nil, apiError(410, "usage_snapshot_expired: restart the read")
+			return nil, apierr.Detailed(410, "usage_snapshot_expired", "usage snapshot expired", "Restart list-usage without the cursor.", "cursor")
 		case errors.Is(err, usage.ErrCursor):
-			return nil, apiError(400, "invalid or mismatched usage pagination")
+			return nil, apierr.Detailed(400, "usage_cursor_invalid", "invalid or mismatched usage pagination", "Use the cursor with its original filters and page size, or restart the read.", "cursor")
 		case errors.Is(err, usage.ErrTooLarge):
-			return nil, apiError(413, err.Error())
+			return nil, apierr.Detailed(413, "usage_snapshot_too_large", err.Error(), "Reduce the period or filter one tenant.", "")
 		case errors.Is(err, usage.ErrCapacity):
-			return nil, apiError(503, err.Error())
+			return nil, apierr.Detailed(503, "usage_snapshot_capacity", err.Error(), "Retry after the current construction or retained snapshots expire.", "")
 		case errors.Is(err, usage.ErrQuery):
 			return nil, apiError(400, err.Error())
 		default:

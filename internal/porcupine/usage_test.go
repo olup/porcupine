@@ -175,3 +175,53 @@ func TestUsageIdentityNoopsFollowRetainedUUIDQuotaSemantics(t *testing.T) {
 		t.Fatal("meter differs from quota's retained UUID definition", quota, e)
 	}
 }
+
+func TestUsageBufferedMemoryAdmissionIsNotDurableAcceptedUsage(t *testing.T) {
+	t.Parallel()
+	s := service(t, 20)
+	id, token := project(t, s)
+	// Private prototype wiring only. Config still refuses buffered mode until its
+	// recoverable hosted writer exists; no product bypass is added for this test.
+	buffer := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
+		t.Error("unexpected native flush in memory-admission test")
+		return nil
+	}))
+	s.acceptance = buffer
+	result := nativeRequest(t, s, token, `{"type":"track","message_id":"memory-only","actor_id":"u","name":"message"}`, 200)
+	if result["durability"] != "buffered" || result["received"] != float64(1) || result["accepted"] != nil {
+		t.Fatal(result)
+	}
+	if eventCount(t, s) != 0 {
+		t.Fatal("memory admission wrote journal events")
+	}
+	row := usageRow(t, s, defaultTenantID)
+	if row["project_id"] != id || row["acceptance_basis"] != "durable_commit" || row["counters"].(map[string]any)["accepted_live_events"] != "0" {
+		t.Fatal("memory acknowledgment was counted as durable acceptance", row)
+	}
+}
+
+func TestUsageCursorChecksLiveRevocationAndRecoveryEpoch(t *testing.T) {
+	t.Parallel()
+	s := service(t, 20)
+	project(t, s)
+	project(t, s)
+	id, operator := key(t, s, []string{"instance:admin"}, []string{"*"})
+	first := request(t, s, "GET", "/api/v1/usage?start="+usageToday(s)+"&end="+usage.Day(s.clock().AddDate(0, 0, 1))+"&limit=1", operator, "", 200)
+	cursor, ok := first["next_cursor"].(string)
+	if !ok || cursor == "" {
+		t.Fatal(first)
+	}
+	request(t, s, "DELETE", "/api/v1/access-keys/"+id, adminToken, "", 204)
+	request(t, s, "GET", "/api/v1/usage?cursor="+cursor, operator, "", 401)
+	if _, e := s.control.Exec(`UPDATE metadata SET value='recovered-epoch' WHERE key='usage_epoch'`); e != nil {
+		t.Fatal(e)
+	}
+	expired := request(t, s, "GET", "/api/v1/usage?cursor="+cursor, adminToken, "", 410)
+	if expired["code"] != "usage_snapshot_expired" || expired["hint"] == nil {
+		t.Fatal(expired)
+	}
+	invalid := request(t, s, "GET", "/api/v1/usage?cursor=invalid", adminToken, "", 400)
+	if invalid["code"] != "usage_cursor_invalid" {
+		t.Fatal(invalid)
+	}
+}

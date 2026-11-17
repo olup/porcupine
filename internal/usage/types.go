@@ -133,7 +133,7 @@ type UsageRow struct {
 	PeriodEnd       string              `json:"period_end"`
 	AvailableSince  string              `json:"available_since"`
 	Partial         bool                `json:"partial"`
-	AcceptanceBasis string              `json:"acceptance_basis" enum:"journal_commit"`
+	AcceptanceBasis string              `json:"acceptance_basis" enum:"durable_commit" doc:"Counts durable retained outcomes, not memory acknowledgments; currently the SQLite journal, with native commit required for future hosted ingestion."`
 	Counters        *UsageCounters      `json:"counters,omitempty" doc:"Absent when the whole bucket predates instrumentation; absence is not zero."`
 	QueryDuration   *UsageQueryDuration `json:"query_duration,omitempty" doc:"Absent when this bucket predates instrumentation."`
 	Storage         UsageStorage        `json:"storage"`

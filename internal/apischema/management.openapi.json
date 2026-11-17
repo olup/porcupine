@@ -4274,8 +4274,9 @@
         "additionalProperties": false,
         "properties": {
           "acceptance_basis": {
+            "description": "Counts durable retained outcomes, not memory acknowledgments; currently the SQLite journal, with native commit required for future hosted ingestion.",
             "enum": [
-              "journal_commit"
+              "durable_commit"
             ],
             "type": "string"
           },

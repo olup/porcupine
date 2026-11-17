@@ -298,7 +298,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 	}
 	if a.rules.usage != nil {
 		if err = a.rules.usage.AddTx(ctx, tx, batch.projectID, acceptedAt, usage.Counters{Live: int64(accepted)}, 0); err != nil {
-			return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
+			return nil, &acceptanceFailure{message: "storage unavailable"}
 		}
 	}
 	if err = tx.Commit(); err != nil {

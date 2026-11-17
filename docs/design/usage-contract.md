@@ -12,7 +12,7 @@ One cumulative update joins each existing successful domain transaction:
 
 | Transaction owner | Metered transition |
 | --- | --- |
-| `eventAcceptance.Accept` | Newly accepted canonical live rows, once per batch, beside acceptance, receipts, identity changes, allowance accounting and webhook outbox scheduling. |
+| `durableAcceptance.Accept` | Newly accepted canonical live rows, once per batch, beside acceptance, receipts, identity changes, allowance accounting and webhook outbox scheduling. |
 | `importManager.commitImportChunk` | Accepted-row delta for this committed chunk, beside its durable parser offset, original outcome counts and checkpoint. No additional write/trigger for each imported row. |
 | `Service.publishExport` | Compressed encoded data bytes after the winning job/attempt conditional publication update, before the same commit. |
 | `Service.publishPipelineS3` | Manifest data-file bytes beside the winning receipt-window cursor publication. A retry cannot advance that cursor twice. |
@@ -25,6 +25,8 @@ This preserves the current quota's exact retained-UUID semantics, including iden
 Live accounting uses the existing batch acceptance timestamp. Import chunks freeze acceptance with their committed outcome, rather than using the original event date. Output accounting dates the first successful durable operational transition; an S3 manifest may already exist after a crash, so this is not a claim about its first remote visibility time. Presigned downloads bypass Porcupine and are not inferred from output publication. Receiver-side effects are not inferred from webhook acknowledgments either: a receiver may process a request whose response is lost.
 
 The source journal keeps one `usage_rollups` row per source/project/day, not an everlasting row per event or batch. A positive change advances the bucket revision. Duplicate-only acceptance does not create an extra metering write. Arithmetic guards reject overflow instead of wrapping a counter.
+
+The metering hook belongs to `durableAcceptance.Accept`, not to the `liveAcceptor` caller or response serializer. Future memory acknowledgments must not invoke it. `acceptance_basis: durable_commit` labels the meter's boundary, not the HTTP acknowledgment; the available runtime is journal-backed and future hosted counts require native commit proof. A private prototype test verifies that buffered memory admission leaves both journal events and accepted usage unchanged, without enabling buffered mode in deployment configuration.
 
 ## Durable query admission and actual return
 
@@ -104,3 +106,5 @@ Measured on Apple M1 Pro, Darwin/arm64, with the same prebuilt test binary, SQLi
 Hoisting the SQL statements reduced the one-event allocation delta from roughly 6.2 KiB to 0.8 KiB/request, but did not demonstrate a latency improvement. The extra durable update still costs about 0.07 ms in the single-event fixture. Batching amortizes this update; the test does not establish sustained service throughput or a production capacity guarantee. Setup, payload generation, shutdown, source publication and analytical projection are excluded from the measured loop; it includes HTTP parsing/authentication and durable journal acceptance, not only an isolated UPSERT.
 
 Both the [original unfavorable results](usage-acceptance-original.txt) and the [constant-SQL rerun](usage-acceptance-constant-sql.txt) are retained. Reproduce with `go test ./internal/porcupine -run '^$' -bench '^BenchmarkUsageCaptureAcceptance$' -benchtime=100x -count=3` in a quiet local window. Benchmarks are manual and do not lengthen ordinary CI tests.
+
+Measurement provenance: the original dynamic-SQL run used the in-progress usage worktree based on `7dc52b9`, before its first clean commit. The final posting and benchmark implementation were captured in `9db83e8` before rebase, on base `47e5cd7`; the final binary also contained in-progress non-acceptance timing/snapshot changes. Both runs preceded PR #60's acceptor-interface/acknowledgment-response change. Their claims are restricted to the within-binary on/off durable HTTP acceptance comparison above, not exact timings of the later rebased service or hosted buffering. Renaming that transaction owner to `durableAcceptance` does not relocate its posting outside the SQLite commit.
