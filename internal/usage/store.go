@@ -107,14 +107,17 @@ func (s *Store) PublishSourceTotalsTx(ctx context.Context, tx *sql.Tx, reports [
 	return nil
 }
 func (s *Store) RecordStorageSample(ctx context.Context, v StorageSample) error {
-	return recordStorageSample(ctx, s.DB, v)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.RecordStorageSampleTx(ctx, tx, v); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) RecordStorageSampleTx(ctx context.Context, tx *sql.Tx, v StorageSample) error {
-	return recordStorageSample(ctx, tx, v)
-}
-func recordStorageSample(ctx context.Context, db interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}, v StorageSample) error {
 	if !validID(v.TenantID) || !validID(v.ProjectID) || !validDay(v.Day) || v.Bytes < 0 {
 		return errors.New("invalid usage storage sample")
 	}
@@ -122,9 +125,22 @@ func recordStorageSample(ctx context.Context, db interface {
 	if err != nil || Day(at) != v.Day {
 		return errors.New("invalid usage storage sample time")
 	}
+	if s.Postgres {
+		// A statement-level EXISTS alone can see a row from before deletion,
+		// then wait on the sample UPSERT and overwrite deletion's zero after
+		// it commits. Lock the project until publication's transaction ends.
+		var project string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 AND tenant_id=$2 FOR KEY SHARE`, v.ProjectID, v.TenantID).Scan(&project)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 	// Recheck the control anchor when publishing the sample: a native read may
 	// finish before deletion while its delayed publication arrives afterwards.
-	_, err = db.ExecContext(ctx, `INSERT INTO usage_storage_samples(tenant_id,project_id,day_start,observed_at,bytes) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM projects WHERE id=$2 AND tenant_id=$1) ON CONFLICT(tenant_id,project_id,day_start) DO UPDATE SET observed_at=excluded.observed_at,bytes=excluded.bytes WHERE usage_storage_samples.observed_at<excluded.observed_at OR (usage_storage_samples.observed_at=excluded.observed_at AND excluded.bytes=0)`, v.TenantID, v.ProjectID, v.Day, Stamp(at), v.Bytes)
+	_, err = tx.ExecContext(ctx, `INSERT INTO usage_storage_samples(tenant_id,project_id,day_start,observed_at,bytes) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM projects WHERE id=$2 AND tenant_id=$1) ON CONFLICT(tenant_id,project_id,day_start) DO UPDATE SET observed_at=excluded.observed_at,bytes=excluded.bytes WHERE usage_storage_samples.observed_at<excluded.observed_at OR (usage_storage_samples.observed_at=excluded.observed_at AND excluded.bytes=0)`, v.TenantID, v.ProjectID, v.Day, Stamp(at), v.Bytes)
 	return err
 }
 func (s *Store) Prune(ctx context.Context) error {

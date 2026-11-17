@@ -1,10 +1,12 @@
 package porcupine
 
 import (
-	"github.com/olup/porcupine/internal/usage"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/usage"
 )
 
 func TestSharedUsageCumulativeSourcesAndSnapshotReplay(t *testing.T) {
@@ -87,5 +89,80 @@ func TestSharedUsageQueryOnNonOwnerNeedsNoJournalProjectAnchor(t *testing.T) {
 	}
 	if e = b.service.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE id=?`, id).Scan(&anchors); e != nil || anchors != 0 {
 		t.Fatal("query manufactured an ingestion owner anchor", anchors, e)
+	}
+}
+
+func TestSharedUsageStorageSampleCannotOverwriteCommittedDeletionZero(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
+	db, err := sql.Open("pgx", sharedPostgresDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(4)
+	if _, err = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL); INSERT INTO projects VALUES('p','t');` + usage.ControlSchema); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := usage.Normalize(nil)
+	store := usage.NewStore(db, true, config, time.Now)
+	at := time.Now().UTC()
+	sample := usage.StorageSample{TenantID: "t", ProjectID: "p", Day: usage.Day(at), ObservedAt: usage.Stamp(at), Bytes: 100}
+	if err = store.RecordStorageSample(t.Context(), sample); err != nil {
+		t.Fatal(err)
+	}
+	deleting, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleting.Rollback()
+	var id string
+	if err = deleting.QueryRow(`SELECT id FROM projects WHERE id='p' FOR UPDATE`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	zero := sample
+	zero.Bytes = 0
+	zero.ObservedAt = usage.Stamp(at.Add(time.Second))
+	zero.Day = usage.Day(at.Add(time.Second))
+	if err = store.RecordStorageSampleTx(t.Context(), deleting, zero); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = deleting.Exec(`DELETE FROM projects WHERE id='p'`); err != nil {
+		t.Fatal(err)
+	}
+	sample.ObservedAt = usage.Stamp(at.Add(2 * time.Second))
+	sample.Day = usage.Day(at.Add(2 * time.Second))
+	done := make(chan error, 1)
+	go func() { done <- store.RecordStorageSample(t.Context(), sample) }()
+	// Prove the competing statement started and is waiting on this transaction;
+	// a sleep would not establish that it acquired an old statement snapshot.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var waiting bool
+		if err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock')`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err = <-done:
+			t.Fatal("sample escaped the uncommitted deletion", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sample did not reach deletion lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err = deleting.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	var bytes int64
+	if err = db.QueryRow(`SELECT bytes FROM usage_storage_samples WHERE project_id='p' ORDER BY day_start DESC LIMIT 1`).Scan(&bytes); err != nil || bytes != 0 {
+		t.Fatal("late positive sample overwrote committed zero", bytes, err)
 	}
 }

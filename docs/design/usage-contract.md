@@ -60,6 +60,8 @@ Sampling runs approximately hourly on the existing project owner. The control st
 
 Current catalogue removal is the zero-footprint boundary. An ingestion fence or a tenant state change alone is not proof of zero files. Provider object versions and backup retention remain outside this current-reference gauge and its deletion claims.
 
+Zero publication and project removal share the control transaction. A sampler rechecks and, in PostgreSQL, key-share locks that project row before publishing its value. A bare `INSERT … SELECT EXISTS(project)` is insufficient: its old statement snapshot can survive a wait behind deletion's zero and overwrite it after the project disappears. The real PostgreSQL regression reproduces that overwrite without the lock and verifies zero survives with it.
+
 ## Replayable bounded snapshots
 
 `GET /api/v1/usage` is registered once with Huma as `list-usage`, requiring `instance:admin`; CLI generation and MCP use that operation and live authorization on every call. A tenant filter does not grant authority. The existing tenant-admin ingestion-budget endpoint remains separate.
