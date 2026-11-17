@@ -93,7 +93,7 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, "UPDATE hosted_s3_pipeline_runs SET state='queued',attempt_id=''"); err != nil {
 			return err
 		}
-		w := hostedScheduledWork{pipeline: storedPipeline{ProjectID: "project"}, tenant: "tenant", reservedBytes: 512}
+		w := hostedScheduledWork{pipeline: storedPipeline{Pipeline: Pipeline{ProjectID: "project"}}, tenant: "tenant", reservedBytes: 512}
 		binding := w.binding()
 		return effects.charge(ctx, tx, binding, binding.Demand, 1)
 	})
