@@ -185,15 +185,29 @@ func (r *postgresNativeRegistry) ensure(ctx context.Context, project string) (na
 func (r *postgresNativeRegistry) markReady(ctx context.Context, project string) error {
 	ctx, cancel := r.metadataContext(ctx)
 	defer cancel()
-	result, err := r.db.ExecContext(ctx, `UPDATE pc_native_projects SET ready=1 WHERE source_id=$1 AND project_id=$2 AND deleted=0`, r.source, project)
+	// A cancelled client query can return while PostgreSQL is still waiting
+	// for the row lock. Publish readiness only after the update succeeds within
+	// the metadata deadline.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE pc_native_projects SET ready=1 WHERE source_id=$1 AND project_id=$2 AND deleted=0`, r.source, project)
 	if err != nil {
 		return err
 	}
 	count, err := result.RowsAffected()
-	if err == nil && count != 1 {
+	if err != nil {
+		return err
+	}
+	if count != 1 {
 		return errSharedNativeDeleted
 	}
-	return err
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return tx.Commit()
 }
 func (r *postgresNativeRegistry) deleting(ctx context.Context, project string) (bool, error) {
 	p, err := r.lookup(ctx, project)
