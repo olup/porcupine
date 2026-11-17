@@ -2,10 +2,8 @@ package porcupine
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,14 +19,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 	var checkpoint *nativeCheckpoint
 	func() {
 		defer release()
-		checkpoint, err = s.lake.stageCheckpoint(ctx, func(ctx context.Context, destination string) error {
-			source, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: runtime.databasePath}).String()+"?mode=ro&_pragma=busy_timeout(100)")
-			if err != nil {
-				return err
-			}
-			defer source.Close()
-			return snapshotSQLite(ctx, source, destination)
-		})
+		checkpoint, err = s.stageNativeCheckpoint(ctx)
 	}()
 	if err != nil {
 		return err
@@ -57,8 +48,8 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 			result = errors.Join(result, destination.remove(cleanup, id))
 		}
 	}()
-	manifest := nativeBackupManifest{Format: "porcupine-native-v1", ID: id, Version: Version, SourceID: checkpoint.SourceID, CreatedAt: now(), CapturedAt: checkpoint.CapturedAt, SQLitePath: "acceptance.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
-	for _, p := range []string{"acceptance.sqlite", "ducklake/registry.sqlite"} {
+	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: checkpoint.SourceID, CreatedAt: now(), CapturedAt: checkpoint.CapturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
+	for _, p := range []string{"acceptance.sqlite", "control.sqlite", "ducklake/registry.sqlite"} {
 		if err := validateBackupSQLite(ctx, filepath.Join(checkpoint.Directory, filepath.FromSlash(p))); err != nil {
 			return err
 		}

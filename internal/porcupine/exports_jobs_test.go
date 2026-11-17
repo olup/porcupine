@@ -16,6 +16,13 @@ func exportContext(t *testing.T, s *Service, token string) context.Context {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, project := range a.Projects {
+		if project != "*" {
+			if err := s.ensureProjectLocal(t.Context(), project, a); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	return context.WithValue(context.Background(), actorContextKey{}, a)
 }
 

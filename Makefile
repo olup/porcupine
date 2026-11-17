@@ -20,7 +20,7 @@ check: api-check cli-check
 fmt:
 	gofmt -w cmd internal cli/cmd
 
-integration: ducklake-smoke ducklake-s3-test ducklake-restore-drill
+integration: ducklake-smoke ducklake-s3-test ducklake-restore-drill shared-integration
 
 integration-s3: ducklake-s3-test
 
@@ -96,3 +96,16 @@ ducklake-s3-test:
 ducklake-restore-drill: cli
 	docker build --build-arg VERSION=dev -t porcupine-native-restore-test .
 	PORCUPINE_RESTORE_DOCKER_IMAGE=porcupine-native-restore-test PORCUPINE_RESTORE_CLI=$(CURDIR)/bin/cli/porcupine CGO_ENABLED=1 go test ./internal/porcupine -run '^TestDuckLakeCLIRestoreDrill$$' -count=1 -timeout=120s
+
+.PHONY: shared-postgres-fixture-test shared-postgres-test
+shared-postgres-fixture-test:
+	CGO_ENABLED=0 PORCUPINE_TEST_NATIVE_POSTGRES=1 go test ./internal/cmd/shared-postgres-integration -count=1 -timeout=600s
+
+shared-postgres-test: shared-postgres-fixture-test
+	CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration
+
+SHARED_TEST_RACE ?= true
+
+.PHONY: shared-integration
+shared-integration: shared-postgres-fixture-test
+	CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- go run ./internal/cmd/ducklake-s3-integration -run '^(TestShared|TestDuckLakeS3SharedPostgres)' -race=$(SHARED_TEST_RACE) -timeout=600s

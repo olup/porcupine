@@ -18,7 +18,7 @@ func oauthManagementActor(id string, permissions, projects []string) context.Con
 func oauthManagementAdmin(t *testing.T, s *Service) context.Context {
 	t.Helper()
 	var id string
-	if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&id); err != nil {
+	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return oauthManagementActor(id, []string{"instance:admin"}, []string{"*"})
@@ -43,20 +43,20 @@ func oauthClientInput(name string, permissions, projects []string) *OAuthClientC
 func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
 	s := service(t, 20)
 	var original string
-	if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&original); err != nil {
+	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&original); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE access_keys SET created_at='2000-01-01',revoked_at='2001-01-01' WHERE id=?`, original); err != nil {
+	if _, err := s.control.Exec(`UPDATE access_keys SET created_at='2000-01-01',revoked_at='2001-01-01' WHERE id=?`, original); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM metadata WHERE key='oauth_bootstrap_id'`); err != nil {
+	if _, err := s.control.Exec(`DELETE FROM metadata WHERE key='oauth_bootstrap_id'`); err != nil {
 		t.Fatal(err)
 	}
 	for _, row := range []struct{ id, permissions, created string }{
 		{newID(), `["events:read"]`, "1990-01-01"},
 		{newID(), `["instance:admin"]`, "2002-01-01"},
 	} {
-		if _, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,?,?,?)`, row.id, hash(row.id), row.permissions, `["*"]`, row.created); err != nil {
+		if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,?,?,?)`, row.id, hash(row.id), row.permissions, `["*"]`, row.created); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -64,20 +64,20 @@ func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var alias string
-	if err := s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != original {
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != original {
 		t.Fatal("bootstrap alias did not retain the original revoked administrator", err)
 	}
 	older := newID()
-	if _, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,'["instance:admin"]','["*"]','1980-01-01')`, older, hash(older)); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,'["instance:admin"]','["*"]','1980-01-01')`, older, hash(older)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != original {
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != original {
 		t.Fatal("existing alias rotated", err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO oauth_clients(client_id,secret_hash) VALUES('missing-principal','hash')`); err == nil {
+	if _, err := s.control.Exec(`INSERT INTO oauth_clients(client_id,secret_hash) VALUES('missing-principal','hash')`); err == nil {
 		t.Fatal("OAuth client accepted without a principal")
 	}
 }
@@ -100,7 +100,7 @@ func TestOAuthClientSecretIsIndependentAndListingScoped(t *testing.T) {
 		t.Fatal("one-time client secret response is cacheable")
 	}
 	var tokenHash, secretHash string
-	if err := s.db.QueryRow(`SELECT k.token_hash,c.secret_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, created.Body.ClientID).Scan(&tokenHash, &secretHash); err != nil {
+	if err := s.control.QueryRow(`SELECT k.token_hash,c.secret_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, created.Body.ClientID).Scan(&tokenHash, &secretHash); err != nil {
 		t.Fatal(err)
 	}
 	if secretHash != hash(secret) || tokenHash == secretHash || tokenHash == secret || len(tokenHash) != 64 {
@@ -160,16 +160,16 @@ func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
 		t.Fatal("manager could not create subordinate client", err)
 	}
 	var before, after int
-	if err := s.db.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&before); err != nil {
+	if err := s.control.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`CREATE TRIGGER reject_oauth_client BEFORE INSERT ON oauth_clients BEGIN SELECT RAISE(ABORT,'forced client insert failure'); END`); err != nil {
+	if _, err := s.control.Exec(`CREATE TRIGGER reject_oauth_client BEFORE INSERT ON oauth_clients BEGIN SELECT RAISE(ABORT,'forced client insert failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if output, err := s.managementCreateOAuthClient(admin, oauthClientInput("must rollback", []string{"events:read"}, []string{a})); output != nil || queryStatus(err) != 500 {
 		t.Fatal("failed creation returned client credentials", err)
 	}
-	if err := s.db.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&after); err != nil {
+	if err := s.control.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if before != after {
@@ -201,7 +201,7 @@ func TestOAuthClientRevocationAndLastAdministrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revoked *string
-	if err := s.db.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, created.Body.ClientID).Scan(&revoked); err != nil || revoked == nil {
+	if err := s.control.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, created.Body.ClientID).Scan(&revoked); err != nil || revoked == nil {
 		t.Fatal("revocation did not disable the shared principal", err)
 	}
 	secondContext := oauthManagementActor(second.Body.ClientID, []string{"instance:admin"}, []string{"*"})

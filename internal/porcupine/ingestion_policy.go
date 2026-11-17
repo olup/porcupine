@@ -26,7 +26,7 @@ func (s *Service) initializeProjectIngestion(ctx context.Context) error {
 
 func (s *Service) projectIngestionMode(ctx context.Context, projectID string) (string, error) {
 	var mode string
-	if err := s.db.QueryRowContext(ctx, `SELECT ingestion_mode FROM projects WHERE id=?`, projectID).Scan(&mode); err != nil {
+	if err := s.control.QueryRowContext(ctx, `SELECT ingestion_mode FROM projects WHERE id=$1`, projectID).Scan(&mode); err != nil {
 		return "", errors.New("project ingestion policy unavailable")
 	}
 	if mode != ingestionMixed && mode != ingestionServerOnly {

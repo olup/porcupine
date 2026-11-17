@@ -161,7 +161,7 @@ PRIMARY KEY(job_id,file_id,row_number)) WITHOUT ROWID;`); err != nil {
 		{"format", "TEXT NOT NULL DEFAULT 'posthog'"}, {"delivery_cursor", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('import_uploads') WHERE name=?)`, column.name).Scan(&exists); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('import_uploads') WHERE name=$1)`, column.name).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -220,9 +220,9 @@ func restoreImportHash(state []byte) (stdhash.Hash, error) {
 	return h, nil
 }
 
-func importCheckAuthority(ctx context.Context, tx *sql.Tx, actorID, project string) error {
+func importCheckAuthority(ctx context.Context, query oauthQueryer, actorID, project string) error {
 	var permissions, projects string
-	err := tx.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=? AND revoked_at IS NULL`, actorID).Scan(&permissions, &projects)
+	err := query.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, actorID).Scan(&permissions, &projects)
 	if err != nil {
 		return apiError(403, "import credential is no longer authorized")
 	}
@@ -261,11 +261,11 @@ func scanImportFile(row interface{ Scan(...any) error }) (storedImportUploadFile
 }
 
 func (m *importManager) loadImportJob(ctx context.Context, project, id string) (ImportUploadJob, error) {
-	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? AND id=?`, project, id))
+	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, id))
 	if err != nil {
 		return ImportUploadJob{}, importLookupError(err)
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=? ORDER BY ordinal`, id)
+	rows, err := m.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
@@ -283,7 +283,7 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
-	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=? ORDER BY file_id,row_number LIMIT ?`, id, importMaxSamples)
+	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=$1 ORDER BY file_id,row_number LIMIT $2`, id, importMaxSamples)
 	if err != nil {
 		return ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
@@ -300,7 +300,7 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	}
 	job.Delivery = &ImportDelivery{}
 	job.Delivery.Enabled = m.deliveryEnabled
-	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=? AND id<=? AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
+	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=$1 AND id<=$2 AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
 		return ImportUploadJob{}, apiError(503, "import delivery status unavailable")
 	}
 	job.Delivery.Ready = job.State == "completed" && job.Delivery.Enabled && job.Delivery.Pending == 0

@@ -108,7 +108,7 @@ func scanPipeline(row interface{ Scan(...any) error }) (storedPipeline, error) {
 	return p, err
 }
 func (s *Service) loadPipeline(ctx context.Context, projectID, pipelineID string) (storedPipeline, error) {
-	return scanPipeline(s.db.QueryRowContext(ctx, `SELECT `+pipelineColumns+` FROM pipelines WHERE project_id=? AND id=?`, projectID, pipelineID))
+	return scanPipeline(s.db.QueryRowContext(ctx, `SELECT `+pipelineColumns+` FROM pipelines WHERE project_id=$1 AND id=$2`, projectID, pipelineID))
 }
 func pipelineLookupError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -241,13 +241,13 @@ func (s *Service) createPipeline(ctx context.Context, input *PipelineCreateInput
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
 	var projectCount, totalCount int
-	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE project_id=?) FROM pipelines`, p.ProjectID).Scan(&totalCount, &projectCount) != nil {
+	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE project_id=$1) FROM pipelines`, p.ProjectID).Scan(&totalCount, &projectCount) != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
 	if projectCount >= 64 || totalCount >= 512 {
 		return nil, apiError(409, "pipeline limit reached")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO pipelines(`+pipelineColumns+`) VALUES(?,?,?,?,?,?,?,?,?)`, p.ID, p.ProjectID, principal(ctx).ID, p.Kind, p.Name, p.State, string(config), secret, p.CreatedAtMS)
+	_, err = tx.ExecContext(ctx, `INSERT INTO pipelines(`+pipelineColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, p.ID, p.ProjectID, principal(ctx).ID, p.Kind, p.Name, p.State, string(config), secret, p.CreatedAtMS)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
@@ -278,7 +278,7 @@ func (s *Service) listPipelines(ctx context.Context, input *PipelineListInput) (
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
 		return nil, apiError(400, "invalid pipeline pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,kind,name,state,created_at_ms FROM pipelines WHERE project_id=? ORDER BY created_at_ms DESC,id LIMIT ? OFFSET ?`, input.ID, input.Limit+1, input.Offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,kind,name,state,created_at_ms FROM pipelines WHERE project_id=$1 ORDER BY created_at_ms DESC,id LIMIT $2 OFFSET $3`, input.ID, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
@@ -330,7 +330,7 @@ func (s *Service) setPipelineState(ctx context.Context, input *PipelineGetInput,
 		}
 		defer release()
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state=? WHERE project_id=? AND id=?`, state, input.ID, input.PipelineID)
+	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state=$1 WHERE project_id=$2 AND id=$3`, state, input.ID, input.PipelineID)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
@@ -364,7 +364,7 @@ func (s *Service) deletePipeline(ctx context.Context, input *PipelineGetInput) (
 		s.pipelineWake()
 		return nil, nil
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=? AND id=?`, input.ID, input.PipelineID)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=$1 AND id=$2`, input.ID, input.PipelineID)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
@@ -420,7 +420,7 @@ func (s *Service) rotatePipeline(ctx context.Context, input *PipelineRotateInput
 			return nil, apiError(409, "event filters cannot change during credential rotation")
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET secret=? WHERE project_id=? AND id=?`, secret, p.ProjectID, p.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET secret=$1 WHERE project_id=$2 AND id=$3`, secret, p.ProjectID, p.ID)
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}

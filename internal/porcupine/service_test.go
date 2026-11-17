@@ -58,7 +58,7 @@ func request(t *testing.T, s *Service, method, path, token, body string, status 
 	result := map[string]any{}
 	if w.Body.Len() > 0 {
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s %s: invalid JSON response: %v; body=%q", method, path, err, w.Body.String())
 		}
 	}
 	return result
@@ -125,7 +125,7 @@ func TestRestartDedupAndBootstrap(t *testing.T) {
 		t.Fatal("durable pending event missing")
 	}
 	var stored string
-	if err = s.db.QueryRow(`SELECT token_hash FROM access_keys WHERE name='bootstrap admin'`).Scan(&stored); err != nil {
+	if err = s.control.QueryRow(`SELECT token_hash FROM access_keys WHERE name='bootstrap admin'`).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored == adminToken || stored != hash(adminToken) {

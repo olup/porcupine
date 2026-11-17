@@ -26,6 +26,10 @@ func analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
 		directory = defaultAnalyticsDirectory(os.Getenv("PORCUPINE_DB"))
 	}
 	config := &porcupine.DuckLakeConfig{Directory: directory, S3: remote}
+	config.PostgresURL, err = sharedSecretSetting("PORCUPINE_DUCKLAKE_POSTGRES_URL")
+	if err != nil {
+		return nil, err
+	}
 	for _, field := range []struct {
 		name     string
 		target   *int
@@ -34,6 +38,7 @@ func analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
 		{"PORCUPINE_DUCKLAKE_MEMORY_MB", &config.MemoryLimitMB, 64, 32768},
 		{"PORCUPINE_DUCKLAKE_THREADS", &config.Threads, 1, 4},
 		{"PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS", &config.MaxOpenProjects, 1, 64},
+		{"PORCUPINE_DUCKLAKE_METADATA_TIMEOUT_SECONDS", &config.MetadataTimeoutSeconds, 2, 60},
 	} {
 		value, err := analyticsInteger(field.name, 0, field.min, field.max)
 		if err != nil {

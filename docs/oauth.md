@@ -1,8 +1,8 @@
 # OAuth client credentials
 
-A backend or unattended agent can exchange its client ID and secret at `/oauth/token` and use the resulting short-lived Bearer token for either the HTTP API or MCP. Porcupine issues tokens in the same process as the analytics API and stores grants in SQLite. A [service key](service-keys.md) offers a fixed Bearer credential for one audience.
+A backend or unattended agent can exchange its client ID and secret at `/oauth/token` and use the resulting short-lived Bearer token for either the HTTP API or MCP. Porcupine issues tokens in the same process as the analytics API and stores grants in its control database. A [service key](service-keys.md) offers a fixed Bearer credential for one audience.
 
-For interactive applications, Porcupine also supports [email sign-in for CLI and MCP](connect-your-team.md) and [upstream OIDC for read-only MCP](mcp-interactive-oauth.md). These flows use OAuth authorization codes with S256 PKCE.
+For interactive applications, Porcupine supports [email sign-in for CLI and MCP](connect-your-team.md). **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human accounts alongside email OTP, including authorized administration. Tool connections use Porcupine authorization codes with S256 PKCE; upstream provider tokens are not Porcupine credentials.
 
 ## Operator configuration
 

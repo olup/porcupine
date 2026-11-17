@@ -30,12 +30,20 @@ func newApp() *cli.Command {
 		Commands: []*cli.Command{
 			restoreCommand(),
 			importCommand(),
-			{Name: "login", Usage: "Authorize this CLI in your browser", Flags: []cli.Flag{&cli.BoolFlag{Name: "admin", Usage: "Request administrator access"}}, Action: func(ctx context.Context, c *cli.Command) error {
+			{Name: "login", Usage: "Authorize this CLI in your browser", Flags: []cli.Flag{
+				&cli.BoolFlag{Name: "admin", Usage: "Request instance administrator access"},
+				&cli.BoolFlag{Name: "tenant-admin", Usage: "Request administration of one tenant selected in your browser"},
+				&cli.StringFlag{Name: "scopes", Usage: "Project scopes to request, separated by spaces or commas; defaults to read-only"},
+			}, Action: func(ctx context.Context, c *cli.Command) error {
 				origin, err := instanceOrigin(c)
 				if err != nil {
 					return err
 				}
-				return login(ctx, origin, c.Bool("admin"))
+				clientID, scopes, err := loginOptions(c.Bool("admin"), c.Bool("tenant-admin"), c.String("scopes"))
+				if err != nil {
+					return err
+				}
+				return login(ctx, origin, clientID, scopes)
 			}},
 			{Name: "status", Usage: "Check instance readiness", Action: func(ctx context.Context, c *cli.Command) error {
 				return runOperation(ctx, c, operation{Method: "GET", Path: "/readyz"}, false)

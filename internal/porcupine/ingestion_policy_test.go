@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 				t.Fatal("server-only project minted a public ingestion key")
 			}
 			var credentials int
-			if err := f.s.db.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
+			if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
 				t.Fatal("server-only creation stored an ingestion credential")
 			}
 			var listed ProjectList
@@ -123,69 +124,38 @@ func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"invalid","ingestion_mode":"browser_only"}`, 422)
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"server","ingestion_mode":"server_only"}`, 503)
 	var projects int
-	if err := s.db.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 2 {
+	if err := s.control.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 2 {
 		t.Fatal("invalid project mode created partial metadata")
 	}
 }
 
-func TestProjectIngestionPolicyMigrationAndRestart(t *testing.T) {
+func TestPreTenantSchemaIsRejectedWithoutMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old-schema.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE access_keys(id TEXT PRIMARY KEY,name TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,permissions TEXT NOT NULL,projects TEXT NOT NULL,revoked_at TEXT,created_at TEXT NOT NULL);
 INSERT INTO projects VALUES('old-project','Existing project','2020-01-01T00:00:00Z')`)
-	if err == nil {
-		_, err = db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES('old-key','Old ingestion',?,'["events:write"]','["old-project"]','2020-01-01T00:00:00Z')`, hash("old-public-project-key"))
-	}
 	db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var mode string
-	if err := s.db.QueryRow(`SELECT ingestion_mode FROM projects WHERE id='old-project'`).Scan(&mode); err != nil || mode != ingestionMixed {
+	if err == nil {
 		s.Close()
-		t.Fatal("old project did not migrate to mixed")
+		t.Fatal("startup accepted a pre-tenant schema")
 	}
-	request(t, s, "POST", "/capture/", "", captureBody("old-public-project-key", "old-key-still-works"), 200)
-	s.Close()
-	// Create a persisted confidential project with OAuth, then restart without OAuth.
-	s, err = Open(Config{DBPath: path, OAuth: &OAuthConfig{Issuer: "https://policy.example", AllowLegacyKeys: true}})
+	if !strings.Contains(err.Error(), "pre-tenant database schema is unsupported") {
+		t.Fatalf("unexpected startup error: %v", err)
+	}
+	db, err = sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"Persisted confidential project","ingestion_mode":"server_only"}`, 201)
-	id := created["project"].(map[string]any)["id"].(string)
-	_, selector := key(t, s, []string{"events:write"}, []string{id})
-	s.Close()
-	s, err = Open(Config{DBPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if err := s.db.QueryRow(`SELECT ingestion_mode FROM projects WHERE id=?`, id).Scan(&mode); err != nil || mode != ingestionServerOnly {
-		t.Fatal("restart lost server-only policy")
-	}
-	request(t, s, "POST", "/capture/", "", captureBody(selector, "no-oauth-public-rejected"), 401)
-	request(t, s, "POST", "/capture/", selector, captureBody(selector, "no-oauth-legacy-rejected"), 401)
-	request(t, s, "POST", "/capture/", "", captureBody("old-public-project-key", "old-mixed-still-works"), 200)
-	var forbidden int
-	if err := s.db.QueryRow(`SELECT count(*) FROM events WHERE project_id=?`, id).Scan(&forbidden); err != nil || forbidden != 0 {
-		t.Fatal("server-only accepted writes after OAuth was disabled")
-	}
-	listed := request(t, s, "GET", "/api/v1/projects", adminToken, "", 200)
-	modes := map[string]string{}
-	for _, item := range listed["projects"].([]any) {
-		metadata := item.(map[string]any)
-		modes[metadata["id"].(string)] = metadata["ingestion_mode"].(string)
-	}
-	if len(modes) != 2 || modes["old-project"] != ingestionMixed || modes[id] != ingestionServerOnly {
-		t.Fatal("migrated project listing lost stored ingestion policies")
+	defer db.Close()
+	var name string
+	if err := db.QueryRow(`SELECT name FROM projects WHERE id='old-project'`).Scan(&name); err != nil || name != "Existing project" {
+		t.Fatalf("rejection modified existing project: name=%q err=%v", name, err)
 	}
 }

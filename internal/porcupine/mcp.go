@@ -67,12 +67,12 @@ func managementOperations(doc *huma.OpenAPI) map[string]*huma.Operation {
 			continue
 		}
 		for _, op := range []*huma.Operation{item.Get, item.Post, item.Put, item.Patch, item.Delete} {
-			if op == nil || op.Metadata["http_only"] == true {
+			if op == nil {
 				continue
 			}
-			access, ok := op.Metadata["access"].(operationAccess)
-			if !ok || access.Permission == "" || op.OperationID == "" {
-				panic("management operation missing access policy or operation ID")
+			managementOperationAccess(op)
+			if op.Metadata["http_only"] == true {
+				continue
 			}
 			if _, exists := operations[op.OperationID]; exists {
 				panic("duplicate management operation ID")

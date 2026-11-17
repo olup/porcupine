@@ -9,13 +9,21 @@ import (
 // and its accepted historical rows always commit in the same transaction.
 type importManager struct {
 	db              *sql.DB
+	control         oauthQueryer
 	rules           *eventRules
 	deliveryEnabled bool
 }
 
+func (m *importManager) authorityQuery(tx *sql.Tx) oauthQueryer {
+	if m.control != nil {
+		return m.control
+	}
+	return tx
+}
+
 func (m *importManager) projectExists(ctx context.Context, id string) error {
 	var exists int
-	if err := m.db.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=?`, id).Scan(&exists); err != nil {
+	if err := m.db.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1`, id).Scan(&exists); err != nil {
 		return apiError(503, "project storage unavailable")
 	}
 	if exists == 0 {

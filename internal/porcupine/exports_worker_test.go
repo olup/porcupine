@@ -34,7 +34,7 @@ func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
 		fake.onComplete = func() {
 			var err error
 			if revoke {
-				_, err = s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), job.ActorID)
+				_, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), job.ActorID)
 			} else {
 				_, err = s.db.Exec(`UPDATE export_jobs SET cancel_requested=1 WHERE id=?`, job.ID)
 			}
@@ -116,7 +116,7 @@ func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 	if _, err = s.db.Exec(`DELETE FROM metadata WHERE key='last_delivery_error'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), job.ActorID); err != nil {
+	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), job.ActorID); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.exportCanContinue(context.Background(), job); !errors.Is(err, errExportRevoked) {

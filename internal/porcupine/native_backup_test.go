@@ -25,7 +25,7 @@ func TestNativeBackupConfigurationRequiresNativeFiles(t *testing.T) {
 		}
 	}
 	root := t.TempDir()
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(root, "lake", "backup")}, filepath.Join(root, "db"), &DuckLakeConfig{Directory: filepath.Join(root, "lake")}); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(root, "lake", "backup")}, filepath.Join(root, "db"), localControlPath(filepath.Join(root, "db")), &DuckLakeConfig{Directory: filepath.Join(root, "lake")}); err == nil {
 		t.Fatal("backup destination inside analytical store accepted")
 	}
 }
@@ -67,7 +67,7 @@ func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) 
 		if err := os.Mkdir(path, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeBackupManifest(path, nativeBackupManifest{Format: "porcupine-native-v1", ID: item.id, SourceID: item.source, CreatedAt: item.created}); err != nil {
+		if err := writeBackupManifest(path, nativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: item.source, CreatedAt: item.created}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -108,9 +108,10 @@ func minimalNativeBackupBundle(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(directory, "ducklake"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := nativeBackupManifest{Format: "porcupine-native-v1", ID: "pc_backup_test", SourceID: "source", SQLitePath: "acceptance.sqlite", DuckLakeDirectory: "ducklake", CreatedAt: now(), CapturedAt: now()}
+	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: "pc_backup_test", SourceID: "source", SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", CreatedAt: now(), CapturedAt: now(), SourceStorage: nativeBackupStorageIdentity{Mode: "local"}}
 	for _, item := range []struct{ path, statement string }{
-		{"acceptance.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('ducklake_source_id','source')"},
+		{"acceptance.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('ducklake_source_id','source'),('journal_source_id','journal-source'),('local_control_source_id','control-source'),('journal_layout','separate-control-v1')"},
+		{"control.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('local_control_source_id','control-source'),('local_journal_source_id','journal-source')"},
 		{"ducklake/registry.sqlite", "CREATE TABLE source(id TEXT PRIMARY KEY);INSERT INTO source VALUES('source');CREATE TABLE catalogs(project_id TEXT PRIMARY KEY,ready INTEGER)"},
 	} {
 		path := filepath.Join(directory, filepath.FromSlash(item.path))
@@ -136,15 +137,21 @@ func minimalNativeBackupBundle(t *testing.T) string {
 }
 
 func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T) {
-	for _, scenario := range []string{"valid", "valid-legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "missing-catalog"} {
+	for _, scenario := range []string{"valid", "legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "control-mismatch", "missing-control", "legacy-format", "missing-catalog"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := minimalNativeBackupBundle(t)
 			manifest := readNativeManifest(t, directory)
 			target := filepath.Join(directory, "acceptance.sqlite")
 			switch scenario {
-			case "valid-legacy-paths":
+			case "legacy-paths":
 				manifest.SQLitePath = "/original/source/queue.db"
 				manifest.DuckLakeDirectory = "/original/source/lake"
+			case "legacy-format":
+				manifest.Format = "porcupine-native-v1"
+			case "missing-control":
+				if err := os.Remove(filepath.Join(directory, "control.sqlite")); err != nil {
+					t.Fatal(err)
+				}
 			case "escape":
 				manifest.Files[0].Path = "../outside"
 			case "absolute":
@@ -168,9 +175,13 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 				if err := os.Symlink(outside, target); err != nil {
 					t.Skip("symlinks unavailable")
 				}
-			case "source-mismatch", "missing-catalog":
+			case "source-mismatch", "control-mismatch", "missing-catalog":
 				path := target
 				statement := "UPDATE metadata SET value='other-source' WHERE key='ducklake_source_id'"
+				if scenario == "control-mismatch" {
+					path = filepath.Join(directory, "control.sqlite")
+					statement = "UPDATE metadata SET value='foreign-journal' WHERE key='local_journal_source_id'"
+				}
 				if scenario == "missing-catalog" {
 					path = filepath.Join(directory, "ducklake", "registry.sqlite")
 					statement = "INSERT INTO catalogs VALUES('missing-project',1)"
@@ -218,7 +229,7 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 		if err := os.Mkdir(directory, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeBackupManifest(directory, nativeBackupManifest{Format: "porcupine-native-v1", ID: item.id, SourceID: "source", CreatedAt: item.created}); err != nil {
+		if err := writeBackupManifest(directory, nativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: "source", CreatedAt: item.created}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -235,32 +246,32 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 
 func TestNativeBackupIndependentS3Configuration(t *testing.T) {
 	localRoot := t.TempDir()
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), &DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), localControlPath(filepath.Join(localRoot, "backups", "queue.db")), &DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
 		t.Fatal("backup destination containing live SQLite accepted")
 	}
 	remote := &DuckLakeS3Config{Bucket: "backup-test", Prefix: "independent", Region: "us-east-1"}
 	root := t.TempDir()
 	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1"}}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: remote}, filepath.Join(root, "queue.db"), lake); err != nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err != nil {
 		t.Fatal(err)
 	}
 	for _, prefix := range []string{"analytics", "analytics/backups"} {
 		copy := *remote
 		copy.Prefix = prefix
-		if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), lake); err == nil {
+		if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 			t.Fatal("overlapping S3 destination accepted")
 		}
 	}
 	copy := *remote
 	copy.Prefix = "analytics-parent"
 	lake.S3.Prefix = "analytics-parent/child"
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), lake); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("ancestor S3 destination accepted")
 	}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir(), S3: remote}, filepath.Join(root, "queue.db"), lake); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir(), S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("ambiguous destination accepted")
 	}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, filepath.Join(root, "queue.db"), lake); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("analytical S3 metadata-only local backup accepted")
 	}
 }
@@ -284,12 +295,12 @@ func TestNativeBackupNormalizesSourceBeforeS3OverlapCheck(t *testing.T) {
 	for _, prefix := range []string{"analytics/", "/analytics/"} {
 		lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: prefix, Region: "us-east-1"}}
 		destination := &NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics/nested", Region: "us-east-1"}}
-		if _, err := prepareNativeBackup(destination, filepath.Join(root, "queue.db"), lake); err == nil {
+		if _, err := prepareNativeBackup(destination, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 			t.Fatal("raw source prefix bypassed overlap validation", prefix)
 		}
 	}
 	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "source-test", Prefix: "../invalid", Region: "us-east-1"}}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "separate", Region: "us-east-1"}}, filepath.Join(root, "queue.db"), lake); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "separate", Region: "us-east-1"}}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("invalid source config bypassed validation")
 	}
 }

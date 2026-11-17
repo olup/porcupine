@@ -17,10 +17,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gofrs/flock"
 )
@@ -29,13 +31,62 @@ const (
 	localCallbackAddr = "127.0.0.1:43179"
 	analyticsClient   = "porcupine-local"
 	adminClient       = "porcupine-local-admin"
+	tenantAdminClient = "porcupine-local-tenant-admin"
 )
 
 func oauthScope(client string) string {
+	if client == tenantAdminClient {
+		return "tenant:admin"
+	}
 	if client == adminClient {
 		return "instance:admin"
 	}
 	return "events:read management:read"
+}
+
+var loginScopeName = regexp.MustCompile(`^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$`)
+
+func projectLoginScopes(raw string) ([]string, error) {
+	scopes := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	if len(scopes) == 0 || len(scopes) > 32 {
+		return nil, errors.New("request 1 to 32 project scopes")
+	}
+	for _, scope := range scopes {
+		if len(scope) > 64 || !loginScopeName.MatchString(scope) || strings.HasPrefix(scope, "instance:") || strings.HasPrefix(scope, "tenant:") {
+			return nil, errors.New("--scopes accepts project scopes only; use --admin or --tenant-admin for administration")
+		}
+	}
+	slices.Sort(scopes)
+	return slices.Compact(scopes), nil
+}
+
+func loginOptions(admin, tenantAdmin bool, raw string) (string, []string, error) {
+	if admin && tenantAdmin || raw != "" && (admin || tenantAdmin) {
+		return "", nil, errors.New("cannot combine --admin, --tenant-admin, or --scopes")
+	}
+	client := analyticsClient
+	if admin {
+		client = adminClient
+	} else if tenantAdmin {
+		client = tenantAdminClient
+	}
+	if raw == "" {
+		return client, strings.Fields(oauthScope(client)), nil
+	}
+	scopes, err := projectLoginScopes(raw)
+	return client, scopes, err
+}
+
+func validSessionScopes(client string, scopes []string) bool {
+	switch client {
+	case adminClient, tenantAdminClient:
+		return slices.Equal(scopes, strings.Fields(oauthScope(client)))
+	case analyticsClient:
+		_, err := projectLoginScopes(strings.Join(scopes, " "))
+		return err == nil
+	default:
+		return false
+	}
 }
 
 type oauthSession struct {
@@ -44,6 +95,7 @@ type oauthSession struct {
 	Access  string    `json:"access_token"`
 	Refresh string    `json:"refresh_token"`
 	Expires time.Time `json:"expires_at"`
+	Scopes  []string  `json:"scopes"`
 }
 
 func sessionFile(origin string) (string, error) {
@@ -121,13 +173,13 @@ func storedAccessToken(ctx context.Context, origin, path string) (string, error)
 	}
 	var s oauthSession
 	if json.Unmarshal(raw, &s) != nil || s.Origin != origin ||
-		(s.Client != analyticsClient && s.Client != adminClient) || s.Refresh == "" || s.Access == "" {
+		!validSessionScopes(s.Client, s.Scopes) || s.Refresh == "" || s.Access == "" {
 		return "", errors.New("invalid OAuth session for this instance; run porcupine login again")
 	}
 	if time.Now().Add(30 * time.Second).Before(s.Expires) {
 		return s.Access, nil
 	}
-	next, err := exchangeToken(ctx, origin, s.Client, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.Refresh}})
+	next, err := exchangeToken(ctx, origin, s.Client, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.Refresh}}, s.Scopes)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +189,10 @@ func storedAccessToken(ctx context.Context, origin, path string) (string, error)
 	return next.Access, nil
 }
 
-func exchangeToken(ctx context.Context, origin, clientID string, form url.Values) (oauthSession, error) {
+func exchangeToken(ctx context.Context, origin, clientID string, form url.Values, allowed []string) (oauthSession, error) {
+	if !validSessionScopes(clientID, allowed) {
+		return oauthSession{}, errors.New("invalid requested OAuth scopes")
+	}
 	resource := origin + "/api/v1"
 	form.Set("resource", resource)
 	form.Set("client_id", clientID)
@@ -169,7 +224,6 @@ func exchangeToken(ctx context.Context, origin, clientID string, form url.Values
 	if err = json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&token); err != nil {
 		return oauthSession{}, errors.New("invalid OAuth token response")
 	}
-	allowed := strings.Fields(oauthScope(clientID))
 	scopes := strings.Fields(token.Scope)
 	if !strings.EqualFold(token.Type, "Bearer") || token.Access == "" || token.Refresh == "" ||
 		token.Resource != resource || len(scopes) == 0 ||
@@ -181,10 +235,12 @@ func exchangeToken(ctx context.Context, origin, clientID string, form url.Values
 			return oauthSession{}, errors.New("unexpected OAuth scope")
 		}
 	}
-	return oauthSession{Origin: origin, Client: clientID, Access: token.Access, Refresh: token.Refresh, Expires: time.Now().Add(time.Duration(token.Seconds) * time.Second)}, nil
+	slices.Sort(scopes)
+	scopes = slices.Compact(scopes)
+	return oauthSession{Origin: origin, Client: clientID, Access: token.Access, Refresh: token.Refresh, Expires: time.Now().Add(time.Duration(token.Seconds) * time.Second), Scopes: scopes}, nil
 }
 
-func login(ctx context.Context, origin string, admin bool) error {
+func login(ctx context.Context, origin, clientID string, scopes []string) error {
 	path, err := sessionFile(origin)
 	if err != nil {
 		return err
@@ -193,7 +249,7 @@ func login(ctx context.Context, origin string, admin bool) error {
 	if err != nil {
 		return fmt.Errorf("open OAuth callback on %s: %w", localCallbackAddr, err)
 	}
-	return browserLogin(ctx, origin, admin, path, listener, func(address string) {
+	return browserLogin(ctx, origin, clientID, scopes, path, listener, func(address string) {
 		fmt.Fprintln(os.Stderr, "Open this URL to authorize Porcupine:")
 		fmt.Fprintln(os.Stderr, address)
 		openLoginBrowser(address)
@@ -221,7 +277,7 @@ func oauthRandom() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes[:]), err
 }
 
-func browserLogin(ctx context.Context, origin string, admin bool, path string, listener net.Listener, open func(string)) error {
+func browserLogin(ctx context.Context, origin, clientID string, scopes []string, path string, listener net.Listener, open func(string)) error {
 	defer listener.Close()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -236,13 +292,9 @@ func browserLogin(ctx context.Context, origin string, admin bool, path string, l
 	hash := sha256.Sum256([]byte(verifier))
 	callbackHost := listener.Addr().String()
 	redirect := "http://" + callbackHost + "/callback"
-	clientID := analyticsClient
-	if admin {
-		clientID = adminClient
-	}
 	params := url.Values{
 		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {redirect},
-		"scope": {oauthScope(clientID)}, "resource": {origin + "/api/v1"}, "state": {state},
+		"scope": {strings.Join(scopes, " ")}, "resource": {origin + "/api/v1"}, "state": {state},
 		"code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(hash[:])},
 	}
 	result := make(chan string, 1)
@@ -295,7 +347,7 @@ func browserLogin(ctx context.Context, origin string, admin bool, path string, l
 			return err
 		}
 		defer unlock()
-		s, err := exchangeToken(ctx, origin, clientID, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}})
+		s, err := exchangeToken(ctx, origin, clientID, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}}, scopes)
 		if err != nil {
 			return err
 		}

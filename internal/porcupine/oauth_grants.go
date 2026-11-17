@@ -15,9 +15,10 @@ type OAuthGrant struct {
 	ID          string   `json:"id" doc:"Consent grant and revocable access-key principal identifier"`
 	HumanID     string   `json:"human_id" doc:"Human principal ID; revoking it through revoke-access-key revokes every consent grant."`
 	ClientID    string   `json:"client_id"`
+	TenantID    string   `json:"tenant_id,omitempty" doc:"Tenant selected by a tenant-administration consent. Empty for project or instance consent."`
 	Resource    string   `json:"resource" doc:"API or MCP resource authorized by this grant."`
-	Issuer      string   `json:"issuer"`
-	Subject     string   `json:"subject" doc:"Verified email address, OIDC subject or retired principal ID."`
+	Issuer      string   `json:"issuer" doc:"Canonical human identity namespace: email for invited accounts, regardless of sign-in provider."`
+	Subject     string   `json:"subject" doc:"Invited account email. Upstream sign-in providers do not grant permissions."`
 	CreatedAtMS int64    `json:"created_at_ms"`
 	ExpiresAtMS int64    `json:"expires_at_ms"`
 	RevokedAt   *string  `json:"revoked_at" nullable:"true"`
@@ -46,9 +47,9 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
 		return nil, apiError(400, "invalid OAuth grant pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id,g.human_id,g.client_id,g.resource,CASE WHEN e.principal_id IS NOT NULL THEN 'email' ELSE coalesce(h.issuer,'local-invitation') END,coalesce(e.email,h.subject,g.human_id),g.created_at_ms,g.expires_at_ms,k.revoked_at,k.permissions,k.projects
- FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id LEFT JOIN oidc_humans h ON h.principal_id=g.human_id LEFT JOIN email_humans e ON e.principal_id=g.human_id
- ORDER BY g.created_at_ms DESC,g.id LIMIT ? OFFSET ?`, input.Limit+1, input.Offset)
+	rows, err := s.control.QueryContext(ctx, `SELECT g.id,g.human_id,g.client_id,g.resource,'email',coalesce(e.email,g.human_id),g.created_at_ms,g.expires_at_ms,k.revoked_at,k.permissions,k.projects,coalesce(t.tenant_id,'')
+ FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id LEFT JOIN email_humans e ON e.principal_id=g.human_id LEFT JOIN oauth_grant_tenants t ON t.grant_id=g.id
+ ORDER BY g.created_at_ms DESC,g.id LIMIT $1 OFFSET $2`, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "OAuth grant storage unavailable")
 	}
@@ -57,7 +58,7 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 	for rows.Next() {
 		var grant OAuthGrant
 		var permissions, projects string
-		if rows.Scan(&grant.ID, &grant.HumanID, &grant.ClientID, &grant.Resource, &grant.Issuer, &grant.Subject, &grant.CreatedAtMS, &grant.ExpiresAtMS, &grant.RevokedAt, &permissions, &projects) != nil {
+		if rows.Scan(&grant.ID, &grant.HumanID, &grant.ClientID, &grant.Resource, &grant.Issuer, &grant.Subject, &grant.CreatedAtMS, &grant.ExpiresAtMS, &grant.RevokedAt, &permissions, &projects, &grant.TenantID) != nil {
 			return nil, apiError(503, "OAuth grant storage unavailable")
 		}
 		if json.Unmarshal([]byte(permissions), &grant.Permissions) != nil || json.Unmarshal([]byte(projects), &grant.Projects) != nil {
@@ -77,7 +78,7 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 }
 func (s *Service) managementRevokeOAuthGrant(ctx context.Context, input *OAuthGrantRevokeInput) (*struct{}, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT principal_id FROM oauth_interactive_grants WHERE id=?`, input.ID).Scan(&id)
+	err := s.control.QueryRowContext(ctx, `SELECT principal_id FROM oauth_interactive_grants WHERE id=$1`, input.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "OAuth grant not found")
 	}

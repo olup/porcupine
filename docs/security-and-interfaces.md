@@ -4,12 +4,12 @@ The HTTP API, CLI and MCP use the same project grants. The [management API refer
 
 ## Technical access
 
-An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md) or configure an upstream OIDC provider and explicit human-to-project bindings for [interactive MCP](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
+An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md). **Unreleased:** configured Google or OIDC sign-in authenticates the same invited human accounts and memberships, alongside email verification. See [sign-in configuration](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
 
 [OAuth client credentials](oauth.md) authorize machine API and MCP access when
 the operator configures an issuer. Clients exchange an ID and secret through
 HTTP Basic at `/oauth/token`; only the resulting short-lived access token goes
-in Bearer authorization. SQLite stores separate secret and token hashes.
+in Bearer authorization. The control database stores separate secret and token hashes.
 Creation returns a client secret once. Logs must not contain raw credentials.
 An administrator can also issue a [static service key](service-keys.md) for a single audience. HTTP and MCP share operation policies.
 
@@ -24,10 +24,35 @@ remains available for offline use. Public single-project PostHog ingestion keys
 stay separate, write-only browser credentials and are not OAuth clients.
 
 Huma provides typed management requests, validation, and generated OpenAPI.
-SQLite stores client credentials, token hashes, and project grants. Explicit permission checks
-run inside the Go process; there is no policy server or role inheritance.
+The control database stores client credentials, token hashes, memberships, and project grants. It uses local SQLite by default or PostgreSQL in shared mode. Explicit permission checks run inside the Go process; there is no external policy server.
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
+
+## Tenant roles and project permissions (unreleased)
+
+The published v0.14.0 release does not include tenant memberships. In the development model, instance and tenant administration have distinct authority:
+
+| Assignment | Authority |
+| --- | --- |
+| Instance operator, `instance:admin` | Deployment settings, tenant creation, hard budgets, suspension, and recovery. The operator can administer every tenant. |
+| Tenant administrator | That tenant's projects, memberships, and team service accounts. Can inspect its configuration and usage. Cannot change operator budgets or another tenant's resources. |
+| Tenant member | Project capabilities granted by that membership. Membership alone does not grant every project. |
+
+Memberships use `project_scope: "all"` or `"selected"`. `all` includes current and future projects in the same tenant. `selected` names projects explicitly. Neither is the deployment-wide `*` grant. An existing analyst connection keeps its approved project selection; a broader membership does not silently widen that connection.
+
+Project roles are fixed permission presets:
+
+| Project role | Permissions |
+| --- | --- |
+| `reader` | `events:read`, `management:read` |
+| `contributor` | Reader permissions plus `events:write`, `identity:write`, and `imports:write` |
+| `manager` | Every project permission listed below, including event correction, deletion, and pipelines |
+
+A grant can use a role preset or an explicit permission list. The same person can be a reader of project A and a contributor to project B. Operations check the required capability on the requested project, rather than a union of capabilities across projects. Tool consent can further restrict those rights. Ordinary CLI login requests read scopes. A write-capable member requests explicit project permissions with `porcupine login --scopes`, or authorizes a registered MCP client for those scopes. Custom project scopes cannot be combined with an administrative login mode. Tenant administrators have fixed authority on their own tenant; their membership does not accept project restrictions or custom permission bundles.
+
+The human-only OAuth scope `tenant:admin` authorizes a fixed administrative role in one explicitly selected tenant. A dedicated client and consent page keep it separate from ordinary project analysis and deployment administration. Team machine accounts receive fixed project permissions; they cannot receive `tenant:admin` or `instance:admin` through tenant provisioning.
+
+Membership changes invalidate affected human-tool connections. Removing a membership preserves access from other memberships and the lifecycle of independent team service accounts. The last active tenant administrator is protected from removal or demotion by another tenant administrator. An instance operator retains recovery authority. See [tenant access](tenant-access.md) and [service keys](service-keys.md).
 
 ## Permission vocabulary
 
@@ -36,6 +61,7 @@ The accepted permission names are:
 | Permission | Intended authority |
 | --- | --- |
 | `instance:admin` | All instance and project operations, including access revocation. Requires `*` project scope. |
+| `tenant:admin` | Unreleased human-only consent scope for administration of one verified tenant. It is never a deployment-wide grant. |
 | `events:read` | Read events and analytics within scope. |
 | `imports:write` | Create and resume historical uploads within a project, together with `events:write`. |
 | `events:write` | Ingest events within scope. |
@@ -97,7 +123,7 @@ The default backend parses native DuckDB SQL and checks its AST before execution
 
 Each project has a separate DuckLake catalog and engine context. The public view excludes private originals and tombstone internals. The engine's filesystem permissions are restricted to its managed directory and external access is disabled after initialization. Query parameter values are bound separately, with exact name matching. Even instance administrators use these project-scoped read-only paths.
 
-Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#fixed-query-limits).
+Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#query-limits).
 
 Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native tests exercise the actual storage boundary in addition to parser rejection.
 
@@ -106,6 +132,20 @@ Public statistics expose elapsed time without physical scan totals. Delivery sta
 Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Analytical S3 is configured before initializing a fresh archive.
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
+
+### Unreleased shared deployment boundary
+
+Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. This mode is not included in v0.14.0.
+
+Any public worker authenticates against shared control. Owner-dependent work is forwarded to the trusted registered worker URL with a signed, bounded internal request. The receiving worker validates routing identity, project ownership, request integrity, and replay protection, then revalidates the original client credential. Public routing headers cannot select an owner or bypass project authorization. Internal transport requires HTTPS outside loopback; network access and routing secrets belong to the operator.
+
+Tenant policies and usage refresh on a ten-second cycle. Cached limits may temporarily lag, but expired policy cannot authorize unlimited new ingestion. Credential revocation and project-deletion fences are checked against shared control independently of that cache. Shared query reservations coordinate tenant capacity immediately, with additional per-process limits.
+
+Native metadata I/O has configurable connection, statement, lock, and TCP bounds. These do not guarantee instant cancellation of every PostgreSQL/libpq or object-store call. A shared query reservation remains valid for the SQL deadline, both I/O grace intervals, and 30 seconds. If native execution has not returned after the deadline, both I/O graces, and 15 seconds, a watchdog terminates the whole worker with exit status `70` before that reservation can be reused. Operators must supervise restart with the same durable volume. This is a process-level safety boundary; it can interrupt unrelated requests and is not enabled for default local mode.
+
+Worker registration binds one stable worker ID to its durable local volume and prevents two active processes from claiming it. This does not replicate accepted events or authorize a replacement owner without its volume. Owner-bound requests return `503` when that owner is unavailable. Non-owner SQL responses set `delivery.pending_unknown: true`; do not infer a drained queue from their zero local counts.
+
+Shared catalog cleanup preserves at least eight days of snapshots and obsolete-file grace for remote readers. Native whole-instance backup and restore are unsupported in this mode; coordinated PostgreSQL, S3, and worker-volume recovery remains an operator responsibility. These are storage and failure boundaries, not a promise of automatic failover or immediate physical erasure.
 
 ## Pipeline boundaries
 

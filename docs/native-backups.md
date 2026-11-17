@@ -1,10 +1,12 @@
 # Configure native backups
 
+**Unreleased storage layout.** Tenant-enabled development builds keep control metadata and the ingestion journal in separate SQLite files. Their `porcupine-native-v2` backups require the matching development server and CLI. This version does not restore the single-database bundles produced by v0.14.0.
+
 Porcupine supports local backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.
 
 Version v0.14.0 also supports an independent S3 destination and an offline restore command. See [remote backups and recovery](native-backup-recovery.md).
 
-The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains an independent SQLite acceptance database, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed.
+The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains independent copies of the control SQLite database and the ingestion journal, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed. These complete-instance backups apply to the local SQLite control mode; shared PostgreSQL deployments require a separate coordinated recovery procedure.
 
 Backups are disabled until the deployment operator sets a private destination directory. Copy completed bundles to independent off-host storage to protect against loss of the server.
 
@@ -50,7 +52,7 @@ The same `get-instance-status` operation is available through HTTP and MCP. `nat
 
 `last_checkpoint_at` identifies the captured recovery point. `last_success` records later publication. Events accepted after the checkpoint can remain outside that bundle even if they arrived before backup publication.
 
-Completed bundles have names such as `pc_backup_<id>`. Each contains `acceptance.sqlite`, `ducklake/`, and `manifest.json`. The manifest records file sizes and SHA-256 hashes, native source identity, server version, checkpoint time and original internal paths. Those private paths are not included in the API status response.
+Completed bundles have names such as `pc_backup_<id>`. Each contains `control.sqlite`, `acceptance.sqlite`, `ducklake/`, and `manifest.json`. `control.sqlite` holds accounts, grants, tenants, projects, and budget policy. `acceptance.sqlite` holds accepted events, permanent retry receipts, identity state, and local work. The manifest records file sizes and SHA-256 hashes, native source identity, server version, checkpoint time and original internal paths. Those private paths are not included in the API status response.
 
 The server checks the copied SQLite databases, their source identities, the complete file inventory and every file hash before publishing a completed bundle. A failed attempt leaves the previous completed bundle intact. Retention runs only after a replacement passes verification. Incomplete destination copies and abandoned local staging directories are cleaned on retry or restart.
 
@@ -58,7 +60,7 @@ Unchanged Parquet files can share storage between bundles through hardlinks afte
 
 ## What pauses during capture
 
-The server pauses native event projection, its SQLite acknowledgments and project deletion at the existing coordination lock. New events can still enter the bounded SQLite queue. Existing analytical reads continue while SQLite is captured through its online backup API.
+The server coordinates the control snapshot, journal snapshot, native event projection, its SQLite acknowledgments, and project deletion. Control metadata stays stable while both SQLite files are captured through the online backup API. Requests that need control changes can wait during this phase; ingestion can also wait when it needs that state. Existing analytical reads continue until native staging needs its reader barrier.
 
 Before capturing the native catalogs, the server waits for active native readers and maintenance to finish. It then briefly closes resident engines, copies their catalog state and pins immutable Parquet files in a private local stage. Queries can wait during this native staging phase. A long export can make the backup reach its deadline; the backup fails and retries instead of cancelling the export.
 
@@ -73,7 +75,7 @@ Restore with the application stopped, into fresh storage, using the same interna
 1. Copy the completed bundle to the recovery host. Compare its inventory and hashes with `manifest.json` before copying files into the target. The source-side verification does not verify a later off-host transfer.
 2. Record the server image digest and preserve private deployment configuration and pipeline encryption keys separately. They are not part of this bundle.
 3. Disable the native backup overlay on a drill, or select a separate backup destination. A recovered copy retains the source identity and must not prune the live deployment's bundles. Keep destination egress blocked before the recovered server starts. Restoring SQLite restores its credentials and outbound jobs as of the checkpoint. Reconcile later credential revocations and project deletions from an independent record.
-4. Copy `acceptance.sqlite` to the original SQLite pathname. Copy the contents of `ducklake/` to the original DuckLake root. Preserve private permissions and the container user's ownership. Do not reuse SQLite WAL files or any files from a newer recovery point.
+4. Copy `acceptance.sqlite` to the original journal pathname and `control.sqlite` to the configured control pathname. The default control path is the journal pathname followed by `.control`; `PORCUPINE_CONTROL_DB` can select a different path. Copy the contents of `ducklake/` to the original DuckLake root. Restore both SQLite files from the same bundle. Preserve private permissions and the container user's ownership. Do not reuse SQLite WAL files or any files from a newer recovery point.
 5. Start one isolated writer. Pause restored pipeline destinations through the API or agent before permitting egress. Keep the recovery deployment isolated from the source's one-time export bucket while pending deletions are reviewed.
 6. Check instance status, known counts, identify results, corrections and deletions. Drain pending events and mutations. Retry known producer IDs and verify that their event IDs are unchanged. Check another project to prove isolation.
 7. Review credentials, pending exports and external side effects before reconnecting clients or resuming destinations. A manual copy does not perform the access reset and destination pause of the [offline CLI restore](native-backup-recovery.md).

@@ -14,8 +14,11 @@ import (
 	"github.com/olup/porcupine/internal/nativequery"
 )
 
-func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, parameters map[string]string) (AnalyticsResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, parameters map[string]string, limits queryExecutionLimits) (AnalyticsResult, error) {
+	if limits.Timeout <= 0 || limits.MaxRows < 1 || limits.MaxRows > 100000 || limits.MaxResultBytes < 256 || limits.MaxResultBytes > 64<<20 {
+		return AnalyticsResult{}, apiError(500, "invalid interactive execution limits")
+	}
+	ctx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()
 	p, release, err := s.leaseProject(ctx, project)
 	if err != nil {
@@ -53,23 +56,26 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 		}
 		alias = "_pc_result_" + strconv.Itoa(suffix+1)
 	}
-	rows, err := conn.QueryContext(ctx, "SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT 1001", args...)
+	result := AnalyticsResult{Meta: columns, Data: []map[string]json.RawMessage{}}
+	metadata, _ := json.Marshal(result.Meta)
+	bytes := len(metadata) + 256
+	if bytes > limits.MaxResultBytes {
+		return AnalyticsResult{}, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
+	}
+	rows, err := conn.QueryContext(ctx, "SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
 	if err != nil {
 		return AnalyticsResult{}, duckLakeQueryError(ctx, err)
 	}
 	defer rows.Close()
-	result := AnalyticsResult{Meta: columns, Data: []map[string]json.RawMessage{}}
-	metadata, _ := json.Marshal(result.Meta)
-	bytes := len(metadata) + 256
 	for rows.Next() {
-		if len(result.Data) >= analyticsMaxRows {
+		if len(result.Data) >= limits.MaxRows {
 			return AnalyticsResult{}, analyticsError(429, "result_row_limit", "analytics result row limit reached", "Reduce the result or use create-event-export for a larger CSV or JSONL export.", "")
 		}
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
 			return AnalyticsResult{}, duckLakeQueryError(ctx, err)
 		}
-		if len(raw) > analyticsMaxBytes-bytes {
+		if len(raw) > limits.MaxResultBytes-bytes {
 			return AnalyticsResult{}, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 		}
 		fields, err := exportJSONObject([]byte(raw))
@@ -95,7 +101,7 @@ func (s *duckLakeStore) Query(ctx context.Context, project, rawSQL string, param
 			return AnalyticsResult{}, apiError(503, "invalid DuckLake result")
 		}
 		bytes += len(encoded) + 1
-		if bytes > analyticsMaxBytes {
+		if bytes > limits.MaxResultBytes {
 			return AnalyticsResult{}, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 		}
 		result.Data = append(result.Data, row)
@@ -181,8 +187,6 @@ func (s *duckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (E
 		return EventCatalog{}, err
 	}
 	project, event, limit, offset := input.ID, input.Event, input.Limit, input.Offset
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	p, release, err := s.leaseProject(ctx, project)
 	if err != nil {
 		return EventCatalog{}, duckLakeProjectError(ctx, err)

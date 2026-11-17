@@ -60,11 +60,15 @@ func TestExistingPipelinesRequireSameKeyAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.db.Exec(`INSERT INTO projects(id,name,created_at) VALUES('p','p','now');
-INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms)
-SELECT 'd','p',id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1`)
+	created := request(t, s, "POST", "/api/v1/projects", c.BootstrapToken, `{"name":"pipeline fixture"}`, 201)
+	projectID := created["project"].(map[string]any)["id"].(string)
+	result, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms)
+SELECT 'd',$1,id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1`, projectID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		t.Fatal("pipeline fixture was not created", rows, err)
 	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)

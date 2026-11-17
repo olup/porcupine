@@ -115,10 +115,22 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				t.Fatal("catalog must contain a bounded first page of summaries")
 			}
 			tail := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20, Offset: 20}, false)
-			if len(tail["operations"].([]any)) != 20 || tail["next_offset"] != nil {
-				t.Fatal("full catalog pagination failed")
+			if len(tail["operations"].([]any)) != 20 {
+				t.Fatal("catalog second page failed")
 			}
 			allOperations := append(catalog["operations"].([]any), tail["operations"].([]any)...)
+			for tail["next_offset"] != nil {
+				offset := int(tail["next_offset"].(float64))
+				if offset != len(allOperations) {
+					t.Fatal("catalog cursor did not advance by the returned page size")
+				}
+				tail = mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20, Offset: offset}, false)
+				items := tail["operations"].([]any)
+				if len(items) == 0 || len(items) > 20 {
+					t.Fatal("invalid catalog continuation page")
+				}
+				allOperations = append(allOperations, items...)
+			}
 			for _, item := range allOperations {
 				op := item.(map[string]any)
 				wantReadOnly := op["method"] == "GET" || op["operation_id"] == "query-events"
@@ -161,7 +173,7 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				t.Fatalf("revoked key retained MCP access: %v", err)
 			}
 			var bootstrapID string
-			if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
+			if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
 				t.Fatal(err)
 			}
 			mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "revoke-access-key", Path: map[string]string{"id": bootstrapID}}, 409)

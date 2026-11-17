@@ -33,22 +33,26 @@ type AnalyticsLimits struct {
 	MaxSQLBytes                        int    `json:"max_sql_bytes"`
 	MaxRows                            int    `json:"max_rows"`
 	MaxResultBytes                     int    `json:"max_result_bytes"`
+	MaxExecutionMS                     int    `json:"max_execution_ms" doc:"Effective tenant interactive execution deadline in milliseconds."`
 	MaxExecutionSeconds                int    `json:"max_execution_seconds"`
 	RequestTimeoutSeconds              int    `json:"request_timeout_seconds" doc:"Suggested client request timeout. Native object-storage I/O can finish after the SQL cancellation deadline."`
 	ObjectStorageRequestTimeoutSeconds int    `json:"object_storage_request_timeout_seconds,omitempty" doc:"Native object-storage I/O timeout. Cancellation cannot immediately interrupt an in-flight HTTP request; it may extend the SQL execution deadline by this interval. Automatic HTTP retries are disabled."`
+	MetadataRequestTimeoutSeconds      int    `json:"metadata_request_timeout_seconds,omitempty" doc:"Configured native PostgreSQL metadata I/O allowance. Shared workers enforce a fail-stop watchdog before an abandoned query permit can be reused."`
 	MaxMemoryBytes                     int    `json:"max_memory_bytes" doc:"Configured memory budget shared by queries on each resident project engine. DuckDB allocations can exceed this; it is not a per-query limit or hard process RSS ceiling."`
 	MemoryScope                        string `json:"memory_scope" doc:"Memory is configured per resident project engine, shared by its work; it is not an instance-wide or per-query bound."`
 	MaxReadRows                        int    `json:"max_read_rows" doc:"Physical row scan quota; zero means unavailable for this engine."`
 	MaxReadBytes                       int    `json:"max_read_bytes" doc:"Physical byte scan quota; zero means unavailable for this engine."`
-	MaxConcurrentQueries               int    `json:"max_concurrent_queries" doc:"Instance-wide query concurrency limit"`
+	MaxConcurrentQueries               int    `json:"max_concurrent_queries" doc:"Effective tenant interactive concurrency, shared across its projects and bounded by deployment capacity."`
 }
 
 type AnalyticsSchema struct {
-	Enabled  bool             `json:"enabled"`
-	Tables   []AnalyticsTable `json:"tables"`
-	Limits   AnalyticsLimits  `json:"limits"`
-	SQL      AnalyticsSQL     `json:"sql"`
-	Delivery DeliveryStatus   `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
+	Enabled          bool                   `json:"enabled"`
+	Tables           []AnalyticsTable       `json:"tables"`
+	Limits           AnalyticsLimits        `json:"limits"`
+	SQL              AnalyticsSQL           `json:"sql"`
+	TenantBudgets    TenantBudgets          `json:"tenant_budgets" doc:"Configured tenant policy; effective limits are bounded by deployment ceilings. No aggregate tenant consumption is included."`
+	DeploymentLimits InteractiveQueryConfig `json:"deployment_limits" doc:"Worker safety ceilings, including analytical capacity shared with background work. Shared deployments additionally enforce tenant concurrency through PostgreSQL permits."`
+	Delivery         DeliveryStatus         `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
 }
 
 type AnalyticsSchemaOutput struct{ Body AnalyticsSchema }
@@ -97,14 +101,14 @@ type AnalyticsQueryOutput struct{ Body AnalyticsQuery }
 func analyticsLimits() AnalyticsLimits {
 	return AnalyticsLimits{
 		MaxSQLBytes: maxSQLBytes, MaxRows: analyticsMaxRows, MaxResultBytes: analyticsMaxBytes,
-		MaxExecutionSeconds: 5, RequestTimeoutSeconds: 10, MaxMemoryBytes: defaultDuckLakeMemoryMB << 20,
+		MaxExecutionMS: 5000, MaxExecutionSeconds: 5, RequestTimeoutSeconds: 10, MaxMemoryBytes: defaultDuckLakeMemoryMB << 20,
 		MemoryScope: "per_resident_project_engine", MaxConcurrentQueries: 2,
 	}
 }
 
 func (s *Service) analyticsProject(ctx context.Context, id string) error {
 	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=?`, id).Scan(&exists); err != nil {
+	if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&exists); err != nil {
 		return apiError(503, "project storage unavailable")
 	}
 	if exists == 0 {

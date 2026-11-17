@@ -108,28 +108,28 @@ func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := `SELECT event,count(*) AS n FROM events WHERE event=$event GROUP BY event`
-	result, err := s.Query(context.Background(), "query-a", query, map[string]string{"event": "purchase"})
+	result, err := s.Query(context.Background(), "query-a", query, map[string]string{"event": "purchase"}, defaultQueryExecutionLimits())
 	if err != nil || result.Rows != 1 || string(result.Data[0]["n"]) != `"1"` || string(result.Data[0]["event"]) != `"purchase"` {
 		t.Fatalf("parameter query: %+v %v", result, err)
 	}
-	result, err = s.Query(context.Background(), "query-a", query, map[string]string{"event": "purchase' OR true --"})
+	result, err = s.Query(context.Background(), "query-a", query, map[string]string{"event": "purchase' OR true --"}, defaultQueryExecutionLimits())
 	if err != nil || result.Rows != 0 {
 		t.Fatalf("parameter changed syntax: %+v %v", result, err)
 	}
 	for _, parameters := range []map[string]string{nil, {"wrong": "purchase"}, {"event": "purchase", "extra": "x"}} {
-		if _, err := s.Query(context.Background(), "query-a", query, parameters); err == nil {
+		if _, err := s.Query(context.Background(), "query-a", query, parameters, defaultQueryExecutionLimits()); err == nil {
 			t.Fatal("incorrect parameter names accepted")
 		}
 	}
-	result, err = s.Query(context.Background(), "query-a", `SELECT CAST('18446744073709551615' AS UBIGINT) AS precise, CAST('99999999999999999999999999999999999999' AS HUGEINT) AS huge, CAST('123.45' AS DECIMAL(10,2)) AS amount FROM events LIMIT 1`, nil)
+	result, err = s.Query(context.Background(), "query-a", `SELECT CAST('18446744073709551615' AS UBIGINT) AS precise, CAST('99999999999999999999999999999999999999' AS HUGEINT) AS huge, CAST('123.45' AS DECIMAL(10,2)) AS amount FROM events LIMIT 1`, nil, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["precise"]) != `"18446744073709551615"` || string(result.Data[0]["huge"]) != `"99999999999999999999999999999999999999"` || string(result.Data[0]["amount"]) != `"123.45"` {
 		t.Fatalf("numeric precision: %+v %v", result, err)
 	}
-	result, err = s.Query(context.Background(), "query-a", `SELECT list(id ORDER BY id) AS ids FROM events`, nil)
+	result, err = s.Query(context.Background(), "query-a", `SELECT list(id ORDER BY id) AS ids FROM events`, nil, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["ids"]) != `["1","2"]` {
 		t.Fatalf("nested integer precision: %+v %v", result, err)
 	}
-	result, err = s.Query(context.Background(), "query-a", `SELECT CAST(timezone('Europe/Paris',TIMESTAMPTZ '2026-11-13 23:30:00+00') AS DATE) AS day FROM events LIMIT 1`, nil)
+	result, err = s.Query(context.Background(), "query-a", `SELECT CAST(timezone('Europe/Paris',TIMESTAMPTZ '2026-11-13 23:30:00+00') AS DATE) AS day FROM events LIMIT 1`, nil, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["day"]) != `"2026-11-14"` {
 		t.Fatalf("local timezone day boundary: %+v %v", result, err)
 	}
@@ -143,7 +143,7 @@ func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
 			t.Fatalf("catalog leaked property values or another project: %s", forbidden)
 		}
 	}
-	_, err = s.Query(context.Background(), "query-a", "SELECT CAST('sensitive-test-value' AS BIGINT) AS broken FROM events", nil)
+	_, err = s.Query(context.Background(), "query-a", "SELECT CAST('sensitive-test-value' AS BIGINT) AS broken FROM events", nil, defaultQueryExecutionLimits())
 	if err == nil || strings.Contains(err.Error(), "sensitive-test-value") {
 		t.Fatalf("raw engine error escaped: %v", err)
 	}
@@ -160,22 +160,22 @@ func TestDuckLakeQueryNativeCancellationAndLimits(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	start := time.Now()
-	_, err := s.Query(ctx, "query-a", `SELECT sum(a.timestamp_ms % (b.timestamp_ms+1) + c.timestamp_ms % (d.timestamp_ms+1)) AS heavy FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d`, nil)
+	_, err := s.Query(ctx, "query-a", `SELECT sum(a.timestamp_ms % (b.timestamp_ms+1) + c.timestamp_ms % (d.timestamp_ms+1)) AS heavy FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d`, nil, defaultQueryExecutionLimits())
 	cancel()
 	if err == nil || time.Since(start) > 2*time.Second {
 		t.Fatalf("native query did not stop promptly: %v, %s", err, time.Since(start))
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	result, err := s.Query(ctx, "query-a", "SELECT count(*) AS n FROM events", nil)
+	result, err := s.Query(ctx, "query-a", "SELECT count(*) AS n FROM events", nil, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["n"]) != `"100"` {
 		t.Fatalf("native connection did not recover after interrupt: %+v %v", result, err)
 	}
-	if _, err := s.Query(context.Background(), "query-a", "SELECT a.id,b.id AS other FROM events a CROSS JOIN events b", nil); err == nil {
+	if _, err := s.Query(context.Background(), "query-a", "SELECT a.id,b.id AS other FROM events a CROSS JOIN events b", nil, defaultQueryExecutionLimits()); err == nil {
 		t.Fatal("oversized row result accepted")
 	}
 	largeSQL := "SELECT concat(" + strings.TrimSuffix(strings.Repeat("$value,", 300), ",") + ") AS too_large FROM events LIMIT 1"
-	if _, err := s.Query(context.Background(), "query-a", largeSQL, map[string]string{"value": strings.Repeat("x", 4096)}); err == nil || queryStatus(err) != 429 {
+	if _, err := s.Query(context.Background(), "query-a", largeSQL, map[string]string{"value": strings.Repeat("x", 4096)}, defaultQueryExecutionLimits()); err == nil || queryStatus(err) != 429 {
 		t.Fatal("oversized byte result accepted")
 	}
 }
@@ -187,7 +187,7 @@ func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
 	if err := store.Apply(context.Background(), []eventProjection{item}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.Query(context.Background(), "json", "SELECT json_extract(properties,'$') AS document, first(events) OVER() AS row FROM events", nil)
+	result, err := store.Query(context.Background(), "json", "SELECT json_extract(properties,'$') AS document, first(events) OVER() AS row FROM events", nil, defaultQueryExecutionLimits())
 	if err != nil || len(result.Data) != 1 {
 		t.Fatalf("raw JSON query: %+v %v", result, err)
 	}
@@ -199,7 +199,7 @@ func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
 		t.Fatalf("typed nested integer precision: %s", result.Data[0]["row"])
 	}
 	for _, value := range []string{"plain", "<>&", "a\x00b", "\n\t\"\\", "日本語", "\u2028\u2029"} {
-		result, err := store.Query(context.Background(), "json", "SELECT $value AS value", map[string]string{"value": value})
+		result, err := store.Query(context.Background(), "json", "SELECT $value AS value", map[string]string{"value": value}, defaultQueryExecutionLimits())
 		encoded, _ := json.Marshal(value)
 		if err != nil || string(result.Data[0]["value"]) != string(encoded) {
 			t.Fatalf("string encoding for %q: %+v %v", value, result, err)
@@ -209,12 +209,12 @@ func TestDuckLakeJSONResultPreflightAndNestedIntegers(t *testing.T) {
 
 func TestDuckLakeQuerySerializationAliasesAndNonfiniteValues(t *testing.T) {
 	store := openLakeStorageTest(t, t.TempDir(), 1)
-	result, err := store.Query(context.Background(), "aliases", "SELECT 1 AS _pc_result, 2 AS _PC_RESULT_1, 3 AS porcupine_query", nil)
+	result, err := store.Query(context.Background(), "aliases", "SELECT 1 AS _pc_result, 2 AS _PC_RESULT_1, 3 AS porcupine_query", nil, defaultQueryExecutionLimits())
 	if err != nil || len(result.Data) != 1 || len(result.Data[0]) != 3 || string(result.Data[0]["porcupine_query"]) != "3" {
 		t.Fatalf("row alias collided with output column: %+v %v", result, err)
 	}
 	for _, value := range []string{"NaN", "Infinity", "-Infinity"} {
-		_, err := store.Query(context.Background(), "aliases", "SELECT CAST('"+value+"' AS DOUBLE) AS unsupported", nil)
+		_, err := store.Query(context.Background(), "aliases", "SELECT CAST('"+value+"' AS DOUBLE) AS unsupported", nil, defaultQueryExecutionLimits())
 		if err == nil || queryStatus(err) != 400 {
 			t.Fatalf("non-finite number %s: %v", value, err)
 		}
@@ -240,7 +240,7 @@ func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
 		{"SELECT \xff", nil, "invalid_sql", ""},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
-			_, queryErr := store.Query(context.Background(), "policy", tc.sql, tc.params)
+			_, queryErr := store.Query(context.Background(), "policy", tc.sql, tc.params, defaultQueryExecutionLimits())
 			_, exportErr := store.ValidateExport(context.Background(), "policy", tc.sql, tc.params, false)
 			var queryFailure, exportFailure *managementError
 			if !errors.As(queryErr, &queryFailure) || !errors.As(exportErr, &exportFailure) {

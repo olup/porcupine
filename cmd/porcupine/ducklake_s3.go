@@ -49,5 +49,12 @@ func analyticsHTTPWriteTimeout(lake *porcupine.DuckLakeConfig) time.Duration {
 		}
 		timeout = max(timeout, time.Duration(15+requestTimeout)*time.Second)
 	}
+	if lake != nil && lake.PostgresURL != "" {
+		metadataTimeout := lake.MetadataTimeoutSeconds
+		if metadataTimeout == 0 {
+			metadataTimeout = 10
+		}
+		timeout += time.Duration(metadataTimeout) * time.Second
+	}
 	return timeout
 }

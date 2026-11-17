@@ -105,11 +105,12 @@ var operations = []operation{
 	},
 	{
 		ID: "create-project", Method: "POST", Path: "/api/v1/projects",
-		Summary:     "Create a project with mixed or OAuth-only server ingestion; mixed projects return a one-time public ingestion key",
+		Summary:     "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"ingestion_mode (string) [mixed server_only] server_only requires configured OAuth, creates no public ingestion key, and requires an API-resource access token or service key on every capture route.",
 			"name (string, required) Project name",
+			"tenant_id (string) Owning tenant. Omit to use the installation's default tenant.",
 		},
 	},
 	{
@@ -117,6 +118,44 @@ var operations = []operation{
 		Summary: "Issue an independent, revocable API or MCP key owned by a machine client",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Machine OAuth client ID that owns this key.", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"audience (string, required) [api mcp] Use the key with this resource only.",
+			"name (string, required)",
+			"permissions (array of string, required) Subset of the service account's permissions.",
+			"projects (array of string, required) Subset of the service account's projects.",
+		},
+	},
+	{
+		ID: "create-tenant", Method: "POST", Path: "/api/v1/tenants",
+		Summary:     "Create a tenant with optional budgets; deployment operator only",
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"budgets (object) Optional complete budget configuration. Omit for unlimited ingestion and deployment-default interactive limits.",
+			"name (string, required)",
+		},
+	},
+	{
+		ID: "create-tenant-service-account", Method: "POST", Path: "/api/v1/tenants/{tenant_id}/service-accounts",
+		Summary: "Create a team-owned machine account with fixed project permissions and a one-time secret",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"name (string, required)",
+			"permissions (array of string, required) Fixed project permissions; administration scopes are not available to machine accounts.",
+			"projects (array of string, required) Explicit projects belonging to this tenant. No wildcard.",
+			"source_id (string) Optional producer source, requiring events:write and exactly one project. Immutable after creation.",
+		},
+	},
+	{
+		ID: "create-tenant-service-api-key", Method: "POST", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}/api-keys",
+		Summary: "Issue a separate API or MCP key within this tenant's machine account grants",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
 		},
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
@@ -264,6 +303,28 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-tenant", Method: "GET", Path: "/api/v1/tenants/{tenant_id}",
+		Summary: "Read configuration of a tenant administered by this caller",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "get-tenant-project-roles", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/project-roles",
+		Summary: "Discover fixed project role presets used when inviting tenant members",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "get-tenant-usage", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/usage",
+		Summary: "Read an administered tenant's UTC monthly acceptance counter and remaining allowance",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "period", In: "query", Type: "string", Description: "UTC calendar month, YYYY-MM. Defaults to the current month. Prior months remain available; there is no manual reset operation.", Required: false},
+		},
+	},
+	{
 		ID: "invite-human", Method: "POST", Path: "/api/v1/humans",
 		Summary:     "Invite a project member or instance administrator. For an administrator use projects [*] and permissions [instance:admin].",
 		ContentType: "application/json", BodyRequired: true,
@@ -272,6 +333,22 @@ var operations = []operation{
 			"grants (array of object) Per-project rights. Alternatively supply both projects and permissions.",
 			"permissions (array of string) Permissions applied in every assigned project.",
 			"projects (array of string) Explicit project IDs. For an instance administrator, use only * with only instance:admin.",
+		},
+	},
+	{
+		ID: "invite-tenant-member", Method: "POST", Path: "/api/v1/tenants/{tenant_id}/members",
+		Summary: "Invite an email human to this tenant as administrator or project-scoped member; sends a notice, not a login code",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"email (string, required)",
+			"grants (array of object)",
+			"permissions (array of string) Default project permissions instead of project_role.",
+			"project_role (string) [reader contributor manager] Default permission preset. Omit for reader. Admin membership has fixed tenant-local authority.",
+			"project_scope (string) [all selected] all includes future projects in this tenant; selected grants only the listed projects.",
+			"role (string, required) [admin member]",
 		},
 	},
 	{
@@ -295,6 +372,15 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
 			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+		},
+	},
+	{
+		ID: "list-human-identities", Method: "GET", Path: "/api/v1/humans/{id}/identities",
+		Summary: "List upstream sign-in identity bindings for a human; deployment operator only",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Durable human account ID.", Required: true},
+			{Name: "cursor", In: "query", Type: "string", Description: "Continue after the binding ID returned as next_cursor.", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
 		},
 	},
 	{
@@ -356,6 +442,9 @@ var operations = []operation{
 	{
 		ID: "list-projects", Method: "GET", Path: "/api/v1/projects",
 		Summary: "List projects accessible to this key",
+		Params: []parameter{
+			{Name: "tenant_id", In: "query", Type: "string", Description: "Optional tenant filter. Existing project grants still apply.", Required: false},
+		},
 	},
 	{
 		ID: "list-quarantined-events", Method: "GET", Path: "/api/v1/projects/{id}/quarantined-events",
@@ -363,6 +452,42 @@ var operations = []operation{
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "after_event_id", In: "query", Type: "string", Description: "Return quarantined originals with event_id greater than this decimal cursor (server default: 0)", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
+		},
+	},
+	{
+		ID: "list-tenant-members", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/members",
+		Summary: "List this tenant's memberships without exposing other teams or global human grants",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "cursor", In: "query", Type: "string", Description: "", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+		},
+	},
+	{
+		ID: "list-tenant-service-accounts", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/service-accounts",
+		Summary: "List this tenant's team machine accounts without secrets",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+		},
+	},
+	{
+		ID: "list-tenant-service-api-keys", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}/api-keys",
+		Summary: "List a team machine account's API and MCP key metadata without secrets",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+		},
+	},
+	{
+		ID: "list-tenants", Method: "GET", Path: "/api/v1/tenants",
+		Summary: "List tenants administered by this caller; operators can list the deployment",
+		Params: []parameter{
+			{Name: "cursor", In: "query", Type: "string", Description: "Continue after the tenant ID returned as next_cursor.", Required: false},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
 		},
 	},
@@ -439,7 +564,7 @@ var operations = []operation{
 	},
 	{
 		ID: "revoke-access-key", Method: "DELETE", Path: "/api/v1/access-keys/{id}",
-		Summary: "Revoke a key; the last active administrator is protected",
+		Summary: "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Access key identifier", Required: true},
 		},
@@ -466,6 +591,39 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "revoke-tenant-member", Method: "DELETE", Path: "/api/v1/tenants/{tenant_id}/members/{human_id}",
+		Summary: "Revoke only this tenant membership and affected human tools; preserve other tenants and independent team service accounts",
+		Params: []parameter{
+			{Name: "human_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "revoke-tenant-service-account", Method: "DELETE", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}",
+		Summary: "Revoke this tenant's machine account and all its tokens and keys",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "revoke-tenant-service-api-key", Method: "DELETE", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}/api-keys/{key_id}",
+		Summary: "Revoke one key owned by this tenant's machine account",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "key_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "unlink-human-identity", Method: "DELETE", Path: "/api/v1/humans/{id}/identities/{identity_id}",
+		Summary: "Unlink one upstream identity and revoke this human's interactive connections; deployment operator only",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Durable human account ID.", Required: true},
+			{Name: "identity_id", In: "path", Type: "string", Description: "The binding ID returned by list-human-identities.", Required: true},
+		},
+	},
+	{
 		ID: "update-human", Method: "PUT", Path: "/api/v1/humans/{id}",
 		Summary: "Replace an invited human’s grants and invalidate affected connections",
 		Params: []parameter{
@@ -476,6 +634,64 @@ var operations = []operation{
 			"grants (array of object)",
 			"permissions (array of string)",
 			"projects (array of string)",
+		},
+	},
+	{
+		ID: "update-tenant", Method: "PATCH", Path: "/api/v1/tenants/{tenant_id}",
+		Summary: "Rename this tenant; only instance operators may change ingestion_allowed",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"ingestion_allowed (boolean) Suspend only new acceptance. Delivery, queries, exports and deletion retain their existing permissions.",
+			"name (string)",
+		},
+	},
+	{
+		ID: "update-tenant-budgets", Method: "PUT", Path: "/api/v1/tenants/{tenant_id}/budgets",
+		Summary: "Replace monthly ingestion and interactive query budgets without resetting consumption; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"hot_query_max_concurrent (integer, required) Interactive operations shared by all projects in this tenant, further bounded by deployment capacity.",
+			"hot_query_max_result_bytes (integer, required) Maximum encoded interactive SQL result size, including metadata overhead.",
+			"hot_query_max_rows (integer, required) Maximum rows returned by an interactive SQL query.",
+			"hot_query_timeout_ms (integer, required) Execution deadline in milliseconds, further bounded by the deployment ceiling.",
+			"ingestion_monthly_events (integer, required) New canonical events accepted per UTC calendar month, including imports and identity controls. Null is unlimited; zero allows only retries of previously accepted events.",
+		},
+	},
+	{
+		ID: "update-tenant-member", Method: "PUT", Path: "/api/v1/tenants/{tenant_id}/members/{human_id}",
+		Summary: "Replace this tenant membership and invalidate affected tool connections; protect the last tenant administrator",
+		Params: []parameter{
+			{Name: "human_id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"grants (array of object)",
+			"permissions (array of string) Default project permissions instead of project_role.",
+			"project_role (string) [reader contributor manager] Default permission preset. Omit for reader. Admin membership has fixed tenant-local authority.",
+			"project_scope (string) [all selected] all includes future projects in this tenant; selected grants only the listed projects.",
+			"role (string, required) [admin member]",
+		},
+	},
+	{
+		ID: "update-tenant-service-account", Method: "PUT", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}",
+		Summary: "Replace a team machine account's name and project grants; grant changes revoke its existing keys",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"name (string, required)",
+			"permissions (array of string, required) Fixed project permissions; administration scopes are not available to machine accounts.",
+			"projects (array of string, required) Explicit projects belonging to this tenant. No wildcard.",
+			"source_id (string) Optional producer source, requiring events:write and exactly one project. Immutable after creation.",
 		},
 	},
 	{

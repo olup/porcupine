@@ -41,6 +41,9 @@ func (c *oauthClient) permitsInteractiveScope(permission string) bool {
 	if c.SourceID != "" || !slices.Contains(c.Permissions, permission) {
 		return false
 	}
+	if slices.Contains(c.Permissions, tenantAdminScope) {
+		return permission == tenantAdminScope && len(c.Permissions) == 1 && slices.Equal(c.Projects, []string{"*"}) && !slices.Contains(c.GrantTypes, "client_credentials")
+	}
 	if c.admin() {
 		return permission == "instance:admin" && len(c.Permissions) == 1 && slices.Equal(c.Projects, []string{"*"}) && !slices.Contains(c.GrantTypes, "client_credentials")
 	}
@@ -82,7 +85,7 @@ func interactiveProjectsAllowed(human, client actor, permissions, projects []str
 	if human.emailHuman && !human.admin() {
 		for _, project := range projects {
 			for _, permission := range permissions {
-				if !slices.Contains(human.emailProjectPermissions[project], permission) {
+				if !slices.Contains(human.projectPermissions[project], permission) {
 					return false
 				}
 			}

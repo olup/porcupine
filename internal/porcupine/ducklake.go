@@ -8,26 +8,29 @@ import (
 
 const defaultDuckLakeMemoryMB = 512
 
-// DuckLakeConfig selects the local analytical store. The native
-// engine is available only in builds made with the ducklake build tag.
+// DuckLakeConfig selects native resource limits, a local working directory and
+// optional shared PostgreSQL metadata with S3 analytical data.
 type DuckLakeConfig struct {
-	Directory           string
-	MemoryLimitMB       int
-	Threads             int
-	MaxOpenProjects     int
-	MaintenanceInterval time.Duration
-	SnapshotRetention   time.Duration
-	CleanupGrace        time.Duration
-	CleanupInterval     time.Duration
-	DisableCleanup      bool
-	S3                  *DuckLakeS3Config
+	Directory              string
+	MemoryLimitMB          int
+	Threads                int
+	MaxOpenProjects        int
+	MaintenanceInterval    time.Duration
+	SnapshotRetention      time.Duration
+	CleanupGrace           time.Duration
+	CleanupInterval        time.Duration
+	DisableCleanup         bool
+	S3                     *DuckLakeS3Config
+	PostgresURL            string
+	SharedSourceID         string
+	MetadataTimeoutSeconds int
 }
 
 type lakeStore interface {
 	SourceID(context.Context) (string, error)
 	Apply(context.Context, []eventProjection) error
 	Load(context.Context, string, string) (eventProjection, error)
-	Query(context.Context, string, string, map[string]string) (AnalyticsResult, error)
+	Query(context.Context, string, string, map[string]string, queryExecutionLimits) (AnalyticsResult, error)
 	ValidateExport(context.Context, string, string, map[string]string, bool) (string, error)
 	Export(context.Context, string, string, map[string]string, *analyticalWindow, int64, exportStreamCallbacks) (exportStreamResult, error)
 	Catalog(context.Context, EventCatalogInput) (EventCatalog, error)

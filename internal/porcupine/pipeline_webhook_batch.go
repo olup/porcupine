@@ -67,7 +67,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []Ev
 			body.Write(encoded)
 		}
 		if chunk.existing {
-			result, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET payload=substr(payload,1,length(payload)-2)||','||?||']}',bytes=?,event_count=? WHERE id=? AND state='queued' AND frozen=0 AND substr(payload,-2)=']}'`, body.String(), chunk.size, chunk.count, chunk.id)
+			result, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET payload=substr(payload,1,length(payload)-2)||','||$1||']}',bytes=$2,event_count=$3 WHERE id=$4 AND state='queued' AND frozen=0 AND substr(payload,-2)=']}'`, body.String(), chunk.size, chunk.count, chunk.id)
 			if err != nil {
 				return err
 			}
@@ -77,12 +77,12 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []Ev
 			}
 		} else {
 			raw := prefix(chunk.id, chunk.start, chunk.end) + body.String() + "]}"
-			if _, err := tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,window_start_ms,window_end_ms,state,next_attempt_ms,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?)`, chunk.id, pipelineID, project, chunk.events[0].UUID, raw, len(raw), chunk.count, chunk.start, chunk.end, max(now, chunk.end), now); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,window_start_ms,window_end_ms,state,next_attempt_ms,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11)`, chunk.id, pipelineID, project, chunk.events[0].UUID, raw, len(raw), chunk.count, chunk.start, chunk.end, max(now, chunk.end), now); err != nil {
 				return err
 			}
 		}
 		for _, event := range chunk.events {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO webhook_members(project_id,pipeline_id,event_uuid,delivery_id) VALUES(?,?,?,?)`, project, pipelineID, event.UUID, chunk.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO webhook_members(project_id,pipeline_id,event_uuid,delivery_id) VALUES($1,$2,$3,$4)`, project, pipelineID, event.UUID, chunk.id); err != nil {
 				return err
 			}
 		}
@@ -99,10 +99,10 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []Ev
 			if webhookCapacityExceeded(globalCount+added, globalBytes+bytesAdded, projectCount+added, projectBytes+bytesAdded, delta, cfg) {
 				return 0, 0, errWebhookCapacity
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,state,next_attempt_ms,created_at_ms) VALUES(?,?,?,?,?,?,1,'queued',?,?)`, id, pipelineID, project, event.UUID, string(raw), len(raw), now, now); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,state,next_attempt_ms,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,1,'queued',$7,$8)`, id, pipelineID, project, event.UUID, string(raw), len(raw), now, now); err != nil {
 				return 0, 0, err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_members(project_id,pipeline_id,event_uuid,delivery_id) VALUES(?,?,?,?)`, project, pipelineID, event.UUID, id); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_members(project_id,pipeline_id,event_uuid,delivery_id) VALUES($1,$2,$3,$4)`, project, pipelineID, event.UUID, id); err != nil {
 				return 0, 0, err
 			}
 			added++
@@ -133,7 +133,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []Ev
 				return 0, 0, err
 			}
 			chunk = &webhookOpenChunk{id: newID(), start: start, end: end}
-			err = tx.QueryRowContext(ctx, `SELECT id,bytes,event_count FROM webhook_deliveries WHERE pipeline_id=? AND state='queued' AND frozen=0 AND window_end_ms=? AND event_count<100 AND bytes<1048576 ORDER BY created_at_ms DESC,id DESC LIMIT 1`, pipelineID, end).Scan(&chunk.id, &chunk.size, &chunk.count)
+			err = tx.QueryRowContext(ctx, `SELECT id,bytes,event_count FROM webhook_deliveries WHERE pipeline_id=$1 AND state='queued' AND frozen=0 AND window_end_ms=$2 AND event_count<100 AND bytes<1048576 ORDER BY created_at_ms DESC,id DESC LIMIT 1`, pipelineID, end).Scan(&chunk.id, &chunk.size, &chunk.count)
 			if err == nil {
 				chunk.existing = true
 			} else if !errors.Is(err, sql.ErrNoRows) {
@@ -175,7 +175,7 @@ func webhookCapacityExceeded(globalCount, globalBytes, projectCount, projectByte
 }
 
 func (s *Service) webhookPipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pipeline_id,state,attempts,created_at_ms,completed_at_ms,error_code,last_status,window_start_ms,window_end_ms,event_count,bytes FROM webhook_deliveries WHERE project_id=? AND pipeline_id=? ORDER BY created_at_ms DESC,id DESC LIMIT ? OFFSET ?`, project, pipeline, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,pipeline_id,state,attempts,created_at_ms,completed_at_ms,error_code,last_status,window_start_ms,window_end_ms,event_count,bytes FROM webhook_deliveries WHERE project_id=$1 AND pipeline_id=$2 ORDER BY created_at_ms DESC,id DESC LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func (s *Service) webhookPipelineRunPage(ctx context.Context, project, pipeline 
 }
 func (s *Service) getWebhookPipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
 	var run PipelineRun
-	err := s.db.QueryRowContext(ctx, `SELECT id,pipeline_id,state,attempts,created_at_ms,completed_at_ms,error_code,last_status,window_start_ms,window_end_ms,event_count,bytes FROM webhook_deliveries WHERE project_id=? AND pipeline_id=? AND id=?`, project, pipeline, id).Scan(&run.ID, &run.PipelineID, &run.State, &run.Attempts, &run.CreatedAtMS, &run.CompletedAtMS, &run.Error, &run.LastStatus, &run.WindowStartMS, &run.WindowEndMS, &run.EventCount, &run.Bytes)
+	err := s.db.QueryRowContext(ctx, `SELECT id,pipeline_id,state,attempts,created_at_ms,completed_at_ms,error_code,last_status,window_start_ms,window_end_ms,event_count,bytes FROM webhook_deliveries WHERE project_id=$1 AND pipeline_id=$2 AND id=$3`, project, pipeline, id).Scan(&run.ID, &run.PipelineID, &run.State, &run.Attempts, &run.CreatedAtMS, &run.CompletedAtMS, &run.Error, &run.LastStatus, &run.WindowStartMS, &run.WindowEndMS, &run.EventCount, &run.Bytes)
 	return run, err
 }
 func (s *Service) retryWebhookPipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
@@ -202,7 +202,7 @@ func (s *Service) retryWebhookPipelineRun(ctx context.Context, project, pipeline
 // A changed body can keep its delivery ID only before any attempt. Once an
 // attempt may have reached the receiver, surviving members get a fresh ID.
 func (s *Service) cancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, uuid string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.pipeline_id,d.payload,d.state,d.attempts,d.frozen,d.window_start_ms,d.window_end_ms FROM webhook_deliveries d JOIN webhook_members m ON m.delivery_id=d.id WHERE m.project_id=? AND m.event_uuid=? AND d.project_id=? AND d.payload<>''`, project, uuid, project)
+	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.pipeline_id,d.payload,d.state,d.attempts,d.frozen,d.window_start_ms,d.window_end_ms FROM webhook_deliveries d JOIN webhook_members m ON m.delivery_id=d.id WHERE m.project_id=$1 AND m.event_uuid=$2 AND d.project_id=$3 AND d.payload<>''`, project, uuid, project)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (s *Service) cancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, u
 		if body.Event != nil && body.Event.UUID != uuid {
 			surviving = append(surviving, *body.Event)
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_members WHERE delivery_id=? AND event_uuid=?`, c.id, uuid); err != nil {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_members WHERE delivery_id=$1 AND event_uuid=$2`, c.id, uuid); err != nil {
 			return err
 		}
 		if len(surviving) > 0 && c.state == "queued" && !c.frozen {
@@ -250,12 +250,12 @@ func (s *Service) cancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, u
 			if err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET payload=?,bytes=?,event_count=? WHERE id=?`, string(encoded), len(encoded), len(surviving), c.id); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET payload=$1,bytes=$2,event_count=$3 WHERE id=$4`, string(encoded), len(encoded), len(surviving), c.id); err != nil {
 				return err
 			}
 			continue
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='canceled',payload='',bytes=0,error_code='event_deleted',completed_at_ms=? WHERE id=?`, s.clock().UnixMilli(), c.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='canceled',payload='',bytes=0,error_code='event_deleted',completed_at_ms=$1 WHERE id=$2`, s.clock().UnixMilli(), c.id); err != nil {
 			return err
 		}
 		if len(surviving) == 0 {
@@ -271,10 +271,10 @@ func (s *Service) cancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, u
 		}
 		// event_uuid is a private representative, while webhook_members preserves
 		// each true identity. A fresh representative avoids legacy unique-key overlap.
-		if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,window_start_ms,window_end_ms,state,next_attempt_ms,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?)`, nextID, c.pipeline, project, nextID, string(encoded), len(encoded), len(surviving), c.start, c.end, max(s.clock().UnixMilli(), c.end), s.clock().UnixMilli()); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,window_start_ms,window_end_ms,state,next_attempt_ms,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11)`, nextID, c.pipeline, project, nextID, string(encoded), len(encoded), len(surviving), c.start, c.end, max(s.clock().UnixMilli(), c.end), s.clock().UnixMilli()); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE webhook_members SET delivery_id=? WHERE delivery_id=?`, nextID, c.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE webhook_members SET delivery_id=$1 WHERE delivery_id=$2`, nextID, c.id); err != nil {
 			return err
 		}
 	}

@@ -94,11 +94,6 @@ func (a *projectActivity) drain(ctx context.Context, id string) (func(), error) 
 }
 
 func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
-	release, err := s.activity.drain(ctx, id)
-	if err != nil {
-		return err
-	}
-	defer release()
 	// Project grants span multiple projects, and delivery batches can do so
 	// too. Drain those short operations before deleting their SQLite inputs.
 	s.catalogMu.Lock()
@@ -109,18 +104,19 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 	var one int
-	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE id=?`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE id=$1`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
 		return apiError(404, "project not found")
 	} else if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO project_deletions(project_id,completed) VALUES(?,0)`, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO project_deletions(project_id,completed) VALUES($1,0)`, id); err != nil {
 		return err
 	}
 	if err = s.stageProjectExportCleanup(ctx, tx, id); err != nil {
 		return err
 	}
-	if err = purgeProjectSQLite(ctx, tx, id); err != nil {
+	err = purgeProjectLocalRecords(ctx, tx, id)
+	if err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -131,13 +127,48 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		return apiError(503, "project deletion interrupted; retry DELETE")
 	}
 	defer s.deletionMu.Unlock()
+	// Cancel local operations before waiting for the SQLite connection. A request
+	// materializing a project anchor may itself be waiting for that connection.
+	finishActivity, err := s.activity.drain(ctx, id)
+	if err != nil {
+		return apiError(503, "project deletion is waiting for local work; retry DELETE")
+	}
+	defer finishActivity()
+	ctx = allowSharedDeletedProject(ctx)
+	var alreadyCompleted bool
+	if err := s.control.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&alreadyCompleted); err == nil && alreadyCompleted {
+		return nil
+	}
+	if s.shared != nil {
+		owner, _, err := s.sharedProjectOwner(ctx, id)
+		if err != nil || owner != s.shared.config.WorkerID {
+			return apiError(503, "project deletion requires its available journal owner")
+		}
+	}
+	if err := s.beginControlProjectDeletion(ctx, id); err != nil {
+		return err
+	}
+	var staged bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&staged); err != nil {
+		return apiError(503, "local deletion state unavailable")
+	}
+	if !staged {
+		if err := s.ensureProjectLocal(ctx, id, actor{}); err != nil {
+			return err
+		}
+	}
+	if s.shared != nil {
+		if err := s.waitSharedProjectQueries(ctx, id); err != nil {
+			return apiError(503, "project deletion is waiting for active queries; retry DELETE")
+		}
+	}
 	ctx, release, err := s.projectionContext(ctx)
 	if err != nil {
 		return apiError(503, "project deletion unavailable; retry DELETE")
 	}
 	defer release()
 	var completed bool
-	err = s.db.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=?`, id).Scan(&completed)
+	err = s.db.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = s.stageProjectDeletion(ctx, id)
 	}
@@ -147,10 +178,13 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 			err = s.deleteProjectArchive(ctx, id)
 		}
 		if err == nil {
-			_, err = s.db.ExecContext(ctx, `UPDATE project_deletions SET completed=1 WHERE project_id=?`, id)
+			_, err = s.db.ExecContext(ctx, `UPDATE project_deletions SET completed=1 WHERE project_id=$1`, id)
 		}
 	}
 	if err == nil {
+		if err := s.completeControlProjectDeletion(ctx, id); err != nil {
+			return apiError(503, "project metadata cleanup incomplete; retry DELETE")
+		}
 		return nil
 	}
 	var known *managementError
@@ -195,6 +229,30 @@ func (s *Service) resumeProjectDeletions(ctx context.Context) {
 		ids = append(ids, id)
 	}
 	rows.Close()
+	query := `SELECT project_id FROM project_deletions WHERE completed=0`
+	var args []any
+	if s.shared != nil {
+		query = `SELECT d.project_id FROM project_deletions d JOIN shared_project_owners o ON o.project_id=d.project_id WHERE d.completed=0 AND o.worker_id=$1`
+		args = []any{s.shared.config.WorkerID}
+	}
+	rows, err = s.control.QueryContext(ctx, query, args...)
+	if err == nil {
+		known := map[string]bool{}
+		for _, id := range ids {
+			known[id] = true
+		}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) != nil {
+				break
+			}
+			if !known[id] {
+				ids = append(ids, id)
+				known[id] = true
+			}
+		}
+		rows.Close()
+	}
 	for _, id := range ids {
 		if ctx.Err() != nil {
 			return

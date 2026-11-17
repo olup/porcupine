@@ -37,11 +37,11 @@ func oauthProtocolClient(t *testing.T, s *Service, permissions, projects []strin
 	secret := "secret+percent:% reserved-character-value"
 	encodedPermissions, _ := json.Marshal(permissions)
 	encodedProjects, _ := json.Marshal(projects)
-	_, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'OAuth fixture',?,?,?,?)`, id, hash("unreturned-principal-"+id), string(encodedPermissions), string(encodedProjects), now())
+	_, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'OAuth fixture',?,?,?,?)`, id, hash("unreturned-principal-"+id), string(encodedPermissions), string(encodedProjects), now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.Exec(`INSERT INTO oauth_clients(client_id,secret_hash) VALUES(?,?)`, id, hash(secret)); err != nil {
+	if _, err = s.control.Exec(`INSERT INTO oauth_clients(client_id,secret_hash) VALUES(?,?)`, id, hash(secret)); err != nil {
 		t.Fatal(err)
 	}
 	return id, secret
@@ -108,14 +108,14 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 	}
 	var storedHash, storedClient, resource, scope string
 	var issued, expires int64
-	if err = s.db.QueryRow(`SELECT token_hash,client_id,resource,scope,issued_at_ms,expires_at_ms FROM oauth_tokens`).Scan(&storedHash, &storedClient, &resource, &scope, &issued, &expires); err != nil {
+	if err = s.control.QueryRow(`SELECT token_hash,client_id,resource,scope,issued_at_ms,expires_at_ms FROM oauth_tokens`).Scan(&storedHash, &storedClient, &resource, &scope, &issued, &expires); err != nil {
 		t.Fatal(err)
 	}
 	if storedHash != hash(token.AccessToken) || storedHash == token.AccessToken || storedClient != clientID || resource != s.oauth.apiResource || scope != "events:read" || expires-issued != 900000 {
 		t.Fatal("unsafe or incorrect persisted token")
 	}
 	var secretHash, principalHash string
-	if err = s.db.QueryRow(`SELECT c.secret_hash,k.token_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, clientID).Scan(&secretHash, &principalHash); err != nil {
+	if err = s.control.QueryRow(`SELECT c.secret_hash,k.token_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, clientID).Scan(&secretHash, &principalHash); err != nil {
 		t.Fatal(err)
 	}
 	if secretHash != hash(secret) || principalHash == secretHash {
@@ -143,7 +143,7 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 	if _, err := s.authenticateOAuthToken(context.Background(), mcp, s.oauth.apiResource); err == nil {
 		t.Fatal("MCP token accepted at API resource")
 	}
-	if _, err := s.db.Exec(`UPDATE access_keys SET permissions='["instance:admin"]',projects='["*"]' WHERE id=?`, id); err != nil {
+	if _, err := s.control.Exec(`UPDATE access_keys SET permissions='["instance:admin"]',projects='["*"]' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	actor, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
@@ -160,7 +160,7 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 	if err != nil || !authorize(newActor, "events:read", otherProject) {
 		t.Fatal("new token did not capture newly authorized scope", err)
 	}
-	if _, err = s.db.Exec(`UPDATE access_keys SET permissions='["events:write"]' WHERE id=?`, id); err != nil {
+	if _, err = s.control.Exec(`UPDATE access_keys SET permissions='["events:write"]' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
 	actor, err = s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
@@ -172,7 +172,7 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 		t.Fatal("expired OAuth token fell back to legacy auth")
 	}
 	clock.Add(-900000)
-	if _, err = s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), id); err != nil {
+	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource); err == nil {
@@ -190,7 +190,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 		t.Fatal("scope was not normalized and sorted")
 	}
 	var bootstrapID string
-	if err := s.db.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrapID); err != nil {
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrapID); err != nil {
 		t.Fatal(err)
 	}
 	principal, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource)
@@ -198,14 +198,14 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 		t.Fatal("bootstrap downscope changed actor identity or retained administration")
 	}
 	full := oauthProtocolRequest(t, s, "bootstrap", adminToken, oauthGrantForm(), 200)["access_token"].(string)
-	if _, err = s.db.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, bootstrapID); err != nil {
+	if _, err = s.control.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, bootstrapID); err != nil {
 		t.Fatal(err)
 	}
 	principal, err = s.authenticateOAuthToken(context.Background(), full, s.oauth.apiResource)
 	if err != nil || principal.admin() || !principal.can("events:read") || principal.can("events:delete") {
 		t.Fatal("old admin token bypassed current grant reduction")
 	}
-	if _, err = s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), bootstrapID); err != nil {
+	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), bootstrapID); err != nil {
 		t.Fatal(err)
 	}
 	oauthProtocolRequest(t, s, "bootstrap", adminToken, oauthGrantForm(), 401)
@@ -273,7 +273,7 @@ func TestOAuthEndpointRateLimitAndPublicIngestClientRejection(t *testing.T) {
 	s, _ := oauthProtocolService(t)
 	_, public := project(t, s)
 	var id string
-	if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(public)).Scan(&id); err != nil {
+	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(public)).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	oauthProtocolRequest(t, s, id, public, oauthGrantForm(), 401)

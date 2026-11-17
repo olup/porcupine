@@ -145,12 +145,12 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 		return nil, apiError(503, "export storage unavailable")
 	}
 	var previousID, previousHash string
-	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM export_jobs WHERE project_id=? AND actor_id=? AND idempotency_hash=?`, input.ID, actorID, keyHash).Scan(&previousID, &previousHash)
+	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM export_jobs WHERE project_id=$1 AND actor_id=$2 AND idempotency_hash=$3`, input.ID, actorID, keyHash).Scan(&previousID, &previousHash)
 	if err == nil {
 		if previousHash != requestHash {
 			return nil, apiError(409, "idempotency_key was used for a different export request")
 		}
-		job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE id=?`, previousID))
+		job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE id=$1`, previousID))
 		if err != nil {
 			return nil, apiError(503, "export storage unavailable")
 		}
@@ -171,7 +171,7 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 		return nil, apiError(503, "export delivery barrier unavailable")
 	}
 	job := ExportJob{ID: newID(), ProjectID: input.ID, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
-	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "export storage unavailable")
 	}
@@ -253,7 +253,7 @@ func (s *Service) cancelEventExport(ctx context.Context, input *ExportGetInput) 
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(503, "export storage unavailable")
 	}
-	job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=? AND id=?`, input.ID, input.ExportID))
+	job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 AND id=$2`, input.ID, input.ExportID))
 	if err != nil {
 		return nil, exportLookupError(err)
 	}
@@ -267,9 +267,9 @@ func (s *Service) cancelEventExport(ctx context.Context, input *ExportGetInput) 
 	if job.State == ExportQueued {
 		job.State = ExportCanceled
 		job.CompletedAt = s.clock().UTC().Format(time.RFC3339Nano)
-		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET state='canceled',cancel_requested=1,cleanup_pending=1,completed_at=?,sql='',parameters='{}' WHERE id=?`, job.CompletedAt, job.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET state='canceled',cancel_requested=1,cleanup_pending=1,completed_at=$1,sql='',parameters='{}' WHERE id=$2`, job.CompletedAt, job.ID)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET cancel_requested=1,cleanup_pending=1 WHERE id=?`, job.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET cancel_requested=1,cleanup_pending=1 WHERE id=$1`, job.ID)
 	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "export storage unavailable")
@@ -310,7 +310,7 @@ func (s *Service) eventExportFiles(ctx context.Context, input *ExportFilesInput)
 	if s.exports == nil || s.exports.store == nil {
 		return nil, apiError(503, "export storage is not configured")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=? AND attempt_id=? AND complete=1 ORDER BY file_index LIMIT ? OFFSET ?`, job.ID, job.AttemptID, input.Limit+1, input.Offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND complete=1 ORDER BY file_index LIMIT $3 OFFSET $4`, job.ID, job.AttemptID, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "export file metadata unavailable")
 	}

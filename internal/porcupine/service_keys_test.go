@@ -22,7 +22,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 			t.Fatal("service key metadata or secrecy contract")
 		}
 		var stored string
-		if err := f.s.db.QueryRow("SELECT token_hash FROM access_keys WHERE id=?", key.ID).Scan(&stored); err != nil || stored != hash(key.Token) {
+		if err := f.s.control.QueryRow("SELECT token_hash FROM access_keys WHERE id=?", key.ID).Scan(&stored); err != nil || stored != hash(key.Token) {
 			t.Fatal("service key stored incorrectly")
 		}
 		return key
@@ -96,7 +96,7 @@ func TestServiceKeyServerOnlyAndParentChange(t *testing.T) {
 	f.call(t, "POST", "/api/v1/oauth-clients/"+parent.ClientID+"/api-keys", admin, body, 201, &private)
 	f.call(t, "POST", "/capture/", private.Token, map[string]any{"event": "server", "distinct_id": "person"}, 200, nil)
 	f.call(t, "POST", "/capture/", "", map[string]any{"api_key": private.Token, "event": "server", "distinct_id": "person"}, 401, nil)
-	if _, err := f.s.db.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, parent.ClientID); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, parent.ClientID); err != nil {
 		t.Fatal(err)
 	}
 	f.call(t, "POST", "/capture/", private.Token, map[string]any{"event": "server", "distinct_id": "person"}, 401, nil)

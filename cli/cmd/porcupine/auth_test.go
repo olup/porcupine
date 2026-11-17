@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,20 +20,23 @@ import (
 )
 
 func TestLocalLoginAndRotatingRefresh(t *testing.T) {
-	for _, admin := range []bool{false, true} {
-		t.Run(fmt.Sprintf("admin=%v", admin), func(t *testing.T) {
+	for _, tc := range []struct{ name, client, scope string }{
+		{"reader", analyticsClient, oauthScope(analyticsClient)},
+		{"contributor", analyticsClient, "events:read events:write imports:write"},
+		{"instance-admin", adminClient, oauthScope(adminClient)},
+		{"tenant-admin", tenantAdminClient, oauthScope(tenantAdminClient)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientID := tc.client
+			scopes := strings.Fields(tc.scope)
 			var challenge atomic.Value
 			var refreshes atomic.Int32
-			clientID := analyticsClient
-			if admin {
-				clientID = adminClient
-			}
 			var origin string
 			issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/oauth/authorize":
 					q := r.URL.Query()
-					if q.Get("client_id") != clientID || q.Get("scope") != oauthScope(clientID) || q.Get("resource") != origin+"/api/v1" || q.Get("code_challenge_method") != "S256" || q.Get("response_type") != "code" || len(q.Get("state")) < 40 {
+					if q.Get("client_id") != clientID || q.Get("scope") != tc.scope || q.Get("resource") != origin+"/api/v1" || q.Get("code_challenge_method") != "S256" || q.Get("response_type") != "code" || len(q.Get("state")) < 40 {
 						t.Error("incorrect authorization parameters")
 					}
 					challenge.Store(q.Get("code_challenge"))
@@ -77,7 +79,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 					default:
 						t.Error("unexpected grant")
 					}
-					json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": refresh, "scope": oauthScope(clientID), "expires_in": expires, "token_type": "Bearer", "resource": origin + "/api/v1"})
+					json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": refresh, "scope": tc.scope, "expires_in": expires, "token_type": "Bearer", "resource": origin + "/api/v1"})
 				default:
 					t.Error("unexpected request")
 					http.NotFound(w, r)
@@ -92,7 +94,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "session.json")
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			err = browserLogin(ctx, origin, admin, path, listener, func(address string) {
+			err = browserLogin(ctx, origin, clientID, scopes, path, listener, func(address string) {
 				res, err := http.Get(address)
 				if err != nil {
 					t.Fatal(err)
@@ -145,7 +147,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if json.Unmarshal(b, &session) != nil || session.Refresh != "refresh2" || session.Client != clientID {
+			if json.Unmarshal(b, &session) != nil || session.Refresh != "refresh2" || session.Client != clientID || strings.Join(session.Scopes, " ") != tc.scope {
 				t.Fatal("rotation was not persisted")
 			}
 		})
@@ -153,7 +155,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 }
 
 func TestTokenEndpointRejectsUnsafeResponses(t *testing.T) {
-	for _, kind := range []string{"wrong-resource", "expanded-scope", "expired", "invalid-grant", "redirect"} {
+	for _, kind := range []string{"wrong-resource", "expanded-scope", "expanded-project-scope", "expired", "invalid-grant", "redirect"} {
 		t.Run(kind, func(t *testing.T) {
 			leaked := false
 			attacker := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { leaked = true }))
@@ -165,6 +167,8 @@ func TestTokenEndpointRejectsUnsafeResponses(t *testing.T) {
 					reply["resource"] = "https://other.example/api/v1"
 				case "expanded-scope":
 					reply["scope"] = "instance:admin"
+				case "expanded-project-scope":
+					reply["scope"] = "events:read events:write"
 				case "expired":
 					reply["expires_in"] = 0
 				case "invalid-grant":
@@ -177,10 +181,36 @@ func TestTokenEndpointRejectsUnsafeResponses(t *testing.T) {
 				json.NewEncoder(w).Encode(reply)
 			}))
 			defer server.Close()
-			_, err := exchangeToken(context.Background(), server.URL, analyticsClient, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"secret-in-body"}})
+			_, err := exchangeToken(context.Background(), server.URL, analyticsClient, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"secret-in-body"}}, strings.Fields(oauthScope(analyticsClient)))
 			if err == nil || strings.Contains(err.Error(), "secret-in-body") || leaked {
 				t.Fatal("unexpected token response accepted or secret disclosed")
 			}
 		})
+	}
+}
+
+func TestLoginRejectsCombinedAdministratorModes(t *testing.T) {
+	_, err := invoke(t, "http://127.0.0.1:8080", "login", "--admin", "--tenant-admin")
+	if err == nil || !strings.Contains(err.Error(), "cannot combine") {
+		t.Fatalf("combined administrator modes were not rejected: %v", err)
+	}
+}
+
+func TestProjectLoginScopeSelection(t *testing.T) {
+	for _, raw := range []string{"events:write,events:read,imports:write", "events:write events:read imports:write events:read"} {
+		client, scopes, err := loginOptions(false, false, raw)
+		if err != nil || client != analyticsClient || strings.Join(scopes, " ") != "events:read events:write imports:write" {
+			t.Fatalf("project scope selection failed: %s %v %v", client, scopes, err)
+		}
+	}
+	for _, raw := range []string{"instance:admin", "tenant:admin", "events:read tenant:admin", "events:read?x=y", " ", ",,"} {
+		if _, _, err := loginOptions(false, false, raw); err == nil {
+			t.Fatalf("unsafe project login scope accepted: %q", raw)
+		}
+	}
+	for _, mode := range []string{"--admin", "--tenant-admin"} {
+		if _, err := invoke(t, "http://127.0.0.1:8080", "login", mode, "--scopes", "events:read"); err == nil || !strings.Contains(err.Error(), "cannot combine") {
+			t.Fatalf("combined scope and role login accepted: %v", err)
+		}
 	}
 }

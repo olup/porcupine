@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Service) s3PipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=? AND p.id=? ORDER BY r.window_start_ms DESC,r.id LIMIT ? OFFSET ?`, project, pipeline, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 ORDER BY r.window_start_ms DESC,r.id LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -29,11 +29,11 @@ func (s *Service) s3PipelineRunPage(ctx context.Context, project, pipeline strin
 }
 func (s *Service) getS3PipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
 	var r PipelineRun
-	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=? AND p.id=? AND r.id=?`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
+	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 AND r.id=$3`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
 	return r, err
 }
 func (s *Service) retryS3PipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',attempts=0,next_attempt_ms=0,error_code='',completed_at_ms=0 WHERE id=? AND pipeline_id=? AND state='failed' AND EXISTS(SELECT 1 FROM pipelines WHERE id=? AND project_id=?)`, id, pipeline, pipeline, project)
+	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',attempts=0,next_attempt_ms=0,error_code='',completed_at_ms=0 WHERE id=$1 AND pipeline_id=$2 AND state='failed' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND project_id=$4)`, id, pipeline, pipeline, project)
 	if err != nil {
 		return false, err
 	}
@@ -59,7 +59,7 @@ func (s *Service) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3
 	return exportstore.New(ctx, exportstore.Config{Bucket: d.Bucket, Region: d.Region, Prefix: d.Prefix, Endpoint: d.Endpoint, UsePathStyle: d.UsePathStyle, AccessKeyID: secret.AccessKeyID, SecretAccessKey: secret.SecretAccessKey, SessionToken: secret.SessionToken})
 }
 func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.Store, id string) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT object_key,upload_id FROM pipeline_s3_files WHERE run_id=?`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT object_key,upload_id FROM pipeline_s3_files WHERE run_id=$1`, id)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.S
 		if err = store.Delete(ctx, f.key); err != nil {
 			return err
 		}
-		if _, err = s.db.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=? AND object_key=?`, id, f.key); err != nil {
+		if _, err = s.db.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=$1 AND object_key=$2`, id, f.key); err != nil {
 			return err
 		}
 	}
@@ -104,7 +104,7 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 	defer release()
 	// Pausing and claiming both serialize in SQLite, so a new attempt cannot start
 	// after this point. A running attempt observes the pause and is cleaned next.
-	if _, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state='paused' WHERE project_id=? AND id=?`, project, id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state='paused' WHERE project_id=$1 AND id=$2`, project, id); err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
 	p, err := s.loadPipeline(ctx, project, id)
@@ -112,10 +112,10 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 		return pipelineLookupError(err)
 	}
 	var running bool
-	if s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=? AND state='running')`, id).Scan(&running) != nil || running {
+	if s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=$1 AND state='running')`, id).Scan(&running) != nil || running {
 		return apiError(503, "pipeline attempt is stopping; retry deletion")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT f.run_id,r.window_start_ms,r.manifest FROM pipeline_s3_files f JOIN pipeline_s3_runs r ON r.id=f.run_id WHERE r.pipeline_id=? AND r.state!='succeeded'`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT f.run_id,r.window_start_ms,r.manifest FROM pipeline_s3_files f JOIN pipeline_s3_runs r ON r.id=f.run_id WHERE r.pipeline_id=$1 AND r.state!='succeeded'`, id)
 	if err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
@@ -164,7 +164,7 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 			}
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=? AND id=? AND NOT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=? AND state='running')`, project, id, id)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=$3 AND state='running')`, project, id, id)
 	if err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
@@ -219,20 +219,20 @@ func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 	}
 	for _, w := range candidates {
 		var next int64
-		err = tx.QueryRowContext(ctx, `SELECT id,state,attempts,attempt_id,event_watermark,mutation_watermark,manifest,next_attempt_ms FROM pipeline_s3_runs WHERE pipeline_id=? AND window_start_ms=?`, w.pipeline.ID, w.start).Scan(&w.id, &w.state, &w.attempts, &w.attemptID, &w.eventWatermark, &w.mutationWatermark, &w.manifest, &next)
+		err = tx.QueryRowContext(ctx, `SELECT id,state,attempts,attempt_id,event_watermark,mutation_watermark,manifest,next_attempt_ms FROM pipeline_s3_runs WHERE pipeline_id=$1 AND window_start_ms=$2`, w.pipeline.ID, w.start).Scan(&w.id, &w.state, &w.attempts, &w.attemptID, &w.eventWatermark, &w.mutationWatermark, &w.manifest, &next)
 		if errors.Is(err, sql.ErrNoRows) {
 			if s.pipelineWindowHasAdmissions(w.pipeline.ProjectID, w.start, w.end) {
 				continue
 			}
 			w.id = newID()
 			w.state = "queued"
-			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE project_id=? AND is_imported=0`, w.pipeline.ProjectID).Scan(&w.eventWatermark); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE project_id=$1 AND is_imported=0`, w.pipeline.ProjectID).Scan(&w.eventWatermark); err != nil {
 				return nil, err
 			}
-			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM mutation_audit WHERE project_id=?`, w.pipeline.ProjectID).Scan(&w.mutationWatermark); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM mutation_audit WHERE project_id=$1`, w.pipeline.ProjectID).Scan(&w.mutationWatermark); err != nil {
 				return nil, err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms,event_watermark,mutation_watermark) VALUES(?,?,?,?,'queued',?,?,?)`, w.id, w.pipeline.ID, w.start, w.end, now, w.eventWatermark, w.mutationWatermark); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms,event_watermark,mutation_watermark) VALUES($1,$2,$3,$4,'queued',$5,$6,$7)`, w.id, w.pipeline.ID, w.start, w.end, now, w.eventWatermark, w.mutationWatermark); err != nil {
 				return nil, err
 			}
 		} else if err != nil {
@@ -241,7 +241,7 @@ func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 		if w.state != "queued" || next > now {
 			continue
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE pipeline_s3_state SET last_attempt_ms=max(?,(SELECT coalesce(max(last_attempt_ms),0)+1 FROM pipeline_s3_state)) WHERE pipeline_id=?`, now, w.pipeline.ID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE pipeline_s3_state SET last_attempt_ms=max($1,(SELECT coalesce(max(last_attempt_ms),0)+1 FROM pipeline_s3_state)) WHERE pipeline_id=$2`, now, w.pipeline.ID); err != nil {
 			return nil, err
 		}
 		if err = tx.Commit(); err != nil {

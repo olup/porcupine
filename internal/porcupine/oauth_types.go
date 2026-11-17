@@ -11,7 +11,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// EmailConfig enables passwordless browser authentication for approved addresses.
+// EmailConfig configures invited human accounts and optional SMTP sign-in delivery.
 type EmailConfig struct {
 	SendCode       func(context.Context, string, string) error
 	SendInvitation func(ctx context.Context, email string, instanceAdmin bool) error
@@ -52,10 +52,10 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 		}
 	}
 	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
-	if c.OIDC != nil && c.Email != nil {
-		return nil, errors.New("choose OIDC or email login")
+	if c.OIDC != nil && c.Email == nil {
+		c.Email = &EmailConfig{}
 	}
-	if c.Email != nil && c.Email.SendCode == nil {
+	if c.Email != nil && c.Email.SendCode == nil && c.OIDC == nil {
 		return nil, errors.New("email login requires a configured sender")
 	}
 	if c.Email != nil || c.OIDC != nil {

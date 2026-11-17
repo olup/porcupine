@@ -52,28 +52,15 @@ func scanExport(row exportScanner) (storedExport, error) {
 }
 
 func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (storedExport, error) {
-	return scanExport(s.db.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=? AND id=?`, projectID, jobID))
+	return scanExport(s.db.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 AND id=$2`, projectID, jobID))
 }
 
 func (s *Service) exportActor(ctx context.Context, keyID string) (actor, error) {
-	return s.exportActorFrom(ctx, s.db, keyID)
-}
-
-func (s *Service) exportActorFrom(ctx context.Context, query oauthQueryer, keyID string) (actor, error) {
-	var result actor
-	var permissions, projects string
-	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=? AND revoked_at IS NULL`, keyID).Scan(&result.ID, &permissions, &projects, &result.SourceID)
-	if err != nil {
-		return result, err
-	}
-	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
-		return actor{}, errors.New("invalid export creator grants")
-	}
-	return s.validateInteractivePrincipal(ctx, query, result)
+	return s.loadCredentialActor(ctx, keyID)
 }
 
 func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,upload_id,complete,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=? AND attempt_id=? ORDER BY file_index`, jobID, attemptID)
+	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,upload_id,complete,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=$1 AND attempt_id=$2 ORDER BY file_index`, jobID, attemptID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +77,7 @@ func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) 
 }
 
 func (s *Service) storedExportPage(ctx context.Context, project string, limit, offset int) ([]storedExport, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?`, project, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 ORDER BY rowid DESC LIMIT $2 OFFSET $3`, project, limit, offset)
 	if err != nil {
 		return nil, err
 	}

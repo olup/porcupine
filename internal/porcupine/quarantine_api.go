@@ -63,7 +63,7 @@ func (s *Service) listQuarantinedEvents(ctx context.Context, input *QuarantinedE
 	if err != nil || after < 0 {
 		return nil, apiError(400, "invalid event ID cursor")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.uuid,q.error_code,q.quarantined_at,e.received_at FROM events e JOIN delivery_quarantine q ON q.event_id=e.id WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT ?`, input.ID, after, input.Limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.uuid,q.error_code,q.quarantined_at,e.received_at FROM events e JOIN delivery_quarantine q ON q.event_id=e.id WHERE e.project_id=$1 AND e.id>$2 ORDER BY e.id LIMIT $3`, input.ID, after, input.Limit+1)
 	if err != nil {
 		return nil, apiError(503, "quarantined event metadata unavailable")
 	}
@@ -98,7 +98,7 @@ func (s *Service) retryQuarantinedEvent(ctx context.Context, input *QuarantinedE
 		return nil, apiError(400, "invalid event ID")
 	}
 	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id=? AND project_id=?)`, id, input.ID).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id=$1 AND project_id=$2)`, id, input.ID).Scan(&exists); err != nil {
 		return nil, apiError(503, "quarantined event storage unavailable")
 	}
 	if exists == 0 {

@@ -3,118 +3,88 @@ package porcupine
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"slices"
 )
 
-func (s *Service) initializeOIDCHumans(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oidc_humans (principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),issuer TEXT NOT NULL,subject TEXT NOT NULL,UNIQUE(issuer,subject));`)
-	if err != nil {
-		return err
+func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (actor, error) {
+	if s.oauth == nil || s.oauth.browser == nil {
+		return actor{}, errors.New("interactive authorization disabled")
 	}
-	if blocked, err := s.restoredIdentityBootstrapBlocked(ctx); err != nil || blocked {
-		return err
+	return loadEmailHuman(ctx, query, humanID)
+}
+
+func (s *Service) oidcHuman(ctx context.Context, subject, email string) (authenticatedHuman, error) {
+	if s.oauth == nil || s.oauth.oidc == nil || subject == "" || len(subject) > 512 {
+		return authenticatedHuman{}, errors.New("identity provider login unavailable")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	email, err := normalizeEmail(email)
 	if err != nil {
-		return err
+		return authenticatedHuman{}, errors.New("invalid verified identity")
+	}
+	tx, err := s.control.BeginTx(ctx, nil)
+	if err != nil {
+		return authenticatedHuman{}, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT principal_id,issuer,subject FROM oidc_humans`)
-	if err != nil {
-		return err
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return authenticatedHuman{}, err
 	}
-	var removed []string
-	for rows.Next() {
-		var id, issuer, subject string
-		if err := rows.Scan(&id, &issuer, &subject); err != nil {
-			rows.Close()
-			return err
+	var id, linkedEmail, invitedEmail string
+	err = tx.QueryRowContext(ctx, `SELECT i.principal_id,i.linked_email,h.email
+FROM oidc_identities i JOIN email_humans h ON h.principal_id=i.principal_id
+WHERE i.issuer=$1 AND i.subject=$2`, s.oauth.oidc.issuer, subject).Scan(&id, &linkedEmail, &invitedEmail)
+	switch {
+	case err == nil:
+		if email != linkedEmail || email != invitedEmail {
+			return authenticatedHuman{}, errors.New("provider identity does not match the invited account")
 		}
-		current := false
-		if s.oauth != nil && s.oauth.oidc != nil && issuer == s.oauth.oidc.issuer {
-			_, current = s.oauth.oidc.bindings[subject]
-		}
-		if !current {
-			removed = append(removed, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, id := range removed {
-		if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?) WHERE id=?`, now(), id); err != nil {
-			return err
-		}
-	}
-	if s.oauth == nil || s.oauth.oidc == nil {
-		return tx.Commit()
-	}
-	for subject, grant := range s.oauth.oidc.bindings {
-		var id string
-		err = tx.QueryRowContext(ctx, `SELECT principal_id FROM oidc_humans WHERE issuer=? AND subject=?`, s.oauth.oidc.issuer, subject).Scan(&id)
-		permissions, _ := json.Marshal(grant.Permissions)
-		configured, _ := json.Marshal(grant.Projects)
-		// Operator settings can still mention a project deleted through the API.
-		// Preserve its tombstone across restarts while allowing future bindings.
-		var projects string
-		if filterErr := tx.QueryRowContext(ctx, `SELECT json_group_array(value) FROM json_each(?)
-WHERE value NOT IN (SELECT project_id FROM project_deletions)`, string(configured)).Scan(&projects); filterErr != nil {
-			return filterErr
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			id = newID()
-			_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'OIDC human',?,?,?,?)`, id, hash("unusable-oidc-"+newID()+newID()), string(permissions), projects, now())
-			if err == nil {
-				_, err = tx.ExecContext(ctx, `INSERT INTO oidc_humans(principal_id,issuer,subject) VALUES(?,?,?)`, id, s.oauth.oidc.issuer, subject)
-			}
-		} else if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE access_keys SET permissions=?,projects=? WHERE id=?`, string(permissions), projects, id)
-		}
+	case errors.Is(err, sql.ErrNoRows):
+		err = tx.QueryRowContext(ctx, `SELECT h.principal_id FROM email_humans h
+JOIN access_keys k ON k.id=h.principal_id WHERE h.email=$1 AND k.revoked_at IS NULL`, email).Scan(&id)
 		if err != nil {
-			return err
+			return authenticatedHuman{}, errors.New("account is not authorized")
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO oidc_identities(id,issuer,subject,principal_id,linked_email,created_at)
+VALUES($1,$2,$3,$4,$5,$6)`, newID(), s.oauth.oidc.issuer, subject, id, email, now()); err != nil {
+			return authenticatedHuman{}, errors.New("provider identity cannot be linked")
+		}
+	default:
+		return authenticatedHuman{}, err
 	}
-	return tx.Commit()
-}
-
-func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (actor, error) {
-	var subject, issuer, permissions, projects string
-	var result actor
-	if s.oauth != nil && s.oauth.config.Email != nil {
-		return loadEmailHuman(ctx, query, humanID)
-	}
-	if s.oauth == nil || s.oauth.oidc == nil {
-		return result, errors.New("interactive authorization disabled")
-	}
-	err := query.QueryRowContext(ctx, `SELECT h.issuer,h.subject,k.id,k.permissions,k.projects FROM oidc_humans h JOIN access_keys k ON k.id=h.principal_id WHERE h.principal_id=? AND k.revoked_at IS NULL`, humanID).Scan(&issuer, &subject, &result.ID, &permissions, &projects)
+	human, err := loadEmailHuman(ctx, tx, id)
 	if err != nil {
-		return actor{}, err
+		return authenticatedHuman{}, err
 	}
-	configured, exists := s.oauth.oidc.bindings[subject]
-	if !exists || issuer != s.oauth.oidc.issuer {
-		return actor{}, errors.New("OIDC human binding removed")
+	var version int64
+	if err := tx.QueryRowContext(ctx, `SELECT login_version FROM email_humans WHERE principal_id=$1`, id).Scan(&version); err != nil {
+		return authenticatedHuman{}, err
 	}
-	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
-		return actor{}, errors.New("invalid human grants")
+	if err := tx.Commit(); err != nil {
+		return authenticatedHuman{}, err
 	}
-	result.Permissions = slices.DeleteFunc(result.Permissions, func(p string) bool { return !slices.Contains(configured.Permissions, p) })
-	result.Projects = slices.DeleteFunc(result.Projects, func(p string) bool { return !slices.Contains(configured.Projects, p) })
-	if len(result.Permissions) == 0 || len(result.Projects) == 0 {
-		return actor{}, errors.New("human has no current grant")
-	}
-	return result, nil
+	return authenticatedHuman{actor: human, proof: humanLoginProof{Version: version, Verified: true}}, nil
 }
 
-func (s *Service) oidcHuman(ctx context.Context, subject string) (actor, error) {
-	var id string
-	if err := s.db.QueryRowContext(ctx, `SELECT principal_id FROM oidc_humans WHERE issuer=? AND subject=?`, s.oauth.oidc.issuer, subject).Scan(&id); err != nil {
-		return actor{}, err
+type humanLoginProof struct {
+	Version  int64 `json:"version"`
+	Verified bool  `json:"verified"`
+}
+
+type authenticatedHuman struct {
+	actor
+	proof humanLoginProof
+}
+
+func checkHumanLoginProof(ctx context.Context, query oauthQueryer, humanID string, proof humanLoginProof) error {
+	if humanID == "" || !proof.Verified {
+		return errors.New("human sign-in required")
 	}
-	return s.loadOAuthHuman(ctx, s.db, id)
+	var version int64
+	if err := query.QueryRowContext(ctx, `SELECT login_version FROM email_humans WHERE principal_id=$1`, humanID).Scan(&version); err != nil {
+		return err
+	}
+	if version != proof.Version {
+		return errors.New("human sign-in was invalidated; restart sign-in")
+	}
+	return nil
 }

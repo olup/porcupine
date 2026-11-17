@@ -140,7 +140,7 @@ func TestDuckLakeExportWorkerPublicationAndRevocation(t *testing.T) {
 			s, job := nativeExportWorkerFixture(t, fake)
 			if revoke {
 				fake.onComplete = func() {
-					if _, err := s.db.Exec("UPDATE access_keys SET revoked_at=? WHERE id=?", now(), job.ActorID); err != nil {
+					if _, err := s.control.Exec("UPDATE access_keys SET revoked_at=? WHERE id=?", now(), job.ActorID); err != nil {
 						t.Error(err)
 					}
 				}
@@ -252,7 +252,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			releaseAdmission()
 			if revoke {
 				fake.data.onComplete = func() {
-					if _, err := s.db.Exec("UPDATE access_keys SET revoked_at=? WHERE id=?", now(), ownerID); err != nil {
+					if _, err := s.control.Exec("UPDATE access_keys SET revoked_at=? WHERE id=?", now(), ownerID); err != nil {
 						t.Error(err)
 					}
 				}
@@ -349,7 +349,7 @@ func TestDuckLakeExportNativeValueParity(t *testing.T) {
 		if strings.Contains(query, "$value") {
 			params = map[string]string{"value": "東京\n<value>"}
 		}
-		expected, err := store.Query(context.Background(), "typed", query, params)
+		expected, err := store.Query(context.Background(), "typed", query, params, defaultQueryExecutionLimits())
 		if err != nil {
 			t.Fatal(query, err)
 		}

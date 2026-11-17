@@ -22,6 +22,7 @@ type NativeRestoreRequest struct {
 	SourceID                     string `json:"source_id"`
 	LocalBundlePath              string `json:"local_bundle_path,omitempty"`
 	TargetDBPath                 string `json:"target_db_path"`
+	TargetControlDBPath          string `json:"target_control_db_path,omitempty"`
 	TargetDuckLakeDirectory      string `json:"target_ducklake_directory"`
 	ResetCredentialsAcknowledged bool   `json:"reset_credentials_acknowledged"`
 	BootstrapToken               string `json:"bootstrap_token"`
@@ -49,7 +50,10 @@ func (r NativeRestoreRequest) String() string   { return "NativeRestoreRequest{c
 func (r NativeRestoreRequest) GoString() string { return r.String() }
 
 func normalizeNativeRestorePaths(r *NativeRestoreRequest) error {
-	for _, p := range []*string{&r.TargetDBPath, &r.TargetDuckLakeDirectory, &r.LocalBundlePath} {
+	if r.TargetControlDBPath == "" {
+		r.TargetControlDBPath = localControlPath(r.TargetDBPath)
+	}
+	for _, p := range []*string{&r.TargetDBPath, &r.TargetControlDBPath, &r.TargetDuckLakeDirectory, &r.LocalBundlePath} {
 		if *p == "" {
 			continue
 		}
@@ -94,13 +98,13 @@ func validateNativeRestoreRequest(r NativeRestoreRequest) error {
 	if len(r.BootstrapToken) < 32 || strings.TrimSpace(r.BootstrapToken) != r.BootstrapToken {
 		return errors.New("a fresh private recovery bootstrap token of at least 32 characters is required")
 	}
-	if !filepath.IsAbs(r.TargetDBPath) || !filepath.IsAbs(r.TargetDuckLakeDirectory) || r.TargetDBPath == r.TargetDuckLakeDirectory {
+	if !filepath.IsAbs(r.TargetDBPath) || !filepath.IsAbs(r.TargetControlDBPath) || !filepath.IsAbs(r.TargetDuckLakeDirectory) {
 		return errors.New("fresh absolute SQLite and DuckLake target paths are required")
 	}
-	if nativeRestorePathsOverlap(r.TargetDBPath, r.TargetDuckLakeDirectory) {
+	if nativeRestorePathsOverlap(r.TargetDBPath, r.TargetControlDBPath) || nativeRestorePathsOverlap(r.TargetDBPath, r.TargetDuckLakeDirectory) || nativeRestorePathsOverlap(r.TargetControlDBPath, r.TargetDuckLakeDirectory) {
 		return errors.New("SQLite target must be outside the DuckLake target directory")
 	}
-	for _, path := range []string{r.TargetDBPath, r.TargetDBPath + "-wal", r.TargetDBPath + "-shm", r.TargetDBPath + ".native-restore-incomplete", r.TargetDuckLakeDirectory} {
+	for _, path := range []string{r.TargetDBPath, r.TargetDBPath + "-wal", r.TargetDBPath + "-shm", r.TargetDBPath + ".native-restore-incomplete", r.TargetControlDBPath, r.TargetControlDBPath + "-wal", r.TargetControlDBPath + "-shm", r.TargetControlDBPath + ".native-restore-incomplete", r.TargetDuckLakeDirectory} {
 		if _, err := os.Lstat(path); err == nil {
 			return errors.New("restore target already exists")
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -111,7 +115,7 @@ func validateNativeRestoreRequest(r NativeRestoreRequest) error {
 		if !filepath.IsAbs(r.LocalBundlePath) {
 			return errors.New("local bundle path must be absolute")
 		}
-		if nativeRestorePathsOverlap(r.LocalBundlePath, r.TargetDBPath) || nativeRestorePathsOverlap(r.LocalBundlePath, r.TargetDuckLakeDirectory) {
+		if nativeRestorePathsOverlap(r.LocalBundlePath, r.TargetDBPath) || nativeRestorePathsOverlap(r.LocalBundlePath, r.TargetControlDBPath) || nativeRestorePathsOverlap(r.LocalBundlePath, r.TargetDuckLakeDirectory) {
 			return errors.New("restore source and target paths overlap")
 		}
 	}
@@ -152,7 +156,7 @@ func verifyRestoreInventory(ctx context.Context, r nativeBackupReader, m nativeB
 			return errors.New("backup S3 bundle is missing an inventory object")
 		}
 	}
-	catalogs := map[string]bool{"acceptance.sqlite": true, "ducklake/registry.sqlite": true}
+	catalogs := map[string]bool{"acceptance.sqlite": true, "control.sqlite": true, "ducklake/registry.sqlite": true}
 	for _, c := range m.Catalogs {
 		catalogs[c.Path] = true
 	}
@@ -195,13 +199,23 @@ func verifyRestoreInventory(ctx context.Context, r nativeBackupReader, m nativeB
 
 // Compare the current application schema without opening or migrating the
 // restored database. Equal release versions alone do not establish compatibility.
-func verifyRestoreSQLiteSchema(ctx context.Context, source *sql.DB) error {
+func verifyRestoreSQLiteSchema(ctx context.Context, journal, control *sql.DB) error {
 	reference, err := Open(Config{DBPath: ":memory:", BootstrapToken: strings.Repeat("r", 32)})
 	if err != nil {
 		return err
 	}
 	defer reference.Close()
-	expected, err := nativeRestoreTableSchemas(ctx, reference.db)
+	if err := verifyRestoreDatabaseSchema(ctx, reference.db, journal); err != nil {
+		return fmt.Errorf("journal: %w", err)
+	}
+	if err := verifyRestoreDatabaseSchema(ctx, reference.control, control); err != nil {
+		return fmt.Errorf("control: %w", err)
+	}
+	return nil
+}
+
+func verifyRestoreDatabaseSchema(ctx context.Context, reference, source *sql.DB) error {
+	expected, err := nativeRestoreTableSchemas(ctx, reference)
 	if err != nil {
 		return err
 	}
@@ -209,13 +223,11 @@ func verifyRestoreSQLiteSchema(ctx context.Context, source *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// Retired invitations contain no analytical data and are erased in the reset.
-	delete(actual, "local_invitations")
 	if _, ok := actual["project_deletion_files"]; ok {
-		if _, err = reference.db.ExecContext(ctx, `CREATE TABLE project_deletion_files(project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL,PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`); err != nil {
+		if _, err = reference.ExecContext(ctx, `CREATE TABLE project_deletion_files(project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL,PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`); err != nil {
 			return err
 		}
-		expected, err = nativeRestoreTableSchemas(ctx, reference.db)
+		expected, err = nativeRestoreTableSchemas(ctx, reference)
 		if err != nil {
 			return err
 		}
@@ -265,9 +277,9 @@ func nativeRestoreTableSchemas(ctx context.Context, db *sql.DB) (map[string]stri
 	return result, nil
 }
 
-func resetNativeRestoreCredentials(ctx context.Context, db *sql.DB, bootstrap string) (NativeRestoreResult, error) {
+func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB, bootstrap string) (NativeRestoreResult, error) {
 	result := NativeRestoreResult{IngestionKeys: []NativeRestoreIngestionKey{}, Warning: "Physical DuckLake snapshot history is rebuilt. Data deleted after the checkpoint cannot be inferred or reconciled by this restore."}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := control.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
@@ -276,17 +288,8 @@ func resetNativeRestoreCredentials(ctx context.Context, db *sql.DB, bootstrap st
 	for _, credential := range []struct{ table, column string }{
 		{"access_keys", "token_hash"}, {"oauth_clients", "secret_hash"}, {"oauth_tokens", "token_hash"},
 		{"oauth_refresh_tokens", "token_hash"}, {"oauth_authorization_codes", "code_hash"}, {"oauth_authorization_requests", "request_hash"},
-		{"local_invitations", "code_hash"},
 	} {
-		if credential.table == "local_invitations" {
-			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_invitations')`).Scan(&exists); err != nil {
-				return result, err
-			}
-			if !exists {
-				continue
-			}
-		}
+
 		var duplicate bool
 		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+credential.table+" WHERE "+credential.column+"=?)", hash(bootstrap)).Scan(&duplicate); err != nil {
 			return result, err
@@ -322,41 +325,13 @@ func resetNativeRestoreCredentials(ctx context.Context, db *sql.DB, bootstrap st
 	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?),token_hash='restored-revoked-'||id`, now()); err != nil {
 		return result, err
 	}
-	for _, table := range []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "oauth_clients", "email_humans", "oidc_humans", "webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "export_files", "project_deletion_files", "import_upload_samples", "import_upload_files"} {
-		if table == "project_deletion_files" {
-			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {
-				return result, err
-			}
-			if !exists {
-				continue
-			}
-		}
+	for _, table := range []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "tenant_credentials", "oauth_clients", "oidc_identities", "email_humans"} {
+
 		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return result, fmt.Errorf("reset restored %s: %w", table, err)
 		}
 	}
-	var invitations bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_invitations')`).Scan(&invitations); err != nil {
-		return result, err
-	}
-	if invitations {
-		if _, err = tx.ExecContext(ctx, "DROP TABLE local_invitations"); err != nil {
-			return result, err
-		}
-	}
-	for _, statement := range []string{
-		`UPDATE pipelines SET state='paused',secret=X''`,
-		`UPDATE export_jobs SET state='canceled',cancel_requested=1,attempt_id='',cleanup_pending=0,file_count=0,error='cancelled by offline credential reset'`,
-		`UPDATE import_uploads SET state='cancelled',error='cancelled by offline credential reset' WHERE state NOT IN ('completed','failed','cancelled')`,
-		`DELETE FROM webhook_queue_usage`,
-		`DELETE FROM metadata WHERE key='native_backup_writer_id'`,
-		`INSERT INTO metadata(key,value) VALUES('native_restore_credentials_reset','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-	} {
-		if _, err = tx.ExecContext(ctx, statement); err != nil {
-			return result, err
-		}
-	}
+
 	result.RecoveryAdminID = newID()
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'recovery bootstrap admin',?,'["instance:admin"]','["*"]',?)`, result.RecoveryAdminID, hash(bootstrap), now()); err != nil {
 		return result, err
@@ -374,10 +349,52 @@ func resetNativeRestoreCredentials(ctx context.Context, db *sql.DB, bootstrap st
 		}
 		raw := token()
 		scope, _ := json.Marshal([]string{key.project})
-		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, newID(), key.name, hash(raw), string(scope), now(), key.source); err != nil {
+		keyID := newID()
+		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, keyID, key.name, hash(raw), string(scope), now(), key.source); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) SELECT ?,tenant_id FROM projects WHERE id=?`, keyID, key.project); err != nil {
 			return result, err
 		}
 		result.IngestionKeys = append(result.IngestionKeys, NativeRestoreIngestionKey{key.project, key.source, raw})
 	}
+	if err := resetNativeRestoreJournal(ctx, journal); err != nil {
+		return result, err
+	}
 	return result, tx.Commit()
+}
+
+func resetNativeRestoreJournal(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "export_files", "project_deletion_files", "import_upload_samples", "import_upload_files"} {
+		if table == "project_deletion_files" {
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				continue
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			return fmt.Errorf("reset restored %s: %w", table, err)
+		}
+	}
+	for _, statement := range []string{
+		`UPDATE pipelines SET state='paused',secret=X''`,
+		`UPDATE export_jobs SET state='canceled',cancel_requested=1,attempt_id='',cleanup_pending=0,file_count=0,error='cancelled by offline credential reset'`,
+		`UPDATE import_uploads SET state='cancelled',error='cancelled by offline credential reset' WHERE state NOT IN ('completed','failed','cancelled')`,
+		`DELETE FROM webhook_queue_usage`,
+		`DELETE FROM metadata WHERE key='native_backup_writer_id'`,
+		`INSERT INTO metadata(key,value) VALUES('native_restore_credentials_reset','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+	} {
+		if _, err = tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

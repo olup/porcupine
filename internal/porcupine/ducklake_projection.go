@@ -134,7 +134,13 @@ func (p *projectLake) apply(ctx context.Context, projections []preparedLakeProje
 			return err
 		}
 		end := min(offset+chunkSize, len(projections))
-		err := p.applyChunk(ctx, projections[offset:end])
+		operation := func() error { return p.applyChunk(ctx, projections[offset:end]) }
+		var err error
+		if p.shared {
+			err = retrySharedNative(ctx, operation)
+		} else {
+			err = operation()
+		}
 		if err == nil {
 			offset = end
 			continue
@@ -189,6 +195,9 @@ func (p *projectLake) applyChunk(ctx context.Context, projections []preparedLake
 		return err
 	}
 	defer tx.Rollback()
+	if err := p.acquireNativeWrite(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, lakeStageProjections, string(encoded)); err != nil {
 		return err
 	}

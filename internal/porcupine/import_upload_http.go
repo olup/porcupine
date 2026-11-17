@@ -147,11 +147,11 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if err := importWriteLock(ctx, tx); err != nil {
 		return nil, err
 	}
-	if err := importCheckAuthority(ctx, tx, a.ID, input.ID); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a.ID, input.ID); err != nil {
 		return nil, err
 	}
 	var id, previousHash string
-	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM import_uploads WHERE project_id=? AND actor_id=? AND idempotency_hash=?`, input.ID, a.ID, keyHash).Scan(&id, &previousHash)
+	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM import_uploads WHERE project_id=$1 AND actor_id=$2 AND idempotency_hash=$3`, input.ID, a.ID, keyHash).Scan(&id, &previousHash)
 	if err == nil {
 		if previousHash != requestHash {
 			return nil, apiError(409, "idempotency_key was used with a different manifest")
@@ -179,7 +179,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 		source = format
 	}
 	now := m.importTime()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO import_uploads(id,project_id,actor_id,source_id,format,idempotency_hash,request_hash,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'uploading',?,?)`, id, input.ID, a.ID, source, format, keyHash, requestHash, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO import_uploads(id,project_id,actor_id,source_id,format,idempotency_hash,request_hash,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'uploading',$8,$9)`, id, input.ID, a.ID, source, format, keyHash, requestHash, now, now); err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
 	hashState, err := importHashState(sha256.New())
@@ -187,7 +187,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 		return nil, apiError(503, "import checksum unavailable")
 	}
 	for index, file := range files {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_files(id,job_id,ordinal,path,kind,size_bytes,sha256,hash_state) VALUES(?,?,?,?,?,?,?,?)`, newID(), id, index, file.Path, file.Kind, file.SizeBytes, file.SHA256, hashState); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_files(id,job_id,ordinal,path,kind,size_bytes,sha256,hash_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, newID(), id, index, file.Path, file.Kind, file.SizeBytes, file.SHA256, hashState); err != nil {
 			return nil, apiError(503, "import manifest unavailable")
 		}
 	}
@@ -216,7 +216,7 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 	if err := m.projectExists(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?`, input.ID, input.Limit+1, input.Offset)
+	rows, err := m.db.QueryContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 ORDER BY rowid DESC LIMIT $2 OFFSET $3`, input.ID, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
@@ -241,7 +241,7 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 		jobs = jobs[:input.Limit]
 	}
 	for _, job := range jobs {
-		if err := m.db.QueryRowContext(ctx, `SELECT coalesce(sum(rows),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(ignored),0),coalesce(sum(unresolved),0),coalesce(sum(invalid),0) FROM import_upload_files WHERE job_id=?`, job.ID).Scan(&job.Counts.Rows, &job.Counts.Accepted, &job.Counts.Duplicates, &job.Counts.Ignored, &job.Counts.Unresolved, &job.Counts.Invalid); err != nil {
+		if err := m.db.QueryRowContext(ctx, `SELECT coalesce(sum(rows),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(ignored),0),coalesce(sum(unresolved),0),coalesce(sum(invalid),0) FROM import_upload_files WHERE job_id=$1`, job.ID).Scan(&job.Counts.Rows, &job.Counts.Accepted, &job.Counts.Duplicates, &job.Counts.Ignored, &job.Counts.Unresolved, &job.Counts.Invalid); err != nil {
 			return nil, apiError(503, "import progress unavailable")
 		}
 		result.Jobs = append(result.Jobs, job)
@@ -250,7 +250,7 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 }
 
 func (m *importManager) loadImportFileForWrite(ctx context.Context, project, jobID, fileID string, a actor) (storedImportUploadFile, error) {
-	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? AND id=?`, project, jobID))
+	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, jobID))
 	if err != nil {
 		return storedImportUploadFile{}, importLookupError(err)
 	}
@@ -260,13 +260,13 @@ func (m *importManager) loadImportFileForWrite(ctx context.Context, project, job
 	if job.State != "uploading" && job.State != "completed" {
 		return storedImportUploadFile{}, apiError(409, "import is terminal")
 	}
-	file, err := scanImportFile(m.db.QueryRowContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=? AND id=?`, jobID, fileID))
+	file, err := scanImportFile(m.db.QueryRowContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=$1 AND id=$2`, jobID, fileID))
 	if err != nil {
 		return file, importLookupError(err)
 	}
 	if file.State == "uploading" {
 		var next string
-		if err := m.db.QueryRowContext(ctx, `SELECT id FROM import_upload_files WHERE job_id=? AND state!='completed' ORDER BY ordinal LIMIT 1`, jobID).Scan(&next); err != nil {
+		if err := m.db.QueryRowContext(ctx, `SELECT id FROM import_upload_files WHERE job_id=$1 AND state!='completed' ORDER BY ordinal LIMIT 1`, jobID).Scan(&next); err != nil {
 			return file, apiError(503, "import progress unavailable")
 		}
 		if next != file.ID {
@@ -394,10 +394,10 @@ func (m *importManager) finishImportUpload(ctx context.Context, input *ImportUpl
 	if err := importWriteLock(ctx, tx); err != nil {
 		return nil, err
 	}
-	if err := importCheckAuthority(ctx, tx, a.ID, input.ID); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), a.ID, input.ID); err != nil {
 		return nil, err
 	}
-	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=? AND id=?`, input.ID, input.ImportID))
+	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, input.ID, input.ImportID))
 	if err != nil {
 		return nil, importLookupError(err)
 	}
@@ -421,17 +421,17 @@ func (m *importManager) finishImportUpload(ctx context.Context, input *ImportUpl
 	}
 	if !cancel {
 		var unfinished int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM import_upload_files WHERE job_id=? AND state!='completed'`, job.ID).Scan(&unfinished); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM import_upload_files WHERE job_id=$1 AND state!='completed'`, job.ID).Scan(&unfinished); err != nil {
 			return nil, apiError(503, "import progress unavailable")
 		}
 		if unfinished > 0 {
 			return nil, apiError(409, "complete every manifest file before completing the import")
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET state=?,updated_at=?,completed_at=? WHERE id=?`, target, m.importTime(), m.importTime(), job.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET state=$1,updated_at=$2,completed_at=$3 WHERE id=$4`, target, m.importTime(), m.importTime(), job.ID); err != nil {
 		return nil, apiError(503, "import checkpoint unavailable")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0 WHERE job_id=?`, job.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0 WHERE job_id=$1`, job.ID); err != nil {
 		return nil, apiError(503, "import cleanup unavailable")
 	}
 	if err := tx.Commit(); err != nil {

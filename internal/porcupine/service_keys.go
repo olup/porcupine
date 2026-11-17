@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -14,16 +15,21 @@ const serviceKeyPrefix = "pc_sk_"
 
 type ServiceKeyCreateInput struct {
 	ID   string `path:"id" doc:"Machine OAuth client ID that owns this key."`
-	Body struct {
-		Name        string   `json:"name" minLength:"1" maxLength:"200"`
-		Audience    string   `json:"audience" enum:"api,mcp" doc:"Use the key with this resource only."`
-		Permissions []string `json:"permissions" minItems:"1" doc:"Subset of the service account's permissions."`
-		Projects    []string `json:"projects" minItems:"1" doc:"Subset of the service account's projects."`
-	}
+	Body ServiceKeySpec
+}
+
+type ServiceKeySpec struct {
+	Name        string   `json:"name" minLength:"1" maxLength:"200"`
+	Audience    string   `json:"audience" enum:"api,mcp" doc:"Use the key with this resource only."`
+	Permissions []string `json:"permissions" minItems:"1" maxItems:"32" doc:"Subset of the service account's permissions."`
+	Projects    []string `json:"projects" minItems:"1" maxItems:"64" doc:"Subset of the service account's projects."`
 }
 
 func (s *Service) initializeServiceKeys(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS service_api_keys(
+	if s.shared != nil {
+		return nil
+	}
+	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS service_api_keys(
 		principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),
 		client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
 		audience TEXT NOT NULL CHECK(audience IN ('api','mcp'))
@@ -60,7 +66,7 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 		return nil, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
@@ -92,17 +98,26 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	id := newID()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES(?,?,?,?,?,?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
 		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES(?,?,?)`, id, parent.ID, body.Audience); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES($1,$2,$3)`, id, parent.ID, body.Audience); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
+	}
+	if len(parent.tenantIDs) == 1 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, parent.tenantIDs[0]); err != nil {
+			return nil, apiError(503, "service key ownership unavailable")
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
-	return &AccessKeyCreateOutput{Body: AccessKeyCreated{ID: id, Name: body.Name, ServiceClientID: parent.ID, Audience: body.Audience, Permissions: body.Permissions, Projects: body.Projects, SourceID: sourceID, Token: secret}}, nil
+	tenantID := ""
+	if len(parent.tenantIDs) == 1 {
+		tenantID = parent.tenantIDs[0]
+	}
+	return &AccessKeyCreateOutput{Body: AccessKeyCreated{TenantID: tenantID, ID: id, Name: body.Name, ServiceClientID: parent.ID, Audience: body.Audience, Permissions: body.Permissions, Projects: body.Projects, SourceID: sourceID, Token: secret}}, nil
 }
 
 func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource string) (actor, error) {
@@ -120,14 +135,42 @@ func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource stri
 	}
 	a := actor{serviceKey: true}
 	var permissions, projects string
-	err := s.db.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id FROM service_api_keys b
+	err := s.control.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id FROM service_api_keys b
 		JOIN access_keys k ON k.id=b.principal_id JOIN access_keys parent ON parent.id=b.client_id
-		WHERE k.token_hash=? AND b.audience=? AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
+		WHERE k.token_hash=$1 AND b.audience=$2 AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
 		return actor{}, err
 	}
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return actor{}, errors.New("invalid service key grants")
 	}
+	return constrainServiceKeyActor(ctx, s.control, a)
+}
+
+func constrainServiceKeyActor(ctx context.Context, query oauthQueryer, a actor) (actor, error) {
+	var parentID string
+	err := query.QueryRowContext(ctx, `SELECT client_id FROM service_api_keys WHERE principal_id=$1`, a.ID).Scan(&parentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, nil
+	}
+	if err != nil {
+		return actor{}, err
+	}
+	a, err = constrainTenantCredentialActor(ctx, query, a)
+	if err != nil {
+		return actor{}, err
+	}
+	parent, err := loadOAuthClient(ctx, query, parentID)
+	if err != nil || !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.tenantIDs, parent.tenantIDs) {
+		return actor{}, errors.New("service key parent authority unavailable")
+	}
+	for _, project := range a.Projects {
+		for _, permission := range a.Permissions {
+			if !authorize(parent.actor, permission, project) {
+				return actor{}, errors.New("service key exceeds current parent grants")
+			}
+		}
+	}
+	a.serviceKey = true
 	return a, nil
 }

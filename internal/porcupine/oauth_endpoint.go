@@ -74,7 +74,7 @@ func (s *Service) authenticateOAuthEndpoint(r *http.Request, form url.Values) (*
 	if id == "" || len(id) > 256 || len(secret) > 4096 || strings.ContainsAny(id+secret, "\r\n\x00") {
 		return nil, 401, "invalid_client"
 	}
-	client, err := loadOAuthClient(r.Context(), s.db, id)
+	client, err := loadOAuthClient(r.Context(), s.control, id)
 	if err != nil {
 		return nil, 401, "invalid_client"
 	}

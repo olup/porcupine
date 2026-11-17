@@ -93,21 +93,23 @@ def check(directory, binary, origin, bootstrap):
     assert b"ready" in cli("--url", origin, "status")
     admin_key = service_key("project provisioner", ["*"],
                             ["management:read", "management:write", "events:write"])["token"]
+    operator_key = service_key("deployment operator", ["*"], ["instance:admin"])["token"]
     status = json.loads(cli("get-instance-status", key=admin_key))
     assert status["status"] == "ok" and status["checks"] == {
         "sqlite": "ok", "ducklake": "ok"}
     assert status["configuration"]["analytics"] is True
     assert all(not value for name, value in status["configuration"].items() if name != "analytics"), "unexpected optional services"
-    cli("create-project", "--body", '{"name":"   "}', key=admin_key, denied=400,
+    cli("create-project", "--body", '{"name":"not authorized"}', key=admin_key, denied=403)
+    cli("create-project", "--body", '{"name":"   "}', key=operator_key, denied=400,
         message="name must contain 1 to 200 UTF-8 bytes")
-    cli("create-project", "--body", '{"name":', key=admin_key, denied=400,
+    cli("create-project", "--body", '{"name":', key=operator_key, denied=400,
         message="validation failed")
     project_file = directory / "project with spaces.json"
     ids = []
     for name in ("CLI private", "CLI other"):
         project_file.write_text(json.dumps({"name": name, "ingestion_mode": "server_only"}))
         project = json.loads(cli("create-project", "--body", "@" + str(project_file),
-                                 key=admin_key))["project"]
+                                 key=operator_key))["project"]
         assert project["name"] == name
         ids.append(project["id"])
     assert set(ids) == {p["id"] for p in json.loads(cli("list-projects", key=admin_key))["projects"]}

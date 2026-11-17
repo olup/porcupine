@@ -149,14 +149,11 @@ func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*
 	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	select {
-	case s.querySlots <- struct{}{}:
-		defer func() { <-s.querySlots }()
-	default:
-		return nil, apiError(429, "analytics query concurrency limit reached")
+	ctx, limits, release, err := s.beginInteractiveQuery(ctx, input.ID)
+	if err != nil {
+		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	defer release()
 	asOf := s.clock().UTC().Truncate(time.Millisecond)
 	read, err := s.lake.Profile(ctx, input.ID, options, asOf)
 	if err != nil {
@@ -171,7 +168,7 @@ func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*
 		return nil, apiError(503, "delivery status unavailable")
 	}
 	encoded, err := json.Marshal(result)
-	if err != nil || len(encoded) > analyticsMaxBytes {
+	if err != nil || len(encoded) > limits.MaxResultBytes {
 		return nil, apiError(429, "event profile result byte limit reached")
 	}
 	return &EventProfileOutput{Body: result}, nil

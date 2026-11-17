@@ -143,7 +143,9 @@ DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 
 
 A delivery barrier waits for accepted originals and mutations through the job's watermarks. It does not exclude later writes. URLs appear only after the whole attempt succeeds.
 
-## Fixed query limits
+## Query limits
+
+The published v0.14.0 release uses these fixed interactive limits:
 
 | Limit | DuckLake value |
 | --- | --- |
@@ -155,6 +157,8 @@ A delivery barrier waits for accepted originals and mutations through the job's 
 | Physical scanned-row or read-byte quota | Not implemented |
 
 Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
+
+**Unreleased:** [tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting.md#unreleased-interactive-query-ceilings) replace fixed interactive limits with configurable bounds. Their defaults remain the values above. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This exposes configured allowances, including the monthly ingestion budget, but no aggregate tenant consumption. SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls. These tenant controls are not in v0.14.0.
 
 ## Delivery consistency and errors
 

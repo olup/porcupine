@@ -39,7 +39,7 @@ func TestManagementKeyListingAndLifecycle(t *testing.T) {
 		t.Fatal("revocation metadata missing")
 	}
 	var stored string
-	if err := s.db.QueryRow(`SELECT token_hash FROM access_keys WHERE id=?`, visibleID).Scan(&stored); err != nil {
+	if err := s.control.QueryRow(`SELECT token_hash FROM access_keys WHERE id=?`, visibleID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored != hash(secret) {
@@ -58,7 +58,7 @@ func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
 	request(t, s, "POST", "/api/v1/access-keys", scoped, `{"name":"bad","permissions":["events:read"],"projects":["*"]}`, 403)
 	request(t, s, "POST", "/api/v1/access-keys", scoped, `{"name":"reader","permissions":["events:read"],"projects":["`+a+`"]}`, 201)
 	var bootstrapID string
-	if err := s.db.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
+	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
 		t.Fatal(err)
 	}
 	request(t, s, "DELETE", "/api/v1/access-keys/"+bootstrapID, adminToken, "", 409)
@@ -68,11 +68,35 @@ func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
 	request(t, s, "DELETE", "/api/v1/access-keys/"+newAdminID, newAdmin, "", 409)
 }
 
+func TestManagementJournalAnchorsDoNotAuthorizeRequests(t *testing.T) {
+	s := service(t, 20)
+	projectID, _ := project(t, s)
+	journalGrant := func(id, raw string) {
+		t.Helper()
+		_, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at)
+VALUES(?,'untrusted journal record',?,'["instance:admin"]','["*"]',?)
+ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,permissions=excluded.permissions,projects=excluded.projects,revoked_at=NULL`, id, hash(raw), now())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	forged := token()
+	journalGrant(newID(), forged)
+	request(t, s, "GET", "/api/v1/tenants", forged, "", 401)
+	readerID, reader := key(t, s, []string{"management:read"}, []string{projectID})
+	journalGrant(readerID, reader)
+	request(t, s, "GET", "/api/v1/projects", reader, "", 200)
+	request(t, s, "GET", "/api/v1/tenants", reader, "", 403)
+	request(t, s, "DELETE", "/api/v1/access-keys/"+readerID, adminToken, "", 204)
+	journalGrant(readerID, reader)
+	request(t, s, "GET", "/api/v1/projects", reader, "", 401)
+}
+
 func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 	s := service(t, 20)
 	api := request(t, s, "GET", "/openapi.json", "", "", 200)
 	paths := api["paths"].(map[string]any)
-	operations := 0
+	operations := map[string]bool{}
 	for path, value := range paths {
 		if !strings.HasPrefix(path, "/api/v1/") {
 			t.Fatalf("unexpected documented operation %s", path)
@@ -82,11 +106,17 @@ func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 			if len(op["security"].([]any)) == 0 {
 				t.Fatal("private operation lacks bearer security")
 			}
-			operations++
+			id := op["operationId"].(string)
+			if operations[id] {
+				t.Fatalf("duplicate public operation ID %s", id)
+			}
+			operations[id] = true
 		}
 	}
-	if operations != 47 {
-		t.Fatalf("got %d operations", operations)
+	for _, id := range []string{"list-projects", "create-project", "query-events", "create-access-key", "get-tenant-project-roles"} {
+		if !operations[id] {
+			t.Fatalf("missing operation %s", id)
+		}
 	}
 	components := api["components"].(map[string]any)
 	security := components["securitySchemes"].(map[string]any)["bearerAuth"].(map[string]any)

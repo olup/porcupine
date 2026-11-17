@@ -87,7 +87,7 @@ func TestDuckLakeS3StoragePinPreservesAWSPartition(t *testing.T) {
 func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
 	c := validLakeS3Config()
 	lake := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &c}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, "queue.db", &lake); err == nil {
+	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, "queue.db", localControlPath("queue.db"), &lake); err == nil {
 		t.Fatal("local-only backups accepted remote data")
 	}
 }
@@ -108,7 +108,7 @@ func TestDuckLakeOpeningReservationsDoNotHoldGlobalMutex(t *testing.T) {
 	}
 	store.opening["cold"] = pending
 	store.mu.Unlock()
-	if _, err := store.Query(ctx, "hot", "SELECT count(*) AS total FROM events", nil); err != nil {
+	if _, err := store.Query(ctx, "hot", "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits()); err != nil {
 		t.Fatal("opening reservation blocked the hot project", err)
 	}
 	deadline, cancel := context.WithTimeout(ctx, 20*time.Millisecond)

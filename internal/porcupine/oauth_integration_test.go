@@ -216,17 +216,17 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 
 	// Tokens and one-time client secrets are persisted only as hashes.
 	var secretHash, bearerHash string
-	if err := f.s.db.QueryRow(`SELECT c.secret_hash,k.token_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, created.ClientID).Scan(&secretHash, &bearerHash); err != nil {
+	if err := f.s.control.QueryRow(`SELECT c.secret_hash,k.token_hash FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id WHERE c.client_id=?`, created.ClientID).Scan(&secretHash, &bearerHash); err != nil {
 		t.Fatal(err)
 	}
 	if secretHash != hash(created.ClientSecret) || secretHash == created.ClientSecret || bearerHash == hash(created.ClientSecret) {
 		t.Fatal("client secret persisted in plaintext or reused as bearer key")
 	}
 	var rawTokens, hashedTokens int
-	if err := f.s.db.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE token_hash=?`, read.AccessToken).Scan(&rawTokens); err != nil {
+	if err := f.s.control.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE token_hash=?`, read.AccessToken).Scan(&rawTokens); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.db.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE token_hash=?`, hash(read.AccessToken)).Scan(&hashedTokens); err != nil {
+	if err := f.s.control.QueryRow(`SELECT count(*) FROM oauth_tokens WHERE token_hash=?`, hash(read.AccessToken)).Scan(&hashedTokens); err != nil {
 		t.Fatal(err)
 	}
 	if rawTokens != 0 || hashedTokens != 1 {
@@ -252,18 +252,18 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	}
 
 	// Current grants can remove permissions immediately from previously issued tokens.
-	if _, err := f.s.db.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, created.ClientID); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, created.ClientID); err != nil {
 		t.Fatal(err)
 	}
 	f.call(t, "POST", "/capture/", write.AccessToken, event("removed-write"), 403, nil)
 	f.call(t, "GET", path, read.AccessToken, nil, 200, nil)
 	projects, _ := json.Marshal([]string{b})
-	if _, err := f.s.db.Exec(`UPDATE access_keys SET projects=? WHERE id=?`, string(projects), created.ClientID); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=? WHERE id=?`, string(projects), created.ClientID); err != nil {
 		t.Fatal(err)
 	}
 	f.call(t, "GET", path, read.AccessToken, nil, 403, nil)
 	projects, _ = json.Marshal([]string{a})
-	if _, err := f.s.db.Exec(`UPDATE access_keys SET projects=? WHERE id=?`, string(projects), created.ClientID); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=? WHERE id=?`, string(projects), created.ClientID); err != nil {
 		t.Fatal(err)
 	}
 	f.call(t, "DELETE", "/api/v1/oauth-clients/"+created.ClientID, admin.AccessToken, nil, 204, nil)

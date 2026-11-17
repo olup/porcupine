@@ -102,7 +102,7 @@ func (s *Service) createS3PipelineState(ctx context.Context, tx *sql.Tx, id stri
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_state(pipeline_id,cursor_ms) VALUES(?,?)`, id, start.UnixMilli())
+	_, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_state(pipeline_id,cursor_ms) VALUES($1,$2)`, id, start.UnixMilli())
 	return err
 }
 func (s *Service) validateS3PipelineSpec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {

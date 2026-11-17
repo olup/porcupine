@@ -27,11 +27,15 @@ To let an agent guide you, give it the [agent guide](https://olup.github.io/porc
 
 ## Run an instance
 
-Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
+Start with [hosting](hosting.md). Then [set up team sign-in](connect-your-team.md), [manage projects](projects.md), and [invite people](email-accounts.md). For the unreleased tenant workflow, [invite the first tenant administrator](tenant-access.md). For a backend, cron job, or shared agent, create a [service key](service-keys.md).
 
 The deployment operator chooses [storage](storage.md) and configures [backups](restore.md). DuckLake uses local SSD storage by default; new deployments can select [analytical S3](ducklake-s3.md) for their data files. These settings apply to the deployment and are separate from project permissions. You can also read an authenticated [instance status report](instance-status.md). Operators can configure and monitor [DuckLake history cleanup](ducklake-cleanup.md) and [scheduled native backups](native-backups.md).
 
 Version v0.14.0 includes [remote backups and offline recovery](native-backup-recovery.md).
+
+**Unreleased:** [tenants and usage budgets](tenants.md) group projects under a monthly ingestion allowance and shared interactive query limits. After connecting the instance operator, [choose a tenant and invite its first administrator](tenant-access.md). A fresh instance already has the `default` tenant for a single team. [Tenant administrators](tenant-access.md) can manage their own projects, memberships, and service accounts. Members receive permissions on selected projects or all projects in their tenant. This feature requires a fresh data directory and is not included in v0.14.0.
+
+Optional [shared PostgreSQL deployment](shared-deployment.md) is also unreleased: one binary can use PostgreSQL control/catalog metadata, owner-local SQLite queues, and S3 Parquet. Any worker can serve as a public entry point; accepted events and jobs stay with their durable project owner. This does not provide automatic owner failover or native whole-instance backup/restore.
 
 ## Look up a contract
 

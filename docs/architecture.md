@@ -13,9 +13,29 @@ Each project has its own local DuckLake catalog and either a local Parquet direc
 
 SQLite remains authoritative for projects, grants, OAuth state, receipts, pending events, mutations, and destination jobs. DuckLake stores analytical history. Both are needed for recovery.
 
+## Unreleased control and ingestion separation
+
+Local development builds use distinct SQLite databases for control metadata and the ingestion journal. `Service.control` owns accounts, credentials, tenants, project definitions, budget policy, and aggregate usage. `Service.db` owns event acceptance, receipt history, identity state, exact local acceptance counters, imports, mutations, and delivery jobs. Journal project and actor rows are uncredentialed foreign-key anchors, not authorization records.
+
+A local acceptance batch refreshes authoritative policy under the standalone admission lock, then atomically accepts events and consumption in the journal. Policy changes use the same lock. Usage reads replay the journal's high-water counters into control without charging twice. Native backups capture both SQLite databases and analytical state; file identities prevent pairing unrelated snapshots. The separate local layout is unreleased and requires a fresh data directory.
+
+## Unreleased shared deployment
+
+The same server can optionally use [shared PostgreSQL metadata](shared-deployment.md) and S3 while keeping a durable SQLite volume on each worker. This configuration is in development and is not included in v0.14.0.
+
+PostgreSQL holds control metadata, authorization, policies, usage reports, worker ownership, query reservations, and DuckLake catalogs. It does not hold event payloads. PostgreSQL-backed DuckLake catalogs disable data inlining, so payloads move directly from the owner's SQLite queue into S3 Parquet files.
+
+Each project has one durable owner for its acceptance queue, receipt ledger, identities, imports, mutations, and jobs. Any public worker can authenticate a request and forward owner-bound work internally. SQL can read delivered data on any worker through the shared catalog and S3. A non-owner query reports `delivery.pending_unknown: true`; schema discovery routes to the owner for authoritative delivery status.
+
+Workers share tenant query reservations and publish cumulative monthly usage with a ten-second budget refresh. Auth revocation is checked against shared control independently of this cache. Owner-local SQLite commits remain the acceptance boundary. Adding workers distributes projects and analytical requests, while a project's writes stay with its owner.
+
+Native PostgreSQL metadata uses bounded connection, statement, lock, and TCP settings, but not every native network call stops immediately on cancellation. Shared interactive execution has a fail-stop watchdog: if native work exceeds its SQL deadline, both I/O grace allowances, and a 15-second margin, the process exits with status `70` before its shared permit becomes reusable. Operators must supervise restart with the same owner volume. [Timeout and supervision contract](shared-deployment.md#native-timeouts-and-worker-supervision)
+
+There is no automatic owner failover without its volume. An unavailable owner produces `503` for owner-bound requests. Recovery requires the shared PostgreSQL metadata, S3 data, and every owner volume; native whole-instance backup and restore are unsupported in shared mode. [Failure and recovery contract](shared-deployment.md#failure-and-recovery-boundary)
+
 ## Deployment and isolation
 
-Run one application process per SQLite database and DuckLake directory. Keep the full `/data` volume on persistent local storage. A second writer, a replicated broker, and automatic host failover are outside this deployment model.
+Run one application process per SQLite database and DuckLake directory. Keep the full `/data` volume on persistent local storage. The default deployment has one writer. The unreleased shared deployment has one writer per project owner, with a separate persistent volume per worker. A replicated event queue and automatic owner failover are outside both models.
 
 Project isolation applies to HTTP, CLI, MCP, interactive queries, exports, and destination pipelines. Native SQL validation rejects external sources, table functions, private tables, writes, and configuration changes. Each engine is restricted to its managed local directory and, when configured, its own S3 prefix. Output, time, and concurrency limits also apply. DuckDB's memory setting is a shared engine budget, not a hard process-memory limit; use a container limit for containment.
 

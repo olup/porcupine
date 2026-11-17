@@ -81,7 +81,7 @@ func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []Ev
 		return nil
 	}
 	projectID := events[0].ProjectID
-	rows, err := tx.QueryContext(ctx, `SELECT id,config FROM pipelines WHERE project_id=? AND kind='webhook' AND state='active' ORDER BY id`, projectID)
+	rows, err := tx.QueryContext(ctx, `SELECT id,config FROM pipelines WHERE project_id=$1 AND kind='webhook' AND state='active' ORDER BY id`, projectID)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []Ev
 	if err = tx.QueryRowContext(ctx, `SELECT count,bytes FROM webhook_queue_usage WHERE scope='instance'`).Scan(&globalCount, &globalBytes); err != nil {
 		return err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT count,bytes FROM webhook_queue_usage WHERE scope=?`, "project:"+projectID).Scan(&projectCount, &projectBytes)
+	err = tx.QueryRowContext(ctx, `SELECT count,bytes FROM webhook_queue_usage WHERE scope=$1`, "project:"+projectID).Scan(&projectCount, &projectBytes)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -148,18 +148,16 @@ type webhookDelivery struct {
 	attempts                                    int
 }
 
-func pipelineCreatorAuthorized(ctx context.Context, q oauthQueryer, id, project string) (bool, error) {
-	var a actor
-	var permissions, projects string
-	err := q.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=? AND revoked_at IS NULL`, id).Scan(&a.ID, &permissions, &projects)
-	if errors.Is(err, sql.ErrNoRows) {
+func (s *Service) pipelineCreatorAuthorized(ctx context.Context, id, project string) (bool, error) {
+	if err := s.requireSharedProjectOwner(ctx, project); err != nil {
+		return false, err
+	}
+	a, err := s.loadCredentialActor(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, errInteractiveGrant) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
-	}
-	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
-		return false, errors.New("invalid pipeline creator grants")
 	}
 	return authorize(a, "pipelines:write", project) && authorize(a, "events:read", project), nil
 }
@@ -174,19 +172,19 @@ func (s *Service) claimWebhook(ctx context.Context) (*webhookDelivery, error) {
 		return nil, err
 	}
 	var d webhookDelivery
-	err = tx.QueryRowContext(ctx, `SELECT d.id,d.pipeline_id,d.project_id,p.actor_id,d.payload,p.secret,d.attempts FROM webhook_deliveries d JOIN pipelines p ON p.id=d.pipeline_id AND p.project_id=d.project_id WHERE d.state='queued' AND d.next_attempt_ms<=? AND p.kind='webhook' AND p.state='active' AND NOT EXISTS(SELECT 1 FROM webhook_cooldowns c WHERE c.pipeline_id=d.pipeline_id AND c.not_before_ms>?) ORDER BY d.next_attempt_ms,d.created_at_ms,d.id LIMIT 1`, s.clock().UnixMilli(), s.clock().UnixMilli()).Scan(&d.id, &d.pipelineID, &d.projectID, &d.actorID, &d.payload, &d.secret, &d.attempts)
+	err = tx.QueryRowContext(ctx, `SELECT d.id,d.pipeline_id,d.project_id,p.actor_id,d.payload,p.secret,d.attempts FROM webhook_deliveries d JOIN pipelines p ON p.id=d.pipeline_id AND p.project_id=d.project_id WHERE d.state='queued' AND d.next_attempt_ms<=$1 AND p.kind='webhook' AND p.state='active' AND NOT EXISTS(SELECT 1 FROM webhook_cooldowns c WHERE c.pipeline_id=d.pipeline_id AND c.not_before_ms>$2) ORDER BY d.next_attempt_ms,d.created_at_ms,d.id LIMIT 1`, s.clock().UnixMilli(), s.clock().UnixMilli()).Scan(&d.id, &d.pipelineID, &d.projectID, &d.actorID, &d.payload, &d.secret, &d.attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	allowed, err := pipelineCreatorAuthorized(ctx, tx, d.actorID, d.projectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, d.actorID, d.projectID)
 	if err != nil {
 		return nil, err
 	}
 	var deletedUUID string
-	err = tx.QueryRowContext(ctx, `SELECT m.event_uuid FROM webhook_members m JOIN event_heads h ON h.project_id=m.project_id AND h.uuid=m.event_uuid WHERE m.project_id=? AND m.delivery_id=? AND h.is_deleted=1 LIMIT 1`, d.projectID, d.id).Scan(&deletedUUID)
+	err = tx.QueryRowContext(ctx, `SELECT m.event_uuid FROM webhook_members m JOIN event_heads h ON h.project_id=m.project_id AND h.uuid=m.event_uuid WHERE m.project_id=$1 AND m.delivery_id=$2 AND h.is_deleted=1 LIMIT 1`, d.projectID, d.id).Scan(&deletedUUID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -200,11 +198,11 @@ func (s *Service) claimWebhook(ctx context.Context) (*webhookDelivery, error) {
 		if allowed {
 			code = "attempts_exhausted"
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='failed',error_code=?,completed_at_ms=? WHERE id=?`, code, s.clock().UnixMilli(), d.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='failed',error_code=$1,completed_at_ms=$2 WHERE id=$3`, code, s.clock().UnixMilli(), d.id); err != nil {
 			return nil, err
 		}
 	} else {
-		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='sending',frozen=1,attempts=attempts+1 WHERE id=?`, d.id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='sending',frozen=1,attempts=attempts+1 WHERE id=$1`, d.id); err != nil {
 			return nil, err
 		}
 		d.attempts++
@@ -220,7 +218,7 @@ func (s *Service) claimWebhook(ctx context.Context) (*webhookDelivery, error) {
 		return &webhookDelivery{}, nil
 	}
 	var state string
-	if err = s.db.QueryRowContext(ctx, `SELECT state FROM webhook_deliveries WHERE id=?`, d.id).Scan(&state); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT state FROM webhook_deliveries WHERE id=$1`, d.id).Scan(&state); err != nil {
 		return nil, err
 	}
 	if state != "sending" {
@@ -247,7 +245,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 		if resultErr != nil {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Second)
 			defer stop()
-			s.db.ExecContext(cleanup, `UPDATE webhook_deliveries SET state='queued',next_attempt_ms=? WHERE id=? AND state='sending'`, s.clock().Add(time.Second).UnixMilli(), d.id)
+			s.db.ExecContext(cleanup, `UPDATE webhook_deliveries SET state='queued',next_attempt_ms=$1 WHERE id=$2 AND state='sending'`, s.clock().Add(time.Second).UnixMilli(), d.id)
 		}
 	}()
 
@@ -261,7 +259,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	if err != nil || json.Unmarshal(secret, &destination) != nil || validateWebhookEndpoint(destination.Endpoint) != nil || validateWebhookHeaders(destination.Headers) != nil {
 		return true, s.finishWebhook(ctx, d, 0, "invalid_destination", false)
 	}
-	allowed, err := pipelineCreatorAuthorized(ctx, s.db, d.actorID, d.projectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, d.actorID, d.projectID)
 	if err != nil {
 		return true, err
 	}
@@ -271,7 +269,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	// Pauses and deletes committed after claim suppress the send. Work already in
 	// flight cannot be recalled from the receiver.
 	var state, pipelineState string
-	if err = s.db.QueryRowContext(ctx, `SELECT d.state,p.state FROM webhook_deliveries d JOIN pipelines p ON p.id=d.pipeline_id WHERE d.id=?`, d.id).Scan(&state, &pipelineState); errors.Is(err, sql.ErrNoRows) {
+	if err = s.db.QueryRowContext(ctx, `SELECT d.state,p.state FROM webhook_deliveries d JOIN pipelines p ON p.id=d.pipeline_id WHERE d.id=$1`, d.id).Scan(&state, &pipelineState); errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	} else if err != nil {
 		return true, err
@@ -280,7 +278,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 		return true, nil
 	}
 	if pipelineState != "active" {
-		_, err = s.db.ExecContext(ctx, `UPDATE webhook_deliveries SET state='queued' WHERE id=? AND state='sending'`, d.id)
+		_, err = s.db.ExecContext(ctx, `UPDATE webhook_deliveries SET state='queued' WHERE id=$1 AND state='sending'`, d.id)
 		return true, err
 	}
 	attempt, cancel := context.WithTimeout(ctx, time.Duration(s.pipelines.config.WebhookTimeoutSeconds)*time.Second)
@@ -289,7 +287,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	if ctx.Err() != nil {
 		cleanup, stop := context.WithTimeout(context.Background(), time.Second)
 		defer stop()
-		_, err = s.db.ExecContext(cleanup, `UPDATE webhook_deliveries SET state='queued',next_attempt_ms=? WHERE id=? AND state='sending'`, s.clock().UnixMilli(), d.id)
+		_, err = s.db.ExecContext(cleanup, `UPDATE webhook_deliveries SET state='queued',next_attempt_ms=$1 WHERE id=$2 AND state='sending'`, s.clock().UnixMilli(), d.id)
 		return true, err
 	}
 	retry := code != "" && (status == 0 || status == 408 || status == 425 || status == 429 || status >= 500)
@@ -350,7 +348,7 @@ func (s *Service) finishWebhook(ctx context.Context, d *webhookDelivery, status 
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state=?,payload=?,bytes=?,next_attempt_ms=?,last_status=?,error_code=?,completed_at_ms=? WHERE id=? AND state='sending'`, state, payload, size, next, status, code, completed, d.id)
+	result, err := tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state=$1,payload=$2,bytes=$3,next_attempt_ms=$4,last_status=$5,error_code=$6,completed_at_ms=$7 WHERE id=$8 AND state='sending'`, state, payload, size, next, status, code, completed, d.id)
 	if err != nil {
 		return err
 	}
@@ -363,17 +361,17 @@ func (s *Service) finishWebhook(ctx context.Context, d *webhookDelivery, status 
 	}
 	if retry {
 		var failures int
-		err = tx.QueryRowContext(ctx, `SELECT failures FROM webhook_cooldowns WHERE pipeline_id=?`, d.pipelineID).Scan(&failures)
+		err = tx.QueryRowContext(ctx, `SELECT failures FROM webhook_cooldowns WHERE pipeline_id=$1`, d.pipelineID).Scan(&failures)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		failures = min(max(failures, 0), 15) + 1
 		until := s.clock().Add(webhookBackoff(max(failures, d.attempts))).UnixMilli()
-		if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_cooldowns(pipeline_id,not_before_ms,failures) VALUES(?,?,?) ON CONFLICT(pipeline_id) DO UPDATE SET not_before_ms=excluded.not_before_ms,failures=excluded.failures`, d.pipelineID, until, failures); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_cooldowns(pipeline_id,not_before_ms,failures) VALUES($1,$2,$3) ON CONFLICT(pipeline_id) DO UPDATE SET not_before_ms=excluded.not_before_ms,failures=excluded.failures`, d.pipelineID, until, failures); err != nil {
 			return err
 		}
 	} else if code == "" {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_cooldowns WHERE pipeline_id=?`, d.pipelineID); err != nil {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_cooldowns WHERE pipeline_id=$1`, d.pipelineID); err != nil {
 			return err
 		}
 	}
@@ -390,7 +388,7 @@ func (s *Service) retryWebhookDelivery(ctx context.Context, project, pipeline, i
 	}
 	defer tx.Rollback()
 	var state, payload string
-	err = tx.QueryRowContext(ctx, `SELECT state,payload FROM webhook_deliveries WHERE project_id=? AND pipeline_id=? AND id=?`, project, pipeline, id).Scan(&state, &payload)
+	err = tx.QueryRowContext(ctx, `SELECT state,payload FROM webhook_deliveries WHERE project_id=$1 AND pipeline_id=$2 AND id=$3`, project, pipeline, id).Scan(&state, &payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, sql.ErrNoRows
 	}
@@ -400,11 +398,11 @@ func (s *Service) retryWebhookDelivery(ctx context.Context, project, pipeline, i
 	if state != "failed" || payload == "" {
 		return false, nil
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='queued',attempts=0,next_attempt_ms=?,error_code='',completed_at_ms=0 WHERE id=? AND state='failed'`, s.clock().UnixMilli(), id)
+	_, err = tx.ExecContext(ctx, `UPDATE webhook_deliveries SET state='queued',attempts=0,next_attempt_ms=$1,error_code='',completed_at_ms=0 WHERE id=$2 AND state='failed'`, s.clock().UnixMilli(), id)
 	if err != nil {
 		return false, err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_cooldowns WHERE pipeline_id=?`, pipeline); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_cooldowns WHERE pipeline_id=$1`, pipeline); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -423,9 +421,9 @@ func (s *Service) pruneWebhookHistory(ctx context.Context) error {
 		return nil
 	}
 	// Bound metadata independently of retained failed payloads. Amortize scans.
-	_, err := s.db.ExecContext(ctx, `DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE payload='' AND completed_at_ms>0 AND (completed_at_ms<? OR id NOT IN (SELECT id FROM webhook_deliveries WHERE payload='' ORDER BY completed_at_ms DESC,id DESC LIMIT 10000) OR id IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY project_id ORDER BY completed_at_ms DESC,id DESC) AS position FROM webhook_deliveries WHERE payload='') WHERE position>1000)) LIMIT 256)`, s.clock().Add(-7*24*time.Hour).UnixMilli())
+	_, err := s.db.ExecContext(ctx, `DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE payload='' AND completed_at_ms>0 AND (completed_at_ms<$1 OR id NOT IN (SELECT id FROM webhook_deliveries WHERE payload='' ORDER BY completed_at_ms DESC,id DESC LIMIT 10000) OR id IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY project_id ORDER BY completed_at_ms DESC,id DESC) AS position FROM webhook_deliveries WHERE payload='') WHERE position>1000)) LIMIT 256)`, s.clock().Add(-7*24*time.Hour).UnixMilli())
 	if err == nil {
-		_, err = s.db.ExecContext(ctx, `UPDATE metadata SET value=CASE key WHEN 'webhook_history_changes' THEN '0' ELSE ? END WHERE key IN ('webhook_history_changes','webhook_history_pruned_ms')`, s.clock().UnixMilli())
+		_, err = s.db.ExecContext(ctx, `UPDATE metadata SET value=CASE key WHEN 'webhook_history_changes' THEN '0' ELSE $1 END WHERE key IN ('webhook_history_changes','webhook_history_pruned_ms')`, s.clock().UnixMilli())
 	}
 
 	return err

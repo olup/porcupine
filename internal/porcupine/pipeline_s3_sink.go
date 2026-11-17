@@ -88,14 +88,14 @@ func (w *pipelineS3Sink) beginFile() error {
 		return errExportOutputLimit
 	}
 	key := fmt.Sprintf("%s/%d/%s/part-%06d.%s.gz", w.work.pipeline.ID, w.work.start, w.work.attemptID, len(w.files)+1, w.work.spec.Format)
-	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) VALUES(?,?)`, w.work.id, key); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) VALUES($1,$2)`, w.work.id, key); err != nil {
 		return err
 	}
 	upload, err := w.store.Begin(w.ctx, key)
 	if err != nil {
 		return err
 	}
-	if _, err = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=? WHERE run_id=? AND object_key=?`, upload.ID(), w.work.id, key); err != nil {
+	if _, err = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=$1 WHERE run_id=$2 AND object_key=$3`, upload.ID(), w.work.id, key); err != nil {
 		// The durable key still permits deletion after an ambiguous Complete. Abort
 		// this newly-created ID immediately if checkpointing it failed.
 		cleanup, cancel := context.WithTimeout(context.Background(), 10e9)

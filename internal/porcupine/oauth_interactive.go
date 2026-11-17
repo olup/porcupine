@@ -19,7 +19,10 @@ const oauthCodeTTL = 5 * time.Minute
 const oauthRefreshTTL = 7 * 24 * time.Hour
 
 func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_authorization_requests(
+	if s.shared != nil {
+		return nil
+	}
+	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_authorization_requests(
  request_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES access_keys(id),redirect_uri TEXT NOT NULL,
  scope TEXT NOT NULL,resource TEXT NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,peer_hash TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS oauth_interactive_grants(
@@ -48,16 +51,16 @@ func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
 	}
 	for _, column := range []struct{ table, name, definition string }{{"oauth_tokens", "interactive_grant_id", "TEXT NOT NULL DEFAULT ''"}, {"oauth_authorization_requests", "peer_hash", "TEXT NOT NULL DEFAULT ''"}, {"oauth_interactive_grants", "resource", "TEXT NOT NULL DEFAULT ''"}} {
 		var exists bool
-		if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name=?)`, column.table, column.name).Scan(&exists); err != nil {
+		if err = s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info($1) WHERE name=$2)`, column.table, column.name).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
-			if _, err = s.db.ExecContext(ctx, `ALTER TABLE `+column.table+` ADD COLUMN `+column.name+` `+column.definition); err != nil {
+			if _, err = s.control.ExecContext(ctx, `ALTER TABLE `+column.table+` ADD COLUMN `+column.name+` `+column.definition); err != nil {
 				return err
 			}
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS oauth_tokens_interactive_grant ON oauth_tokens(interactive_grant_id)`)
+	_, err = s.control.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS oauth_tokens_interactive_grant ON oauth_tokens(interactive_grant_id)`)
 	if err != nil {
 		return err
 	}
@@ -67,7 +70,7 @@ func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
 // Revoke the old principals and their dependent grants before discarding the
 // one-use codes. Keeping the principal rows preserves grant and job audit IDs.
 func (s *Service) retireManualInvitations(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -77,7 +80,7 @@ func (s *Service) retireManualInvitations(ctx context.Context) error {
 		return err
 	}
 	if exists {
-		if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=? WHERE revoked_at IS NULL AND id IN (SELECT principal_id FROM local_invitations)`, now()); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=$1 WHERE revoked_at IS NULL AND id IN (SELECT principal_id FROM local_invitations)`, now()); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `DROP TABLE local_invitations`); err != nil {
@@ -88,7 +91,7 @@ func (s *Service) retireManualInvitations(ctx context.Context) error {
 }
 
 func (s *Service) loadOAuthAuthorizationRequest(ctx context.Context, rawID string) (oauthAuthorizationRequest, error) {
-	return s.loadOAuthRequest(ctx, s.db, rawID)
+	return s.loadOAuthRequest(ctx, s.control, rawID)
 }
 func (s *Service) loadOAuthRequest(ctx context.Context, query oauthQueryer, rawID string) (oauthAuthorizationRequest, error) {
 	request := oauthAuthorizationRequest{ID: rawID}
@@ -97,7 +100,7 @@ func (s *Service) loadOAuthRequest(ctx context.Context, query oauthQueryer, rawI
 	}
 	err := query.QueryRowContext(ctx, `SELECT r.client_id,k.name,r.redirect_uri,r.scope,r.resource,r.state,r.challenge,r.expires_at_ms
  FROM oauth_authorization_requests r JOIN access_keys k ON k.id=r.client_id
- WHERE r.request_hash=? AND r.consumed=0 AND r.expires_at_ms>? AND k.revoked_at IS NULL`, hash(rawID), s.clock().UnixMilli()).Scan(&request.ClientID, &request.ClientName, &request.RedirectURI, &request.Scope, &request.Resource, &request.State, &request.CodeChallenge, &request.ExpiresAtMS)
+ WHERE r.request_hash=$1 AND r.consumed=0 AND r.expires_at_ms>$2 AND k.revoked_at IS NULL`, hash(rawID), s.clock().UnixMilli()).Scan(&request.ClientID, &request.ClientName, &request.RedirectURI, &request.Scope, &request.Resource, &request.State, &request.CodeChallenge, &request.ExpiresAtMS)
 	return request, err
 }
 
@@ -128,7 +131,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 400, "invalid_request")
 		return
 	}
-	client, err := loadOAuthClient(r.Context(), s.db, q.Get("client_id"))
+	client, err := loadOAuthClient(r.Context(), s.control, q.Get("client_id"))
 	if err != nil || !slices.Contains(client.GrantTypes, "authorization_code") || !slices.Contains(client.RedirectURIs, q.Get("redirect_uri")) {
 		oauthTokenError(w, 400, "invalid_request")
 		return
@@ -196,14 +199,18 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
-	request := oauthAuthorizationRequest{ID: rawID, ClientID: client.ID, ClientName: clientName(r.Context(), s.db, client.ID), RedirectURI: q.Get("redirect_uri"), Scope: strings.Join(requested, " "), Resource: resource, State: q.Get("state"), CodeChallenge: q.Get("code_challenge"), ExpiresAtMS: s.clock().Add(oauthRequestTTL).UnixMilli()}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	request := oauthAuthorizationRequest{ID: rawID, ClientID: client.ID, ClientName: clientName(r.Context(), s.control, client.ID), RedirectURI: q.Get("redirect_uri"), Scope: strings.Join(requested, " "), Resource: resource, State: q.Get("state"), CodeChallenge: q.Get("code_challenge"), ExpiresAtMS: s.clock().Add(oauthRequestTTL).UnixMilli()}
+	tx, err := s.control.BeginTx(r.Context(), nil)
 	if err != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_authorization_requests WHERE expires_at_ms<=? OR consumed=1`, s.clock().UnixMilli()); err != nil {
+	if _, err = tx.ExecContext(r.Context(), `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		oauthTokenError(w, 503, "temporarily_unavailable")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_authorization_requests WHERE expires_at_ms<=$1 OR consumed=1`, s.clock().UnixMilli()); err != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
@@ -212,12 +219,12 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var count, perClient, perPeer int
-	if tx.QueryRowContext(r.Context(), `SELECT count(*),count(*) FILTER(WHERE client_id=?),count(*) FILTER(WHERE peer_hash=?) FROM oauth_authorization_requests`, client.ID, peerHash).Scan(&count, &perClient, &perPeer) != nil || count >= 1000 || perClient >= 64 || perPeer >= 8 {
+	if tx.QueryRowContext(r.Context(), `SELECT count(*),count(*) FILTER(WHERE client_id=$1),count(*) FILTER(WHERE peer_hash=$2) FROM oauth_authorization_requests`, client.ID, peerHash).Scan(&count, &perClient, &perPeer) != nil || count >= 1000 || perClient >= 64 || perPeer >= 8 {
 		w.Header().Set("Retry-After", "1")
 		oauthTokenError(w, 429, "temporarily_unavailable")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO oauth_authorization_requests(request_hash,client_id,redirect_uri,scope,resource,state,challenge,expires_at_ms,peer_hash) VALUES(?,?,?,?,?,?,?,?,?)`, hash(rawID), request.ClientID, request.RedirectURI, request.Scope, request.Resource, request.State, request.CodeChallenge, request.ExpiresAtMS, peerHash)
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO oauth_authorization_requests(request_hash,client_id,redirect_uri,scope,resource,state,challenge,expires_at_ms,peer_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, hash(rawID), request.ClientID, request.RedirectURI, request.Scope, request.Resource, request.State, request.CodeChallenge, request.ExpiresAtMS, peerHash)
 	if err != nil || tx.Commit() != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
@@ -226,20 +233,23 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 func clientName(ctx context.Context, query oauthQueryer, id string) string {
 	var name string
-	_ = query.QueryRowContext(ctx, `SELECT name FROM access_keys WHERE id=?`, id).Scan(&name)
+	_ = query.QueryRowContext(ctx, `SELECT name FROM access_keys WHERE id=$1`, id).Scan(&name)
 	return name
 }
 
-func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, approved actor) (string, error) {
+func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof humanLoginProof, approved actor) (string, error) {
 	if !s.interactiveOAuthEnabled() {
 		return "", errors.New("interactive OAuth unavailable")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return "", err
+	}
+	if err := checkHumanLoginProof(ctx, tx, humanID, proof); err != nil {
 		return "", err
 	}
 	current, err := s.loadOAuthRequest(ctx, tx, request.ID)
@@ -257,7 +267,19 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if err != nil {
 		return "", err
 	}
-	if !s.interactiveScopesAllowed(human, client, current.Resource, approved.Permissions) || !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
+	if !s.interactiveScopesAllowed(human, client, current.Resource, approved.Permissions) {
+		return "", errors.New("invalid consent grants")
+	}
+	tenantID := ""
+	if tenantAdminConsent(approved.Permissions) {
+		if len(approved.tenantAdmins) != 1 || len(approved.Projects) != 0 {
+			return "", errors.New("invalid tenant consent")
+		}
+		tenantID = approved.tenantAdmins[0]
+		if _, err := s.tenantAdminActor(ctx, tx, human, tenantID); err != nil {
+			return "", errors.New("tenant administration is not granted")
+		}
+	} else if !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
 		return "", errors.New("invalid consent grants")
 	}
 	requested := strings.Fields(current.Scope)
@@ -271,7 +293,7 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	slices.Sort(approved.Projects)
 	approved.Projects = slices.Compact(approved.Projects)
 	var count, perHuman int
-	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=?) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>?`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
+	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=$1) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>$2`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
 		return "", errOAuthCapacity
 	}
 	grantID := newID()
@@ -285,19 +307,24 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	}
 	permissions, _ := json.Marshal(approved.Permissions)
 	projects, _ := json.Marshal(approved.Projects)
-	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,?,?,?,?,?)`, grantID, "Interactive "+current.ClientName, hash(unusable), string(permissions), string(projects), now())
+	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, grantID, "Interactive "+current.ClientName, hash(unusable), string(permissions), string(projects), now())
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, human.ID, client.ID, current.Resource, s.clock().UnixMilli(), s.clock().Add(oauthRefreshTTL).UnixMilli())
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7)`, grantID, grantID, human.ID, client.ID, current.Resource, s.clock().UnixMilli(), s.clock().Add(oauthRefreshTTL).UnixMilli())
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_authorization_codes(code_hash,grant_id,client_id,redirect_uri,challenge,expires_at_ms) VALUES(?,?,?,?,?,?)`, hash(code), grantID, client.ID, current.RedirectURI, current.CodeChallenge, s.clock().Add(oauthCodeTTL).UnixMilli())
+	if tenantID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO oauth_grant_tenants(grant_id,tenant_id) VALUES($1,$2)`, grantID, tenantID); err != nil {
+			return "", err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_authorization_codes(code_hash,grant_id,client_id,redirect_uri,challenge,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6)`, hash(code), grantID, client.ID, current.RedirectURI, current.CodeChallenge, s.clock().Add(oauthCodeTTL).UnixMilli())
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE oauth_authorization_requests SET consumed=1 WHERE request_hash=?`, hash(request.ID))
+	_, err = tx.ExecContext(ctx, `UPDATE oauth_authorization_requests SET consumed=1 WHERE request_hash=$1`, hash(request.ID))
 	if err != nil {
 		return "", err
 	}

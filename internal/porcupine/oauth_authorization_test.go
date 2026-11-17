@@ -52,24 +52,30 @@ func interactiveEndpoint(t *testing.T, s *Service, path string, form url.Values,
 
 func TestOAuthAuthorizationRejectsCallbackForgeryAndPKCEDowngrade(t *testing.T) {
 	f := newOIDCFixture(t)
-	for _, change := range []func(url.Values){
-		func(q url.Values) { q.Set("redirect_uri", f.callback+"/unregistered") },
-		func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") },
-		func(q url.Values) { q.Set("code_challenge_method", "plain") },
-		func(q url.Values) { q.Del("code_challenge_method") },
-		func(q url.Values) { q.Set("code_challenge", "bad") },
-		func(q url.Values) { q.Set("scope", "events:write") },
-		func(q url.Values) { q.Set("resource", f.host.URL+"/api/v1") },
-		func(q url.Values) { q.Add("redirect_uri", f.callback) },
+	for _, test := range []struct {
+		name   string
+		change func(url.Values)
+	}{
+		{"unregistered-callback", func(q url.Values) { q.Set("redirect_uri", f.callback+"/unregistered") }},
+		{"foreign-callback", func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") }},
+		{"plain-pkce", func(q url.Values) { q.Set("code_challenge_method", "plain") }},
+		{"missing-pkce-method", func(q url.Values) { q.Del("code_challenge_method") }},
+		{"invalid-challenge", func(q url.Values) { q.Set("code_challenge", "bad") }},
+		{"unregistered-write-scope", func(q url.Values) { q.Set("scope", "events:write") }},
+		{"unregistered-admin-scope", func(q url.Values) { q.Set("scope", "instance:admin") }},
+		{"unknown-resource", func(q url.Values) { q.Set("resource", f.host.URL+"/api/v1/unregistered") }},
+		{"repeated-callback", func(q url.Values) { q.Add("redirect_uri", f.callback) }},
 	} {
-		target, _ := url.Parse(f.authorizeURL(f.callback))
-		q := target.Query()
-		change(q)
-		target.RawQuery = q.Encode()
-		location, _ := f.get(t, target.String(), 400)
-		if location != "" {
-			t.Fatal("invalid request redirected browser")
-		}
+		t.Run(test.name, func(t *testing.T) {
+			target, _ := url.Parse(f.authorizeURL(f.callback))
+			q := target.Query()
+			test.change(q)
+			target.RawQuery = q.Encode()
+			location, _ := f.get(t, target.String(), 400)
+			if location != "" {
+				t.Fatal("invalid request redirected browser")
+			}
+		})
 	}
 	for _, raw := range []string{"https://user:secret@example.com/cb", "https://example.com/cb#fragment", "http://example.com/cb", "https://example.com/cb?code=preloaded", "https://*.example.com/cb"} {
 		if validOAuthRedirect(raw) {
@@ -88,10 +94,10 @@ func TestOAuthAuthorizationCodePKCEOnceOnlyAndHashedStorage(t *testing.T) {
 	response := interactiveEndpoint(t, f.s, "/oauth/token", correct, "", "", 200)
 	access, refresh := response["access_token"].(string), response["refresh_token"].(string)
 	var storedCode, storedRefresh string
-	if f.s.db.QueryRow(`SELECT code_hash FROM oauth_authorization_codes`).Scan(&storedCode) != nil || storedCode != hash(code) || storedCode == code {
+	if f.s.control.QueryRow(`SELECT code_hash FROM oauth_authorization_codes`).Scan(&storedCode) != nil || storedCode != hash(code) || storedCode == code {
 		t.Fatal("authorization code not hash-only")
 	}
-	if f.s.db.QueryRow(`SELECT token_hash FROM oauth_refresh_tokens`).Scan(&storedRefresh) != nil || storedRefresh != hash(refresh) || storedRefresh == refresh {
+	if f.s.control.QueryRow(`SELECT token_hash FROM oauth_refresh_tokens`).Scan(&storedRefresh) != nil || storedRefresh != hash(refresh) || storedRefresh == refresh {
 		t.Fatal("refresh token not hash-only")
 	}
 	if _, err := f.s.authenticateOAuthToken(context.Background(), access, f.host.URL+"/mcp"); err != nil {
@@ -127,7 +133,7 @@ func TestOAuthInteractiveCredentialsAndRedirectAreClientBound(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			f := newOIDCFixture(t)
 			code := interactiveCode(t, f)
-			if _, err := f.s.db.Exec(`UPDATE oauth_clients SET token_endpoint_auth_method=?,secret_hash=? WHERE client_id=?`, method, hash("confidential-secret"), f.clientID); err != nil {
+			if _, err := f.s.control.Exec(`UPDATE oauth_clients SET token_endpoint_auth_method=?,secret_hash=? WHERE client_id=?`, method, hash("confidential-secret"), f.clientID); err != nil {
 				t.Fatal(err)
 			}
 			form := interactiveTokenForm(f, code)
@@ -163,7 +169,7 @@ func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing
 	if _, err = f.s.exportActor(context.Background(), principal.ID); err != nil {
 		t.Fatal("new grant not authorized", err)
 	}
-	if _, err = f.s.db.Exec(`UPDATE oauth_interactive_grants SET expires_at_ms=? WHERE principal_id=?`, f.s.clock().Add(-time.Second).UnixMilli(), principal.ID); err != nil {
+	if _, err = f.s.control.Exec(`UPDATE oauth_interactive_grants SET expires_at_ms=? WHERE principal_id=?`, f.s.clock().Add(-time.Second).UnixMilli(), principal.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
@@ -174,7 +180,7 @@ func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err = f.s.exportActorFrom(context.Background(), tx, principal.ID); err == nil {
+	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
 		t.Fatal("expired grant retained publication transaction authority")
 	}
 }
@@ -190,7 +196,7 @@ func TestOAuthInteractiveRevocationAndAdminGrantManagement(t *testing.T) {
 	admin := oauthProtocolRequest(t, f.s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {f.host.URL + "/api/v1"}}, 200)["access_token"].(string)
 	grants := request(t, f.s, "GET", "/api/v1/oauth-grants", admin, "", 200)
 	entries := grants["grants"].([]any)
-	if len(entries) != 1 || entries[0].(map[string]any)["id"] != principal.ID || entries[0].(map[string]any)["subject"] != "operator-subject" {
+	if len(entries) != 1 || entries[0].(map[string]any)["id"] != principal.ID || entries[0].(map[string]any)["human_id"] != f.humanID || entries[0].(map[string]any)["issuer"] != "email" || entries[0].(map[string]any)["subject"] != "operator@example.test" {
 		t.Fatal("admin cannot inspect human grant identity", grants)
 	}
 	request(t, f.s, "DELETE", "/api/v1/oauth-grants/"+principal.ID, admin, "", 204)
@@ -277,7 +283,7 @@ func TestOAuthInteractiveMissingAuxiliaryMappingCannotBroadenAuthority(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.db.Exec(`DELETE FROM oauth_interactive_access`); err != nil {
+	if _, err = f.s.control.Exec(`DELETE FROM oauth_interactive_access`); err != nil {
 		t.Fatal(err)
 	}
 	after, err := f.s.authenticateOAuthToken(context.Background(), raw, f.host.URL+"/mcp")
@@ -308,14 +314,14 @@ func TestOAuthAuthorizationStartAdmissionIsIndependentAndBounded(t *testing.T) {
 		}
 	}
 	var pending int
-	if f.s.db.QueryRow(`SELECT count(*) FROM oauth_authorization_requests`).Scan(&pending) != nil || accepted > 5 || accepted == 0 || rejected == 0 || pending != accepted {
+	if f.s.control.QueryRow(`SELECT count(*) FROM oauth_authorization_requests`).Scan(&pending) != nil || accepted > 5 || accepted == 0 || rejected == 0 || pending != accepted {
 		t.Fatal("authorization start flood not bounded", accepted, rejected, pending)
 	}
 	if !f.s.oauth.limiter.Allow() {
 		t.Fatal("unauthenticated authorization flood consumed token issuance budget")
 	}
 	var peerHash string
-	if f.s.db.QueryRow(`SELECT peer_hash FROM oauth_authorization_requests LIMIT 1`).Scan(&peerHash) != nil || len(peerHash) != 64 || strings.Contains(peerHash, "192.0.2") {
+	if f.s.control.QueryRow(`SELECT peer_hash FROM oauth_authorization_requests LIMIT 1`).Scan(&peerHash) != nil || len(peerHash) != 64 || strings.Contains(peerHash, "192.0.2") {
 		t.Fatal("raw IP stored in pending authorization")
 	}
 }
@@ -325,7 +331,7 @@ func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
 	code := interactiveCode(t, f)
 	other, _ := oauthProtocolClient(t, f.s, []string{"events:read"}, []string{"*"})
 	redirects, _ := json.Marshal([]string{f.callback})
-	if _, err := f.s.db.Exec(`UPDATE oauth_clients SET grant_types='["authorization_code","refresh_token"]',redirect_uris=?,token_endpoint_auth_method='none' WHERE client_id=?`, string(redirects), other); err != nil {
+	if _, err := f.s.control.Exec(`UPDATE oauth_clients SET grant_types='["authorization_code","refresh_token"]',redirect_uris=?,token_endpoint_auth_method='none' WHERE client_id=?`, string(redirects), other); err != nil {
 		t.Fatal(err)
 	}
 	wrong := interactiveTokenForm(f, code)
@@ -340,11 +346,11 @@ func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal("cross-client invalid proof revoked victim", err)
 	}
-	if _, err = f.s.db.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), f.clientID); err != nil {
+	if _, err = f.s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), f.clientID); err != nil {
 		t.Fatal(err)
 	}
 	var revoked *string
-	if f.s.db.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, principal.ID).Scan(&revoked) != nil || revoked == nil {
+	if f.s.control.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, principal.ID).Scan(&revoked) != nil || revoked == nil {
 		t.Fatal("client revocation did not durably revoke consent principal")
 	}
 	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {

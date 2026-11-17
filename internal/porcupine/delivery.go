@@ -9,6 +9,8 @@ import (
 )
 
 type DeliveryStatus struct {
+	PendingUnknown          bool   `json:"pending_unknown,omitempty" doc:"True on a shared query worker which does not own this project's SQLite queue. Do not interpret pending=0 as a drained queue; get-event-schema is routed to its owner for authoritative status."`
+	OwnerWorkerID           string `json:"owner_worker_id,omitempty"`
 	Enabled                 bool   `json:"enabled"`
 	Pending                 int64  `json:"pending"`
 	OldestPendingReceivedAt string `json:"oldest_pending_received_at,omitempty" doc:"Receipt time of the earliest queued original by acceptance order, including quarantined events, in this project"`
@@ -102,7 +104,7 @@ func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
 }
 
 func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>? ORDER BY r.event_id LIMIT ?`, cursor, s.deliveryMaxEvents)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>$1 ORDER BY r.event_id LIMIT $2`, cursor, s.deliveryMaxEvents)
 	if err != nil {
 		return nil, errors.New("cannot read delivery queue")
 	}
@@ -168,13 +170,13 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, event.ID); err != nil {
 			return errors.New("cannot save delivery receipt")
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id=?`, event.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id=$1`, event.ID); err != nil {
 			return errors.New("cannot remove delivered event")
 		}
 		projects[event.ProjectID] = true
 	}
 	for projectID := range projects {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "last_delivery_success:"+projectID, now()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "last_delivery_success:"+projectID, now()); err != nil {
 			return errors.New("cannot record project delivery")
 		}
 	}
@@ -187,7 +189,7 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error
 func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 	if deliveryErr != nil {
 		message := "DuckLake delivery failed"
-		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, message)
+		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, message)
 		return
 	}
 	s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key='last_delivery_error'`)
@@ -195,20 +197,31 @@ func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 
 func (s *Service) deliveryStatus(ctx context.Context, projectID string) (DeliveryStatus, error) {
 	status := DeliveryStatus{Enabled: s.lake != nil}
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*), COALESCE((SELECT received_at FROM events WHERE project_id=? AND delivered=0 ORDER BY id LIMIT 1),'') FROM events WHERE project_id=? AND delivered=0`, projectID, projectID).Scan(&status.Pending, &status.OldestPendingReceivedAt); err != nil {
+	if s.shared != nil {
+		owner, _, err := s.sharedProjectOwner(ctx, projectID)
+		if err != nil {
+			return status, err
+		}
+		status.OwnerWorkerID = owner
+		if owner != s.shared.config.WorkerID {
+			status.PendingUnknown = true
+			return status, nil
+		}
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*), COALESCE((SELECT received_at FROM events WHERE project_id=$1 AND delivered=0 ORDER BY id LIMIT 1),'') FROM events WHERE project_id=$2 AND delivered=0`, projectID, projectID).Scan(&status.Pending, &status.OldestPendingReceivedAt); err != nil {
 		return status, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_quarantine q JOIN events e ON e.id=q.event_id WHERE e.project_id=?`, projectID).Scan(&status.Quarantined); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_quarantine q JOIN events e ON e.id=q.event_id WHERE e.project_id=$1`, projectID).Scan(&status.Quarantined); err != nil {
 		return status, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM mutation_outbox WHERE project_id=?`, projectID).Scan(&status.PendingMutations); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM mutation_outbox WHERE project_id=$1`, projectID).Scan(&status.PendingMutations); err != nil {
 		return status, err
 	}
 	for _, field := range []struct {
 		key   string
 		value *string
 	}{{"last_delivery_success:" + projectID, &status.LastSuccess}, {"last_delivery_error", &status.Error}} {
-		if err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, field.key).Scan(field.value); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=$1`, field.key).Scan(field.value); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return status, err
 		}
 	}

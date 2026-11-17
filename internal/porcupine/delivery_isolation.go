@@ -25,7 +25,7 @@ func (s *Service) deliveryCursor(ctx context.Context) (int64, error) {
 }
 
 func (s *Service) advanceDeliveryCursor(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('delivery_scan_cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.FormatInt(id, 10))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('delivery_scan_cursor',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.FormatInt(id, 10))
 	if err != nil {
 		return errors.New("cannot save delivery cursor")
 	}
@@ -51,7 +51,7 @@ func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool
 }
 
 func (s *Service) quarantineOriginal(ctx context.Context, event Event, code int) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO delivery_quarantine(event_id,error_code,quarantined_at) SELECT id,?,? FROM events WHERE id=? AND project_id=? AND uuid=?`, code, s.clock().UTC().Format(time.RFC3339Nano), event.ID, event.ProjectID, event.UUID)
+	result, err := s.db.ExecContext(ctx, `INSERT INTO delivery_quarantine(event_id,error_code,quarantined_at) SELECT id,$1,$2 FROM events WHERE id=$3 AND project_id=$4 AND uuid=$5 ON CONFLICT(event_id) DO NOTHING`, code, s.clock().UTC().Format(time.RFC3339Nano), event.ID, event.ProjectID, event.UUID)
 	if err != nil {
 		return false, errors.New("cannot quarantine rejected event")
 	}
@@ -65,7 +65,7 @@ func (s *Service) quarantineOriginal(ctx context.Context, event Event, code int)
 // retryQuarantinedDelivery only makes an accepted original eligible again. It
 // never changes its identity, payload, revision or receipt partition.
 func (s *Service) retryQuarantinedDelivery(ctx context.Context, project string, eventID int64) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM delivery_quarantine WHERE event_id IN (SELECT id FROM events WHERE id=? AND project_id=?)`, eventID, project)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM delivery_quarantine WHERE event_id IN (SELECT id FROM events WHERE id=$1 AND project_id=$2)`, eventID, project)
 	if err != nil {
 		return false, errors.New("cannot retry quarantined event")
 	}
@@ -80,7 +80,7 @@ func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.T
 		return nil
 	}
 	var queued bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events e JOIN delivery_quarantine q ON q.event_id=e.id WHERE e.project_id=? AND e.uuid=?)`, projection.ProjectID, projection.UUID).Scan(&queued); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events e JOIN delivery_quarantine q ON q.event_id=e.id WHERE e.project_id=$1 AND e.uuid=$2)`, projection.ProjectID, projection.UUID).Scan(&queued); err != nil {
 		return err
 	}
 	if queued {
@@ -88,7 +88,7 @@ func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.T
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=? AND uuid=? AND id IN (SELECT event_id FROM delivery_quarantine)`, projection.ProjectID, projection.UUID)
+	_, err := tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=$1 AND uuid=$2 AND id IN (SELECT event_id FROM delivery_quarantine)`, projection.ProjectID, projection.UUID)
 	if err != nil {
 		return errors.New("cannot remove superseded quarantined event")
 	}
