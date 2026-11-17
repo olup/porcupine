@@ -1,4 +1,4 @@
-# Standalone configuration for local files, email, S3 and backups.
+# Standalone server configuration for local files, email, S3 and backups.
 # Build:     docker compose build porcupine
 # First run: docker compose --profile setup run --rm init
 # Then:     docker compose up -d porcupine
