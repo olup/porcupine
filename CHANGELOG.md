@@ -5,7 +5,7 @@
 - Retry bounded native transaction conflicts between local projection and inline-data maintenance without serializing the default maintenance path. Cancellation, validation errors and allocation recovery keep their separate handling.
 - Shared interactive queries renew execution-scoped reservations until the native call returns. Unresponsive or uncertain calls quarantine the affected project's interactive engine and degrade readiness instead of terminating the worker. Automatic reservation expiry accepts possible physical concurrency overshoot during a control-network partition.
 - Tenants with team administrators, project-scoped memberships, monthly ingestion allowances, and configurable interactive query concurrency, timeout, row, and byte limits.
-- Separate SQLite control and ingestion databases. Optional shared PostgreSQL stores control and DuckLake catalog metadata; event payloads remain in owner-local SQLite before S3 Parquet.
+- Separate SQLite control and ingestion databases in standalone mode.
 - Email OTP and optional trusted Google/OIDC sign-in for invited humans, with operator identity recovery and revocation of previous interactive grants.
 - Read-only MCP tools `porcupine_schema` and `porcupine_query`.
 - Project editors can document exact event names and top-level property keys. Catalog readers see the description, last editor ID, and edit time alongside observed data.
@@ -20,7 +20,7 @@
 - Documentation reorganized into task guides, detailed reference, and design/validation records. The agent entry point describes the current contract rather than cumulative release history.
 - Hugo builds the documentation through a Go helper, using a pinned, checksum-verified binary. CLI packaging, artifact checks, and SDK identity probes also use Go; development and CI no longer require Python.
 
-- Added an opt-in hosted profile with PostgreSQL control and DuckLake metadata, analytical S3, and replaceable workers. Live ingestion acknowledges admission to bounded worker memory. A process failure or incomplete drain can lose acknowledged events before a flush commits. The flush interval does not bound loss during an outage. Standalone and owner-routed shared deployments still acknowledge after the SQLite commit.
+- Added an opt-in hosted profile with PostgreSQL control and DuckLake metadata, analytical S3, and replaceable workers. Live ingestion acknowledges admission to bounded worker memory. A process failure or incomplete drain can lose acknowledged events before a flush commits. The flush interval does not bound loss during an outage. Standalone still acknowledges after the SQLite commit.
 - Hosted workers share resumable import uploads, durable event mutation intents, query admission, webhook and export jobs, and scheduled SQL-to-S3 pipelines. Hosted project and tenant deletion fence access first. Physical reclamation waits for the configured grace period, the operator restore floor, and reconciliation of pending work and object ownership.
 
 Start with fresh storage when moving from v0.14.0. Keep the old image, data and backups together. Transfer the history you need explicitly and recreate access on the new instance. Remove `use_cache` from SQL requests and use matching server and CLI versions. Hosted operators must exercise PostgreSQL and S3 recovery before admitting traffic. See the upgrade and hosted setup links in the hosting guide.

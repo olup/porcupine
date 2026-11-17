@@ -27,7 +27,7 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 ## Operations
 
 - [Server configuration keys](configuration.md) and [detailed hosting configuration](hosting-options.md)
-- [Analytical S3](ducklake-s3.md) and [shared PostgreSQL deployment](shared-deployment.md)
+- [Analytical S3](ducklake-s3.md) and [hosted runtime](shared-deployment.md)
 - [Instance status](instance-status.md), [durability](reliability.md), and [retry receipts](receipts.md)
 - [operator numerical usage](usage.md), including replayable consumption and current Parquet sampling
 - [History cleanup](ducklake-cleanup.md)

@@ -22,9 +22,7 @@ Standalone stores analytical data on local SSD or S3 and keeps operational state
 - **Control** owns humans, credentials, tenant memberships, projects, policies, and reported usage.
 - **Journal** owns accepted payloads, receipts, identity state, acceptance counters, mutations, imports, and delivery jobs.
 
-The two files have matching persistent identities and must be restored together. Optional shared mode replaces control and DuckLake catalog metadata with PostgreSQL and keeps journal SQLite local to each worker. Complete event rows go from that journal directly to S3 Parquet without a PostgreSQL event queue; data inlining is disabled. DuckLake catalog metadata can still hold column statistics containing derived event values.
-
-In owner-routed shared mode, each project has a durable owner. Public workers forward owner-bound requests; delivered SQL can run against shared metadata and files. Adding workers does not recover an unavailable owner's queue. See [shared deployment](reference/shared-deployment.md) for supervision, timeout, and failure behavior.
+The two files have matching persistent identities and must be restored together.
 
 The opt-in [hosted profile](design/hosted-profile-composition.md) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
 

@@ -11,7 +11,7 @@ Use a fresh data directory for a new installation. Keep the server and CLI versi
 | Try it on a laptop | One process, local SQLite and DuckLake, loopback HTTP |
 | Run on one VM | The same local storage, an HTTPS proxy, and independent backups |
 | Keep analytical files on S3 | The VM setup with an existing private bucket and a dedicated prefix |
-| Run several workers | [Shared PostgreSQL deployment](reference/shared-deployment.md), with a durable local journal per worker |
+| Run replaceable workers behind an ingress | [Hosted profile](design/hosted-profile-composition.md) with PostgreSQL, S3, and buffered live acknowledgment |
 
 Start with one server and local files. PostgreSQL is not required for tenants, people, budgets, the API, CLI, or MCP. [Storage](storage.md) describes the state owned by SQLite, DuckLake, PostgreSQL, and S3.
 
@@ -80,7 +80,7 @@ Analytical S3 is separate from export results, pipeline destinations, and backup
 
 ## Choose a storage mode
 
-Standalone keeps the journal and control databases on the local volume. Owner-routed shared mode adds PostgreSQL control and catalog metadata, S3 Parquet, and stable worker identities. Each project depends on its owner’s local journal and volume for accepted data until analytical projection. [Owner-routed setup](reference/shared-deployment.md)
+Standalone keeps the journal and control databases on the local volume. Live acknowledgment follows the SQLite commit. Analytical files can live on local disk or in S3.
 
 The opt-in hosted profile uses PostgreSQL and S3 with disposable worker storage. Live acknowledgment covers admission to bounded worker memory. A crash or incomplete drain can lose acknowledged events that have yet to commit, and the flush interval does not bound loss during an outage. Start with a fresh PostgreSQL database and dedicated analytical S3 prefix. Configure and exercise PostgreSQL and S3 recovery before admitting traffic. [Hosted setup and recovery requirements](design/hosted-profile-composition.md)
 
@@ -96,7 +96,7 @@ For one team, keep the built-in `default` tenant and use [team setup](reference/
 4. Read the month's allowance through `GET /api/v1/tenants/{tenant_id}/usage`. Use `GET /api/v1/usage` for the operator's paginated numerical report. Keep customer records and billing in your application. [Numerical usage and its limits](reference/usage.md)
 5. To remove access, revoke the relevant key through its management API. Rotate a provisioner key by deploying a replacement before revoking the old key with `revoke-access-key`. [Credential rotation](reference/service-keys.md)
 
-Inspect the running instance's `/openapi.json` for request and response schemas. To exercise provisioning, tenant isolation, and restart recovery in a disposable shared deployment, run the [two-worker check](reference/shared-deployment.md#exercise-provisioning-and-owner-restart).
+Inspect the running instance's `/openapi.json` for request and response schemas. Exercise provisioning, tenant isolation, ingestion, and query visibility in the target environment before routing production traffic.
 
 ## Keep data and resources safe
 
@@ -119,4 +119,4 @@ v0.15.0 introduces separate acceptance and control databases and tenant ownershi
 3. Update clients to match the server. Remove the `use_cache` request field. Replace old Compose overlays with the [server configuration](reference/configuration.md) and review settings before enabling pipelines.
 4. Verify counts, event times, identity behavior, corrections and deletes, then switch producers and readers. Keep the old instance isolated with its recovery material until the new deployment is validated. Returning to the old instance requires reconciling writes accepted after cutover.
 
-Moving an owner-routed deployment to the hosted profile also requires fresh PostgreSQL metadata and a fresh S3 destination. Preserve the owner journals until their accepted work has reached DuckLake and you have verified the data you intend to transfer.
+When setting up the hosted profile, provision fresh PostgreSQL metadata and a dedicated S3 prefix. Use the [hosted profile runbook](design/hosted-profile-composition.md) to set retention and verify recovery.

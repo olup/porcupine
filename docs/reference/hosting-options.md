@@ -64,7 +64,7 @@ Live events have no automatic age-based deletion. Historical snapshots default t
 
 ### Interactive query ceilings {#unreleased-interactive-query-ceilings}
 
-The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Shared execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation renewal, automatic expiry, and project quarantine.
+The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Hosted execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation renewal, automatic expiry, and project quarantine.
 
 ## Optional destinations
 

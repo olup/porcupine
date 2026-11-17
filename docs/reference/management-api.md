@@ -107,7 +107,7 @@ Tenant membership operations invite, list, update, and revoke people under `/api
 
 Operators can list upstream identity bindings with `list-human-identities` and unlink one with `unlink-human-identity`. See [identity recovery](identity-recovery.md) for revocation effects and the HTTP, CLI, and MCP workflow.
 
-The [tenant guide](tenants.md) explains shared allowances, resumable imports, quota response codes, and the SQLite and shared PostgreSQL deployment boundaries.
+The [tenant guide](tenants.md) explains shared allowances, resumable imports, quota response codes, and the standalone and hosted deployment boundaries.
 
 ### Project and credential details
 

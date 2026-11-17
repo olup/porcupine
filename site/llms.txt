@@ -39,6 +39,6 @@ For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_
 
 ## Deploy
 
-Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a new local instance. Its tagged checkout and release overlay pin the server to v0.15.0. Use [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Standalone and owner-routed shared deployments commit accepted events to a local SQLite journal. The opt-in hosted profile acknowledges live admission to worker memory, so an acknowledged event can be lost before analytical commit. Read the running instance’s input contract for its acknowledgment mode.
+Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a new local instance. Its tagged checkout and release overlay pin the server to v0.15.0. Use [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Standalone commits accepted events to a local SQLite journal. The opt-in hosted profile acknowledges live admission to worker memory, so an acknowledged event can be lost before analytical commit. Read the running instance’s input contract for its acknowledgment mode.
 
 Fetch `/openapi.json` for HTTP contracts. In MCP, inspect each management operation with `porcupine_docs` before `porcupine_call`. On 401, check expiry and audience; on 403, project grants and permission; on 429/503, limits or unavailable storage. Honor Retry-After and use bounded retries with stable IDs.

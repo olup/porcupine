@@ -8,7 +8,6 @@ A query export is not a backup. A recoverable instance needs its operational dat
 | --- | --- |
 | Local analytics on one server | [Scheduled local recovery bundles](reference/native-backups.md), independent S3 backups, or a stopped-volume copy |
 | Analytical files on S3 | [Complete backups to an independent S3 destination](reference/native-backup-recovery.md) |
-| Owner-routed shared mode | Coordinate PostgreSQL metadata, S3 files, and every owner's local volume; native whole-instance restore is unavailable |
 | Hosted profile | [Coordinate PostgreSQL point-in-time recovery with versioned S3 data](design/hosted-restore-drill.md) |
 
 Keep backups away from the source disk. Keep the pipeline encryption key and deployment secrets privately, separately from backup bundles. A live copy of selected database files is not a consistent checkpoint.

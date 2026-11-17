@@ -26,6 +26,6 @@ Every guide has a **View Markdown** link. It opens the source text in the browse
 
 ## Run an instance
 
-[Hosting](hosting.md) covers a laptop or VM. [People and permissions](access.md) covers invitations, tool connections, and service credentials. [Storage](storage.md) explains local files, S3, and the owner-routed and hosted PostgreSQL profiles. Configure [backups](backup-and-restore.md) before storing important data.
+[Hosting](hosting.md) covers a laptop or VM. [People and permissions](access.md) covers invitations, tool connections, and service credentials. [Storage](storage.md) explains local files, S3, and the hosted profile with PostgreSQL and S3. Configure [backups](backup-and-restore.md) before storing important data.
 
 Detailed request fields and configuration options live in the [reference](reference/README.md). Development decisions and benchmark records live in [design and validation](design/README.md). The [roadmap](roadmap.md) separates completed work from proposals.

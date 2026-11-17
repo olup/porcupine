@@ -6,7 +6,7 @@ Porcupine remains the resource server. It verifies access tokens, binds each pro
 
 ## Configure the server
 
-Start with fresh control storage. An existing control database cannot change authentication mode or adopt another mode's identities. SQLite and shared PostgreSQL support either mode; events remain in each worker's SQLite journal before DuckLake.
+Start with fresh control storage. An existing control database cannot change authentication mode or adopt another mode's identities. Both standalone and hosted support either authentication mode.
 
 Remove configured `bootstrap_token`, `oauth`, `email`, and `oidc` values, including matching environment overrides. External mode rejects builtin provider and SMTP settings before opening storage. Configure a trusted issuer and its signing-key endpoint:
 
@@ -94,7 +94,7 @@ Tenant administrators create native service accounts and scoped API or MCP keys 
 
 A finite export stores only an audit subject digest, its admitted project/tenant, issuer, and original expiry. It stores no bearer token, refresh secret, or human account. Execution and publication stop at the original expiry and recheck current project ownership and deletion state. Expired execution reports `authorization_expired` and cleans unfinished output. A retry never renews that execution authority.
 
-The current SQLite journal keeps inert foreign-key anchors for audit subjects and tenant ownership links. These rows contain no authorization grants and are never used to authenticate. Tenant cleanup removes its links and removes an anchor only when no other tenant or job still references it. The hosted Phase 5 design removes these local records when jobs move to PostgreSQL.
+The current SQLite journal keeps inert foreign-key anchors for audit subjects and tenant ownership links. These rows contain no authorization grants and are never used to authenticate. Tenant cleanup removes its links and removes an anchor only when no other tenant or job still references it. Hosted uses its PostgreSQL job stores.
 
 A completed export keeps normal result retention. A freshly authorized user can retrieve it later, subject to current project permissions. Each download link is bounded by the current token's remaining lifetime and the object's retention.
 

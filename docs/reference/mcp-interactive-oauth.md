@@ -79,7 +79,7 @@ The provider's signature, issuer, audience, expiry, authorized party, nonce, and
 
 Use the human and membership APIs to revoke an account or its access to one tenant. Use `revoke-oauth-grant` to disconnect one tool, or revoke the downstream client to disable that application. Current local permissions remain authoritative even if the person can still sign in to Google. Removing a login provider does not transfer its identities to another issuer.
 
-Pending browser sessions use the deployment's control database in shared mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
+Pending browser sessions use the deployment's control database in hosted mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
 
 Instance operators can [list and unlink upstream identities](identity-recovery.md) for account recovery. Unlinking revokes that human's existing interactive connections and pending local sign-in proofs, while keeping their account and memberships. A fresh verified login can relink.
 
