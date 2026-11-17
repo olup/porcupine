@@ -57,7 +57,7 @@ Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yam
 
 One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/restore.md)
 
-**Unreleased:** [tenants and usage budgets](docs/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. This requires a fresh data directory and is not part of v0.14.0.
+**Unreleased:** [tenants and usage budgets](docs/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. A fresh instance creates a `default` tenant. Keep it for one team, or create a tenant before adding its projects. People are invited to explicit projects; a tenant does not yet have its own membership or administrator role. Follow the [team setup](docs/connect-your-team.md#choose-a-tenant-for-your-projects-unreleased) after connecting the instance administrator. This requires a fresh data directory and is not part of v0.14.0.
 
 The optional [shared deployment](docs/shared-deployment.md) keeps event queues in owner-local SQLite, control and catalog metadata in PostgreSQL, and analytical payloads in S3 Parquet. It is unreleased and does not provide automatic owner failover.
 

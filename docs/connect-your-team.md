@@ -29,6 +29,29 @@ callback_port = 43179
 
 Run `codex mcp login porcupine_admin --scopes instance:admin`. Enter your authorized administrator email on the Porcupine page, enter the code delivered to its inbox, and approve instance administration. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
 
+## Choose a tenant for your projects (unreleased)
+
+This step applies to tenant-enabled development builds, not the published v0.14.0 release. Use a CLI built from the same version as the server.
+
+After connecting the instance administrator, set up the team in this order:
+
+1. Choose the tenant that holds the team's projects. A fresh instance creates `default`; keep it for a single-team installation.
+2. Create projects inside that tenant.
+3. Invite people to the projects they need.
+
+For the default tenant, run:
+
+```sh
+porcupine get-tenant --tenant-id default
+porcupine create-project --body '{"name":"Website","tenant_id":"default","ingestion_mode":"server_only"}'
+```
+
+To keep another team's budgets separate, run `porcupine create-tenant --body '{"name":"Research team"}'`. Use the returned `tenant.id` as `tenant_id` when creating that team's projects. The tenant's projects share its ingestion allowance and interactive query limits. Only an instance administrator manages these budgets.
+
+With MCP, ask the admin agent to inspect `list-tenants`, choose or create a tenant, and create the team's projects there. The agent discovers the installed contracts through `porcupine_docs`.
+
+Invitations still grant explicit project permissions. There is no tenant membership or tenant administrator role yet. Inviting someone to a project does not grant access to the tenant's other projects, and new projects do not inherit existing invitations. See [tenants and budgets](tenants.md).
+
 ## Invite someone once
 
 Ask the connected admin agent to create a project if necessary, then invite the person's address with the required permissions for each project. For example:

@@ -33,7 +33,7 @@ The deployment operator chooses [storage](storage.md) and configures [backups](r
 
 Version v0.14.0 includes [remote backups and offline recovery](native-backup-recovery.md).
 
-**Unreleased:** [tenants and usage budgets](tenants.md) group projects under a monthly ingestion allowance and shared interactive query limits. Tenant management is restricted to instance administrators. This feature requires a fresh data directory and is not included in v0.14.0.
+**Unreleased:** [tenants and usage budgets](tenants.md) group projects under a monthly ingestion allowance and shared interactive query limits. After connecting the instance administrator, [choose a tenant, create its projects, and invite people](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased). A fresh instance already has the `default` tenant for a single team. Invitations grant project permissions; tenant membership and tenant administrators are not implemented. This feature requires a fresh data directory and is not included in v0.14.0.
 
 Optional [shared PostgreSQL deployment](shared-deployment.md) is also unreleased: one binary can use PostgreSQL control/catalog metadata, owner-local SQLite queues, and S3 Parquet. Any worker can serve as a public entry point; accepted events and jobs stay with their durable project owner. This does not provide automatic owner failover or native whole-instance backup/restore.
 

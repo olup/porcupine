@@ -76,6 +76,14 @@ sh examples/hello.sh
 
 The example creates a new local project, sends one synthetic cookieless `hello` event and waits for its count to reach `"1"`. Each run creates another project. Use the returned project ID for further exploration. See [hosting](https://olup.github.io/porcupine/docs/hosting.md) for a public HTTPS deployment.
 
+### Tenant-enabled development builds
+
+This paragraph applies only when the running server exposes tenant operations. The v0.14.0 image and CLI do not include them. Inspect the installed API or MCP contracts and use matching CLI/server versions.
+
+For setup, connect the instance administrator, inspect the automatically created `default` tenant, create projects in that tenant, then invite people to explicit project IDs. Create another tenant only when you need separate team budgets. There is no tenant-wide invitation, tenant administrator role, or automatic access to future projects. Never substitute a deployment-wide `*` grant for tenant membership. See [team setup](https://olup.github.io/porcupine/docs/connect-your-team.md#choose-a-tenant-for-your-projects-unreleased).
+
+Choose local SQLite for one application worker. Tenants do not require PostgreSQL. Shared workers use PostgreSQL for control and DuckLake catalog metadata, S3 for Parquet, and a durable owner-local SQLite queue on every worker. Event payloads do not pass through PostgreSQL. Project owners are not automatically reassigned after a crash. Compare the modes in [hosting](https://olup.github.io/porcupine/docs/hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) before selecting a deployment.
+
 ## Collect events
 
 - **Native HTTP.** Send `track`, `pageview` or `identify` messages to `POST /ingest/v1/events`. Use `X-Porcupine-Key` with a public write key on a mixed project, or use an authorized API bearer with `events:write` for backend ingestion. A `server_only` project requires a private API credential. Persist one producer `message_id` per event and reuse it on retries to get the same Porcupine `event_id`.

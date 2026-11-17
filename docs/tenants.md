@@ -6,9 +6,13 @@ A tenant groups projects that share an ingestion allowance and interactive query
 
 ## Ownership and access
 
+For a fresh deployment, follow [team setup](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased): connect the instance administrator, choose or create a tenant, create its projects, then invite people to those projects.
+
 Each project belongs to one tenant. Its `tenant_id` is returned with project metadata and cannot be changed after creation. Producers send events to a project; Porcupine resolves its tenant from stored project ownership. A field supplied in an event cannot select a different tenant.
 
 Permissions still name projects explicitly. A person or service can have access to several projects, including projects in different tenants. Adding access to one project does not expose another project's events or the tenant's aggregate usage. An operator-issued `*` project grant covers the whole deployment, including all tenants; it is not a tenant-local wildcard.
+
+There is no invitation to an entire tenant. A person invited to existing projects does not gain access to projects created later in that tenant.
 
 Only a credential with `instance:admin` can create projects, manage tenants, change budgets, suspend ingestion, or read tenant-wide usage. Project readers can see the configured budgets and deployment ceilings through their project's schema, but cannot change them or read aggregate consumption. There is no separate tenant administrator role. Project permissions continue to control queries, imports, event changes, and pipelines. [Permissions](security-and-interfaces.md)
 

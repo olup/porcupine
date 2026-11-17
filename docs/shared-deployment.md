@@ -1,6 +1,6 @@
 # Shared PostgreSQL deployment
 
-**Unreleased, implementation in progress.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the intended deployment contract, not a production availability guarantee.
+**Unreleased.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the implemented deployment contract, not a production availability guarantee. For a single-server setup, compare the [SQLite and PostgreSQL modes](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
 
 The same server binary has two modes. The default keeps control metadata, accepted events, and jobs in local SQLite, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
 

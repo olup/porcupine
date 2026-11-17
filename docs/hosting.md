@@ -4,7 +4,26 @@ The default server embeds DuckDB and DuckLake. One container holds the Go servic
 
 The [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
 
-**Unreleased:** the same development binary can run with [shared control PostgreSQL and DuckLake catalogs](shared-deployment.md), S3 analytical files, and an owner-local SQLite volume on every worker. This optional mode is not in the published v0.14.0 image. The standalone setup below remains the default.
+## Choose local SQLite or shared PostgreSQL (unreleased)
+
+The development server supports both deployment modes in the same binary. The published v0.14.0 image supports only the standalone mode. Match the CLI and server versions.
+
+| Choose | Local SQLite, the default | Shared PostgreSQL |
+| --- | --- | --- |
+| Application workers | One process with its own persistent volume | Several workers, each with its own persistent SQLite volume |
+| Accounts, project ownership, budgets, and coordination | Local SQLite | Shared PostgreSQL |
+| Event acceptance queue and retry receipts | Local SQLite | Project owner's local SQLite |
+| DuckLake catalog metadata | Local project catalogs | PostgreSQL |
+| Analytical event files | Local SSD or S3 | S3 |
+| Tenant and project support | Multiple tenants, each with projects | Multiple tenants, each with projects |
+
+For one server or one team, keep SQLite. PostgreSQL is not required to use tenants, email accounts, budgets, the API, CLI, or MCP. A fresh tenant-enabled instance creates `default`; you can keep every project there.
+
+Choose [shared PostgreSQL deployment](shared-deployment.md) when workers need common management state and analytical catalogs. PostgreSQL stores metadata, not an intermediate copy of event payloads. Shared mode still needs durable project ownership and the owner's SQLite volume. It does not provide automatic writer failover, transparent project rebalancing, or coordinated whole-instance backup.
+
+After deployment, [connect the instance administrator, choose a tenant, create projects, and invite people](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased). Invitations currently grant explicit project permissions in both modes. Only an instance administrator manages tenants and their budgets.
+
+The standalone setup below remains the default. Start a fresh data directory for the unreleased tenant-enabled schema; existing pre-tenant data directories are not migrated.
 
 ## Laptop with Docker Compose
 
