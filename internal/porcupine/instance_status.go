@@ -66,7 +66,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Configuration: InstanceConfiguration{
 			ExternalAuthentication: s.externalAuthEnabled(),
 			Analytics:              s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports.Enabled(), WebhookPipelines: s.pipelines.Enabled(),
-			S3QueryPipelines: s.pipelines.Enabled() && s.lake != nil,
+			S3QueryPipelines: s.pipelines.SupportsS3(),
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil && s.oauth.config.Email.SendCode != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.browser != nil && s.oauth.browser.HasOIDC(),
 			SharedControl:    s.shared != nil,

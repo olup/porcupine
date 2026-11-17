@@ -122,7 +122,7 @@ func (p *PGPipelineEffects) RemoveCleanedJobTx(ctx context.Context, tx *sql.Tx, 
 		return e
 	}
 	var d PipelineDemand
-	e := tx.QueryRowContext(ctx, `DELETE FROM pipeline_effect_jobs WHERE `+pipelineScopeWhere+` AND tenant_id=$5 AND id=$6 AND incarnation=$7 AND generation=$8 AND attempt=$9 AND version=$10 AND state IN ('retired','succeeded') RETURNING refs,bytes,rows,artifacts`, pipelineClaimArgs(c)...).Scan(&d.References, &d.QueuedBytes, &d.MetadataRows, &d.ArtifactBytes)
+	e := tx.QueryRowContext(ctx, `DELETE FROM pipeline_effect_jobs WHERE `+pipelineScopeWhere+` AND tenant_id=$5 AND id=$6 AND incarnation=$7 AND generation=$8 AND attempt=$9 AND version=$10 AND state IN ('retired','succeeded') AND NOT needs_recompose RETURNING refs-transferred_refs,bytes-transferred_bytes,rows,artifacts`, pipelineClaimArgs(c)...).Scan(&d.References, &d.QueuedBytes, &d.MetadataRows, &d.ArtifactBytes)
 	if e != nil {
 		return e
 	}
@@ -148,7 +148,7 @@ func (p *PGPipelineEffects) ClaimCleanupTx(ctx context.Context, tx *sql.Tx, s Pi
 		return c, e
 	}
 	a := append(pipelineScopeArgs(s), tenant, owner, attempt)
-	e := tx.QueryRowContext(ctx, `UPDATE pipeline_effect_cleanup c SET attempt=$7,version=version+1,lease_until=clock_timestamp()+interval '30 seconds' WHERE `+pipelineScopeWhere+` AND tenant_id=$5 AND owner_id=$6 AND (lease_until IS NULL OR lease_until<clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM pipeline_effect_jobs j WHERE j.source_id=c.source_id AND j.project_id=c.project_id AND j.catalog_id=c.catalog_id AND j.stream_id=c.stream_id AND j.batch_id=c.owner_id) RETURNING generation,prefix,version`, a...).Scan(&c.Generation, &c.Prefix, &c.Version)
+	e := tx.QueryRowContext(ctx, `UPDATE pipeline_effect_cleanup c SET attempt=$7,version=version+1,lease_until=clock_timestamp()+interval '30 seconds' WHERE `+pipelineScopeWhere+` AND tenant_id=$5 AND owner_id=$6 AND (lease_until IS NULL OR lease_until<clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM pipeline_effect_assemblies a WHERE a.source_id=c.source_id AND a.project_id=c.project_id AND a.catalog_id=c.catalog_id AND a.stream_id=c.stream_id AND a.generation=c.owner_id) AND NOT EXISTS(SELECT 1 FROM pipeline_effect_jobs j WHERE j.source_id=c.source_id AND j.project_id=c.project_id AND j.catalog_id=c.catalog_id AND j.stream_id=c.stream_id AND j.batch_id=c.owner_id) RETURNING generation,prefix,version`, a...).Scan(&c.Generation, &c.Prefix, &c.Version)
 	return c, e
 }
 
