@@ -14,7 +14,7 @@ The worker projects bounded batches into DuckLake. A transaction maintains curre
 
 A process can stop after the analytical commit and before SQLite acknowledgment. The queued batch retries after restart with the same IDs and revisions. Projection rejects stale revisions and preserves one logical current event. This is at-least-once processing with idempotent projection, not a distributed exactly-once transaction.
 
-SQLite keeps project-and-UUID receipts indefinitely. There is no finite receipt eviction mode. Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have their own storage costs.
+The published v0.14.0 release keeps project-and-UUID receipts indefinitely. Unreleased builds prune eligible receipts after 30 days by default, only after verifying their analytical heads. After the first prune, producer-ID batches also check DuckLake before acceptance; a lookup failure refuses the batch for retry. Setting retention to zero stops future pruning but preserves these historical checks. See [receipt retention](receipts.md#bounded-receipts). Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have separate storage costs.
 
 The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](../design/ducklake-maintenance.md)
 

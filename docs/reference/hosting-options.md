@@ -187,7 +187,7 @@ Maintenance leaves a two-second gap after each pass by default. It flushes small
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. SQLite keeps permanent replay receipts. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
+Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. The published v0.14.0 release keeps replay receipts permanently. Unreleased builds support [bounded receipt retention](receipts.md), with historical DuckLake checks after pruning. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
 
 `/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 

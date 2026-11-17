@@ -12,7 +12,7 @@ Event payloads never enter the operational PostgreSQL database. DuckLake data in
 | --- | --- | --- |
 | Tenants, projects, people, keys, OAuth state | Local SQLite | Shared control PostgreSQL |
 | Budget policy and aggregate usage | Local SQLite | Shared control PostgreSQL, with owner-local usage awaiting publication |
-| Accepted event payloads and permanent retry receipts | Local SQLite | Project owner's local SQLite |
+| Accepted event payloads and retry state | Local SQLite | Project owner's local SQLite |
 | Identity state, mutations, imports, uploads, pipeline and export jobs | Local SQLite | Project owner's local SQLite and local managed files |
 | DuckLake catalog | Local project catalog | Per-project PostgreSQL catalog metadata |
 | Delivered analytical payloads | Local Parquet or analytical S3 | S3 Parquet |

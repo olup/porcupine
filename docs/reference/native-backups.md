@@ -54,7 +54,7 @@ The same `get-instance-status` operation is available through HTTP and MCP. `nat
 
 `last_checkpoint_at` identifies the captured recovery point. `last_success` records later publication. Events accepted after the checkpoint can remain outside that bundle even if they arrived before backup publication.
 
-Completed bundles have names such as `pc_backup_<id>`. Each contains `control.sqlite`, `acceptance.sqlite`, `ducklake/`, and `manifest.json`. `control.sqlite` holds accounts, grants, tenants, projects, and budget policy. `acceptance.sqlite` holds accepted events, permanent retry receipts, identity state, and local work. The manifest records file sizes and SHA-256 hashes, native source identity, server version, checkpoint time and original internal paths. Those private paths are not included in the API status response.
+Completed bundles have names such as `pc_backup_<id>`. Each contains `control.sqlite`, `acceptance.sqlite`, `ducklake/`, and `manifest.json`. `control.sqlite` holds accounts, grants, tenants, projects, and budget policy. `acceptance.sqlite` holds accepted events, retained retry receipts, durable pruning markers, identity state, and local work. The manifest records file sizes and SHA-256 hashes, native source identity, server version, checkpoint time and original internal paths. Those private paths are not included in the API status response.
 
 The server checks the copied SQLite databases, their source identities, the complete file inventory and every file hash before publishing a completed bundle. A failed attempt leaves the previous completed bundle intact. Retention runs only after a replacement passes verification. Incomplete destination copies and abandoned local staging directories are cleaned on retry or restart.
 
