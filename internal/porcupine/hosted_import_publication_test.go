@@ -377,12 +377,37 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err := a.service.beginControlProjectDeletion(t.Context(), key.ProjectID); err != nil {
 		t.Fatal(err)
 	}
+	if err := fb.sealDeletedProject(t.Context(), key); !errors.Is(err, output.ErrPipelineConflict) {
+		t.Fatal("deletion acknowledged an import without a checkpoint provider", err)
+	}
+	if current, _, err := fb.publisher.checkpoint(t.Context(), scope, defaultTenantID); err != nil || current != seq {
+		t.Fatal("unconfirmed import advanced the shared cursor", current, err)
+	}
+	outcome := nextProof.Import
+	if _, err := a.service.control.ExecContext(t.Context(), `INSERT INTO import_uploads
+(id,project_id,actor_id,source_id,format,idempotency_hash,request_hash,state,created_at,updated_at)
+VALUES($1,$2,'test',$3,$4,'deletion-replay',$5,'uploading','test','test')`,
+		outcome.Key.JobID, project, outcome.SourceID, outcome.Format, outcome.ManifestSHA256); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.service.control.ExecContext(t.Context(), `INSERT INTO import_upload_files
+(id,job_id,ordinal,path,kind,size_bytes,sha256)
+VALUES($1,$2,0,'empty','events',0,$3)`, outcome.Key.FileID, outcome.Key.JobID, next.InputSHA256); err != nil {
+		t.Fatal(err)
+	}
+	newHostedImportManager(b.service.eventRules, fb)
 	if err = fb.sealDeletedProject(t.Context(), key); err != nil {
 		t.Fatal("sealed import recovery", err)
 	}
 	seq, proof, err = fb.publisher.checkpoint(t.Context(), scope, defaultTenantID)
 	if err != nil || seq != nextProof.Sequence || proof != nextProof.ProofFingerprint {
 		t.Fatal("deletion fence lost the committed import outcome", seq, proof, err)
+	}
+	var state string
+	var generation int64
+	if err := a.service.control.QueryRowContext(t.Context(), `SELECT state,generation FROM import_upload_files WHERE job_id=$1 AND id=$2`,
+		outcome.Key.JobID, outcome.Key.FileID).Scan(&state, &generation); err != nil || state != "completed" || generation != outcome.Next.Generation {
+		t.Fatal("deletion fence lost the import checkpoint", state, generation, err)
 	}
 }
 

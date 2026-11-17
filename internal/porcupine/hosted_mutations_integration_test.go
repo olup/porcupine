@@ -362,6 +362,7 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 	if err != nil || ready.Body.State != "pending" {
 		t.Fatal(ready, err)
 	}
+	preSealSequence := page.NativeHighWater
 	for _, node := range []*sharedJourneyNode{a, b} {
 		node.service.deletionCancel()
 		<-node.service.deletionDone
@@ -376,8 +377,8 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 	if err != nil || settled.state != "applied" {
 		t.Fatal(settled.state, err)
 	}
-	page, err = fb.native.PendingNativeEffects(ctx, scope, 4, 1)
-	if err != nil || page.NativeHighWater != 5 || page.AcknowledgedThrough != 5 || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
+	page, err = fb.native.PendingNativeEffects(ctx, scope, preSealSequence, 1)
+	if err != nil || page.NativeHighWater != preSealSequence+1 || page.AcknowledgedThrough != preSealSequence+1 || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
 		t.Fatal(page, err)
 	}
 	_, err = b.service.editEvent(readyContext, edit)
