@@ -143,7 +143,7 @@ func TestLivePreparationIdentityNoopAndMalformedBatch(t *testing.T) {
 		t.Fatal("malformed outer batch partially committed")
 	}
 	batch, err := prepareLiveBatch("p", "", eventBatch{{UUID: "no-op", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$set": nil}}}, time.Now())
-	if err != nil || batch.events[0].identity.kind != identityControlIgnored || batch.events[0].event.DistinctID != "" || string(batch.events[0].event.Properties) != `{}` {
+	if err != nil || batch.events[0].identity.Operation != identityControlIgnored || batch.events[0].event.DistinctID != "" || string(batch.events[0].event.Properties) != `{}` {
 		t.Fatal("pending invalid control was not parsed as a canonical no-op", batch, err)
 	}
 }

@@ -42,8 +42,8 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 	project := events[0].ProjectID
 	var chunk *webhookOpenChunk
 	prefix := func(id string, start, end int64) string {
-		base, _ := EncodeJSON(WebhookPayload{DeliveryID: id, PipelineID: pipelineID, ProjectID: project, WindowStartMS: &start, WindowEndMS: &end})
-		return string(base[:len(base)-1]) + `,"events":[`
+		base, _ := WebhookBatchPrefix(id, pipelineID, project, start, end)
+		return string(base)
 	}
 	flush := func() error {
 		if chunk == nil || len(chunk.events) == 0 {
