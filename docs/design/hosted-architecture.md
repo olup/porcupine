@@ -140,6 +140,8 @@ Import checkpointing must recover the **original** chunk outcome, not reclassify
 
 `internal/importer/historical.go` owns the shared historical row decisions. Source/version/profile ownership checks, person deletion guards, control sanitization, and safe explicit identify evidence moved from `internal/porcupine/import_rows_accept.go` into this pure reducer. Its detached state and returned changes contain no storage access or allocated IDs. SQLite still owns deduplication before reduction, transaction-local reads between rows, accepted IDs and clocks, snapshots, savepoint rollback, queue admission, receipts, and usage. This extraction does not enable a hosted import backend or change its checkpoint contract.
 
+The disabled [native historical import component](hosted-native-imports.md) now commits original chunk outcomes and shares the live proof sequence, cumulative usage and publication cursor. It does not enable a hosted upload manager or public API. Native schema 5 upgrades empty prototypes explicitly and refuses populated unpublished hosted-v4 catalogs before schema alteration.
+
 Serialized SHA-256 state contains a partial raw input block, not just a digest. Keep it with immutable upload/parser objects on S3 or recompute it from retained chunks. Only final digests, offsets and references belong in PostgreSQL.
 
 ### Other durable local state

@@ -14,6 +14,8 @@ import (
 	"github.com/olup/porcupine/internal/ingest"
 )
 
+const PostHogPersonUUIDPrefix = "porcupine-import-person-v1:"
+
 var ErrRow = errors.New("invalid historical import row")
 
 // PostHog S3 JSONLines uses object properties and ISO8601 UTC timestamps.
@@ -145,7 +147,7 @@ func ParsePostHog(raw []byte, kind string) (Row, error) {
 	// UUID. It deduplicates an exact person-map snapshot without inventing links.
 	canonical, _ := json.Marshal(p)
 	digest := sha512.Sum512(canonical)
-	row.Event.UUID = "porcupine-import-person-v1:" + hex.EncodeToString(digest[:])
+	row.Event.UUID = PostHogPersonUUIDPrefix + hex.EncodeToString(digest[:])
 	row.Event.Event, row.Event.DistinctID, row.Event.Properties = "$set", p.IdentifiedID, json.RawMessage(`{}`)
 	return row, nil
 }

@@ -9,7 +9,7 @@ import (
 )
 
 const hostedFenceSchemaVersion = 3
-const hostedLakeSchemaVersion = 4
+const hostedLakeSchemaVersion = 5
 
 // Version 3 is an explicit empty-catalog cutover, never an inferred legacy
 // identity backfill. Published native steps remain unchanged.
@@ -31,6 +31,12 @@ CREATE TABLE lake.live_commit_proofs (
  manifest_bytes BIGINT,output_count BIGINT,totals_json VARCHAR
 );
 CREATE TABLE lake.live_usage_totals (day VARCHAR,revision BIGINT,accepted_live BIGINT,accepted_import BIGINT)
+`},
+	{5, `DROP TABLE lake.live_commit_proofs;
+ALTER TABLE lake.live_usage_totals RENAME TO native_usage_totals;
+CREATE TABLE lake.native_commit_proofs (proof_version INTEGER,effect_seq BIGINT,operation_id VARCHAR,input_fingerprint VARCHAR,proof_fingerprint VARCHAR,kind VARCHAR,evidence_json VARCHAR);
+CREATE TABLE lake.import_file_heads (job_id VARCHAR,file_id VARCHAR,manifest_sha256 VARCHAR,source_id VARCHAR,format VARCHAR,effect_seq BIGINT,checkpoint_json VARCHAR);
+CREATE TABLE lake.import_person_state (distinct_id VARCHAR,person_id VARCHAR,person_version UBIGINT,mapping_version UBIGINT,profile_version UBIGINT,deleted BOOLEAN,source_id VARCHAR)
 `},
 }
 
@@ -63,7 +69,7 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 	if version == hostedLakeSchemaVersion {
 		return readHostedProjectScope(ctx, p.DB, key)
 	}
-	if version != lakeSchemaVersion && version != hostedFenceSchemaVersion {
+	if version != lakeSchemaVersion && version != hostedFenceSchemaVersion && version != 4 {
 		return HostedProjectScope{}, errors.New("hosted cutover requires a supported empty native catalog")
 	}
 	tx, err := p.DB.BeginTx(ctx, nil)
@@ -78,11 +84,18 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.heads UNION ALL SELECT 1 FROM lake.current_events UNION ALL SELECT 1 FROM lake.identity_profiles UNION ALL SELECT 1 FROM lake.identity_links)`).Scan(&populated); err != nil {
 		return HostedProjectScope{}, err
 	}
+	if version == 4 {
+		var prototype bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.live_commit_proofs UNION ALL SELECT 1 FROM lake.live_usage_totals UNION ALL SELECT 1 FROM lake.hosted_write_guard WHERE next_effect_seq<>0 OR ack_effect_seq<>0)`).Scan(&prototype); err != nil {
+			return HostedProjectScope{}, err
+		}
+		populated = populated || prototype
+	}
 	if populated {
-		return HostedProjectScope{}, errors.New("hosted identity authority is unavailable for this legacy catalog; rebuild from the authoritative journal before cutover")
+		return HostedProjectScope{}, errors.New("populated native prototype requires rebuild from authoritative data before hosted schema5; existing data preserved")
 	}
 	scope := HostedProjectScope{Key: key, CatalogID: SharedNativeCatalogID(key.SourceID, key.ProjectID), StreamID: event.NewID()}
-	if version == hostedFenceSchemaVersion {
+	if version >= hostedFenceSchemaVersion {
 		scope, err = readHostedProjectScope(ctx, tx, key)
 		if err != nil {
 			return HostedProjectScope{}, err

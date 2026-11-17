@@ -144,10 +144,10 @@ WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state IN ('open'
 	return result, nil
 }
 
-// AcknowledgeLiveEffects records confirmed external publication coverage only.
+// AcknowledgeNativeEffects records confirmed external publication coverage only.
 // It retains all proofs and tombstones. The caller must first commit its output,
 // usage and checkpoint transaction; ACK is not permission to prune or drop.
-func (s *DuckLakeStore) AcknowledgeLiveEffects(ctx context.Context, fence ProjectWriteFence, scope HostedProjectScope, through int64) error {
+func (s *DuckLakeStore) AcknowledgeNativeEffects(ctx context.Context, fence ProjectWriteFence, scope HostedProjectScope, through int64) error {
 	if !validProjectWriteFence(fence) || scope.Key != fence.Key || scope.StreamID != fence.StreamID || scope.Key.SourceID != s.Config.SharedSourceID || through < 0 {
 		return ErrProjectWriteFenceStale
 	}
@@ -193,7 +193,7 @@ func (s *DuckLakeStore) AcknowledgeLiveEffects(ctx context.Context, fence Projec
 // horizon are proven, every native sequence must still have exactly one proof.
 func validateNativeEffectHistory(ctx context.Context, tx *sql.Tx, high int64) error {
 	var count, unique, first, last int64
-	if err := tx.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT effect_seq),coalesce(min(effect_seq),0),coalesce(max(effect_seq),0) FROM lake.live_commit_proofs`).Scan(&count, &unique, &first, &last); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT effect_seq),coalesce(min(effect_seq),0),coalesce(max(effect_seq),0) FROM lake.native_commit_proofs`).Scan(&count, &unique, &first, &last); err != nil {
 		return err
 	}
 	if high < 0 || count != high || unique != high || last != high || (high > 0 && first != 1) || (high == 0 && first != 0) {

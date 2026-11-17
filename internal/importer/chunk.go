@@ -15,11 +15,17 @@ type ChunkState struct {
 	Discarding           bool
 	Counts               ImportCounts
 }
+type RowFailure struct {
+	Position int64
+	Reason   string
+}
+
 type Chunk struct {
 	State     ChunkState
 	Rows      []Row
 	Positions []int64
 	Samples   []ImportRowSample
+	Failures  []RowFailure
 }
 
 func ParseChunk(ctx context.Context, file ChunkState, data []byte, final bool) (Chunk, error) {
@@ -41,6 +47,7 @@ func ParseChunk(ctx context.Context, file ChunkState, data []byte, final bool) (
 		row, err := ParseRow(raw, file.Kind, file.Format)
 		if err != nil {
 			work.State.Counts.Invalid++
+			work.Failures = append(work.Failures, RowFailure{Position: work.State.LineNumber + 1, Reason: "invalid_row"})
 			addSample("invalid_row")
 			return nil
 		}
@@ -70,6 +77,7 @@ func ParseChunk(ctx context.Context, file ChunkState, data []byte, final bool) (
 			if work.State.Counts.Rows-file.Counts.Rows > MaxChunkRows {
 				return work, ErrChunkRows
 			}
+			work.Failures = append(work.Failures, RowFailure{Position: work.State.LineNumber + 1, Reason: "row_too_large"})
 			addSample("row_too_large")
 			work.State.Discarding = !complete
 			if complete {
