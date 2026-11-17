@@ -106,7 +106,9 @@ func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *t
 func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 	t.Parallel()
 	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
-	s.db.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at) VALUES('other','pressure','purchase','u','{}','now','now')`)
+	if _, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES('other','default','other','now'); INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at) VALUES('other','pressure','purchase','u','{}','now','now')`); err != nil {
+		t.Fatal(err)
+	}
 	ready, err := s.exportAdmission(context.Background(), job)
 	if err != nil || !ready {
 		t.Fatal("unrelated low pending counts blocked completed project barrier", err)
@@ -314,5 +316,37 @@ func TestExportJobsCancelCommitsBeforeSignalingActiveAttempt(t *testing.T) {
 	}
 	if _, err := s.Cancel(t.Context(), job.ProjectID, job.ID, fixtureActor()); err != nil || !called {
 		t.Fatal("creator cancellation did not signal", called, err)
+	}
+}
+
+func TestExportJobsFiniteExecutionOutageRetainsOriginalExpiry(t *testing.T) {
+	t.Parallel()
+	s, job := exportWorkerFixture(t, &exportTestS3{})
+	at := s.clock()
+	s.issuer = "https://issuer.example"
+	job.ExternalTenantID = "default"
+	job.ExternalIssuer = s.issuer
+	job.ExternalExpiresAtMS = at.Add(5 * time.Minute).UnixMilli()
+	if _, err := s.db.Exec(`INSERT INTO export_external_authority(job_id,tenant_id,issuer,expires_at_ms) VALUES(?,?,?,?)`, job.ID, job.ExternalTenantID, job.ExternalIssuer, job.ExternalExpiresAtMS); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exportJobActor(t.Context(), job); err != nil {
+		t.Fatal("valid private authority rejected", err)
+	}
+	if err := s.control.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.exportJobActor(t.Context(), job)
+	if !authenticationUnavailable(err) {
+		t.Fatal("control outage became revoked authority", err)
+	}
+	s.failExport(t.Context(), job, err)
+	current, err := s.loadExport(t.Context(), job.ProjectID, job.ID)
+	if err != nil || current.State != ExportQueued || current.Error != "authorization_unavailable" || current.SQL == "" {
+		t.Fatal("outage destroyed running execution intent", current, err)
+	}
+	s.clock = func() time.Time { return at.Add(6 * time.Minute) }
+	if _, err := s.exportJobActor(t.Context(), job); !errors.Is(err, errExportAuthorizationExpired) {
+		t.Fatal("outage extended finite execution authority", err)
 	}
 }

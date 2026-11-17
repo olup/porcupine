@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,10 +24,13 @@ func fixtureActor() auth.Principal {
 }
 func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedExport) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "journal.sqlite"))
+	pragmas := url.Values{"_pragma": {"journal_mode(WAL)", "synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}}
+	dsn := (&url.URL{Scheme: "file", Path: filepath.Join(t.TempDir(), "journal.sqlite")}).String() + "?" + pragmas.Encode()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	schema, err := os.ReadFile("../porcupine/journal_schema.sql")
 	if err != nil {
@@ -34,15 +38,37 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedE
 	}
 	_, err = db.Exec(string(schema) + `;
  ALTER TABLE project_deletions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
+ INSERT INTO tenants(id,name,created_at,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES('default','default','now',4,10000,1000,1048576);
  INSERT INTO projects(id,tenant_id,name,created_at) VALUES('project','default','project','now');
  INSERT INTO access_keys VALUES('reader','reader','hash','["events:read"]','["*"]',NULL,'now');
  INSERT INTO metadata VALUES('initialized','1');
  CREATE TABLE project_deletion_files(project_id TEXT,object_key TEXT,upload_id TEXT,storage_id TEXT,PRIMARY KEY(project_id,object_key,upload_id));
  ALTER TABLE export_files ADD COLUMN storage_id TEXT NOT NULL DEFAULT '';
- CREATE TABLE export_external_authority(job_id TEXT PRIMARY KEY,tenant_id TEXT,issuer TEXT,expires_at_ms INTEGER);
- CREATE TABLE managed_artifact_ownership(tenant_id TEXT,project_id TEXT,kind TEXT,storage_id TEXT,object_key TEXT,upload_id TEXT,PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));
+ CREATE TABLE export_external_authority(job_id TEXT PRIMARY KEY REFERENCES export_jobs(id) ON DELETE CASCADE,tenant_id TEXT NOT NULL,issuer TEXT NOT NULL,expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0));
  ` + usage.JournalSchema)
 	if err != nil {
+		t.Fatal(err)
+	}
+	controlDSN := (&url.URL{Scheme: "file", Path: filepath.Join(t.TempDir(), "control.sqlite")}).String() + "?" + pragmas.Encode()
+	control, err := sql.Open("sqlite", controlDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control.SetMaxOpenConns(1)
+	t.Cleanup(func() { control.Close() })
+	if err := control.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	controlSchema, err := os.ReadFile("../porcupine/control_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.Exec(string(controlSchema) + `;
+ INSERT INTO tenants(id,name,created_at,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES('default','default','now',4,10000,1000,1048576);
+ INSERT INTO projects(id,tenant_id,name,created_at) VALUES('project','default','project','now');
+ INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES('reader','reader','hash','["events:read"]','["*"]','now');
+ CREATE TABLE managed_artifact_ownership(tenant_id TEXT,project_id TEXT,kind TEXT,storage_id TEXT,object_key TEXT,upload_id TEXT,PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));
+ `); err != nil {
 		t.Fatal(err)
 	}
 	reader, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 256})
@@ -53,9 +79,9 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedE
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
 	config := ExportConfig{BandwidthBytesPerSecond: 100 << 20, FileBytes: 1024, MaxExecutionSeconds: 10, S3: exportstore.Config{Region: "us-east-1", Bucket: "private-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}}
-	d := ExportDependencies{Journal: db, Control: db, Reader: reader, Clock: time.Now, Usage: usage.NewRecorder(db, "output-test", time.Now), LoadActor: func(ctx context.Context, id string) (auth.Principal, error) {
+	d := ExportDependencies{Journal: db, Control: control, Reader: reader, Clock: time.Now, Usage: usage.NewRecorder(db, "output-test", time.Now), LoadActor: func(ctx context.Context, id string) (auth.Principal, error) {
 		var revoked sql.NullString
-		err := db.QueryRowContext(ctx, `SELECT revoked_at FROM access_keys WHERE id=?`, id).Scan(&revoked)
+		err := control.QueryRowContext(ctx, `SELECT revoked_at FROM access_keys WHERE id=?`, id).Scan(&revoked)
 		if revoked.Valid {
 			return auth.Principal{}, sql.ErrNoRows
 		}
