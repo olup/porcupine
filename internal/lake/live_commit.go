@@ -189,7 +189,7 @@ func (p *ProjectLake) beginHostedIngestionWrite(ctx context.Context, tx *sql.Tx,
 	if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET generation=generation+1,next_effect_seq=next_effect_seq+1,tenant_id=coalesce(tenant_id,?) WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND identity_ready AND state='open' AND fence_epoch=? AND fence_nonce=? AND next_effect_seq=? AND (tenant_id IS NULL OR tenant_id=?)`, tenant, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID, previous, tenant); err != nil {
 		return 0, err
 	}
-	if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
+	if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
 		return 0, err
 	}
 	return previous + 1, nil

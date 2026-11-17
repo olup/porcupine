@@ -388,7 +388,8 @@ func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, i
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("duckdb", "")
+	// DuckDB 2.0.0 can deadlock aborting async COPY writes (duckdb/duckdb@de37cee9).
+	db, err := sql.Open("duckdb", "?async_threads=0")
 	if err != nil {
 		return nil, err
 	}

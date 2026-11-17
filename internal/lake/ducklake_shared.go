@@ -157,6 +157,16 @@ func (p *ProjectLake) acquireNativeProjectGuard(ctx context.Context, tx *sql.Tx)
 	if !p.shared {
 		return nil
 	}
+	if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE lake.project_write_guard SET generation=generation+1 WHERE id=1")
+	return err
+}
+
+// After the drained hosted cutover, legacy writers and deletion are rejected.
+// Hosted writes conflict on hosted_write_guard and only read the legacy guard.
+func checkNativeProjectNotDeleted(ctx context.Context, tx *sql.Tx) error {
 	var deleted bool
 	if err := tx.QueryRowContext(ctx, "SELECT deleted FROM lake.project_write_guard WHERE id=1").Scan(&deleted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -167,8 +177,7 @@ func (p *ProjectLake) acquireNativeProjectGuard(ctx context.Context, tx *sql.Tx)
 	if deleted {
 		return errSharedNativeDeleted
 	}
-	_, err := tx.ExecContext(ctx, "UPDATE lake.project_write_guard SET generation=generation+1 WHERE id=1")
-	return err
+	return nil
 }
 
 func (s *DuckLakeStore) deleteSharedNativeProject(ctx context.Context, project string) error {
