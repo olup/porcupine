@@ -415,6 +415,7 @@ type sharedJourneyProcessConfig struct {
 	DatabaseURL string
 	DBPath      string
 	WorkerID    string
+	OAuthIssuer string
 	ReadyFile   string
 	HostedLake  *lakeapi.DuckLakeConfig
 }
@@ -439,6 +440,9 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 	if input.HostedLake != nil {
 		cfg = Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
 			Shared: &SharedConfig{DatabaseURL: input.DatabaseURL}, DuckLake: input.HostedLake, allowUnreleasedHostedFixture: true}
+	}
+	if input.OAuthIssuer != "" {
+		cfg.OAuth = &OAuthConfig{Issuer: input.OAuthIssuer}
 	}
 	s, err := Open(cfg)
 	if err != nil {
