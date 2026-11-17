@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -49,6 +50,7 @@ type ExternalGrant struct {
 }
 
 func (g *ExternalGrant) Tenant() string           { return g.tenant }
+func (g *ExternalGrant) Issuer() string           { return g.issuer }
 func (g *ExternalGrant) Expires() time.Time       { return g.expires }
 func (g *ExternalGrant) AllProjects() bool        { return g.all }
 func (g *ExternalGrant) Operator() bool           { return g.operator }
@@ -76,13 +78,27 @@ type ExternalVerifier struct {
 	keys                    map[string]any
 	validUntil, lastRefresh time.Time
 	refreshing              chan struct{}
+	lastRefreshFailed       bool
 }
 
 func NormalizeExternalConfig(c ExternalConfig) (ExternalConfig, error) {
-	for _, raw := range []string{c.Issuer, c.JWKSURL, c.APIAudience, c.MCPAudience} {
+	for _, raw := range []string{c.Issuer, c.JWKSURL} {
+		if len(raw) > 4096 {
+			return c, errors.New("external authentication URL exceeds 4096 bytes")
+		}
 		u, e := url.Parse(raw)
-		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) {
+		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return c, errors.New("invalid external authentication URL")
+		}
+		ip := net.ParseIP(u.Hostname())
+		loopback := u.Hostname() == "localhost" || ip != nil && ip.IsLoopback()
+		if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
 			return c, errors.New("external authentication URLs require HTTPS (HTTP is allowed on loopback only)")
+		}
+	}
+	for _, audience := range []string{c.APIAudience, c.MCPAudience} {
+		if audience == "" || len(audience) > 1024 || strings.ContainsAny(audience, " \t\r\n") {
+			return c, errors.New("external audiences must be nonempty bounded identifiers without whitespace")
 		}
 	}
 	if c.APIAudience == c.MCPAudience {
@@ -138,7 +154,7 @@ func (v *ExternalVerifier) Config() ExternalConfig {
 func (v *ExternalVerifier) SigningKeysAvailable(now time.Time) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return now.Before(v.validUntil) && len(v.keys) > 0
+	return now.Before(v.validUntil) && len(v.keys) > 0 && !v.lastRefreshFailed
 }
 
 // Verify checks access-token provenance before interpreting authorization claims.
@@ -172,6 +188,9 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 	if uniqueJSON(payload) != nil || decoder.Decode(&claims) != nil {
 		return nil, errors.New("invalid access token claims")
 	}
+	if _, bound := claims["cnf"]; bound {
+		return nil, errors.New("sender-constrained access tokens require an unsupported proof mechanism")
+	}
 	for _, field := range []string{"iat", "exp", "nbf"} {
 		value, exists := claims[field]
 		if !exists && field == "nbf" {
@@ -181,6 +200,13 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 		seconds, err := number.Int64()
 		if !ok || err != nil || seconds <= 0 || seconds > 253402300799 {
 			return nil, errors.New("integer access-token timestamps required")
+		}
+	}
+	if notBefore, ok := claims["nbf"].(json.Number); ok {
+		nbf, _ := notBefore.Int64()
+		exp, _ := claims["exp"].(json.Number).Int64()
+		if nbf >= exp {
+			return nil, errors.New("access token validity window is empty")
 		}
 	}
 	key, e := v.key(ctx, h.KeyID, h.Algorithm, now)
@@ -214,7 +240,7 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 		return nil, errors.New("access token scopes required")
 	}
 	scopes := strings.Fields(scope)
-	if len(scopes) == 0 || len(scopes) > 32 {
+	if len(scopes) == 0 || len(scopes) > 32 || strings.Join(scopes, " ") != scope {
 		return nil, errors.New("invalid access token scopes")
 	}
 	for i, p := range scopes {
@@ -292,8 +318,9 @@ func (v *ExternalVerifier) key(ctx context.Context, kid, algorithm string, now t
 		}
 		if now.Sub(v.lastRefresh) < 10*time.Second {
 			fresh := now.Before(v.validUntil)
+			failed := v.lastRefreshFailed
 			v.mu.Unlock()
-			if fresh {
+			if fresh && !failed {
 				return nil, errors.New("unknown access token signing key")
 			}
 			return nil, ErrExternalKeysUnavailable
@@ -312,6 +339,7 @@ func (v *ExternalVerifier) refresh(now time.Time) {
 	keys, err := v.fetchKeys(ctx)
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.lastRefreshFailed = err != nil
 	if err == nil {
 		v.keys = keys
 		v.validUntil = now.Add(5 * time.Minute)
@@ -365,7 +393,7 @@ func (v *ExternalVerifier) fetchKeys(ctx context.Context) (map[string]any, error
 		}
 		switch p := k.Key.(type) {
 		case *rsa.PublicKey:
-			if p.N.BitLen() < 2048 || !slices.Contains([]string{"RS256", "RS384", "RS512"}, k.Algorithm) {
+			if p.N.BitLen() < 2048 || p.N.BitLen() > 8192 || p.N.Bit(0) != 1 || p.E < 3 || p.E > 1<<31-1 || p.E%2 == 0 || !slices.Contains([]string{"RS256", "RS384", "RS512"}, k.Algorithm) {
 				return nil, ErrExternalKeysUnavailable
 			}
 		case *ecdsa.PublicKey:

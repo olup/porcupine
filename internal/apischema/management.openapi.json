@@ -2016,6 +2016,14 @@
             ],
             "type": "string"
           },
+          "external_authentication": {
+            "description": "Configured external signing-key cache freshness. This check does not contact the issuer. Unavailable does not block public ingestion or native machine keys.",
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "type": "string"
+          },
           "query_execution": {
             "description": "Shared analytical execution health on this worker, without a native query probe. Unavailable when draining or a project is quarantined; omitted in local mode.",
             "enum": [
@@ -2066,6 +2074,10 @@
             "description": "Email sign-in is configured. No verification email is sent.",
             "type": "boolean"
           },
+          "external_authentication": {
+            "description": "The integrated identity provider is replaced by an external access-token issuer. Native ingestion and machine keys remain supported.",
+            "type": "boolean"
+          },
           "native_s3_storage": {
             "description": "DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials.",
             "type": "boolean"
@@ -2096,6 +2108,7 @@
           }
         },
         "required": [
+          "external_authentication",
           "analytics",
           "native_s3_storage",
           "query_exports",
@@ -2564,7 +2577,7 @@
             "type": "string"
           },
           "client_secret": {
-            "description": "One-time OAuth token-exchange secret. It is never a bearer token or ingestion key.",
+            "description": "One-time OAuth token-exchange secret in builtin mode only. Absent in external mode, which uses native API/MCP keys without a local token endpoint. Never a bearer or ingestion key.",
             "type": "string"
           },
           "created_at": {

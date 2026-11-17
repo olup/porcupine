@@ -82,6 +82,12 @@ func TestExternalAccessTokenBoundaries(t *testing.T) {
 		{"no iat", func(c jwt.MapClaims) { delete(c, "iat") }, "at+jwt", config.APIAudience},
 		{"fractional expiry", func(c jwt.MapClaims) { c["exp"] = float64(clock.Unix()) + 0.5 }, "at+jwt", config.APIAudience},
 		{"long lifetime", func(c jwt.MapClaims) { c["exp"] = clock.Add(time.Hour).Unix() }, "at+jwt", config.APIAudience},
+		{"empty validity window", func(c jwt.MapClaims) {
+			c["exp"] = clock.Add(5 * time.Second).Unix()
+			c["nbf"] = clock.Add(6 * time.Second).Unix()
+		}, "at+jwt", config.APIAudience},
+		{"sender constrained token", func(c jwt.MapClaims) { c["cnf"] = map[string]string{"jkt": "unsupported"} }, "at+jwt", config.APIAudience},
+		{"scope control whitespace", func(c jwt.MapClaims) { c["scope"] = "events:read\nmanagement:read" }, "at+jwt", config.APIAudience},
 		{"unknown scope", func(c jwt.MapClaims) { c["scope"] = "events:read super:admin" }, "at+jwt", config.APIAudience},
 		{"unknown authorization claim", func(c jwt.MapClaims) { c["porcupine"].(map[string]any)["superuser"] = true }, "at+jwt", config.APIAudience},
 		{"tenant escalation", func(c jwt.MapClaims) { c["scope"] = "instance:admin" }, "at+jwt", config.APIAudience},
@@ -97,8 +103,21 @@ func TestExternalAccessTokenBoundaries(t *testing.T) {
 		})
 	}
 	broken.Store(true)
+	unknown := jwt.NewWithClaims(jwt.SigningMethodRS256, claims())
+	unknown.Header["kid"] = "rotated"
+	unknown.Header["typ"] = "at+jwt"
+	unknownRaw, err := unknown.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.Verify(context.Background(), unknownRaw, config.APIAudience, clock.Add(time.Minute)); err != ErrExternalKeysUnavailable {
+		t.Fatalf("missing rotated key outage classified as invalid token: %v", err)
+	}
 	if _, err := verifier.Verify(context.Background(), raw, config.APIAudience, clock.Add(time.Minute)); err != nil {
 		t.Fatalf("cached known key unavailable: %v", err)
+	}
+	if verifier.SigningKeysAvailable(clock.Add(time.Minute)) {
+		t.Fatal("failed refresh not reflected in component health")
 	}
 	fresh := claims()
 	fresh["iat"] = clock.Add(6 * time.Minute).Unix()

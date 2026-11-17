@@ -261,6 +261,18 @@ func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error
 			return err
 		}
 	}
+	// The tenant FK removes its audit links. A global operator can still have
+	// links or an in-flight job in another tenant, so never delete by subject alone.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM journal_actor_tenants WHERE tenant_id=$1`, tenant); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM access_keys WHERE id LIKE 'external:%'
+AND NOT EXISTS(SELECT 1 FROM journal_actor_tenants a WHERE a.actor_id=access_keys.id)
+AND NOT EXISTS(SELECT 1 FROM export_jobs j WHERE j.actor_id=access_keys.id)
+AND NOT EXISTS(SELECT 1 FROM import_uploads j WHERE j.actor_id=access_keys.id)
+AND NOT EXISTS(SELECT 1 FROM pipelines j WHERE j.actor_id=access_keys.id)`); err != nil {
+		return err
+	}
 	for _, statement := range []string{
 		`DELETE FROM shared_tenant_cache WHERE tenant_id=$1`,
 		`DELETE FROM tenant_usage WHERE tenant_id=$1`,

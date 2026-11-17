@@ -10,7 +10,7 @@ import (
 // Register routes on a private mux with the optional OAuth and email routes
 // enabled. Building the schema never dispatches a request to a handler.
 func ManagementOpenAPI() *huma.OpenAPI {
-	s := Service{oauth: &oauthRuntime{
+	s := Service{resources: newResourceRuntime("https://porcupine.example"), oauth: &oauthRuntime{
 		issuer: "https://porcupine.example",
 		config: OAuthConfig{Email: &EmailConfig{}},
 	}}

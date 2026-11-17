@@ -5,6 +5,8 @@ import (
 	"database/sql"
 
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
@@ -24,31 +26,37 @@ func externalPrincipal(ctx context.Context, query oauthQueryer, grant *auth.Exte
 		return auth.Principal{}, err
 	}
 	if grant.AllProjects() {
-		rows, err := query.QueryContext(ctx, `SELECT id FROM projects p WHERE tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) ORDER BY id`, grant.Tenant())
+		rows, err := query.QueryContext(ctx, `SELECT id FROM projects p WHERE tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=p.tenant_id) ORDER BY id`, grant.Tenant())
 		if err != nil {
-			return auth.Principal{}, err
+			return auth.Principal{}, auth.ErrUnavailable
 		}
 		defer rows.Close()
 		actor.Projects = []string{}
 		for rows.Next() {
 			var id string
 			if err := rows.Scan(&id); err != nil {
-				return auth.Principal{}, err
+				return auth.Principal{}, auth.ErrUnavailable
 			}
 			actor.Projects = append(actor.Projects, id)
 		}
 		if err := rows.Err(); err != nil {
-			return auth.Principal{}, err
+			return auth.Principal{}, auth.ErrUnavailable
 		}
 	} else {
-		if err := requireActiveProjectSet(ctx, query, actor.Projects); err != nil {
-			return auth.Principal{}, err
+		args := []any{grant.Tenant()}
+		markers := make([]string, len(actor.Projects))
+		for i, project := range actor.Projects {
+			markers[i] = "$" + strconv.Itoa(i+2)
+			args = append(args, project)
 		}
-		for _, project := range actor.Projects {
-			var tenant string
-			if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&tenant); err != nil || tenant != grant.Tenant() {
-				return auth.Principal{}, apiError(403, "signed project is outside the authorized tenant")
-			}
+		var matched int
+		if err := query.QueryRowContext(ctx, `SELECT count(*) FROM projects p WHERE tenant_id=$1 AND p.id IN (`+strings.Join(markers, ",")+`)
+AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id)
+AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=p.tenant_id)`, args...).Scan(&matched); err != nil {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
+		if matched != len(actor.Projects) {
+			return auth.Principal{}, apiError(403, "signed project is outside the authorized tenant")
 		}
 	}
 	return actor, nil

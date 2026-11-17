@@ -43,7 +43,7 @@ S3 backups are sequential full copies. Account for storage and transfer costs. L
 
 Use the same server image version that created the bundle. The examples use `porcupine:dev`; replace it with the exact matching image. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
 
-Create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository.
+For builtin authentication, create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository. External authentication uses the mode-specific procedure below instead.
 
 ```sh
 porcupine restore \
@@ -76,7 +76,26 @@ The restorer verifies the inventory, checks application and DuckLake formats, an
 
 ## Reconnect deliberately
 
-Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in the control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials; the bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
+Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in a builtin control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials; the bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
+
+### Restore an external-authentication instance
+
+For an archive created in [external mode](external-auth.md), set `--auth-mode external` and omit `--bootstrap-token-file`:
+
+```sh
+porcupine restore \
+  --bundle /srv/porcupine-backups/pc_backup_YOUR_ID \
+  --volume porcupine-recovered \
+  --auth-mode external \
+  --reset-access \
+  --image porcupine:dev
+```
+
+The offline JSON request uses `auth_mode: "external"` and no `bootstrap_token`. A destination authentication configuration takes precedence; a conflicting request or archived mode is rejected before credential reset. An omitted mode defaults to builtin only when no destination mode is provided. Restore does not convert authentication modes.
+
+External restore creates no local recovery administrator and does not prune builtin human, browser, or consent state. Reconfigure the trusted external issuer on the destination and recover administration with its operator JWT. Native machine keys are revoked, public ingestion keys are rotated, pipelines are paused, and exports and pending imports are canceled. Finite external execution snapshots are removed. Recreate native service keys explicitly.
+
+Both modes preserve opaque references to unfinished export and pipeline artifacts before clearing checkpoints. Those references keep tenant deletion pending until reconciled, without contacting the source buckets. This reset/clone workflow is separate from the planned hosted PITR workflow that preserves secrets and restores shared operational state.
 
 When replacing backend credentials, keep the producer's logical `source_id` so retries use the same event namespace.
 

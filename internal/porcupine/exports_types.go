@@ -64,6 +64,7 @@ type storedExport struct {
 	ExpiresAtMS         int64
 	CleanupPending      bool
 	ExternalTenantID    string
+	ExternalIssuer      string
 	ExternalExpiresAtMS int64
 }
 

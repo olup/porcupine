@@ -131,10 +131,13 @@ func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource stri
 		JOIN access_keys k ON k.id=b.principal_id JOIN access_keys parent ON parent.id=b.client_id
 		WHERE k.token_hash=$1 AND b.audience=$2 AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
-		return auth.Principal{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, err
+		}
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
-		return auth.Principal{}, errors.New("invalid service key grants")
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	return constrainServiceKeyActor(ctx, s.control, a)
 }
@@ -146,14 +149,17 @@ func constrainServiceKeyActor(ctx context.Context, query oauthQueryer, a auth.Pr
 		return a, nil
 	}
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	a, err = constrainTenantCredentialActor(ctx, query, a)
 	if err != nil {
 		return auth.Principal{}, err
 	}
 	parent, err := loadOAuthClient(ctx, query, parentID)
-	if err != nil || !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.TenantIDs, parent.TenantIDs) {
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.TenantIDs, parent.TenantIDs) {
 		return auth.Principal{}, errors.New("service key parent authority unavailable")
 	}
 	for _, project := range a.Projects {

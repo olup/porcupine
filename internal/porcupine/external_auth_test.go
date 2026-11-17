@@ -86,6 +86,7 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	t.Parallel()
 	f := newExternalAuthFixture(t)
 	s := f.s
+	enableTestPipelines(t, s)
 	if s.oauth != nil || !s.externalAuthEnabled() {
 		t.Fatal("external mode initialized builtin authority")
 	}
@@ -148,8 +149,19 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	if rejected["code"] != "execution_credential_required" {
 		t.Fatal("missing execution credential guidance", rejected)
 	}
+	created := request(t, s, "POST", "/api/v1/projects/"+idA+"/pipelines", native, pipelineBody("https://example.test"), 201)
+	stored, err := s.loadPipeline(t.Context(), idA, created["id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), stored.ActorID, idA); err != nil || !allowed {
+		t.Fatal("native execution credential cannot authorize its pipeline", err)
+	}
 	request(t, s, "DELETE", "/api/v1/tenants/"+a+"/service-accounts/"+clientID+"/api-keys/"+key["id"].(string), admin, "", 204)
 	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", native, "", 401)
+	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), stored.ActorID, idA); err != nil || allowed {
+		t.Fatal("revoked execution credential still authorizes pipeline", err)
+	}
 	// An external-AS outage never enters the public SDK acceptance path.
 	f.broken.Store(true)
 	request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"event":"click","distinct_id":"person"}`, pa["ingest_token"]), 200)
@@ -202,6 +214,7 @@ func TestExternalMCPReauthenticatesEveryRequest(t *testing.T) {
 		t.Fatal("MCP session retained expired external authority", err)
 	}
 	f.broken.Store(true)
+	f.now.Store(f.clock.Add(12 * time.Minute).UnixMilli())
 	fresh := f.token(t, "reader", defaultTenantID, "management:read events:read", s.resources.mcpResource, id)
 	r := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1"},"capabilities":{}}}`))
 	r.Header.Set("Authorization", "Bearer "+fresh)
@@ -210,7 +223,65 @@ func TestExternalMCPReauthenticatesEveryRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 503 {
-		t.Fatalf("external outage should be retryable: %d %s", w.Code, w.Body.String())
+		t.Fatalf("external outage should be retryable: status %d", w.Code)
 	}
 	request(t, s, "POST", "/capture/", "", captureBody(p["ingest_token"].(string), "public-during-outage"), 200)
+}
+
+func TestExternalAuthLoopbackDevelopmentURLs(t *testing.T) {
+	t.Parallel()
+	for _, origin := range []string{"http://localhost:9080", "http://127.0.0.2:9080", "http://[::1]:9080", "https://data.example.eu"} {
+		c := Config{Auth: &AuthConfig{Mode: "external", PublicURL: origin, External: auth.ExternalConfig{Issuer: origin + "/realm", JWKSURL: origin + "/keys", APIAudience: "api", MCPAudience: "mcp"}}}
+		if err := ValidateConfig(c); err != nil {
+			t.Fatal("explicit loopback development URL rejected", origin, err)
+		}
+	}
+	for _, field := range []string{"public", "issuer", "jwks"} {
+		c := Config{Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: auth.ExternalConfig{Issuer: "https://identity.test/realm", JWKSURL: "https://identity.test/keys", APIAudience: "api", MCPAudience: "mcp"}}}
+		switch field {
+		case "public":
+			c.Auth.PublicURL = "http://data.example.eu"
+		case "issuer":
+			c.Auth.External.Issuer = "http://identity.example.eu/realm"
+		case "jwks":
+			c.Auth.External.JWKSURL = "http://identity.example.eu/keys"
+		}
+		if err := ValidateConfig(c); err == nil {
+			t.Fatal("remote HTTP accepted", field)
+		}
+	}
+}
+
+func TestExternalNativeOperatorSurvivesIssuerOutage(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	s := f.s
+	operator := f.operator(t)
+	account := request(t, s, "POST", "/api/v1/oauth-clients", operator, `{"name":"Operator","permissions":["instance:admin"],"projects":["*"]}`, 201)
+	if account["client_secret"] != nil {
+		t.Fatal("external machine account exposes local OAuth secret")
+	}
+	native := request(t, s, "POST", "/api/v1/oauth-clients/"+account["client_id"].(string)+"/api-keys", operator, `{"name":"Operator key","audience":"api","permissions":["instance:admin"],"projects":["*"]}`, 201)["token"].(string)
+	f.broken.Store(true)
+	f.now.Store(f.clock.Add(6 * time.Minute).UnixMilli())
+	fresh := f.operator(t)
+	request(t, s, "GET", "/api/v1/status", fresh, "", 503)
+	status := request(t, s, "GET", "/api/v1/status", native, "", 200)
+	if status["status"] != "degraded" || status["checks"].(map[string]any)["external_authentication"] != "unavailable" {
+		t.Fatal("external key outage hidden from component status", status)
+	}
+	request(t, s, "POST", "/api/v1/tenants", native, `{"name":"Native operator while issuer unavailable"}`, 201)
+	if _, err := s.authenticateResource(t.Context(), native, s.resources.mcpResource); err == nil {
+		t.Fatal("native operator API key crossed into MCP")
+	}
+}
+
+func TestOfflineSchemaKeepsNativeCredentialOperations(t *testing.T) {
+	t.Parallel()
+	operations := managementOperations(ManagementOpenAPI())
+	for _, id := range []string{"create-service-api-key", "create-tenant-service-account", "create-tenant-service-api-key", "list-tenant-service-api-keys", "update-tenant-service-account", "revoke-tenant-service-account"} {
+		if operations[id] == nil {
+			t.Fatal("offline CLI contract lost native credential operation", id)
+		}
+	}
 }

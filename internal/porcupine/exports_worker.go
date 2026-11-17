@@ -402,7 +402,6 @@ func (s *Service) expireExports(ctx context.Context) {
 	s.db.ExecContext(ctx, `UPDATE export_jobs SET state='expired',cleanup_pending=1,sql='',parameters='{}' WHERE state='succeeded' AND expires_at_ms>0 AND expires_at_ms<=$1`, s.clock().UnixMilli())
 }
 
-
 func (s *Service) nextCleanupExport(ctx context.Context) (storedExport, bool) {
 	job, err := scanExport(s.db.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE cleanup_pending=1 AND state!='running' ORDER BY rowid LIMIT 1`))
 	return job, err == nil

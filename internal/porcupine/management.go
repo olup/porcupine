@@ -182,9 +182,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			a, err = s.authenticateResource(ctx.Context(), raw, resource)
 		}
 		if err != nil {
-			if errors.Is(err, auth.ErrExternalKeysUnavailable) {
-				w.Header().Set("Retry-After", "3")
-				problem(w, 503, "external authentication signing keys unavailable")
+			if writeAuthenticationUnavailable(w, err) {
 				return
 			}
 			s.authChallenge(w, resource, req.Header.Get("Authorization") != "")

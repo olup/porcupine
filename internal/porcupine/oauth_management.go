@@ -91,7 +91,7 @@ type OAuthClientCreateInput struct {
 type OAuthClientCreated struct {
 	TenantID                string   `json:"tenant_id,omitempty"`
 	ClientID                string   `json:"client_id"`
-	ClientSecret            string   `json:"client_secret,omitempty" doc:"One-time OAuth token-exchange secret. It is never a bearer token or ingestion key."`
+	ClientSecret            string   `json:"client_secret,omitempty" doc:"One-time OAuth token-exchange secret in builtin mode only. Absent in external mode, which uses native API/MCP keys without a local token endpoint. Never a bearer or ingestion key."`
 	Name                    string   `json:"name"`
 	SourceID                string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions             []string `json:"permissions"`
@@ -121,7 +121,11 @@ type OAuthClientDeleteInput struct {
 func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	s.registerInteractiveOAuthManagement(api, op)
 	base := "/api/v1/oauth-clients"
-	huma.Register(api, op("create-oauth-client", "POST", base, "Create a scoped machine OAuth client and return its secret once", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
+	createSummary := "Create a scoped machine OAuth client and return its secret once"
+	if s.externalAuthEnabled() {
+		createSummary = "Create a native machine account; issue static API or MCP keys separately, without local OAuth token exchange"
+	}
+	huma.Register(api, op("create-oauth-client", "POST", base, createSummary, auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
 	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
 	huma.Register(api, op("revoke-oauth-client", "DELETE", base+"/{id}", "Revoke an OAuth principal and its issued tokens; the last administrator is protected", auth.OperationAccess{Permission: "instance:admin"}, 204), s.managementRevokeOAuthClient)
 }

@@ -82,6 +82,9 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 					return
 				}
 				if _, err := s.authenticateResource(ctx.Context(), raw, s.resources.apiResource); err != nil {
+					if writeAuthenticationUnavailable(w, err) {
+						return
+					}
 					s.authChallenge(w, s.resources.apiResource, true)
 					problem(w, 401, "imports require an API access token or service key")
 					return

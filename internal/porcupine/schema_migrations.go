@@ -43,8 +43,13 @@ ALTER TABLE project_deletion_files ADD COLUMN storage_id TEXT NOT NULL DEFAULT '
 	// 5: finite authority for exports submitted with an external access token.
 	`CREATE TABLE export_external_authority (
 job_id TEXT PRIMARY KEY REFERENCES export_jobs(id) ON DELETE CASCADE,
-tenant_id TEXT NOT NULL,expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0)) WITHOUT ROWID;
+tenant_id TEXT NOT NULL,issuer TEXT NOT NULL,expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0)) WITHOUT ROWID;
 CREATE INDEX export_external_authority_expiry ON export_external_authority(expires_at_ms);`,
+	// 6: external audit anchors have tenant ownership, never authorization grants.
+	`CREATE TABLE journal_actor_tenants (
+actor_id TEXT NOT NULL REFERENCES access_keys(id) ON DELETE CASCADE,
+tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}

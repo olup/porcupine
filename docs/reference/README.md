@@ -21,6 +21,7 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Team sign-in setup](connect-your-team.md) and [email invitations](email-accounts.md)
 - [OAuth clients](oauth.md) and [Google/OIDC configuration](mcp-interactive-oauth.md)
 - [Email transport](email-transport.md)
+- Unreleased: [external authentication](external-auth.md) replaces the builtin identity provider while retaining native ingestion and machine keys.
 - Unreleased: [tenant access](tenant-access.md), [budgets](tenants.md), and [identity recovery](identity-recovery.md)
 
 ## Operations

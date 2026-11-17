@@ -30,6 +30,8 @@ For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audi
 
 **Unreleased login options:** use `porcupine login --tenant-admin` to authorize administration of one tenant, or `porcupine login --scopes 'events:read events:write management:read'` for selected project permissions. The default remains read-only. Project scopes cannot be combined with `--admin` or `--tenant-admin`, and requesting a scope never adds rights to the human account.
 
+For an unreleased server configured with [external authentication](../docs/reference/external-auth.md), use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT`. Register that public client with the external issuer. The CLI discovers its endpoints, keeps the API resource through exchange and refresh, and requires PKCE and issuer identification in the authorization response. A session without a refresh token works until its access token expires, then requires another login.
+
 ## Import event history
 
 Import native, PostHog, and Segment JSONL files or directories in one command:
@@ -60,7 +62,7 @@ Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to
 
 Since v0.13.0, run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/reference/event-discovery.md) for sampling and payload limits.
 
-`porcupine restore` is an offline operation that runs the matching native server image through Docker. It restores into a fresh volume, resets old access and delivery jobs, and reads the recovery secret from a private file. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
+`porcupine restore` is an offline operation that runs the matching native server image through Docker. It restores into a fresh volume and resets old access and delivery jobs. Builtin mode reads its recovery secret from a private file. Unreleased external mode uses `--auth-mode external` without `--bootstrap-token-file`, then recovers administration through an external operator JWT. Archive and destination modes must match. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
 
 ## Develop
 

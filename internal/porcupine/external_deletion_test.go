@@ -17,10 +17,25 @@ func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
 		return tenant, p["project"].(map[string]any)["id"].(string), p["ingest_token"].(string)
 	}
 	a, pa, ka := create("A")
-	_, pb, kb := create("B")
+	b, pb, kb := create("B")
 	request(t, s, "POST", "/capture/", "", captureBody(ka, "A"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(kb, "B"), 200)
 	reader := f.token(t, "person", a, "events:read", s.resources.apiResource, pa)
+	readerB := f.token(t, "person", b, "events:read", s.resources.apiResource, pb)
+	request(t, s, "GET", "/api/v1/projects/"+pa+"/events", reader, "", 200)
+	request(t, s, "GET", "/api/v1/projects/"+pb+"/events", readerB, "", 200)
+	actorA, err := s.authenticateResource(t.Context(), reader, s.resources.apiResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorB, err := s.authenticateResource(t.Context(), readerB, s.resources.apiResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorActor, err := s.authenticateResource(t.Context(), operator, s.resources.apiResource)
+	if err != nil {
+		t.Fatal(err)
+	}
 	client := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts", operator, externalBody(t, map[string]any{"name": "machine", "permissions": []string{"events:read"}, "projects": []string{pa}}), 201)
 	key := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts/"+client["client_id"].(string)+"/api-keys", operator, externalBody(t, map[string]any{"name": "worker", "audience": "api", "permissions": []string{"events:read"}, "projects": []string{pa}}), 201)["token"].(string)
 	request(t, s, "DELETE", "/api/v1/tenants/"+a, operator, "", 202)
@@ -30,6 +45,19 @@ func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
 	request(t, s, "GET", "/api/v1/projects/"+pa+"/events", operator, "", 404)
 	request(t, s, "GET", "/api/v1/projects/"+pb+"/events", operator, "", 200)
 	request(t, s, "POST", "/capture/", "", captureBody(kb, "B-still-live"), 200)
+	for _, check := range []struct {
+		id    string
+		count int
+	}{{actorA.ID, 0}, {actorB.ID, 1}, {operatorActor.ID, 1}} {
+		var count int
+		if err := s.db.QueryRow(`SELECT count(*) FROM access_keys WHERE id=$1`, check.id).Scan(&count); err != nil || count != check.count {
+			t.Fatal("tenant deletion removed another tenant's audit anchor or retained A", count, check, err)
+		}
+	}
+	var links int
+	if err := s.db.QueryRow(`SELECT count(*) FROM journal_actor_tenants WHERE tenant_id=$1`, a).Scan(&links); err != nil || links != 0 {
+		t.Fatal("deleted tenant retained subject links", links, err)
+	}
 	for _, table := range []string{"email_humans", "oauth_interactive_grants", "oauth_browser_sessions"} {
 		// Browser sessions are PostgreSQL-only. No native human or consent exists in local mode.
 		if table == "oauth_browser_sessions" {
@@ -40,6 +68,17 @@ func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
 			t.Fatal("external cleanup created builtin identity state", table, count, err)
 		}
 	}
+	journal, control := controlJournalPaths(t, s)
+	config := Config{DBPath: journal, ControlDBPath: control, Clock: s.clock, Auth: &AuthConfig{Mode: "external", PublicURL: s.resources.publicURL, External: s.resources.external.Config()}}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.s, err = Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, f.s, "GET", "/api/v1/projects/"+pb+"/events", readerB, "", 200)
+	request(t, f.s, "GET", "/api/v1/projects/"+pa+"/events", reader, "", 401)
 }
 
 // Seed an inert consent row only to detect accidental execution of a builtin

@@ -449,12 +449,18 @@ func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal,
 	}
 	err := s.control.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE token_hash=$1 AND revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
-		return a, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return a, err
+		}
+		return a, auth.ErrUnavailable
 	}
 	if err = json.Unmarshal([]byte(permissions), &a.Permissions); err != nil {
-		return a, err
+		return a, auth.ErrUnavailable
 	}
 	err = json.Unmarshal([]byte(projects), &a.Projects)
+	if err != nil {
+		return a, auth.ErrUnavailable
+	}
 	return a, err
 }
 func write(w http.ResponseWriter, status int, v any) {
@@ -576,6 +582,7 @@ func (s *Service) Handler() http.Handler {
 		write(w, 200, map[string]string{"status": "ready"})
 	})
 	s.registerOAuth(m)
+	s.registerResourceMetadata(m)
 	api := s.registerManagement(m)
 	m.Handle("/mcp", s.mcpHandler(api.OpenAPI(), m))
 	capture := limitConcurrent(s.captureSlots, s.capture)
@@ -715,9 +722,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		a, err = s.authenticate(r.Context(), rawKey)
 	}
 	if err != nil {
-		if errors.Is(err, auth.ErrExternalKeysUnavailable) {
-			w.Header().Set("Retry-After", "3")
-			problem(w, 503, "external authentication signing keys unavailable")
+		if writeAuthenticationUnavailable(w, err) {
 			return
 		}
 		problem(w, 401, "invalid ingestion credential")

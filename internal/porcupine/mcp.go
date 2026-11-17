@@ -225,9 +225,7 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 			a, err = s.authenticateResource(r.Context(), raw, resource)
 		}
 		if err != nil {
-			if errors.Is(err, auth.ErrExternalKeysUnavailable) {
-				w.Header().Set("Retry-After", "3")
-				problem(w, 503, "external authentication signing keys unavailable")
+			if writeAuthenticationUnavailable(w, err) {
 				return
 			}
 			s.authChallenge(w, resource, r.Header.Get("Authorization") != "")

@@ -25,7 +25,8 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.oauth = oauth
-	defer func() { s.oauth = nil }()
+	s.resources = newResourceRuntime(oauth.issuer)
+	defer func() { s.oauth, s.resources = nil, nil }()
 	var operatorID string
 	if err := s.db.QueryRow(`SELECT actor_id FROM pipelines WHERE id=$1`, expiredPipeline).Scan(&operatorID); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,8 @@ SQLite uses WAL mode and `synchronous=FULL`. The server acknowledges capture onl
 
 Retries need a stable PostHog UUID or native/Segment producer message ID in the same project and source. A repeat returns the original event ID and preserves the original accepted payload. Without a stable producer ID, separate submissions can create separate events. [Receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources)
 
+**Unreleased:** a control-storage failure while validating a credential returns retryable `503` with `Retry-After`, before acceptance writes. API, MCP, native ingestion, PostHog, and Segment preserve that distinction. A genuinely invalid, expired, or revoked credential returns `401`. Retry the same stable-ID batch after service recovery; do not replace its IDs.
+
 ## Analytical delivery
 
 The worker projects bounded batches into DuckLake. A transaction maintains current events and monotonic revision heads. Only after that transaction commits does SQLite atomically record receipts, remove delivered queue payloads, and record delivery success.

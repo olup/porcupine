@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Service) initializeOAuth(ctx context.Context) error {
-	if s.externalAuthEnabled() {
+	if s.oauth == nil {
 		return nil
 	}
 	if err := s.initializeInteractiveOAuth(ctx); err != nil {

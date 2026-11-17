@@ -84,7 +84,11 @@ func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string,
 	}
 	access := auth.OperationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
 	base := "/api/v1/tenants/{tenant_id}/service-accounts"
-	huma.Register(api, op("create-tenant-service-account", "POST", base, "Create a team-owned machine account with fixed project permissions and a one-time secret", access, 201), s.createTenantServiceAccount)
+	createSummary := "Create a team-owned machine account with fixed project permissions and a one-time secret"
+	if s.externalAuthEnabled() {
+		createSummary = "Create a team-owned native machine account; issue API or MCP keys separately, without a local OAuth secret"
+	}
+	huma.Register(api, op("create-tenant-service-account", "POST", base, createSummary, access, 201), s.createTenantServiceAccount)
 	huma.Register(api, op("list-tenant-service-accounts", "GET", base, "List this tenant's team machine accounts without secrets", access, 200), s.listTenantServiceAccounts)
 	huma.Register(api, op("update-tenant-service-account", "PUT", base+"/{id}", "Replace a team machine account's name and project grants; grant changes revoke its existing keys", access, 200), s.updateTenantServiceAccount)
 	huma.Register(api, op("revoke-tenant-service-account", "DELETE", base+"/{id}", "Revoke this tenant's machine account and all its tokens and keys", access, 204), s.revokeTenantServiceAccount)
@@ -100,7 +104,7 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 		return a, nil
 	}
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if err := requireTenantActive(ctx, query, tenant); err != nil {
 		return auth.Principal{}, err
@@ -115,7 +119,11 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 	}
 	for _, project := range a.Projects {
 		var owner string
-		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner); err != nil || owner != tenant {
+		err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
+		if err != nil || owner != tenant {
 			return auth.Principal{}, errors.New("tenant machine project is unavailable")
 		}
 	}
