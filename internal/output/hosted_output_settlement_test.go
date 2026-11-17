@@ -12,7 +12,7 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	db, effects := pipelineFixture(t)
-	_, err := db.ExecContext(ctx, ExportPostgresSchemaV1+PipelineJobsPostgresSchemaV1+`
+	_, err := db.ExecContext(ctx, ExportPostgresSchemaV1+PipelineJobsPostgresSchemaV1+ScheduledPipelinePostgresSchemaV1+`
 		CREATE TABLE managed_artifact_ownership(
 			tenant_id TEXT, project_id TEXT, kind TEXT, storage_id TEXT, object_key TEXT, upload_id TEXT
 		);
@@ -31,6 +31,42 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 		}
 		return err
 	})
+	// A scheduled definition stores its rule in the control database. A
+	// potentially unpublished customer object must still hold the deletion.
+	_, err = db.ExecContext(ctx, `
+		UPDATE pipeline_effect_definitions SET rule_key='scheduled-query/control-rule/pipeline/rule';
+		UPDATE hosted_pipeline_configs SET kind='s3';
+		INSERT INTO hosted_s3_pipeline_state(project_id,pipeline_id,cursor_ms,interval_ms)
+		VALUES('project','pipeline',0,60000);
+		INSERT INTO hosted_s3_pipeline_runs
+		(id,project_id,pipeline_id,window_start_ms,window_end_ms,snapshot_catalog_id,snapshot_version,state,created_at_ms,reserved_bytes,attempt_id)
+		VALUES('scheduled','project','pipeline',0,60000,'catalog',0,'running',0,512,'attempt');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		_, err := HostedPipelineDeletionInventory(ctx, tx, "tenant", scope, nil)
+		if !errors.Is(err, errHostedOutputOwnership) {
+			t.Errorf("inventory must refuse unresolved scheduled S3 attempts: %v", err)
+		}
+		return nil
+	})
+	_, err = db.ExecContext(ctx, "UPDATE hosted_s3_pipeline_runs SET state='succeeded'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		items, err := HostedPipelineDeletionInventory(ctx, tx, "tenant", scope, nil)
+		if err == nil && len(items) != 0 {
+			t.Errorf("customer-owned scheduled output produced a managed artifact: %+v", items)
+		}
+		return err
+	})
+	_, err = db.ExecContext(ctx, "UPDATE pipeline_effect_definitions SET rule_key='control-rule/pipeline/rule'")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		var exports *ExportJobs
 		items, err := exports.HostedDeletionInventory(ctx, tx, "tenant", "project")
@@ -51,6 +87,15 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 	other := PipelineScope{"source", "other", "another-catalog", "another-stream"}
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		return effects.PrepareNoOutputStreamTx(ctx, tx, other, "other")
+	})
+
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE hosted_s3_pipeline_runs SET state='queued',attempt_id=''"); err != nil {
+			return err
+		}
+		w := hostedScheduledWork{pipeline: storedPipeline{ProjectID: "project"}, tenant: "tenant", reservedBytes: 512}
+		binding := w.binding()
+		return effects.charge(ctx, tx, binding, binding.Demand, 1)
 	})
 
 	for range 2 {
