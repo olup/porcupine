@@ -22,7 +22,7 @@ The files carry matching identities and cannot be replaced independently. Preser
 
 The [shared deployment](reference/shared-deployment.md) adds optional control PostgreSQL, PostgreSQL DuckLake catalogs, and analytical S3 to the same binary. This is not included in v0.14.0. The default still needs neither PostgreSQL nor S3.
 
-Every project has a durable owner. Its accepted event payloads, identity state, retry receipts, import checkpoints, and destination jobs remain in that worker's SQLite database and managed local files. PostgreSQL stores control and catalog metadata only. DuckLake data inlining is disabled for PostgreSQL catalogs; event payloads pass from SQLite directly into S3 Parquet files.
+Every project has a durable owner. Its accepted event payloads, identity state, retry receipts, import checkpoints, and destination jobs remain in that worker's SQLite database and managed local files. PostgreSQL stores control and catalog metadata, including DuckLake column statistics that can contain derived event values. Data inlining is disabled for PostgreSQL catalogs; complete event rows pass from SQLite directly into S3 Parquet files without a PostgreSQL event queue. Catalog metadata remains part of the analytical data for hosting, backup, and deletion policy.
 
 Public requests may enter through any worker and are internally forwarded when they need owner-local state. Delivered SQL can run on any worker. New workers provide more project and read capacity without moving Parquet data, but cannot take over another worker's acknowledged queue without recovering its volume. Shared analytical storage alone is not replicated acceptance or automatic failover.
 

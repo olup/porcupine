@@ -4,7 +4,7 @@
 
 The same server binary has two modes. The default keeps control metadata in one local SQLite file and accepted events and jobs in a separate SQLite journal, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
 
-Event payloads never enter the operational PostgreSQL database. DuckLake data inlining is disabled for PostgreSQL catalogs too: accepted payloads move from SQLite directly into S3 Parquet files. PostgreSQL holds metadata, grants, policies, counters, and coordination records.
+Complete canonical events commit to the owner's SQLite queue, then project directly into S3 Parquet. No PostgreSQL event queue or staging table is introduced. DuckLake data inlining is disabled for PostgreSQL catalogs. Those catalogs still contain metadata and derived column statistics, which may include event-property, context, or trait values such as minima and maxima. Treat the catalog as part of the analytical data when choosing hosting, access, backups, and deletion policies. Control PostgreSQL holds accounts, grants, policies, counters, and coordination records.
 
 ## Where data lives
 
@@ -25,7 +25,7 @@ Clients use one public address behind a load balancer. HTTP, CLI, MCP, and suppo
 
 Each project has one durable owner. Any worker can authenticate a request against shared control metadata. An operation that needs pending or operational project state is forwarded internally to its owner. This includes ingestion, identify, event changes, queue inspection, historical uploads, quarantine repair, pipelines, and exports. Forwarding retains the client credential for revalidation and authenticates the internal request separately.
 
-Only the owner's SQLite commit acknowledges accepted events. A retry sent through a different public worker reaches the same receipt ledger and returns the original `event_id`. PostgreSQL-reserved ID ranges provide global event identifiers without sending event payloads to PostgreSQL.
+Only the owner's SQLite commit acknowledges accepted events. A retry sent through a different public worker reaches the same receipt ledger and returns the original `event_id`. PostgreSQL-reserved ID ranges provide global event identifiers without using PostgreSQL as an event-payload inbox.
 
 Delivered SQL can execute on any worker against the shared catalog and S3 files. Adding workers increases capacity across projects and analytical requests. It does not split one project's ingestion across owners or distribute one DuckDB query across machines.
 

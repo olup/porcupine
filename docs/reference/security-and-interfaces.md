@@ -135,7 +135,7 @@ Local data paths and engine resource settings belong to deployment configuration
 
 ### Unreleased shared deployment boundary
 
-Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. This mode is not included in v0.14.0.
+Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. DuckLake catalog statistics can contain derived property, context, or trait values, so catalogue access and retention belong within the analytical data security boundary. This mode is not included in v0.14.0.
 
 Any public worker authenticates against shared control. Owner-dependent work is forwarded to the trusted registered worker URL with a signed, bounded internal request. The receiving worker validates routing identity, project ownership, request integrity, and replay protection, then revalidates the original client credential. Public routing headers cannot select an owner or bypass project authorization. Internal transport requires HTTPS outside loopback; network access and routing secrets belong to the operator.
 

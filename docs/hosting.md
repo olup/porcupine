@@ -85,7 +85,7 @@ Both modes use the same server binary and support tenants.
 
 Local mode has two database files. `PORCUPINE_DB` selects the journal, default `./data/porcupine.db`. `PORCUPINE_CONTROL_DB` selects control, default the journal path plus `.control`. Preserve both with their auxiliary files and DuckLake state.
 
-PostgreSQL replaces control and catalog metadata. Event payloads still commit to the owner's SQLite queue, then go to S3 Parquet. They never enter PostgreSQL as an intermediate inbox. Shared mode has no automatic owner failover; acknowledged work depends on recovering that owner's volume.
+PostgreSQL replaces control and catalog metadata. Event payloads still commit to the owner's SQLite queue, then go to S3 Parquet. No PostgreSQL event inbox is introduced. DuckLake catalog statistics may still contain derived event values, so the catalog belongs inside the analytical data's hosting and access boundary. Shared mode has no automatic owner failover; acknowledged work depends on recovering that owner's volume.
 
 For one server, keep SQLite. PostgreSQL is not required for tenant budgets, people, the API, CLI, or MCP. A fresh development installation creates the tenant `default`; [invite its first administrator](access.md).
 
