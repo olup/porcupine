@@ -52,7 +52,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	admin := slices.Contains(permissions, "instance:admin")
 	if slices.Contains(projectsOffered, "*") && !admin {
 		// A wildcard in both upstream grants still requires choosing concrete projects here.
-		rows, queryErr := s.control.QueryContext(r.Context(), `SELECT id FROM projects ORDER BY id LIMIT 1000`)
+		rows, queryErr := s.control.QueryContext(r.Context(), `SELECT id FROM projects WHERE NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=projects.id) AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=projects.tenant_id) ORDER BY id LIMIT 1000`)
 		if queryErr != nil {
 			http.Error(w, "Project access unavailable", 503)
 			return

@@ -26,8 +26,10 @@ The HTTP API, generated CLI, and MCP use these operation IDs and the same permis
 | `update-tenant` | `PATCH /api/v1/tenants/{tenant_id}` | Rename it or allow/suspend new ingestion |
 | `update-tenant-budgets` | `PUT /api/v1/tenants/{tenant_id}/budgets` | Replace its complete budget configuration |
 | `get-tenant-usage` | `GET /api/v1/tenants/{tenant_id}/usage` | Read one month's consumption |
+| `delete-tenant` | `DELETE /api/v1/tenants/{tenant_id}` | Block access and start operator-only resumable deletion |
+| `get-tenant-deletion` | `GET /api/v1/tenants/{tenant_id}/deletion` | Read operator-only cleanup status after tenant removal |
 
-Creating a tenant, replacing budgets, and changing the ingestion switch require `instance:admin`. Tenant administrators can rename their own tenant and read its configuration and usage. `list-tenants` returns only tenants the caller can administer, unless the caller is an instance operator. Ordinary members use `list-projects` to discover their allowed projects. The running operation contracts describe the caller's available actions. `list-tenants` accepts `limit` (default 100, maximum 200). Pass a returned `next_cursor` as `cursor` for the next page. There is no tenant deletion or manual budget-reset operation.
+Creating a tenant, replacing budgets, and changing the ingestion switch require `instance:admin`. Tenant administrators can rename their own tenant and read its configuration and usage. `list-tenants` returns only tenants the caller can administer, unless the caller is an instance operator. Ordinary members use `list-projects` to discover their allowed projects. The running operation contracts describe the caller's available actions. `list-tenants` accepts `limit` (default 100, maximum 200). Pass a returned `next_cursor` as `cursor` for the next page. Tenant deletion is described below. There is no manual budget-reset operation.
 
 After connecting the matching CLI with an instance administrator's credential, inspect the default tenant and its current usage:
 
@@ -109,6 +111,33 @@ When a tenant is suspended or its ingestion allowance is exhausted:
 - Native and Segment ingestion return `429` without event receipts for rejected work.
 - PostHog compatibility ingestion returns an intentional terminal `200` with `quota_limited`. This does not mean the rejected events were stored. Queue and storage failures remain errors.
 - Historical imports retain their checkpoint. Resume the same import after raising the allowance or after the next month starts; accepted rows are not charged again.
+
+## Delete a tenant
+
+Only an instance operator with `instance:admin` can start deletion or read deletion status. Tenant administration alone cannot delete a tenant.
+
+```sh
+porcupine delete-tenant --tenant-id TENANT_ID
+porcupine get-tenant-deletion --tenant-id TENANT_ID
+```
+
+`delete-tenant` returns HTTP `202` after a durable transaction blocks ingestion and project access, revokes credentials owned by the tenant, and records each project for cleanup. Repeat the same ID after a timeout. Status survives removal of the tenant row. An ID that never existed returns `404`. There is no cancellation or restoration operation.
+
+New resource admission stops when the fence commits. Cleanup cancels and drains already admitted project work before removing its managed state.
+
+Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
+
+`state=deleting` means cleanup remains pending and recovery retries it after restart and periodically. Current owner-local shared deployments remain in this state with `error_code=shared_local_cleanup_pending`; full shared cleanup requires the planned shared operational-state backend. A missing journal owner cannot be replaced by an empty journal.
+
+`state=logically_deleted` means standalone managed current data and active tenant control records were removed. `physical_purge=pending_verification` explicitly means that noncurrent S3 versions, retained copies, or backup history have not been proven absent. This implementation never reports `purged`. Tenant deletion does not override point-in-time recovery retention or erase published objects in a customer's pipeline destination.
+
+An internal ownership inventory retains opaque managed object and multipart-upload keys plus a hashed storage namespace before their cleanup checkpoints disappear. Published customer pipeline outputs are excluded. The inventory contains no payload, access credentials, or identifying destination labels and remains until physical removal can be verified. Export cleanup requires the storage fingerprint recorded before the first upload. A changed destination or an upgraded checkpoint with no fingerprint stays pending rather than deleting from the wrong namespace. Objects whose ownership was already discarded by an older build remain unverified and require operator reconciliation.
+
+A small permanent operator-only status tombstone retains the tenant ID, state, timestamps, project progress, and constant recovery categories. Minimal cumulative usage totals retain opaque IDs and UTC periods, without names, email addresses, secrets, SQL, or event payloads. Deletion never refunds usage. No audit retention period or pricing policy is selected by this operation.
+
+The current offline credential-reset restore preserves opaque cleanup holds before neutralizing source export and pipeline jobs. Deleting a restored tenant stays `deleting` with `error_code=restored_artifacts_pending` until source ownership and outstanding current artifacts are reconciled. Reset and deletion do not contact or delete the source bucket. Reconciliation must verify the original namespace, published customer ownership, current objects, and multipart uploads. This version provides no ignore-hold endpoint or automatic reconciliation. The planned hosted recovery keeps operational keys and resumable cleanup instead of this access reset.
+
+The `default` tenant can be deleted. Startup honors its tombstone and never recreates it. Create an explicit replacement tenant and provide its ID when creating projects; omitting the ID then returns `404`.
 
 ## Interactive query limits
 

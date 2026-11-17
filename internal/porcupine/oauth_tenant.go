@@ -25,10 +25,10 @@ func (s *Service) tenantAdminOptions(ctx context.Context, query oauthQueryer, hu
 	}
 	statement := `SELECT t.id,t.name FROM tenants t JOIN tenant_memberships m ON m.tenant_id=t.id
 		JOIN access_keys k ON k.id=m.human_id WHERE m.human_id=$1 AND m.role='admin'
-		AND m.revoked_at IS NULL AND k.revoked_at IS NULL ORDER BY t.name,t.id`
+		AND m.revoked_at IS NULL AND k.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=t.id) ORDER BY t.name,t.id`
 	args := []any{human.ID}
 	if human.Admin() {
-		statement = `SELECT id,name FROM tenants ORDER BY name,id`
+		statement = `SELECT id,name FROM tenants WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=tenants.id) ORDER BY name,id`
 		args = nil
 	}
 	rows, err := query.QueryContext(ctx, statement, args...)
@@ -48,6 +48,9 @@ func (s *Service) tenantAdminOptions(ctx context.Context, query oauthQueryer, hu
 }
 
 func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, human auth.Principal, tenantID string) (auth.Principal, error) {
+	if err := requireTenantActive(ctx, query, tenantID); err != nil {
+		return auth.Principal{}, errInteractiveGrant
+	}
 	if !human.EmailHuman || tenantID == "" || tenantID == "*" {
 		return auth.Principal{}, errInteractiveGrant
 	}

@@ -41,6 +41,8 @@ Use cumulative idempotent postings and a stable pagination watermark for externa
 
 ## Resumable tenant deletion
 
+The [tenant deletion implementation record](tenant-deletion.md) now describes unreleased immediate fences and standalone resumable logical cleanup. Owner-local shared finalization and physical-purge verification remain pending. The target below still defines the complete hosted contract.
+
 Add operator-only `delete-tenant` and a queryable deletion status. First commit an authoritative fence blocking ingestion and resource access, then revoke tenant-owned credentials, delete projects through the existing lifecycle path, and remove tenant control state. Persist progress so retries and worker restarts converge.
 
 Do not disable a global human or its other-tenant memberships, credentials or data. Apply the fence to valid external JWTs too. Reuse project cleanup for analytical catalogs, managed S3 objects, imports, exports and pipelines. Memory flushes must recheck the fence before committing, so old buffered work cannot recreate deleted data.
@@ -64,4 +66,4 @@ Operator lifecycle notification webhooks and an administration frontend remain d
 | Existing tenant usage and output ACKs | Usage definition table | Preserve counters' causal boundaries and define additional units before billing consumers use them. |
 | Existing project deletion and hosted recovery | Tenant deletion design | Compose existing cleanup, add tenant fencing/recovery, and distinguish logical denial from physical purge. |
 
-No current reference behavior is reclassified as shipped. The three features above remain implementation work.
+No current reference behavior is reclassified as shipped. External authentication and expanded usage remain implementation work. Tenant deletion has an unreleased standalone logical-cleanup implementation; its complete hosted and physical-purge contract remains pending.

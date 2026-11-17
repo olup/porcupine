@@ -143,7 +143,11 @@ func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (auth.Pr
 	for _, g := range grants {
 		a.ProjectPermissions[g.ProjectID] = g.Permissions
 	}
-	return addTenantMembershipAuthority(ctx, query, a)
+	a, err = addTenantMembershipAuthority(ctx, query, a)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	return activeHumanAuthority(ctx, query, a)
 }
 
 func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string, error) {
@@ -231,6 +235,22 @@ func sortedGrants(grants []string) []string {
 	return slices.Compact(g)
 }
 
+func (s *Service) beginHumanGrantUpdate(ctx context.Context, projects []string) (*sql.Tx, error) {
+	tx, err := s.control.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, apiError(503, "human account storage unavailable")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		tx.Rollback()
+		return nil, apiError(503, "human account storage unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, tx, projects); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
 func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*EmailHumanOutput, error) {
 	email, err := auth.NormalizeEmail(input.Body.Email)
 	if err != nil {
@@ -241,15 +261,16 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 		return nil, err
 	}
 	h.ID, h.Email, h.CreatedAt = eventapi.NewID(), email, now()
-	tx, err := s.control.BeginTx(ctx, nil)
+	return s.inviteHumanGrant(ctx, h)
+}
+
+func (s *Service) inviteHumanGrant(ctx context.Context, h EmailHuman) (*EmailHumanOutput, error) {
+	tx, err := s.beginHumanGrantUpdate(ctx, h.Projects)
 	if err != nil {
-		return nil, apiError(503, "human account storage unavailable")
+		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(503, "human account storage unavailable")
-	}
-	existing, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE h.email=$1`, email))
+	existing, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE h.email=$1`, h.Email))
 	if err == nil {
 		if existing.RevokedAt != nil || !slices.EqualFunc(existing.Grants, h.Grants, func(a, b HumanProjectGrant) bool {
 			return a.ProjectID == b.ProjectID && slices.Equal(a.Permissions, b.Permissions)
@@ -309,15 +330,19 @@ func (s *Service) updateHuman(ctx context.Context, input *UpdateHumanInput) (*Em
 	if err != nil {
 		return nil, err
 	}
+	return s.updateHumanGrant(ctx, input.ID, spec)
+}
+
+func (s *Service) updateHumanGrant(ctx context.Context, id string, spec EmailHuman) (*EmailHumanOutput, error) {
 	permissionsJSON, _ := json.Marshal(spec.Permissions)
 	projectsJSON, _ := json.Marshal(spec.Projects)
 	grantsJSON, _ := json.Marshal(spec.Grants)
-	tx, err := s.control.BeginTx(ctx, nil)
+	tx, err := s.beginHumanGrantUpdate(ctx, spec.Projects)
 	if err != nil {
-		return nil, apiError(503, "human account storage unavailable")
+		return nil, err
 	}
 	defer tx.Rollback()
-	r, err := tx.ExecContext(ctx, `UPDATE access_keys SET permissions=$1,projects=$2 WHERE revoked_at IS NULL AND id=$3 AND id IN (SELECT principal_id FROM email_humans WHERE deployment_admin=0)`, string(permissionsJSON), string(projectsJSON), input.ID)
+	r, err := tx.ExecContext(ctx, `UPDATE access_keys SET permissions=$1,projects=$2 WHERE revoked_at IS NULL AND id=$3 AND id IN (SELECT principal_id FROM email_humans WHERE deployment_admin=0)`, string(permissionsJSON), string(projectsJSON), id)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -329,10 +354,10 @@ func (s *Service) updateHuman(ctx context.Context, input *UpdateHumanInput) (*Em
 		return nil, apiError(404, "active invited human not found")
 	}
 	// The database invalidates connections on changed project grants even when both unions stay equal.
-	if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET project_grants=$1 WHERE principal_id=$2`, string(grantsJSON), input.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET project_grants=$1 WHERE principal_id=$2`, string(grantsJSON), id); err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
-	h, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE k.id=$1`, input.ID))
+	h, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE k.id=$1`, id))
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -364,6 +389,23 @@ func (s *Service) listHumans(ctx context.Context, input *ListHumansInput) (*List
 	}
 	if rows.Err() != nil {
 		return nil, apiError(503, "human account storage unavailable")
+	}
+	rows.Close()
+	for i := range out.Body.Humans {
+		h := &out.Body.Humans[i]
+		h.Projects, err = activeProjects(ctx, s.control, h.Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
+		grants := []HumanProjectGrant{}
+		permissions := []string{}
+		for _, grant := range h.Grants {
+			if slices.Contains(h.Projects, grant.ProjectID) {
+				grants = append(grants, grant)
+				permissions = append(permissions, grant.Permissions...)
+			}
+		}
+		h.Grants, h.Permissions = grants, sortedGrants(permissions)
 	}
 	return out, nil
 }

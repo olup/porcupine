@@ -234,6 +234,9 @@ func (s *Service) monitorExport(ctx context.Context, job storedExport, cancel co
 }
 
 func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error {
+	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
+		return err
+	}
 	if err := s.requireSharedProjectOwner(ctx, job.ProjectID); err != nil {
 		return err
 	}
@@ -278,6 +281,9 @@ func (s *Service) executeExport(ctx context.Context, job storedExport) error {
 
 func (s *Service) publishExport(ctx context.Context, job storedExport, result lakeapi.ExportStreamResult, sink *exportSink) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
 		return err
 	}
 	columns, err := json.Marshal(result.Columns)
@@ -385,19 +391,19 @@ func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 	if s.exports == nil || s.exports.store == nil {
 		return errExportSink
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT attempt_id,file_index,object_key,upload_id FROM export_files WHERE job_id=$1 ORDER BY attempt_id,file_index`, job.ID)
+	rows, err := s.db.QueryContext(ctx, `SELECT attempt_id,file_index,object_key,upload_id,storage_id FROM export_files WHERE job_id=$1 ORDER BY attempt_id,file_index`, job.ID)
 	if err != nil {
 		return err
 	}
 	type cleanupFile struct {
-		attempt string
-		index   int
-		key, id string
+		attempt          string
+		index            int
+		key, id, storage string
 	}
 	files := []cleanupFile{}
 	for rows.Next() {
 		var file cleanupFile
-		if err = rows.Scan(&file.attempt, &file.index, &file.key, &file.id); err != nil {
+		if err = rows.Scan(&file.attempt, &file.index, &file.key, &file.id, &file.storage); err != nil {
 			rows.Close()
 			return err
 		}
@@ -409,6 +415,12 @@ func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 		return err
 	}
 	for _, file := range files {
+		if file.storage == "" || file.storage != s.exports.store.OwnershipID() {
+			return errors.New("export cleanup requires its original bound storage namespace")
+		}
+		if err := s.retainArtifactOwnership(ctx, job.ProjectID, "export", s.exports.store, file.key, file.id); err != nil {
+			return err
+		}
 		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {
 			return err
 		}

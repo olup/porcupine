@@ -75,6 +75,13 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 		result.NextOffset = &next
 		result.Grants = result.Grants[:input.Limit]
 	}
+	rows.Close()
+	for i := range result.Grants {
+		result.Grants[i].Projects, err = activeProjects(ctx, s.control, result.Grants[i].Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
+	}
 	return &OAuthGrantsOutput{Body: result}, nil
 }
 func (s *Service) managementRevokeOAuthGrant(ctx context.Context, input *OAuthGrantRevokeInput) (*struct{}, error) {

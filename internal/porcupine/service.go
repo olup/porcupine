@@ -62,6 +62,7 @@ type Service struct {
 	deletionMu                  contextMutex
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
+	deletionWake                chan struct{}
 	db                          *sql.DB
 	*eventRules
 	acceptance            liveAcceptor
@@ -715,6 +716,10 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		return
 	}
 	projectID := a.Projects[0]
+	if err := s.requireProjectActive(r.Context(), projectID); err != nil {
+		writeSharedRouteProblem(w, err)
+		return
+	}
 	if s.forwardSharedProject(w, r, projectID) {
 		return
 	}
@@ -760,6 +765,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	result, err := s.acceptance.Accept(r.Context(), prepared, peer, nativeResponse)
 	if err != nil {
 		if writeTenantIngestionError(w, r, err, nativeResponse) {
+			return
+		}
+		var managed *managementError
+		if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
+			write(w, managed.GetStatus(), managed)
 			return
 		}
 		var failure *acceptanceFailure
