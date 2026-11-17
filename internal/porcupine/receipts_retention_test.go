@@ -296,3 +296,52 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 		})
 	}
 }
+
+func TestHistoricalPersonsDeduplicateAfterReceiptPruning(t *testing.T) {
+	t.Parallel()
+	s := duckLakeJourneyService(t)
+	var clock atomic.Int64
+	clock.Store(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixMilli())
+	s.eventRules.clock = func() time.Time { return time.UnixMilli(clock.Load()).UTC() }
+	s.receiptRetention = 48 * time.Hour
+	projectID, _ := project(t, s)
+	data := append([]byte(`{"person_id":"posthog-person","distinct_id":"browser","person_version":1,"person_distinct_id_version":1,"properties":{"plan":"team"}}`), '\n')
+	create := func(key string) ImportUploadJob {
+		return importTestCreate(t, s, projectID, adminToken, key, []ImportUploadFileSpec{{Path: "persons.jsonl", Kind: "persons", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	}
+	initial := finishFormatImport(t, s, projectID, adminToken, create("first-persons"), data)
+	if initial.Counts.Accepted != 1 {
+		t.Fatal(initial.Counts)
+	}
+	duckLakeJourneyDrain(t, s)
+	var traits string
+	var version, usage int64
+	if err := s.db.QueryRow("SELECT traits,version FROM identity_profiles WHERE project_id=? AND identified_id='browser'", projectID).Scan(&traits, &version); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow("SELECT coalesce(sum(accepted_events),0) FROM tenant_usage").Scan(&usage); err != nil {
+		t.Fatal(err)
+	}
+	clock.Add((72 * time.Hour).Milliseconds())
+	if err := s.pruneReceipts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount(t, s) != 0 {
+		t.Fatal("person snapshot receipt was not pruned")
+	}
+	retry := finishFormatImport(t, s, projectID, adminToken, create("retried-persons"), data)
+	if retry.Counts.Duplicates != 1 || retry.Counts.Accepted != 0 || retry.Counts.Ignored != 0 || retry.Counts.Unresolved != 0 {
+		t.Fatal("person snapshot retry changed classification", retry.Counts)
+	}
+	var gotTraits string
+	var gotVersion, gotUsage int64
+	if err := s.db.QueryRow("SELECT traits,version FROM identity_profiles WHERE project_id=? AND identified_id='browser'", projectID).Scan(&gotTraits, &gotVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow("SELECT coalesce(sum(accepted_events),0) FROM tenant_usage").Scan(&gotUsage); err != nil {
+		t.Fatal(err)
+	}
+	if gotTraits != traits || gotVersion != version || gotUsage != usage {
+		t.Fatal("person retry changed identity or usage", gotTraits, gotVersion, gotUsage)
+	}
+}

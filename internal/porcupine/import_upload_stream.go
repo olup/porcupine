@@ -37,9 +37,9 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	defer release()
 	events := make([]eventapi.Event, 0, len(work.rows))
 	for _, row := range work.rows {
-		if row.Kind == "events" {
-			events = append(events, row.Event)
-		}
+		// Person snapshots have stable producer UUIDs too. Their receipts must
+		// participate in the same cold deduplication as ordinary events.
+		events = append(events, row.Event)
 	}
 	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
 	known, err := m.rules.coldKnown(lookup, project, events)
