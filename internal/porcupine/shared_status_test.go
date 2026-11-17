@@ -1,7 +1,6 @@
 package porcupine
 
 import (
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -21,14 +20,11 @@ func TestSharedInstanceStatusAnalyticalMetadataFailure(t *testing.T) {
 	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	s := service(t, 20)
-	native := instanceStatusNativeStore(t, s)
-	metadata, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The native SourceID probe checks the local registry. Its separate metadata
-	// connection must also participate in health, independently of control storage.
-	native.SharedCatalog = metadata
+	native := openSharedNativeMetadataTest(t, dsn)
+	s.lake, s.lakeMemoryMB = native, 128
+	// Native identity comes from the real PG registry, independently of the
+	// service's local control database. It has no local registry fallback.
+	metadata := native.SharedCatalog
 	if result := sharedStatusRead(t, s); result.Status != "ok" || result.Checks.DuckLake != dependencyOK {
 		t.Fatalf("healthy analytical metadata looked unavailable: %+v", result)
 	}
