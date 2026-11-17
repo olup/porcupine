@@ -20,8 +20,7 @@ func HostedPipelineDeletionInventory(ctx context.Context, tx *sql.Tx, tenant str
 		UNION ALL SELECT 1 FROM pipeline_effect_assemblies a WHERE a.project_id=$1 AND NOT EXISTS (
 			SELECT 1 FROM pipeline_effect_cleanup c WHERE c.project_id=a.project_id AND c.tenant_id=a.tenant_id
 			AND c.source_id=a.source_id AND c.catalog_id=a.catalog_id AND c.stream_id=a.stream_id
-			AND c.owner_id=a.generation AND c.generation=a.attempt)
-		UNION ALL SELECT 1 FROM hosted_s3_pipeline_runs WHERE project_id=$1 AND attempt_id<>'' AND state<>'succeeded')`, scope.Key.ProjectID).Scan(&ambiguous)
+			AND c.owner_id=a.generation AND c.generation=a.attempt))`, scope.Key.ProjectID).Scan(&ambiguous)
 	if err != nil {
 		return nil, err
 	}

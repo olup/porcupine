@@ -32,7 +32,7 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 		return err
 	})
 	// A scheduled definition stores its rule in the control database. A
-	// potentially unpublished customer object must still hold the deletion.
+	// customer attempt uses a separate inventory from managed webhooks.
 	_, err = db.ExecContext(ctx, `
 		UPDATE pipeline_effect_definitions SET rule_key='scheduled-query/control-rule/pipeline/rule';
 		UPDATE hosted_pipeline_configs SET kind='s3';
@@ -45,13 +45,6 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipelineTx(t, db, func(tx *sql.Tx) error {
-		_, err := HostedPipelineDeletionInventory(ctx, tx, "tenant", scope, nil)
-		if !errors.Is(err, errHostedOutputOwnership) {
-			t.Errorf("inventory must refuse unresolved scheduled S3 attempts: %v", err)
-		}
-		return nil
-	})
 	_, err = db.ExecContext(ctx, "UPDATE hosted_s3_pipeline_runs SET state='succeeded'")
 	if err != nil {
 		t.Fatal(err)

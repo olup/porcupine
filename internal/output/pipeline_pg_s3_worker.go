@@ -205,13 +205,21 @@ func (s *PipelineJobs) prepareHostedScheduledAttempt(ctx context.Context, w *hos
 	})
 }
 
-func (s *PipelineJobs) publishHostedScheduled(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store) error {
+func readHostedScheduledManifest(w *hostedScheduledWork) (pipelineS3Manifest, error) {
 	var manifest pipelineS3Manifest
-	encoded := []byte(w.manifest)
-	if json.Unmarshal(encoded, &manifest) != nil || manifest.ProjectID != w.pipeline.ProjectID || manifest.PipelineID != w.pipeline.ID ||
+	if json.Unmarshal([]byte(w.manifest), &manifest) != nil || manifest.ProjectID != w.pipeline.ProjectID || manifest.PipelineID != w.pipeline.ID ||
 		manifest.RunID != w.id || manifest.WindowStartMS != w.start || manifest.WindowEndMS != w.end {
-		return ErrPipelineConflict
+		return pipelineS3Manifest{}, ErrPipelineConflict
 	}
+	return manifest, nil
+}
+
+func (s *PipelineJobs) publishHostedScheduled(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store) error {
+	manifest, err := readHostedScheduledManifest(w)
+	if err != nil {
+		return err
+	}
+	encoded := []byte(w.manifest)
 	// Linearize the immutable marker against pause, rotation and the project
 	// fence. A lost database commit is retried using the exact cached marker.
 	publish, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -259,13 +267,14 @@ completed_at_ms=$2,row_count=$3,byte_count=$4 WHERE id=$1`, w.id, s.clock().Unix
 		if err = s.pg.effects.charge(ctx, tx, b, b.Demand, -1); err != nil {
 			return err
 		}
-		return s.recordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, manifest)
+		return s.RecordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, pipelineManifestBytes(manifest))
 	})
 }
 
-func (s *PipelineJobs) recordHostedScheduledUsageTx(ctx context.Context, tx *sql.Tx, project string, manifest pipelineS3Manifest) error {
+// RecordHostedScheduledUsageTx records compressed bytes in the transaction that settles their checkpoint.
+func (s *PipelineJobs) RecordHostedScheduledUsageTx(ctx context.Context, tx *sql.Tx, project string, bytes int64) error {
 	if s.usage == nil {
 		return nil
 	}
-	return s.usage.AddTx(ctx, tx, project, s.clock(), usage.Counters{PipelineBytes: pipelineManifestBytes(manifest)}, 0)
+	return s.usage.AddTx(ctx, tx, project, s.clock(), usage.Counters{PipelineBytes: bytes}, 0)
 }

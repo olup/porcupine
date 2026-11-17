@@ -131,13 +131,13 @@ WHERE seal.project_id=$1 AND seal.source_id=$2 AND d.completed=0`, project, key.
 		if err := h.checkCleanupRecoveryFloor(ctx, observed, inventoried); err != nil {
 			return err
 		}
-		more, err := s.sweepHostedProjectObjects(ctx, session, seal.Scope)
+		more, err := s.sweepHostedProjectObjects(ctx, session, seal.Scope, tenant)
 		if err != nil || more {
 			return err
 		}
 		// A provider can report an abort while an already accepted part is
 		// still arriving. Recheck exact owned upload scopes before metadata drop.
-		outputs, err := s.hostedOutputCleanupObjects(ctx, seal.Scope, tenant)
+		outputs, scheduledBytes, err := s.hostedOutputCleanupObjects(ctx, seal.Scope, tenant)
 		if err != nil {
 			return err
 		}
@@ -155,7 +155,7 @@ WHERE seal.project_id=$1 AND seal.source_id=$2 AND d.completed=0`, project, key.
 				return err
 			}
 		}
-		return s.completeHostedProjectCleanup(ctx, session, seal.Scope, tenant)
+		return s.completeHostedProjectCleanup(ctx, session, seal.Scope, tenant, scheduledBytes)
 	})
 }
 
@@ -193,7 +193,7 @@ func (s *Service) recordHostedProjectInventory(ctx context.Context, session *lak
 		return err
 	}
 	artifacts = append(artifacts, mutations...)
-	outputs, err := s.hostedOutputCleanupObjects(ctx, seal.Scope, tenant)
+	outputs, _, err := s.hostedOutputCleanupObjects(ctx, seal.Scope, tenant)
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,7 @@ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, project, ref.kind, ref.storag
 	return nil
 }
 
-func (s *Service) sweepHostedProjectObjects(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope) (bool, error) {
+func (s *Service) sweepHostedProjectObjects(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {
 	rows, err := s.control.QueryContext(ctx, `SELECT kind,storage_id,object_key,version_id,upload_id
 FROM hosted_project_cleanup_objects WHERE project_id=$1
 ORDER BY kind,storage_id,object_key,version_id,upload_id LIMIT 32`, scope.Key.ProjectID)
@@ -245,7 +245,7 @@ ORDER BY kind,storage_id,object_key,version_id,upload_id LIMIT 32`, scope.Key.Pr
 				err = s.hosted.native.DeleteHostedProjectObject(ctx, scope, ref.key, ref.version)
 			}
 		default:
-			err = s.deleteHostedOutputObject(ctx, scope, ref)
+			err = s.deleteHostedOutputObject(ctx, scope, tenant, ref)
 		}
 		if err != nil {
 			return true, err
@@ -262,7 +262,7 @@ WHERE project_id=$1 AND kind=$2 AND storage_id=$3 AND object_key=$4 AND version_
 	return len(artifacts) != 0, nil
 }
 
-func (s *Service) completeHostedProjectCleanup(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string) error {
+func (s *Service) completeHostedProjectCleanup(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string, scheduledBytes int64) error {
 	return session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		project := scope.Key.ProjectID
 		var pending bool
@@ -278,6 +278,9 @@ OR EXISTS(SELECT 1 FROM restored_artifact_holds WHERE project_id=$1)`, project).
 		if err := finalizeHostedMutationsTx(ctx, tx, scope, tenant); err != nil {
 			return err
 		}
+		if err := s.pipelines.RecordHostedScheduledUsageTx(ctx, tx, project, scheduledBytes); err != nil {
+			return err
+		}
 		if err := output.FinalizeHostedOutputsTx(ctx, tx, tenant, project); err != nil {
 			return err
 		}
@@ -285,36 +288,43 @@ OR EXISTS(SELECT 1 FROM restored_artifact_holds WHERE project_id=$1)`, project).
 	})
 }
 
-func (s *Service) hostedOutputCleanupObjects(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) (_ []hostedCleanupObject, err error) {
+func (s *Service) hostedOutputCleanupObjects(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) ([]hostedCleanupObject, int64, error) {
 	tx, err := s.control.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer tx.Rollback()
 	exports, err := s.exports.HostedDeletionInventory(ctx, tx, tenant, scope.Key.ProjectID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	pipelines, err := output.HostedPipelineDeletionInventory(ctx, tx, tenant, scope, s.hosted.native.Remote)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var refs []hostedCleanupObject
-	for _, ref := range append(exports, pipelines...) {
+	scheduled, scheduledBytes, err := s.pipelines.HostedScheduledDeletionInventory(ctx, tx, tenant, scope.Key.ProjectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, ref := range append(append(exports, pipelines...), scheduled...) {
 		refs = append(refs, hostedCleanupObject{ref.Kind, ref.StorageID, ref.Key, ref.Version, ref.Upload})
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return refs, nil
+	return refs, scheduledBytes, nil
 }
 
-func (s *Service) deleteHostedOutputObject(ctx context.Context, scope lakeapi.HostedProjectScope, ref hostedCleanupObject) error {
+func (s *Service) deleteHostedOutputObject(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string, ref hostedCleanupObject) error {
 	artifact := output.HostedDeletionArtifact{
 		Kind: ref.kind, StorageID: ref.storage, Key: ref.key, Version: ref.version, Upload: ref.upload,
 	}
 	if ref.kind == output.HostedDeletionPipeline {
 		return output.DeleteHostedPipelineArtifact(ctx, scope, s.hosted.native.Remote, artifact)
+	}
+	if ref.kind == output.HostedDeletionScheduled {
+		return s.pipelines.DeleteHostedScheduledArtifact(ctx, tenant, scope.Key.ProjectID, artifact)
 	}
 	return s.exports.DeleteHostedArtifact(ctx, artifact)
 }
