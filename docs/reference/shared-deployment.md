@@ -71,6 +71,20 @@ Worker registration pins an ID to its local volume. It rejects another active pr
 
 This mode does not migrate an existing standalone database. Start with fresh shared metadata and fresh worker directories. Preserve old instances and recovery material separately if importing history into the new deployment.
 
+## Exercise provisioning and owner restart
+
+From the development checkout, run the API journey against an isolated local PostgreSQL process and two loopback workers:
+
+```sh
+CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -run '^TestSharedOperatorAPIProvisioner$'
+```
+
+The two workers use separate temporary SQLite journals and the same disposable PostgreSQL database. The journey provisions two tenants through the operator API with a revocable machine key. It checks that ingestion forwarded from the other worker reaches the owner, that new events beyond the tenant allowance receive a quota refusal, and that key revocation takes effect on both workers immediately. A forced process kill makes owner-bound ingestion return `503` while the healthy worker accepts events for its own tenant. After the owner restarts with its original volume, a retry returns the same `event_id` and the usage API counts the event once.
+
+This focused journey uses the queue without an analytical store. Run `make shared-integration` for the broader suite, including shared DuckLake and S3-compatible storage. Both workers in these automated checks run on one machine. Run your own checks across the actual hosts, proxy, and providers before routing traffic.
+
+Standalone and current shared development builds both acknowledge native events after SQLite commits and expose `durability: "durable"`. The published v0.14.0 release has the standalone durable acknowledgment and predates that response field and shared deployment support. In shared mode, PostgreSQL and S3 are insufficient to recover accepted work still on a lost owner volume. Preserve each volume with its stable worker ID. Fresh owner replacement, stateless buffered acceptance, complete shared tenant cleanup, and distributed PostgreSQL/S3 point-in-time recovery remain outside the current shared deployment contract. [Hosted architecture and validation phases](../design/hosted-architecture.md#phases-and-evidence)
+
 ## Shared budgets
 
 [Tenant budgets](tenants.md) have the same API and authority in both modes. A monthly event consumes allowance when its owner durably accepts it, not when it reaches DuckLake. The owner commits cumulative usage with the event in SQLite.
