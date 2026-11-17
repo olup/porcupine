@@ -63,17 +63,26 @@ type Upload struct {
 	completed bool
 }
 
-func New(ctx context.Context, c Config) (*Store, error) {
+// ValidateConfig checks storage settings without opening files or contacting S3.
+func ValidateConfig(c Config) error {
 	prefix := strings.TrimSuffix(c.Prefix, "/")
 	if !regionPattern.MatchString(c.Region) || !bucketPattern.MatchString(c.Bucket) || strings.Contains(c.Bucket, "..") || net.ParseIP(c.Bucket) != nil || !safePath(prefix) {
-		return nil, ErrConfig
+		return ErrConfig
 	}
 	if (c.AccessKeyID == "") != (c.SecretAccessKey == "") || c.SessionToken != "" && c.AccessKeyID == "" {
-		return nil, ErrConfig
+		return ErrConfig
 	}
 	if c.Endpoint != "" && !ValidEndpoint(c.Endpoint) {
-		return nil, ErrConfig
+		return ErrConfig
 	}
+	return nil
+}
+
+func New(ctx context.Context, c Config) (*Store, error) {
+	if err := ValidateConfig(c); err != nil {
+		return nil, err
+	}
+	prefix := strings.TrimSuffix(c.Prefix, "/")
 	client, transport, err := s3client.New(ctx, s3client.Config{
 		Region: c.Region, Endpoint: c.Endpoint, AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, UsePathStyle: c.UsePathStyle,
 		Timeout: 60 * time.Second, ResponseBytes: 1 << 20, GetResponseBytes: MaxManifestBytes + 1,
