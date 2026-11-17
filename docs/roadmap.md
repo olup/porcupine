@@ -39,6 +39,43 @@ The default remains a single-process SQLite deployment. Optional shared mode is 
 - Complete backups to an independent S3 destination and offline recovery through the standalone CLI. [Backup and recovery](native-backup-recovery.md)
 - DuckDB/DuckLake as the only analytical runtime. Explicit acceptance/import/webhook transaction owners, an independent SQL-policy module, and offline CLI contract generation. [Architecture boundaries](native-only-architecture.md)
 
+## Next validation: manage a team through the public API
+
+After the local control/journal split and tenant membership work are verified,
+exercise the complete hosted-team journey with test data. This is a planned
+acceptance scenario, not a claim that tenant administration has shipped.
+
+- [ ] An instance operator creates a tenant, assigns budgets, and invites its
+  first tenant administrator.
+- [ ] That administrator connects an agent or the CLI through Porcupine OAuth,
+  creates projects, and invites a colleague with read-only project permissions.
+- [ ] A team-owned service credential ingests events independently of the human
+  who created it. The colleague discovers the data and runs SQL.
+- [ ] The team can read its consumption and effective limits. Exhausted budgets
+  return documented errors without granting a way to raise operator ceilings.
+- [ ] Removing a membership or reducing its permissions takes effect on existing
+  tool connections. Another tenant cannot access the team's data or management.
+- [ ] Run the journey against standalone SQLite and shared PostgreSQL/S3, including
+  worker restart and retry. No step requires SSH or direct database access.
+
+Audit API coverage alongside this journey. A future administration frontend must
+use the same authenticated HTTP operations as agents and the CLI. Inventory each
+management action, its authorization scope, contract, generated command, and
+tests. Include memberships, service credentials, projects, budgets, consumption,
+imports and uploads, exports, and pipelines. Identify missing operations explicitly;
+tenant deletion and replacement of an existing pipeline's configuration need a
+product decision rather than an assumption that CRUD coverage is complete.
+
+Deployment secrets, database connections, storage configuration, and recovery
+remain operator-controlled setup unless an explicit management API is designed.
+They do not become tenant-editable settings to support a frontend. Require every
+registered route to declare its protection or intentional public exposure.
+
+Once this journey passes, validate a separate private commercial service that
+provisions tenants, assigns budgets, and reads usage through Porcupine's operator
+API. Reuse the published open-source binary without private patches or direct
+database writes. Payment integration follows that contract validation.
+
 ## Other planned improvements
 
 - Editable documentation for event definitions and their properties, scoped to a
