@@ -51,9 +51,6 @@ func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
 	sampler, _ := s.lake.(parquetUsageSampler)
 	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, s.shared != nil, config, clock), config: config, clock: clock, sampler: sampler}
 	s.eventRules.usage = recorder
-	if s.pipelines != nil && s.pipelines.webhooks != nil {
-		s.pipelines.webhooks.Usage = recorder
-	}
 	return nil
 }
 func (u *usageRuntime) synchronize(ctx context.Context) error {

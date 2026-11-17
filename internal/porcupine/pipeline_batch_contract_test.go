@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
@@ -30,7 +32,7 @@ func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
 	service, err := Open(Config{
 		DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, QueueMaxEvents: 20,
 		Clock:     func() time.Time { return time.UnixMilli(clockMS.Load()).UTC() },
-		Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{0x37}, 32), WebhookMaxAttempts: 3},
+		Pipelines: &output.PipelineConfig{Key: bytes.Repeat([]byte{0x37}, 32), WebhookMaxAttempts: 3},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +53,8 @@ func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
 	var calls atomic.Int32
 	// No destinations exist yet. Join the initial workers before replacing their
 	// outbound client, then run the real workers for the entire API contract.
-	service.stopPipelines()
-	service.pipelines.webhooks.Client = &http.Client{Transport: pipelineBatchContractTransport(func(request *http.Request) (*http.Response, error) {
+	service.pipelines.Stop()
+	*service.pipelineClient = http.Client{Transport: pipelineBatchContractTransport(func(request *http.Request) (*http.Response, error) {
 		defer request.Body.Close()
 		body, err := io.ReadAll(io.LimitReader(request.Body, 2<<20))
 		if err != nil {
@@ -67,7 +69,7 @@ func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
 		}
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
 	}), Timeout: 2 * time.Second}
-	service.startPipelines()
+	service.pipelines.Start()
 	host := httptest.NewServer(service.Handler())
 	t.Cleanup(host.Close)
 	client := &http.Client{Timeout: 3 * time.Second}

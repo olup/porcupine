@@ -40,7 +40,7 @@ func (s *ExportJobs) CleanupProject(ctx context.Context, projectID string) error
 		if storageID == "" || storageID != s.store.OwnershipID() {
 			return errors.New("export cleanup requires its original bound storage namespace")
 		}
-		if err := s.retainArtifactOwnership(ctx, projectID, "export", s.store, key, uploadID); err != nil {
+		if err := retainArtifactOwnership(ctx, s.control, projectID, "export", s.store, key, uploadID); err != nil {
 			return err
 		}
 		if err = s.removeExportArtifact(ctx, key, uploadID); err != nil {

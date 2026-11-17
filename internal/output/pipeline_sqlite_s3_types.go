@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -82,11 +82,11 @@ func normalizeS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
 }
 
 // initializeS3Pipelines requeues runs interrupted by a previous process.
-func (s *Service) initializeS3Pipelines(ctx context.Context) error {
+func (s *PipelineJobs) initializeS3Pipelines(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',error_code='interrupted' WHERE state='running'`)
 	return err
 }
-func (s *Service) createS3PipelineState(ctx context.Context, tx *sql.Tx, id string, c S3PipelineSpec) error {
+func (s *PipelineJobs) createS3PipelineState(ctx context.Context, tx *sql.Tx, id string, c S3PipelineSpec) error {
 	start, err := time.Parse(time.RFC3339, c.StartAt)
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func (s *Service) createS3PipelineState(ctx context.Context, tx *sql.Tx, id stri
 	_, err = tx.ExecContext(ctx, `INSERT INTO pipeline_s3_state(pipeline_id,cursor_ms) VALUES($1,$2)`, id, start.UnixMilli())
 	return err
 }
-func (s *Service) validateS3PipelineSpec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {
+func (s *PipelineJobs) ValidateS3Spec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {
 	if s.lake == nil {
 		return c, apiError(503, "analytical storage is not configured")
 	}

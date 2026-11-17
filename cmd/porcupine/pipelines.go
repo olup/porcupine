@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/olup/porcupine/internal/porcupine"
+	"github.com/olup/porcupine/internal/output"
 )
 
-func (s settings) pipelineConfiguration() (*porcupine.PipelineConfig, error) {
+func (s settings) pipelineConfiguration() (*output.PipelineConfig, error) {
 	key := s.get("PORCUPINE_PIPELINE_KEY")
 	path := s.get("PORCUPINE_PIPELINE_KEY_FILE")
 	endpoints := s.get("PORCUPINE_PIPELINE_S3_ENDPOINTS")
@@ -39,7 +39,7 @@ func (s settings) pipelineConfiguration() (*porcupine.PipelineConfig, error) {
 	if err != nil || len(decoded) != 32 {
 		return nil, errors.New("pipeline encryption key must be 32 base64-encoded bytes")
 	}
-	cfg := &porcupine.PipelineConfig{Key: decoded}
+	cfg := &output.PipelineConfig{Key: decoded}
 	if endpoints != "" {
 		cfg.AllowedS3Endpoints = strings.Split(endpoints, ",")
 	}

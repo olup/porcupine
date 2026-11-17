@@ -1,4 +1,4 @@
-package delivery
+package output
 
 import (
 	"context"
@@ -8,21 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/delivery"
+
 	eventapi "github.com/olup/porcupine/internal/event"
 )
-
-const WebhookChunkEvents = 100
-const WebhookChunkBytes = 1 << 20
-
-type WebhookPayload struct {
-	DeliveryID    string           `json:"delivery_id"`
-	PipelineID    string           `json:"pipeline_id"`
-	ProjectID     string           `json:"project_id"`
-	Event         *eventapi.Event  `json:"event,omitempty"`
-	WindowStartMS *int64           `json:"window_start_ms,omitempty"`
-	WindowEndMS   *int64           `json:"window_end_ms,omitempty"`
-	Events        []eventapi.Event `json:"events,omitempty"`
-}
 
 type webhookOpenChunk struct {
 	id         string
@@ -34,7 +23,7 @@ type webhookOpenChunk struct {
 	encoded    [][]byte
 }
 
-func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []eventapi.Event, pipelineID string, spec WebhookRule, now int64, globalCount, globalBytes, projectCount, projectBytes int64, cfg WebhookLimits) (int64, int64, error) {
+func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []eventapi.Event, pipelineID string, spec delivery.WebhookRule, now int64, globalCount, globalBytes, projectCount, projectBytes int64, cfg webhookLimits) (int64, int64, error) {
 	added, bytesAdded := int64(0), int64(0)
 	if len(events) == 0 {
 		return 0, 0, nil
@@ -42,7 +31,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 	project := events[0].ProjectID
 	var chunk *webhookOpenChunk
 	prefix := func(id string, start, end int64) string {
-		base, _ := WebhookBatchPrefix(id, pipelineID, project, start, end)
+		base, _ := delivery.WebhookBatchPrefix(id, pipelineID, project, start, end)
 		return string(base)
 	}
 	flush := func() error {
@@ -81,13 +70,13 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 	for _, event := range events {
 		if spec.DeliveryMode != "batch" {
 			id := eventapi.NewID()
-			raw, err := EncodeJSON(WebhookPayload{DeliveryID: id, PipelineID: pipelineID, ProjectID: project, Event: &event})
+			raw, err := delivery.EncodeJSON(delivery.WebhookPayload{DeliveryID: id, PipelineID: pipelineID, ProjectID: project, Event: &event})
 			if err != nil {
 				return 0, 0, err
 			}
 			delta := int64(len(raw))
 			if webhookCapacityExceeded(globalCount+added, globalBytes+bytesAdded, projectCount+added, projectBytes+bytesAdded, delta, cfg) {
-				return 0, 0, ErrWebhookCapacity
+				return 0, 0, delivery.ErrWebhookCapacity
 			}
 			if _, err = tx.ExecContext(ctx, `INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,event_count,state,next_attempt_ms,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,1,'queued',$7,$8)`, id, pipelineID, project, event.UUID, string(raw), len(raw), now, now); err != nil {
 				return 0, 0, err
@@ -130,7 +119,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 				return 0, 0, err
 			}
 		}
-		encoded, err := EncodeJSON(event)
+		encoded, err := delivery.EncodeJSON(event)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -138,7 +127,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 		if chunk.count == 0 {
 			delta = int64(len(prefix(chunk.id, chunk.start, chunk.end)) + len(encoded) + 2)
 		}
-		if chunk.count >= WebhookChunkEvents || (chunk.count > 0 && chunk.size+delta > WebhookChunkBytes) {
+		if chunk.count >= delivery.WebhookChunkEvents || (chunk.count > 0 && chunk.size+delta > delivery.WebhookChunkBytes) {
 			if err := flush(); err != nil {
 				return 0, 0, err
 			}
@@ -146,7 +135,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 			delta = int64(len(prefix(chunk.id, chunk.start, chunk.end)) + len(encoded) + 2)
 		}
 		if webhookCapacityExceeded(globalCount+added, globalBytes+bytesAdded, projectCount+added, projectBytes+bytesAdded, delta, cfg) {
-			return 0, 0, ErrWebhookCapacity
+			return 0, 0, delivery.ErrWebhookCapacity
 		}
 		chunk.count++
 		chunk.size += delta
@@ -160,7 +149,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []ev
 	}
 	return added, bytesAdded, nil
 }
-func webhookCapacityExceeded(globalCount, globalBytes, projectCount, projectBytes, delta int64, cfg WebhookLimits) bool {
+func webhookCapacityExceeded(globalCount, globalBytes, projectCount, projectBytes, delta int64, cfg webhookLimits) bool {
 	return globalCount >= int64(cfg.MaxQueuedEvents) || projectCount >= int64(cfg.ProjectMaxQueuedEvents) || delta > cfg.MaxQueuedBytes-globalBytes || delta > cfg.ProjectMaxQueuedBytes-projectBytes
 }
 
@@ -192,7 +181,7 @@ func CancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, uuid string, c
 		return err
 	}
 	for _, c := range chunks {
-		var body WebhookPayload
+		var body delivery.WebhookPayload
 		if json.Unmarshal([]byte(c.payload), &body) != nil {
 			return errors.New("invalid stored webhook chunk")
 		}
@@ -211,7 +200,7 @@ func CancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, uuid string, c
 		if len(surviving) > 0 && c.state == "queued" && !c.frozen {
 			body.Event = nil
 			body.Events = surviving
-			encoded, err := EncodeJSON(body)
+			encoded, err := delivery.EncodeJSON(body)
 			if err != nil {
 				return err
 			}
@@ -230,7 +219,7 @@ func CancelWebhookEvent(ctx context.Context, tx *sql.Tx, project, uuid string, c
 		body.DeliveryID = nextID
 		body.Event = nil
 		body.Events = surviving
-		encoded, err := EncodeJSON(body)
+		encoded, err := delivery.EncodeJSON(body)
 		if err != nil {
 			return err
 		}

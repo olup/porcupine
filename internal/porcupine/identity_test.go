@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/olup/porcupine/internal/output"
+
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -268,7 +270,7 @@ func TestIdentityControlsPrivateImmutableAndNotWebhookEvents(t *testing.T) {
 	s := service(t, 100)
 	projectID, token := project(t, s)
 	// Enable capture fanout without starting any destination worker.
-	rt, err := newPipelineRuntime(&PipelineConfig{Key: make([]byte, 32)})
+	rt, err := newTestPipelineConfig(&output.PipelineConfig{Key: make([]byte, 32)})
 	if err != nil {
 		t.Fatal(err)
 	}

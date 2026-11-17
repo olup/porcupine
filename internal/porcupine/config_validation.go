@@ -2,13 +2,14 @@ package porcupine
 
 import (
 	"errors"
+	"net/url"
+	"strings"
+
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
-	"net/url"
-	"strings"
 )
 
 // ValidateConfig checks operator settings without opening a database, contacting
@@ -89,7 +90,7 @@ func ValidateConfig(c Config) error {
 			return err
 		}
 	}
-	if _, err := newPipelineRuntime(c.Pipelines); err != nil {
+	if _, err := output.NewSQLitePipelines(output.PipelineDependencies{}, c.Pipelines); err != nil {
 		return err
 	}
 	if c.Exports != nil {

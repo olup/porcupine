@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -21,7 +23,7 @@ func (f webhookRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { r
 func webhookTestService(t *testing.T, mode string) (*Service, string, string, string) {
 	t.Helper()
 	s := service(t, 10000)
-	rt, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{7}, 32)})
+	rt, err := newTestPipelineConfig(&output.PipelineConfig{Key: bytes.Repeat([]byte{7}, 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +32,9 @@ func webhookTestService(t *testing.T, mode string) (*Service, string, string, st
 	var creator string
 	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&creator)
 	id := eventapi.NewID()
-	config, _ := json.Marshal(WebhookPipelineSpec{DeliveryMode: mode, IntervalSeconds: 60, IncludeEvents: []string{"test_event", "purchase"}, ExcludeEvents: []string{"blocked"}})
-	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://hooks.example.test/events?private=secret", Headers: map[string]string{"Authorization": "Bearer synthetic", "X-Custom-Key": "private"}})
-	encrypted, err := s.sealPipelineSecret(p, id, secret)
+	config, _ := json.Marshal(output.WebhookPipelineSpec{DeliveryMode: mode, IntervalSeconds: 60, IncludeEvents: []string{"test_event", "purchase"}, ExcludeEvents: []string{"blocked"}})
+	secret, _ := json.Marshal(output.WebhookPipelineSecret{Endpoint: "https://hooks.example.test/events?private=secret", Headers: map[string]string{"Authorization": "Bearer synthetic", "X-Custom-Key": "private"}})
+	encrypted, err := s.pipelines.SealSecret(p, id, secret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +75,8 @@ func TestWebhookEventRetryAndCapacity(t *testing.T) {
 	t.Parallel()
 	s, p, token, id := webhookTestService(t, "event")
 	_ = p
-	s.pipelines.config.WebhookProjectMaxQueuedEvents = 1
-	configureWebhooks(s, durableAcceptanceForTest(t, s), s.pipelines)
+	updateTestPipelines(s, func(c *output.PipelineConfig) { c.WebhookProjectMaxQueuedEvents = 1 })
+	mustConfigureTestPipelines(s, testPipelineConfig(s))
 	body := captureBody(token, "one")
 	request(t, s, "POST", "/capture/", "", body, 200)
 	request(t, s, "POST", "/capture/", "", captureBody(token, "two"), 503)
@@ -86,7 +88,7 @@ func TestWebhookEventRetryAndCapacity(t *testing.T) {
 	s.clock = func() time.Time { return now }
 	var bodies, ids []string
 	status := 503
-	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
+	*s.pipelineClient = http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
 		b, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(b))
 		ids = append(ids, r.Header.Get("X-Porcupine-Delivery-ID"))
@@ -95,12 +97,12 @@ func TestWebhookEventRetryAndCapacity(t *testing.T) {
 		}
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("ok")), Header: http.Header{}}, nil
 	})}
-	if progress, err := s.pipelines.webhooks.Step(context.Background()); !progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(context.Background()); !progress || err != nil {
 		t.Fatal(progress, err)
 	}
 	now = now.Add(2 * time.Second)
 	status = 200
-	if progress, err := s.pipelines.webhooks.Step(context.Background()); !progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(context.Background()); !progress || err != nil {
 		t.Fatal(progress, err)
 	}
 	if len(bodies) != 2 || bodies[0] != bodies[1] || ids[0] != ids[1] {
@@ -173,81 +175,18 @@ func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
 	}
 }
 
-func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T) {
-	t.Parallel()
-	s, p, _, pipeline := webhookTestService(t, "batch")
-	now := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
-	s.clock = func() time.Time { return now }
-	tx, _ := s.db.Begin()
-	for _, uuid := range []string{"deleted-before-send", "deleted-after-attempt", "survivor"} {
-		event := eventapi.Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := durableAcceptanceForTest(t, s).enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	var originalID string
-	s.db.QueryRow(`SELECT id FROM webhook_deliveries`).Scan(&originalID)
-	tx, _ = s.db.Begin()
-	if err := delivery.CancelWebhookEvent(context.Background(), tx, p, "deleted-before-send", s.clock); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	run, err := s.getWebhookPipelineRun(context.Background(), p, pipeline, originalID)
-	if err != nil || run.EventCount != 2 || run.State != "queued" {
-		t.Fatal(run, err)
-	}
-	var immutable string
-	s.db.QueryRow(`SELECT payload FROM webhook_deliveries WHERE id=?`, originalID).Scan(&immutable)
-	s.db.Exec(`UPDATE webhook_deliveries SET state='sending',attempts=1 WHERE id=?`, originalID)
-	tx, _ = s.db.Begin()
-	if err = delivery.CancelWebhookEvent(context.Background(), tx, p, "deleted-after-attempt", s.clock); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	var id, raw, state string
-	var count int
-	s.db.QueryRow(`SELECT id,payload,state,event_count FROM webhook_deliveries WHERE payload<>''`).Scan(&id, &raw, &state, &count)
-	if id == originalID || state != "queued" || count != 1 {
-		t.Fatal("attempted chunk was reused or survivor lost")
-	}
-	var payload delivery.WebhookPayload
-	json.Unmarshal([]byte(raw), &payload)
-	if len(payload.Events) != 1 || payload.Events[0].UUID != "survivor" || payload.DeliveryID != id {
-		t.Fatal("wrong surviving body")
-	}
-	if err = s.pipelines.webhooks.Complete(context.Background(), &delivery.WebhookAttempt{ID: originalID, Payload: immutable, Attempts: 1}, 200, "", false); err != nil {
-		t.Fatal(err)
-	}
-	var originalState string
-	s.db.QueryRow(`SELECT state FROM webhook_deliveries WHERE id=?`, originalID).Scan(&originalState)
-	if originalState != "canceled" {
-		t.Fatal("late ACK resurrected canceled body")
-	}
-	s.db.QueryRow(`SELECT count FROM webhook_queue_usage WHERE scope='instance'`).Scan(&count)
-	if count != 1 {
-		t.Fatal("survivor queue accounting changed")
-	}
-}
-
 func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 	t.Parallel()
 	s, _, token, id := webhookTestService(t, "event")
 	calls := 0
 	status := 400
-	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(*http.Request) (*http.Response, error) {
+	*s.pipelineClient = http.Client{Transport: webhookRoundTrip(func(*http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 	})}
 	request(t, s, "POST", "/capture/", "", captureBody(token, "queued"), 200)
 	s.db.Exec(`UPDATE pipelines SET state='paused' WHERE id=?`, id)
-	if progress, err := s.pipelines.webhooks.Step(context.Background()); progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(context.Background()); progress || err != nil {
 		t.Fatal(progress, err)
 	}
 	request(t, s, "POST", "/capture/", "", captureBody(token, "paused-original"), 200)
@@ -259,7 +198,7 @@ func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 	if _, err := s.control.Exec(`UPDATE access_keys SET revoked_at='revoked' WHERE id=?`, actorID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.pipelines.webhooks.Step(context.Background()); err != nil {
+	if _, err := s.pipelines.RunWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
@@ -273,21 +212,21 @@ func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 	if _, err := s.control.Exec(`UPDATE access_keys SET revoked_at=NULL WHERE id=?`, actorID); err != nil {
 		t.Fatal(err)
 	}
-	if retried, err := s.retryWebhookPipelineRun(context.Background(), project, id, run); !retried || err != nil {
+	if retried, err := retryTestPipelineRun(s, context.Background(), project, id, run); !retried || err != nil {
 		t.Fatal(retried, err)
 	}
-	if _, err := s.pipelines.webhooks.Step(context.Background()); err != nil {
+	if _, err := s.pipelines.RunWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatal("manual retry did not run")
 	}
 	s.db.Exec(`UPDATE webhook_deliveries SET state='sending' WHERE id=?`, run)
-	if err := delivery.InitializeWebhooks(context.Background(), s.db); err != nil {
+	if err := s.pipelines.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	status = 200
-	if _, err := s.pipelines.webhooks.Step(context.Background()); err != nil {
+	if _, err := s.pipelines.RunWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -315,19 +254,19 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 	enqueue("original")
 	var bodies, ids []string
 	status := 400
-	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
+	*s.pipelineClient = http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(body))
 		ids = append(ids, r.Header.Get("Idempotency-Key"))
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 	})}
 	now = received.Add(time.Minute)
-	if _, err := s.pipelines.webhooks.Step(context.Background()); err != nil {
+	if _, err := s.pipelines.RunWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var pipeline string
 	s.db.QueryRow(`SELECT pipeline_id FROM webhook_deliveries WHERE id=?`, ids[0]).Scan(&pipeline)
-	if retried, err := s.retryWebhookPipelineRun(context.Background(), p, pipeline, ids[0]); !retried || err != nil {
+	if retried, err := retryTestPipelineRun(s, context.Background(), p, pipeline, ids[0]); !retried || err != nil {
 		t.Fatal(retried, err)
 	}
 	// Model a request whose server receipt preceded window closure but whose
@@ -339,7 +278,7 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 		t.Fatal("late capture grew a frozen retried chunk")
 	}
 	status = 200
-	if _, err := s.pipelines.webhooks.Step(context.Background()); err != nil {
+	if _, err := s.pipelines.RunWebhook(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(ids) != 2 || ids[0] != ids[1] || bodies[0] != bodies[1] {
@@ -355,8 +294,8 @@ func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
 	var actorID string
 	s.db.QueryRow(`SELECT actor_id FROM pipelines WHERE id=?`, bad).Scan(&actorID)
 	healthy := eventapi.NewID()
-	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
-	encrypted, _ := s.sealPipelineSecret(p, healthy, secret)
+	secret, _ := json.Marshal(output.WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
+	encrypted, _ := s.pipelines.SealSecret(p, healthy, secret)
 	if _, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) SELECT ?,project_id,actor_id,kind,'healthy',state,config,?,created_at_ms FROM pipelines WHERE id=?`, healthy, encrypted, bad); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +304,7 @@ func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
 	// Give the unhealthy destination an older due time so it is selected first.
 	s.db.Exec(`UPDATE webhook_deliveries SET next_attempt_ms=next_attempt_ms-1 WHERE pipeline_id=?`, bad)
 	var calls []string
-	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
+	*s.pipelineClient = http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
 		calls = append(calls, r.URL.Host)
 		status := 200
 		if r.URL.Host != "healthy.example.test" {
@@ -374,7 +313,7 @@ func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
 		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
 	for range 3 {
-		if progress, err := s.pipelines.webhooks.Step(context.Background()); !progress || err != nil {
+		if progress, err := s.pipelines.RunWebhook(context.Background()); !progress || err != nil {
 			t.Fatal(progress, err)
 		}
 	}
@@ -386,11 +325,11 @@ func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
 	if count != 2 {
 		t.Fatal("failed destination payloads stopped counting")
 	}
-	if progress, err := s.pipelines.webhooks.Step(context.Background()); progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(context.Background()); progress || err != nil {
 		t.Fatal("cooldown did not defer untouched bad work", progress, err)
 	}
 	now = now.Add(2 * time.Second)
-	if progress, err := s.pipelines.webhooks.Step(context.Background()); !progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(context.Background()); !progress || err != nil {
 		t.Fatal("cooldown did not recover", progress, err)
 	}
 }

@@ -112,6 +112,8 @@ Source: `internal/porcupine/journal_schema.sql` and all numbered `journalSchema.
 | `metadata` | PostgreSQL | Exactly once | Durable source/schema/job keys; remove local routing/cache keys after classification. |
 | `mutation_audit` | PostgreSQL | Exactly once | Durable mutation ID, expected revision, request hash, actor and application state. |
 | `mutation_outbox` | PostgreSQL | At least once | Durable intent before ACK; immutable S3 body reference, then replay-safe application. |
+| `pipeline_retired_destinations` | PostgreSQL | At least once | Planned retired destination revisions retain old encrypted cleanup credentials and immutable manifest references independently of live rows. The current implementation is SQLite only; hosted manifests remain in S3. |
+| `pipeline_retired_files` | PostgreSQL | At least once | Planned original namespace, key and multipart ownership survives destination replacement. Cleanup never uses replacement credentials. The current implementation is SQLite only. |
 | `pipeline_s3_files` | PostgreSQL | At least once | Durable object/upload references and cleanup state. |
 | `pipeline_s3_runs` | PostgreSQL | At least once | Unique pipeline/window attempts with retained analytical snapshots. |
 | `pipeline_s3_state` | PostgreSQL | Exactly once | Cursor advances conditionally after successful publication. |
