@@ -51,7 +51,7 @@ Storage sampling runs approximately hourly. A sample's cutoff is the earlier of 
 
 ## History and recovery
 
-`available_since` records when instrumentation began. `counters` is absent for a bucket entirely before that point, and `partial` flags a bucket that overlaps it. Editable analytical events and old combined tenant-budget counters cannot reconstruct past live/import/project usage.
+`available_since` records when instrumentation began. `counters` and `query_duration` are absent for a bucket entirely before that point, and `partial` flags a bucket that overlaps it. Editable analytical events and old combined tenant-budget counters cannot reconstruct past live/import/project usage.
 
 The default numerical retention is 365 days. Deleted tenants/projects retain opaque IDs and numbers under this policy, with deletion flags; no names, email addresses, SQL, credentials or event payload are stored in this usage history. Opaque IDs remain linkable identifiers, not a claim of anonymization.
 

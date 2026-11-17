@@ -4302,7 +4302,8 @@
             "type": "string"
           },
           "query_duration": {
-            "$ref": "#/components/schemas/UsageQueryDuration"
+            "$ref": "#/components/schemas/UsageQueryDuration",
+            "description": "Absent when this bucket predates instrumentation."
           },
           "storage": {
             "$ref": "#/components/schemas/UsageStorage"
@@ -4323,7 +4324,6 @@
           "available_since",
           "partial",
           "acceptance_basis",
-          "query_duration",
           "storage"
         ],
         "type": "object"

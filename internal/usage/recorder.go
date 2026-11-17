@@ -149,11 +149,21 @@ func (r *Recorder) StartExecution(ctx context.Context, tenant, project, operatio
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	e := &Execution{recorder: r, id: id, started: time.Now()}
+	e := &Execution{recorder: r, id: id}
 	r.mu.Lock()
 	r.active[id] = e
 	r.mu.Unlock()
 	return e, nil
+}
+
+// Begin starts native wall time immediately before dispatch, independently of
+// the durable admitted count. An admitted attempt can crash before this point.
+func (e *Execution) Begin() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.started.IsZero() && !e.ended {
+		e.started = time.Now()
+	}
 }
 
 // Finish is cheap and must run immediately after the native method returns.
@@ -162,7 +172,9 @@ func (e *Execution) Finish() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.ended {
-		e.elapsed = max(int64(0), time.Since(e.started).Microseconds())
+		if !e.started.IsZero() {
+			e.elapsed = max(int64(0), time.Since(e.started).Microseconds())
+		}
 		e.ended = true
 	}
 }
@@ -186,7 +198,7 @@ func (r *Recorder) observeExecution(ctx context.Context, e *Execution) error {
 	e.mu.Lock()
 	elapsed := e.elapsed
 	ended := e.ended
-	if !ended {
+	if !ended && !e.started.IsZero() {
 		elapsed = max(int64(0), time.Since(e.started).Microseconds())
 	}
 	e.mu.Unlock()

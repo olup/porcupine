@@ -32,7 +32,7 @@ The source journal keeps one `usage_rollups` row per source/project/day, not an 
 
 A process can crash between this commit and dispatch. The contract therefore counts durably admitted attempts, including a possible attempt with zero backend work. It does not claim successful executions or exact CPU seconds.
 
-The observer starts its monotonic duration after the admission commit. It finishes immediately when `LakeStore.Query`, `Catalog` or `Profile` actually returns, at Phase 1's existing native-return boundary. HTTP status enrichment, profile summarization and final JSON serialization happen afterwards. Timeout, HTTP cancellation, expired query permits and a stopped client do not prove native execution has returned.
+After durable admission, a lightweight `Begin` starts monotonic time immediately before `LakeStore.Query`, `Catalog` or `Profile` is invoked. It finishes immediately at that method's actual return, using Phase 1's existing native-return boundary. Service context setup before dispatch, HTTP status enrichment, profile summarization and final JSON serialization are excluded. Timeout, HTTP cancellation, expired query permits and a stopped client do not prove native execution has returned.
 
 `Finish` captures the duration in memory without waiting for SQLite observation I/O, then releases the execution permit through the existing lifecycle. A common ten-second maintenance loop persists cumulative observations and final completion; there is no ticker per query. Only the delta above the prior persisted elapsed value is added. Completing twice or replaying an observation adds nothing twice. All duration belongs to the query's start day, so a late return can increase an earlier bucket.
 
@@ -89,3 +89,18 @@ Offline restore rotates both the control usage epoch and the journal source inca
 | Journal schema inventory | `hosted-architecture.md` | Disposition of both new journal tables and future hosted durable-evidence requirements. |
 
 Existing published guides are retained. The operator reference describes development builds, while the hosted record remains explicitly a target.
+
+## Acceptance cost evidence
+
+Measured on Apple M1 Pro, Darwin/arm64, with the same prebuilt test binary, SQLite configuration, synthetic payloads and real native HTTP acceptance path. Each case sends 100 requests, repeated three times. Only the recorder pointer is disabled in the private test control; receipts, identity, allowance checks and journal commits remain enabled. There is no product flag to turn accounting off.
+
+| Fixture | Meter off median | Meter on median | Observation |
+| --- | ---: | ---: | --- |
+| One event/request, original dynamic SQL | 0.504 ms | 0.572 ms | +13.6%; about 55 extra allocations/request |
+| 100 events/request, original dynamic SQL | 8.569 ms | 8.408 ms | Within 8.31–8.77 ms spread; no speedup claim |
+| One event/request, constant SQL | 0.536 ms | 0.609 ms | +13.6%; about 29 extra allocations/request |
+| 100 events/request, constant SQL | 8.918 ms | 8.910 ms | Within 8.74–10.69 ms spread; no speedup claim |
+
+Hoisting the SQL statements reduced the one-event allocation delta from roughly 6.5 KiB to 0.8 KiB/request, but did not demonstrate a latency improvement. The extra durable update still costs about 0.07 ms in the single-event fixture. Batching amortizes this update; the test does not establish sustained service throughput or a production capacity guarantee. Setup, payload generation, shutdown, source publication and analytical projection are excluded from the measured loop; it includes HTTP parsing/authentication and durable journal acceptance, not only an isolated UPSERT.
+
+Both the [original unfavorable results](usage-acceptance-original.txt) and the [constant-SQL rerun](usage-acceptance-constant-sql.txt) are retained. Reproduce with `go test ./internal/porcupine -run '^$' -bench '^BenchmarkUsageCaptureAcceptance$' -benchtime=100x -count=3` in a quiet local window. Benchmarks are manual and do not lengthen ordinary CI tests.

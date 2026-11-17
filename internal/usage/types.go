@@ -125,18 +125,18 @@ type UsageStorage struct {
 	ExpectedProjects int     `json:"expected_projects"`
 }
 type UsageRow struct {
-	TenantID        string             `json:"tenant_id"`
-	ProjectID       string             `json:"project_id,omitempty"`
-	TenantDeleted   bool               `json:"tenant_deleted"`
-	ProjectDeleted  bool               `json:"project_deleted"`
-	PeriodStart     string             `json:"period_start"`
-	PeriodEnd       string             `json:"period_end"`
-	AvailableSince  string             `json:"available_since"`
-	Partial         bool               `json:"partial"`
-	AcceptanceBasis string             `json:"acceptance_basis" enum:"journal_commit"`
-	Counters        *UsageCounters     `json:"counters,omitempty" doc:"Absent when the whole bucket predates instrumentation; absence is not zero."`
-	QueryDuration   UsageQueryDuration `json:"query_duration"`
-	Storage         UsageStorage       `json:"storage"`
+	TenantID        string              `json:"tenant_id"`
+	ProjectID       string              `json:"project_id,omitempty"`
+	TenantDeleted   bool                `json:"tenant_deleted"`
+	ProjectDeleted  bool                `json:"project_deleted"`
+	PeriodStart     string              `json:"period_start"`
+	PeriodEnd       string              `json:"period_end"`
+	AvailableSince  string              `json:"available_since"`
+	Partial         bool                `json:"partial"`
+	AcceptanceBasis string              `json:"acceptance_basis" enum:"journal_commit"`
+	Counters        *UsageCounters      `json:"counters,omitempty" doc:"Absent when the whole bucket predates instrumentation; absence is not zero."`
+	QueryDuration   *UsageQueryDuration `json:"query_duration,omitempty" doc:"Absent when this bucket predates instrumentation."`
+	Storage         UsageStorage        `json:"storage"`
 }
 type UsagePage struct {
 	MetricVersion     int        `json:"metric_version"`

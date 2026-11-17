@@ -124,10 +124,35 @@ func (s *Service) stopUsage() {
 // The durable start is committed before dispatch. Finish records elapsed native
 // scope in memory before releasing its permit; the common observation worker
 // persists cumulative time. A crash leaves the durable unresolved lower bound.
-func (s *Service) beginUsageQuery(ctx context.Context, project, operation string) (context.Context, InteractiveQueryConfig, func() error, error) {
+type usageQueryScope struct {
+	execution *usage.Execution
+	finish    func() error
+	once      sync.Once
+	cause     error
+}
+
+func (q *usageQueryScope) Begin() {
+	if q.execution != nil {
+		q.execution.Begin()
+	}
+}
+func (q *usageQueryScope) Finish() error {
+	q.once.Do(func() {
+		if q.execution != nil {
+			q.execution.Finish()
+		}
+		q.cause = q.finish()
+	})
+	return q.cause
+}
+
+func (s *Service) beginUsageQuery(ctx context.Context, project, operation string) (context.Context, InteractiveQueryConfig, *usageQueryScope, error) {
 	native, limits, finish, err := s.beginInteractiveQuery(ctx, project)
-	if err != nil || s.usage == nil {
-		return native, limits, finish, err
+	if err != nil {
+		return nil, InteractiveQueryConfig{}, nil, err
+	}
+	if s.usage == nil {
+		return native, limits, &usageQueryScope{finish: finish}, nil
 	}
 	// Analytical reads can execute on a non-owner with no local project anchor.
 	// Freeze the authoritative control scope rather than manufacturing an anchor.
@@ -141,9 +166,7 @@ func (s *Service) beginUsageQuery(ctx context.Context, project, operation string
 		finish()
 		return nil, InteractiveQueryConfig{}, nil, apiError(503, "usage admission unavailable; query was not executed")
 	}
-	var once sync.Once
-	var cause error
-	return native, limits, func() error { once.Do(func() { execution.Finish(); cause = finish() }); return cause }, nil
+	return native, limits, &usageQueryScope{execution: execution, finish: finish}, nil
 }
 
 type parquetUsageSampler interface {

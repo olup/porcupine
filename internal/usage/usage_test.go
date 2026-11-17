@@ -55,6 +55,14 @@ func TestRecorderAtomicDedupAndExecution(t *testing.T) {
 	if got[0].Counters.Queries != 1 || got[0].Unresolved != 1 {
 		t.Fatal(got)
 	}
+	if e = r.Observe(ctx); e != nil {
+		t.Fatal(e)
+	}
+	got, _ = r.Pending(ctx)
+	if got[0].Counters.QueryMicros != 0 {
+		t.Fatal("admission waiting before native dispatch was measured", got)
+	}
+	execution.Begin()
 	// Removing a project does not lose the final observation's frozen tenant.
 	db.Exec(`DELETE FROM projects WHERE id='p'`)
 	execution.Finish()
@@ -221,6 +229,7 @@ func TestQueryFinishDoesNotWaitForObservationIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.Begin()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -243,5 +252,23 @@ func TestQueryFinishDoesNotWaitForObservationIO(t *testing.T) {
 	}
 	if err = r.Observe(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBeforeInstrumentationIsUnknownRatherThanZero(t *testing.T) {
+	t.Parallel()
+	db := usageDB(t, ControlSchema)
+	if _, e := db.Exec(`UPDATE projects SET created_at='2026-10-01T00:00:00Z' WHERE id='p'`); e != nil {
+		t.Fatal(e)
+	}
+	s := NewStore(db, false, config(), clock)
+	for _, group := range []string{"project", "tenant"} {
+		page, e := s.ReadSnapshot(t.Context(), Query{Start: "2026-10-31T00:00:00Z", End: "2026-11-01T00:00:00Z", GroupBy: group})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(page.Rows) != 1 || page.Rows[0].Counters != nil || page.Rows[0].QueryDuration != nil {
+			t.Fatal(page)
+		}
 	}
 }

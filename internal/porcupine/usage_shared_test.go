@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestUsageSharedCumulativeSourcesAndSnapshotReplay(t *testing.T) {
+func TestSharedUsageCumulativeSourcesAndSnapshotReplay(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	a, b := sharedJourneyPair(t, nil)
@@ -59,7 +59,7 @@ func TestUsageSharedCumulativeSourcesAndSnapshotReplay(t *testing.T) {
 	}
 }
 
-func TestUsageQueryOnNonOwnerNeedsNoJournalProjectAnchor(t *testing.T) {
+func TestSharedUsageQueryOnNonOwnerNeedsNoJournalProjectAnchor(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	a, b := sharedJourneyPair(t, nil)
@@ -70,11 +70,12 @@ func TestUsageQueryOnNonOwnerNeedsNoJournalProjectAnchor(t *testing.T) {
 	if e := b.service.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE id=?`, id).Scan(&anchors); e != nil || anchors != 0 {
 		t.Fatal(anchors, e)
 	}
-	_, _, finish, e := b.service.beginUsageQuery(t.Context(), id, "sql")
+	_, _, scope, e := b.service.beginUsageQuery(t.Context(), id, "sql")
 	if e != nil {
 		t.Fatal("non-owner query rejected by metering", e)
 	}
-	if e = finish(); e != nil {
+	scope.Begin()
+	if e = scope.Finish(); e != nil {
 		t.Fatal(e)
 	}
 	if e = b.service.usage.synchronize(t.Context()); e != nil {

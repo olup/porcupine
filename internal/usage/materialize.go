@@ -203,12 +203,13 @@ UNION SELECT tenant_id,project_id,MIN(day_start) AS first_day FROM usage_storage
 				continue
 			}
 			v := totals[p.tenant+"\x00"+p.id][i]
-			r := UsageRow{TenantID: p.tenant, ProjectID: p.id, TenantDeleted: !p.tenantPresent, ProjectDeleted: !p.present, PeriodStart: b.start.Format(time.RFC3339), PeriodEnd: b.end.Format(time.RFC3339), AvailableSince: available, Partial: Stamp(b.start) < available, AcceptanceBasis: "journal_commit", Counters: v.c.Wire(), QueryDuration: UsageQueryDuration{Quality: "observed", Unresolved: strconv.FormatInt(v.unresolved, 10), LastObserved: v.observed}, Storage: storageFor(v.sample, minTime(b.end, s.Clock()))}
+			r := UsageRow{TenantID: p.tenant, ProjectID: p.id, TenantDeleted: !p.tenantPresent, ProjectDeleted: !p.present, PeriodStart: b.start.Format(time.RFC3339), PeriodEnd: b.end.Format(time.RFC3339), AvailableSince: available, Partial: Stamp(b.start) < available, AcceptanceBasis: "journal_commit", Counters: v.c.Wire(), QueryDuration: &UsageQueryDuration{Quality: "observed", Unresolved: strconv.FormatInt(v.unresolved, 10), LastObserved: v.observed}, Storage: storageFor(v.sample, minTime(b.end, s.Clock()))}
 			if v.unresolved > 0 {
 				r.QueryDuration.Quality = "lower_bound"
 			}
 			if Stamp(b.end) <= available {
 				r.Counters = nil
+				r.QueryDuration = nil
 			}
 			out = append(out, r)
 		}
@@ -252,7 +253,7 @@ func combineTenants(rows []UsageRow) ([]UsageRow, error) {
 			v.ProjectDeleted = false
 			v.Counters = nil
 			v.Storage = UsageStorage{Status: "not_measured"}
-			v.QueryDuration = UsageQueryDuration{Quality: "observed", Unresolved: "0"}
+			v.QueryDuration = nil
 			out = append(out, v)
 			totals = append(totals, Counters{})
 		}
@@ -267,20 +268,25 @@ func combineTenants(rows []UsageRow) ([]UsageRow, error) {
 			}
 			a.Counters = totals[i].Wire()
 		}
-		unresolved, e := strconv.ParseInt(a.QueryDuration.Unresolved, 10, 64)
-		if e != nil {
-			return nil, e
+		if r.QueryDuration != nil {
+			if a.QueryDuration == nil {
+				a.QueryDuration = &UsageQueryDuration{Quality: "observed", Unresolved: "0"}
+			}
+			unresolved, e := strconv.ParseInt(a.QueryDuration.Unresolved, 10, 64)
+			if e != nil {
+				return nil, e
+			}
+			extra, _ := strconv.ParseInt(r.QueryDuration.Unresolved, 10, 64)
+			unresolved, e = checkedUnresolved(unresolved, extra)
+			if e != nil {
+				return nil, e
+			}
+			a.QueryDuration.Unresolved = strconv.FormatInt(unresolved, 10)
+			if unresolved > 0 {
+				a.QueryDuration.Quality = "lower_bound"
+			}
+			a.QueryDuration.LastObserved = maxString(a.QueryDuration.LastObserved, r.QueryDuration.LastObserved)
 		}
-		extra, _ := strconv.ParseInt(r.QueryDuration.Unresolved, 10, 64)
-		unresolved, e = checkedUnresolved(unresolved, extra)
-		if e != nil {
-			return nil, e
-		}
-		a.QueryDuration.Unresolved = strconv.FormatInt(unresolved, 10)
-		if unresolved > 0 {
-			a.QueryDuration.Quality = "lower_bound"
-		}
-		a.QueryDuration.LastObserved = maxString(a.QueryDuration.LastObserved, r.QueryDuration.LastObserved)
 		a.Storage.ExpectedProjects++
 		if r.Storage.Bytes != nil {
 			value, _ := strconv.ParseInt(*r.Storage.Bytes, 10, 64)
