@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 contracts.test.mjs",
+    "test": "node --test --test-concurrency=1 server-env.test.mjs contracts.test.mjs",
     "install-browser": "playwright install chromium",
     "test:identify": "node identify-native.mjs"
   },

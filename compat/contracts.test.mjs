@@ -1,3 +1,5 @@
+import { serverEnv } from './server-env.mjs';
+import { identityProbe } from './identity-probe.mjs';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -19,7 +21,7 @@ const matrix = JSON.parse(await readFile(join(here, 'matrix.json'), 'utf8'));
 const installed = async name => JSON.parse(await readFile(join(here, 'node_modules', name, 'package.json'), 'utf8')).version;
 const versions = { 'posthog-js': await installed('posthog-js'), 'posthog-node': await installed('posthog-node'), playwright: await installed('playwright') };
 const report = { schema_version: 1, mode: process.env.PORCUPINE_COMPAT_CANARY ? 'canary' : 'pinned', versions, profile: 'cookieless-default-and-opt-in-identified', configuration: { browser_cookieless: cookielessProfile, browser_identified: identifiedBrowserProfile, browser_local_id_diagnostic: browserProfile, node: nodeProfile, browser_batch_diagnostic: { ...browserProfile, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 250 } } }, results: [], unsupported: matrix.unsupported };
-let directory, child, api, origin, browser, context, page, site, project, otherProject, proxy, proxyURL;
+let probe, directory, child, api, origin, browser, context, page, site, project, otherProject, proxy, proxyURL;
 const admin = randomBytes(32).toString('hex');
 const blocked = [], unexpected = [], wires = [], browserWires = [], browserFailures = [];
 const identifiedProjects = [];
@@ -58,7 +60,7 @@ const identities = id => {
       if ((payload.api_key || item.api_key || item.properties?.token) === target.ingest_token && ['$identify', '$set'].includes(item.event)) controls.set(item.uuid, { uuid: item.uuid, event: item.event });
     }
   }
-  return JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), id, JSON.stringify([...controls.values()])], { encoding: 'utf8' }));
+  return probe(id, [...controls.values()]);
 };
 async function sdkSend(tab, name, operation, argument) {
   const pending = tab.waitForResponse(response => new URL(response.url()).origin === api && response.request().method() === 'POST' && decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() }).batch.some(item => item.event === name));
@@ -115,6 +117,7 @@ before(async () => {
     assert.ok(recorded.payload, 'fixture has a payload');
   }
   directory = await mkdtemp(join(tmpdir(), 'porcupine-compat-'));
+  probe = identityProbe(root, directory);
   const binary = join(directory, 'porcupine');
   execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CGO_ENABLED: '1' } });
   site = createServer(async (request, response) => {
@@ -127,7 +130,7 @@ before(async () => {
   const portReservation = createServer();
   api = await listen(portReservation);
   await close(portReservation);
-  child = spawn(binary, [], { cwd: directory, env: { ...process.env, PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: admin, PORCUPINE_ALLOWED_ORIGINS: origin }, stdio: 'ignore' });
+  child = spawn(binary, [], { cwd: directory, env: serverEnv({ PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: admin, PORCUPINE_ALLOWED_ORIGINS: origin }), stdio: 'ignore' });
   for (let attempt = 0; attempt < 200; attempt++) {
     try { if ((await fetch(api + '/readyz')).ok) break; } catch {}
     if (attempt === 199) throw new Error('Go server did not become ready');
