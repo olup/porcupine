@@ -15,6 +15,7 @@ import (
 )
 
 type hostedRuntime struct {
+	maintenance   *hostedMaintenance
 	native        *lakeapi.DuckLakeStore
 	flusher       *hostedLiveFlusher
 	buffer        *bufferedAcceptance
@@ -126,6 +127,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	s.acceptance = h.buffer
 	s.startDeletionRecovery()
 	s.startHostedRecovery(lakeConfig.MaintenanceInterval)
+	h.maintenance = s.startHostedMaintenance()
 	s.pipelines.Start()
 	s.exports.Start()
 	s.startUsage()
@@ -209,6 +211,9 @@ func (s *Service) startHostedRecovery(interval time.Duration) {
 func (s *Service) closeHosted() error {
 	h := s.hosted
 	s.BeginDrain()
+	if h.maintenance != nil {
+		<-h.maintenance.done
+	}
 	if s.sharedQueries.status().Active != 0 {
 		return errors.New("hosted analytics execution is still active; permit renewal continues until it returns")
 	}
@@ -271,6 +276,9 @@ func (s *Service) initializeHostedUsage(ctx context.Context, c *usage.Config) er
 
 func (s *Service) BeginDrain() {
 	s.BeginQueryDrain()
+	if s.hosted != nil && s.hosted.maintenance != nil {
+		s.hosted.maintenance.stop()
+	}
 	if s.hosted != nil && s.hosted.buffer != nil {
 		s.hosted.buffer.stopAdmission()
 	}

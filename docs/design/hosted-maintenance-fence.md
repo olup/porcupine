@@ -1,8 +1,8 @@
 # Hosted maintenance fence
 
 Unit A2, unreleased. `DuckLakeStore.MaintainHostedProject` adds an explicit
-compaction entry point for an already-held project coordinator session. No
-background caller is enabled. Legacy `Maintain`, `CleanupDue`, and arbitrary
+compaction entry point for an already-held project coordinator session. The
+hosted profile runs it through a shared due schedule. Legacy `Maintain`, `CleanupDue`, and arbitrary
 `MaintenanceCommand` calls still refuse hosted v4 catalogs. Standalone and
 shared-v2 maintenance keep their existing behavior.
 
@@ -74,10 +74,30 @@ As the [compaction documentation](https://ducklake.select/docs/stable/duckdb/mai
 explains, candidate-group limits do not bound the number of input files or the
 operation's duration.
 
-No scheduler invokes this method automatically. Its eventual caller must choose
-when a project is due and has useful work. Reopening a dedicated engine adds
-startup, PostgreSQL, and S3 requests. The correctness fixtures do not measure that
-overhead, sparse-project economics, throughput, or a suitable polling cadence.
+Each hosted worker polls every five seconds and claims at most one ready
+catalog per poll. PostgreSQL orders due projects by last attempt and project ID.
+Claims are shared across workers and expire after two minutes. An attempt ID
+guards completion against a successor claim. Project coordinator ownership
+and the native fence still decide who may write.
+
+The worker inspects existing PostgreSQL DuckLake file metadata before opening
+an engine. A live delete file or two live files at most 1 MiB in the same table
+warrants checking native eligibility. Write-guard tables do not trigger a run.
+When a pass finds no work, the worker waits for a changed file layout before
+opening that catalog again. This probe can overestimate candidates across
+partitions. DuckLake still chooses the actual groups.
+
+Successful and idle checks leave the project due in ten minutes. A busy,
+failed, or interrupted attempt is due again in one minute. The scheduler
+checks local and PostgreSQL write ownership without waiting for a busy
+project. It checks active project authority and registers activity before
+dispatch. Shutdown cancels the scheduler and joins the callback before
+closing providers. A useful pass can open the ordinary resident engine
+and the dedicated compaction engine. The dedicated engine closes at the
+end of the pass, and the ordinary engine is eligible for normal eviction.
+
+Reopening a dedicated engine adds startup, PostgreSQL and S3 requests. The
+cadence is an initial policy and has no load or latency guarantee.
 
 ## Evidence and reproduction
 
@@ -99,8 +119,9 @@ The tests exercise the actual production opener and attempt as well as the nativ
 comparison. The public entry point also proves useful compaction, fresh external
 retry after an intervening native commit, unchanged ordinary engine retry
 settings, seal refusal, active-store close refusal, and lease/engine cleanup.
-The fixtures use 128 MiB and one native thread per engine. A pass is correctness
-evidence, not a load or performance result.
+The fixtures use 128 MiB and one native thread per engine. The scheduler fixture
+uses two workers and checks delayed return after cancellation, progress on the
+next due attempt, and unchanged logical rows. These are correctness fixtures.
 
 Run the normal focused tests with the existing fixture runners. Add the opt-in
 comparison to reproduce the unsafe alternatives and delayed executor model:
@@ -122,8 +143,8 @@ project drop, snapshot expiration, or proof/history pruning.
 
 Compaction changes physical file layout while preserving the existing logical
 history. It supplies no event/effect publication, restore-retention policy,
-physical reader/drop drain, catalog removal, or orphan purge guarantee. Those
-remain separate units. No control or native migration is added here.
+physical reader/drop drain, catalog removal, or orphan purge guarantee. The native registry migration adds a separate due
+schedule for compaction.
 
 ## Documentation fact ledger
 

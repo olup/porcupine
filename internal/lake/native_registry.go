@@ -203,6 +203,11 @@ func (r *postgresNativeRegistry) deleting(ctx context.Context, project string) (
 	return p.Deleted, err
 }
 func (r *postgresNativeRegistry) claimCleanup(ctx context.Context, at, next time.Time) (nativeCleanupAttempt, error) {
+	return r.claimDue(ctx, "pc_native_cleanup", at, next)
+}
+
+// table is one of the registry-owned schedule tables, never a request input.
+func (r *postgresNativeRegistry) claimDue(ctx context.Context, table string, at, next time.Time) (nativeCleanupAttempt, error) {
 	ctx, cancel := r.metadataContext(ctx)
 	defer cancel()
 	a := nativeCleanupAttempt{ID: event.NewID()}
@@ -212,16 +217,16 @@ func (r *postgresNativeRegistry) claimCleanup(ctx context.Context, at, next time
 	}
 	defer tx.Rollback()
 	err = tx.QueryRowContext(ctx, `SELECT c.project_id FROM pc_native_projects c
-LEFT JOIN pc_native_cleanup p ON p.source_id=c.source_id AND p.project_id=c.project_id
+LEFT JOIN `+table+` p ON p.source_id=c.source_id AND p.project_id=c.project_id
 WHERE c.source_id=$1 AND c.ready=1 AND c.deleted=0 AND (p.next_attempt IS NULL OR p.next_attempt<=$2)
 ORDER BY coalesce(p.last_attempt,0),c.project_id FOR UPDATE OF c SKIP LOCKED LIMIT 1`, r.source, at.UnixMilli()).Scan(&a.ProjectID)
 	if err != nil {
 		return a, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO pc_native_cleanup(source_id,project_id,attempt_id,next_attempt,last_attempt,state)
+	result, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(source_id,project_id,attempt_id,next_attempt,last_attempt,state)
 VALUES($1,$2,$3,$4,$5,'running') ON CONFLICT(source_id,project_id) DO UPDATE
 SET attempt_id=excluded.attempt_id,next_attempt=excluded.next_attempt,last_attempt=excluded.last_attempt,state='running'
-WHERE pc_native_cleanup.next_attempt<=$5`, r.source, a.ProjectID, a.ID, next.UnixMilli(), at.UnixMilli())
+WHERE `+table+`.next_attempt<=$5`, r.source, a.ProjectID, a.ID, next.UnixMilli(), at.UnixMilli())
 	if err != nil {
 		return a, err
 	}
