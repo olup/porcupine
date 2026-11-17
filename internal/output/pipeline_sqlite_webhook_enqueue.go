@@ -1,4 +1,4 @@
-package delivery
+package output
 
 import (
 	"context"
@@ -7,13 +7,15 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/delivery"
+
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 // WebhookEnqueuer joins the producer's transaction without owning the journal
 // connection, the destination worker or the rest of the application.
 type WebhookEnqueuer struct {
-	limits *WebhookLimits
+	limits *webhookLimits
 	clock  func() time.Time
 }
 
@@ -28,7 +30,7 @@ func (p *WebhookEnqueuer) Enqueue(ctx context.Context, tx *sql.Tx, events []even
 	}
 	type destination struct {
 		id   string
-		spec WebhookRule
+		spec delivery.WebhookRule
 	}
 	destinations := []destination{}
 	for rows.Next() {

@@ -405,3 +405,66 @@ func TestDuckLakeS3SharedPostgresNativeImportSampleBound(t *testing.T) {
 		}
 	}
 }
+
+func TestDuckLakeS3SharedPostgresNativeImportPrivatePersonUUID(t *testing.T) {
+	t.Parallel()
+	ctx, a, b, config := sharedNativeStores(t)
+	control, coordinator := nativeFenceControl(t)
+	if _, err := control.ExecContext(ctx, `CREATE SEQUENCE shared_event_id_sequence AS BIGINT INCREMENT BY 1024 MINVALUE 1 CACHE 1 NO CYCLE`); err != nil {
+		t.Fatal(err)
+	}
+	key := ProjectWriteKey{SourceID: config.SharedSourceID, ProjectID: "private-person"}
+	scope, err := a.InitializeHostedProject(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := acquireFenceSession(t, coordinator, key)
+	fence := session.Fence(scope.StreamID)
+	if err = a.AdvanceWriteFence(ctx, fence); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"person_id":"internal","distinct_id":"person","properties":{"plan":"archive"},"person_version":1,"person_distinct_id_version":1,"created_at":"2001-01-01T00:00:00Z"}` + "\n")
+	parsed, err := importer.ParseChunk(ctx, importer.ChunkState{FileID: "people", Kind: "persons", Format: "posthog"}, data, false)
+	if err != nil || len(parsed.Rows) != 1 {
+		t.Fatal(parsed, err)
+	}
+	row := parsed.Rows[0]
+	row.Event.ProjectID = key.ProjectID
+	row.Event.SourceID = "posthog"
+	if !strings.HasPrefix(row.Event.UUID, importer.PostHogPersonUUIDPrefix) || len(row.Event.UUID) <= 128 {
+		t.Fatal("fixture did not parse real private person UUID", row.Event.UUID)
+	}
+	input := nativeImportInput(t, a, scope, "job", "people", ImportFileCheckpoint{}, "bytes", row)
+	input.SourceID = "posthog"
+	input.Key.ExpectedEnd = int64(len(data))
+	input.InputSHA256 = nativeDigest(data)
+	raw, err := json.Marshal(parsed.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Parser, err = a.Remote.PutImmutableImportCheckpoint(ctx, scope, "job", "people", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := commitNativeImport(t, a, session, input)
+	if proof.AcceptedImport != 1 || proof.Import.Rows[0].UUID != row.Event.UUID || proof.Import.Rows[0].EventID <= 0 {
+		t.Fatal(proof)
+	}
+	page, err := b.PendingNativeEffects(ctx, scope, 0, 1)
+	if err != nil || len(page.Evidence) != 1 || !reflect.DeepEqual(proof, page.Evidence[0]) {
+		t.Fatal("private person proof round trip", page, err)
+	}
+	live := LiveCommitBatch{ID: "reserved-person-live", TenantID: "tenant-a", Scope: scope, Inputs: []LiveCommitInput{newLiveInput(t, key.ProjectID, "page", row.Event.UUID, "person", `{}`)}}
+	ids, err := session.ReserveEventIDs(ctx, scope.StreamID, live.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stager := &liveProofStager{objects: a.Remote, attempt: fence.AcquisitionID}
+	if _, err = a.CommitLive(ctx, fence, live, ids, stager); err == nil || len(stager.selected) != 0 {
+		t.Fatal("live writer accepted private person namespace", err)
+	}
+	after, err := b.PendingNativeEffects(ctx, scope, 0, 2)
+	if err != nil || after.NativeHighWater != 1 {
+		t.Fatal(after, err)
+	}
+}

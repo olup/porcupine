@@ -137,7 +137,7 @@ func validateLiveCommitBatch(fence ProjectWriteFence, batch LiveCommitBatch, res
 	for _, input := range batch.Inputs {
 		e := input.Event
 		control := e.Event == "$identify" || e.Event == "$set"
-		if e.ID != 0 || e.ProjectID != fence.Key.ProjectID || !ValidStoredEventUUID(e.UUID) || e.Imported || e.Delivered || e.IdentitySnapshot != "" || control != (input.Identity != nil) {
+		if e.ID != 0 || e.ProjectID != fence.Key.ProjectID || !validLiveEventUUID(e.UUID) || e.Imported || e.Delivered || e.IdentitySnapshot != "" || control != (input.Identity != nil) {
 			return "", errors.New("invalid validated live event state")
 		}
 		if control && (e.DistinctID != "" || string(e.Properties) != "{}") {

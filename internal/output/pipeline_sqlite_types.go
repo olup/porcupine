@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import "encoding/json"
 

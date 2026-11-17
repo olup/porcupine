@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -51,18 +53,18 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 				w.WriteHeader(400)
 			}))
 			defer server.Close()
-			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
+			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &output.PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			s.stopPipelines()
+			s.pipelines.Stop()
 			a, _ := project(t, s)
 			b, _ := project(t, s)
 			_, other := key(t, s, []string{"pipelines:write", "events:read"}, []string{b})
 			spec := testS3Spec()
 			spec.Destination.Endpoint = server.URL
-			body, _ := json.Marshal(PipelineCreateBody{Name: "delete recovery", Kind: "s3", S3: &spec, Credentials: PipelineCredentials{AccessKeyID: "test-id", SecretAccessKey: "test-secret"}})
+			body, _ := json.Marshal(PipelineCreateBody{Name: "delete recovery", Kind: "s3", S3: &spec, Credentials: output.PipelineCredentials{AccessKeyID: "test-id", SecretAccessKey: "test-secret"}})
 			base := "/api/v1/projects/" + a + "/pipelines"
 			created := request(t, s, "POST", base, adminToken, string(body), 201)
 			id := created["id"].(string)
@@ -119,7 +121,7 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 				t.Fatal("unpublished ownership inventory included committed customer files or lost pending files", count, wantInventory, err)
 			}
 			if scenario == "matching_commit" {
-				if err = s.deleteS3Pipeline(context.Background(), a, id); err == nil {
+				if err = s.pipelines.Delete(context.Background(), a, id); err == nil {
 					t.Fatal("repeated delete should report missing pipeline")
 				}
 			}

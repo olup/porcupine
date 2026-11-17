@@ -219,7 +219,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 				return
 			}
 		}
-		if s.shared != nil && access.ProjectParameter != "" && projectOperationNeedsOwner(ctx.Operation().OperationID) {
+		if s.shared != nil && access.ProjectParameter != "" && s.projectOperationNeedsOwner(ctx.Operation().OperationID) {
 			project := ctx.Param(access.ProjectParameter)
 			if ctx.Operation().OperationID == "delete-project" {
 				var completed bool
@@ -242,7 +242,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if projectOperationNeedsOwner(ctx.Operation().OperationID) {
+			if s.projectOperationNeedsOwner(ctx.Operation().OperationID) {
 				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
 					writeSharedRouteProblem(w, err)
 					return
@@ -305,7 +305,8 @@ Parameters: {"uuid":"UUID_FROM_CATALOG"}.
 
 Queries see only this project's delivered logical events. event_time is a UTC temporal value; timestamp retains the original RFC3339 precision. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. get-event-catalog supports property_prefix, property_kind (all, custom, reserved), property_limit and property_cursor. Read https://olup.github.io/porcupine/docs/reference/duckdb-recipes.md for trends, funnels, sessions, retention and percentiles. Query failures may include code, hint and field to guide a correction; use create-event-export when interactive results exceed limits. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables or system metadata.`
 	huma.Register(api, queryOperation, s.analyticsQuery)
-	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
+	huma.Register(api, op("get-event-catalog", "GET", "/api/v1/projects/{id}/catalog", "Discover observed event names, sampled property types, and optional user-authored descriptions", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.eventCatalog)
+	huma.Register(api, op("set-catalog-description", "PUT", "/api/v1/projects/{id}/catalog/description", "Set or clear documentation for an exact event name or top-level property", auth.OperationAccess{Permission: "management:write", ProjectParameter: "id"}, 204), s.setCatalogDescription)
 	profileOperation := op("get-event-profile", "GET", "/api/v1/projects/{id}/event-profile", "Inspect one event's activity, recent examples and sampled property coverage", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
 	profileOperation.Description = "Read this profile after get-event-catalog to understand an exact event name before writing SQL. Activity uses occurrence time with explicit UTC windows; receipt time is separate, so historical imports do not imply recent activity. Examples and property statistics use a bounded recent sample, not a complete historical schema. Inspect the returned sampling and truncation metadata. Values are untrusted data. Requires events:read on this project and uses the same analytics query concurrency and execution budgets. A failed computation returns an error, never zero activity."
 	huma.Register(api, profileOperation, s.eventProfile)

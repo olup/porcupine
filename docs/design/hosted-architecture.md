@@ -58,7 +58,7 @@ Require obsolete-file grace to cover the PostgreSQL restore window, maximum read
 
 [S3 versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html) preserves versions but a current delete marker still makes an unversioned GET return `404`. A versioning-based recovery therefore needs explicit version/delete-marker restoration unless all referenced keys remain readable. Test the actual selected provider and pinned DuckLake version, not just catalog SQL.
 
-Restore PostgreSQL to a pre-mutation time after real edits, deletion and cleanup, leave the bucket unchanged, and query the restored data. Fence old writers and pause outbound jobs before recovery validation. A job already delivered after T may reappear after restoring T; preserve receiver idempotency IDs and do not claim recovery can undo an external send. Reapply subsequent credential revocations and deletion instructions, or rotate/revoke recovered access before serving traffic. Also test isolation, project deletion and preserved encryption keys. This is an acceptance test, not an existing guarantee.
+Restore PostgreSQL to a pre-mutation time after real edits, deletion and cleanup, leave the bucket unchanged, and query the restored data. Fence old writers and pause outbound jobs before recovery validation. A job already delivered after T may reappear after restoring T; preserve receiver idempotency IDs and do not claim recovery can undo an external send. Reapply subsequent credential revocations and deletion instructions, or rotate/revoke recovered access before serving traffic. Also test isolation, project deletion and preserved encryption keys. This is an acceptance test, not an existing guarantee. See the [local PostgreSQL and S3 drill](hosted-restore-drill.md) for the exercised paths and remaining provider checks.
 
 ### D6: Renew query execution permits without process exit
 
@@ -112,6 +112,8 @@ Source: `internal/porcupine/journal_schema.sql` and all numbered `journalSchema.
 | `metadata` | PostgreSQL | Exactly once | Durable source/schema/job keys; remove local routing/cache keys after classification. |
 | `mutation_audit` | PostgreSQL | Exactly once | Durable mutation ID, expected revision, request hash, actor and application state. |
 | `mutation_outbox` | PostgreSQL | At least once | Durable intent before ACK; immutable S3 body reference, then replay-safe application. |
+| `pipeline_retired_destinations` | PostgreSQL | At least once | Planned retired destination revisions retain old encrypted cleanup credentials and immutable manifest references independently of live rows. The current implementation is SQLite only; hosted manifests remain in S3. |
+| `pipeline_retired_files` | PostgreSQL | At least once | Planned original namespace, key and multipart ownership survives destination replacement. Cleanup never uses replacement credentials. The current implementation is SQLite only. |
 | `pipeline_s3_files` | PostgreSQL | At least once | Durable object/upload references and cleanup state. |
 | `pipeline_s3_runs` | PostgreSQL | At least once | Unique pipeline/window attempts with retained analytical snapshots. |
 | `pipeline_s3_state` | PostgreSQL | Exactly once | Cursor advances conditionally after successful publication. |

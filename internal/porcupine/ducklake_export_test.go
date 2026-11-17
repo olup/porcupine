@@ -135,12 +135,12 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			fake := &pipelineRecoveryS3{markers: map[string][]byte{}}
 			server := httptest.NewServer(fake)
 			t.Cleanup(server.Close)
-			s.pipelines.s3Origins[server.URL] = true
+			updateTestPipelines(s, func(c *output.PipelineConfig) { c.AllowedS3Endpoints = append(c.AllowedS3Endpoints, server.URL) })
 			limits, err := output.NormalizeExportConfig(output.ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 			if err != nil {
 				t.Fatal(err)
 			}
-			s.pipelines.config.ExportLimits = limits
+			updateTestPipelines(s, func(c *output.PipelineConfig) { c.ExportLimits = limits })
 			start := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 			current := start.Add(5 * time.Second)
 			s.clock = func() time.Time { return current }
@@ -153,7 +153,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 				request(t, s, "POST", "/capture/", "", string(body), 200)
 			}
 			request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"uuid":"private","event":"purchase","distinct_id":"other"}`, otherIngest), 200)
-			_, releaseAdmission := s.beginCaptureReceipt(a)
+			_, releaseAdmission := s.pipelines.BeginReceipt(a)
 			defer releaseAdmission()
 			current = start.Add(65 * time.Second)
 			request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"uuid":"late","event":"purchase","distinct_id":"user"}`, ingest), 200)
@@ -169,12 +169,12 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			spec.SQL = "WITH selected AS (SELECT uuid,properties FROM events WHERE event=$name) SELECT uuid,properties FROM selected WHERE uuid IN (SELECT uuid FROM events) ORDER BY uuid"
 			spec.Parameters = map[string]string{"name": "purchase"}
 			spec.Destination.Endpoint = server.URL
-			body, _ := json.Marshal(PipelineCreateBody{Name: "native window", Kind: "s3", S3: &spec, Credentials: PipelineCredentials{AccessKeyID: "key", SecretAccessKey: "secret"}})
+			body, _ := json.Marshal(PipelineCreateBody{Name: "native window", Kind: "s3", S3: &spec, Credentials: output.PipelineCredentials{AccessKeyID: "key", SecretAccessKey: "secret"}})
 			base := "/api/v1/projects/" + a + "/pipelines"
 			created := request(t, s, "POST", base, owner, string(body), 201)
 			id := created["id"].(string)
 			request(t, s, "GET", base+"/"+id, other, "", 403)
-			if progress, err := s.stepPipelineS3(context.Background()); err != nil || progress {
+			if progress, err := s.pipelines.RunS3(context.Background()); err != nil || progress {
 				t.Fatalf("in-flight capture not respected: %v %v", progress, err)
 			}
 			releaseAdmission()
@@ -185,10 +185,10 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 					}
 				}
 			}
-			if progress, err := s.stepPipelineS3(context.Background()); err != nil || !progress {
+			if progress, err := s.pipelines.RunS3(context.Background()); err != nil || !progress {
 				t.Fatalf("native pipeline did not run: %v %v", progress, err)
 			}
-			runs, err := s.s3PipelineRunPage(context.Background(), a, id, 10, 0)
+			runs, err := testS3RunPage(s, context.Background(), a, id, 10, 0)
 			if err != nil || len(runs) != 1 {
 				t.Fatalf("native runs: %+v %v", runs, err)
 			}
@@ -215,7 +215,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 				t.Fatal("missing commit marker")
 			}
 			for _, raw := range fake.markers {
-				var manifest pipelineS3Manifest
+				var manifest testPipelineManifest
 				if json.Unmarshal(raw, &manifest) != nil || manifest.Rows != 3 || len(manifest.Files) != 3 || manifest.ProjectID != a || manifest.WindowStartMS != start.UnixMilli() {
 					t.Fatalf("native manifest: %s", raw)
 				}
@@ -247,14 +247,14 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			if len(seen) != 3 {
 				t.Fatal("missing exported rows")
 			}
-			if progress, err := s.stepPipelineS3(context.Background()); err != nil || progress {
+			if progress, err := s.pipelines.RunS3(context.Background()); err != nil || progress {
 				t.Fatalf("completed window retried: %v %v", progress, err)
 			}
 			for _, sql := range []string{"SELECT 1", "SELECT * FROM lake.current_events", "SELECT * FROM events WHERE uuid=$missing"} {
 				invalid := spec
 				invalid.SQL = sql
 				invalid.Parameters = nil
-				if _, err := s.validateS3PipelineSpec(context.Background(), a, invalid); err == nil {
+				if _, err := s.pipelines.ValidateS3Spec(context.Background(), a, invalid); err == nil {
 					t.Fatalf("invalid native pipeline accepted: %s", sql)
 				}
 			}
@@ -297,8 +297,8 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 	if !errors.Is(err, lakeapi.ErrExportValueTooLarge) {
 		t.Fatalf("row-limit cause masked by COPY cancellation: %v", err)
 	}
-	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errPipelinePressure }})
-	if !errors.Is(err, errPipelinePressure) {
+	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errTestPipelinePressure }})
+	if !errors.Is(err, errTestPipelinePressure) {
 		t.Fatalf("consumer cause masked by COPY cancellation: %v", err)
 	}
 
@@ -306,3 +306,5 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 		t.Fatal("cancelled export broke reads")
 	}
 }
+
+var errTestPipelinePressure = errors.New("test consumer pressure")
