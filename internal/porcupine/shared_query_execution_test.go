@@ -34,7 +34,7 @@ func TestSharedQueryExecutionTimingRules(t *testing.T) {
 }
 
 type cancellationIgnoringQuery struct {
-	lakeapi.LakeStore
+	hostedEventReader
 	project string
 	entered chan struct{}
 	resume  chan struct{}
@@ -42,7 +42,7 @@ type cancellationIgnoringQuery struct {
 
 func (s *cancellationIgnoringQuery) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	if project != s.project {
-		return s.LakeStore.Query(ctx, project, sql, parameters, limits)
+		return s.hostedEventReader.Query(ctx, project, sql, parameters, limits)
 	}
 	close(s.entered)
 	<-s.resume // Simulate native I/O which has not returned after interruption.
@@ -52,8 +52,7 @@ func (s *cancellationIgnoringQuery) Query(ctx context.Context, project, sql stri
 func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
-	a, b := sharedJourneyPair(t, nil)
-	attachCoreLake(t, a.service)
+	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
 	tenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"Hung query tenant"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
 	if _, err := a.service.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1,hot_query_timeout_ms=1000 WHERE id=$1`, tenant); err != nil {
 		t.Fatal(err)
@@ -61,8 +60,9 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	project, _ := sharedJourneyProject(t, a.host.URL, tenant, "Blocked native query")
 	healthy, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Healthy native query")
 	_, reader := sharedJourneyKey(t, a.host.URL, healthy, []string{"management:read", "events:read"})
-	blocked := &cancellationIgnoringQuery{LakeStore: a.service.lake, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
-	a.service.lake = blocked
+	hostedCleanupWrite(t, a.service, healthy, "healthy")
+	blocked := &cancellationIgnoringQuery{hostedEventReader: a.service.hostedQueries.reader, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
+	a.service.hostedQueries.reader = blocked
 	var unblock sync.Once
 	t.Cleanup(func() { unblock.Do(func() { close(blocked.resume) }) })
 	ctx, cancel := context.WithCancel(t.Context())

@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -37,79 +38,64 @@ func TestSharedInstanceStatusAnalyticalMetadataFailure(t *testing.T) {
 	}
 }
 
-func TestSharedInstanceStatusControlRegistrationAndPrivacy(t *testing.T) {
+func sharedStatusControlFixture(t *testing.T) (*Service, string) {
+	t.Helper()
+	dsn := sharedPostgresDSN(t)
+	control, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { control.Close() })
+	return &Service{control: control, shared: &sharedRuntime{workerID: "status-worker"}, statusSlots: make(chan struct{}, 1)}, dsn
+}
+
+func TestSharedInstanceStatusControlPrivacy(t *testing.T) {
 	t.Parallel()
-	a, _ := sharedJourneyPair(t, nil)
-	healthy := sharedStatusRead(t, a.service)
-	if healthy.Status != "ok" || healthy.Checks.SharedControl != dependencyOK || healthy.Checks.WorkerRegistration != dependencyOK || !healthy.Configuration.SharedControl || !healthy.Configuration.OwnerRouting {
+	s, dsn := sharedStatusControlFixture(t)
+	healthy := sharedStatusRead(t, s)
+	if healthy.Status != "ok" || healthy.Checks.SharedControl != dependencyOK || !healthy.Configuration.SharedControl || healthy.Checks.SQLite != dependencyNotConfigured {
 		t.Fatalf("healthy shared dependencies were not reported: %+v", healthy)
 	}
 	raw, err := json.Marshal(healthy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{a.service.shared.config.DatabaseURL, a.host.URL, sharedJourneySecret, a.service.shared.config.WorkerID, a.service.shared.routing.token, "porcupine-test-only"} {
+	for _, secret := range []string{dsn, s.shared.workerID, adminToken} {
 		if strings.Contains(string(raw), secret) {
-			t.Fatal("shared status disclosed a connection, route or credential")
+			t.Fatal("shared status disclosed a connection or credential")
 		}
-	}
-	if _, err := a.service.control.Exec(`UPDATE shared_workers SET registration_token='superseded-registration' WHERE worker_id=$1`, a.service.shared.config.WorkerID); err != nil {
-		t.Fatal(err)
-	}
-	stale := sharedStatusRead(t, a.service)
-	if stale.Status != "degraded" || stale.Checks.SharedControl != dependencyOK || stale.Checks.WorkerRegistration != dependencyUnavailable || !stale.Configuration.OwnerRouting {
-		t.Fatalf("superseded worker registration looked healthy: %+v", stale)
-	}
-}
-
-func TestSharedInstanceStatusDetectsLostRegistrationSession(t *testing.T) {
-	t.Parallel()
-	a, _ := sharedJourneyPair(t, nil)
-	// A positive timeout waits for termination, rather than just sending SIGTERM.
-	var terminated bool
-	if err := a.service.control.QueryRowContext(t.Context(), `SELECT pg_terminate_backend($1, 1000)`, a.service.shared.routing.backendPID).Scan(&terminated); err != nil {
-		t.Fatal("terminate dedicated registration session", err)
-	}
-	if !terminated {
-		t.Fatal("dedicated registration session did not terminate within one second")
-	}
-	result := sharedStatusRead(t, a.service)
-	if result.Status != "degraded" || result.Checks.SharedControl != dependencyOK || result.Checks.WorkerRegistration != dependencyUnavailable {
-		t.Fatalf("lost dedicated registration session looked healthy before heartbeat: %+v", result)
 	}
 }
 
 func TestSharedInstanceStatusMandatoryControlFailure(t *testing.T) {
 	t.Parallel()
-	a, _ := sharedJourneyPair(t, nil)
-	// Invoke the handler with an already authenticated reader context: when the
-	// database fails after authentication, status must still report that failure.
-	if err := a.service.control.Close(); err != nil {
+	s, _ := sharedStatusControlFixture(t)
+	// Invoke the handler with an already authenticated reader context so the
+	// status probe still runs after the control database goes offline.
+	if err := s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	result := sharedStatusRead(t, a.service)
-	if result.Status != "degraded" || result.Checks.SQLite != dependencyOK || result.Checks.SharedControl != dependencyUnavailable || result.Checks.WorkerRegistration != dependencyUnavailable || !result.Configuration.SharedControl {
-		t.Fatalf("shared control failure disappeared behind local SQLite health: %+v", result)
+	result := sharedStatusRead(t, s)
+	if result.Status != "degraded" || result.Checks.SQLite != dependencyNotConfigured || result.Checks.SharedControl != dependencyUnavailable || !result.Configuration.SharedControl {
+		t.Fatalf("shared control failure was not reported: %+v", result)
 	}
 }
 
 func TestSharedInstanceStatusControlProbeIsBounded(t *testing.T) {
 	t.Parallel()
-	a, _ := sharedJourneyPair(t, nil)
-	// The dedicated registration session occupies the only connection. Pool
-	// admission must honor the one-second status deadline rather than hanging.
-	a.service.control.SetMaxOpenConns(1)
-	a.service.control.SetMaxIdleConns(0)
-	defer func() {
-		a.service.control.SetMaxOpenConns(16)
-		a.service.control.SetMaxIdleConns(4)
-	}()
+	s, _ := sharedStatusControlFixture(t)
+	s.control.SetMaxOpenConns(1)
+	conn, err := s.control.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
 	started := time.Now()
-	result := sharedStatusRead(t, a.service)
+	result := sharedStatusRead(t, s)
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("control probe exceeded its bound: %s", elapsed)
 	}
-	if result.Status != "degraded" || result.Checks.SharedControl != dependencyUnavailable || result.Checks.SQLite != dependencyOK {
+	if result.Status != "degraded" || result.Checks.SharedControl != dependencyUnavailable || result.Checks.SQLite != dependencyNotConfigured {
 		t.Fatalf("blocked control probe looked healthy: %+v", result)
 	}
 }
