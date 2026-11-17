@@ -1,28 +1,25 @@
 // shared-postgres-integration runs the shared-state suite against an isolated,
-// disposable PostgreSQL server. Its published port is bound only to loopback.
+// disposable native PostgreSQL process bound only to loopback.
 package main
 
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	postgres "github.com/fergusstrange/embedded-postgres/v2"
 )
 
-const postgresImage = "postgres:17-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7"
+const postgresVersion postgres.PostgresVersion = "17.11.1"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -43,56 +40,38 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, command []string) error {
-	suffix, err := randomHex(8)
-	if err != nil {
-		return err
-	}
+func run(ctx context.Context, command []string) (result error) {
 	password, err := randomHex(24)
 	if err != nil {
 		return err
 	}
-	container := "porcupine-shared-postgres-" + suffix
-	fixtureEnv := environment(map[string]string{"POSTGRES_PASSWORD": password})
-	start := exec.CommandContext(ctx, "docker", "run", "-d", "--name", container,
-		"--label", "porcupine.integration=true", "--memory", "512m", "--cpus", "1",
-		"-p", "127.0.0.1::5432", "-e", "POSTGRES_PASSWORD", "-e", "POSTGRES_DB=porcupine_integration", postgresImage)
-	start.Env, start.Stdout, start.Stderr = fixtureEnv, io.Discard, os.Stderr
-	if err := start.Run(); err != nil {
-		return errors.New("cannot start the isolated PostgreSQL fixture")
-	}
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		remove := exec.CommandContext(cleanup, "docker", "rm", "-fv", container)
-		remove.Stdout, remove.Stderr = io.Discard, os.Stderr
-		remove.Run()
-	}()
-	port, err := exec.CommandContext(ctx, "docker", "port", container, "5432/tcp").Output()
-	if err != nil {
-		return errors.New("cannot inspect the isolated PostgreSQL fixture")
-	}
-	binding := strings.TrimSpace(string(port))
-	if !strings.HasPrefix(binding, "127.0.0.1:") || strings.Contains(binding, "\n") {
-		return errors.New("PostgreSQL fixture is not bound exclusively to loopback")
-	}
-	dsn := &url.URL{Scheme: "postgres", User: url.UserPassword("postgres", password), Host: binding, Path: "/porcupine_integration", RawQuery: "sslmode=disable&connect_timeout=1"}
-	db, err := sql.Open("pgx", dsn.String())
-	if err != nil {
-		return errors.New("cannot open the isolated PostgreSQL fixture")
-	}
-	defer db.Close()
-	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	for db.PingContext(ready) != nil {
-		select {
-		case <-ready.Done():
-			return errors.New("isolated PostgreSQL fixture did not become ready")
-		case <-time.After(100 * time.Millisecond):
+	cache := os.Getenv("PORCUPINE_TEST_POSTGRES_CACHE")
+	if cache == "" {
+		base, err := os.UserCacheDir()
+		if err != nil {
+			return fmt.Errorf("locate PostgreSQL binary cache: %w", err)
 		}
+		cache = filepath.Join(base, "porcupine-test-postgres")
 	}
+	pg := postgres.NewDatabase(postgres.DefaultConfig().Version(postgresVersion).
+		Port(0).Database("porcupine_integration").Password(password).
+		Storage(postgres.Storage{CacheDir: cache}).
+		StartParameters(map[string]string{
+			"shared_buffers": "32MB", "max_connections": "100",
+			"fsync": "on", "synchronous_commit": "on", "full_page_writes": "on",
+		}))
+	defer func() {
+		result = errors.Join(result, pg.Close())
+		if result != nil {
+			fmt.Fprint(os.Stderr, pg.Logs())
+		}
+	}()
+	if err := pg.StartContext(ctx); err != nil {
+		return fmt.Errorf("start isolated native PostgreSQL fixture: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "PostgreSQL 17 fixture ready (native process, loopback only)")
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
-	child.Env = environment(map[string]string{"PORCUPINE_TEST_POSTGRES_DSN": dsn.String(), "CGO_ENABLED": "1"})
+	child.Env = environment(map[string]string{"PORCUPINE_TEST_POSTGRES_DSN": pg.ConnectionURL(), "CGO_ENABLED": "1"})
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := child.Run(); err != nil {
 		return fmt.Errorf("shared PostgreSQL integration command failed: %w", err)

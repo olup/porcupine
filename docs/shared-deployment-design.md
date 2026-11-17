@@ -91,5 +91,21 @@ Both configurations need real database tests. Shared journeys cover independent
 workers and processes, stable-ID retries through another edge, identify, import
 resume, global counters, permissions, OAuth one-use consumption and revocation,
 query crash recovery, deletion races, and native PostgreSQL/S3 projection. CI
-starts its own disposable PostgreSQL and S3 fixtures. No production deployment is
-part of this implementation request.
+starts a disposable native PostgreSQL process and an S3 fixture container.
+No production deployment is part of this implementation request.
+
+`make shared-postgres-test` needs Go but no Docker. The test runner downloads
+PostgreSQL distribution 17.11.1 and its supervisor through the pinned
+`embedded-postgres/v2` dependency. Subsequent runs reuse verified binaries in
+`porcupine-test-postgres` under the OS user-cache directory. Set
+`PORCUPINE_TEST_POSTGRES_CACHE` to choose another cache directory. CI caches this
+directory by platform, dependency checksums, and fixture configuration.
+
+Each suite starts a fresh cluster with a random password and a loopback-only
+dynamic port. Fsync, synchronous commits, and full-page writes remain enabled.
+The runner stops PostgreSQL and removes its data after success, child-command
+failure, or cancellation. `make shared-postgres-fixture-test` exercises these
+cleanup paths against the real server. Run as a regular non-root user.
+`make shared-integration` also exercises the shared PostgreSQL/S3 journeys;
+the S3 fixture still needs Docker. This tooling is not part of either distributed
+Porcupine binary.

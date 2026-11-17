@@ -13,6 +13,7 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.25.1
+	github.com/fergusstrange/embedded-postgres/v2 v2.0.1
 	github.com/go-oauth2/oauth2/v4 v4.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
