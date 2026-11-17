@@ -35,6 +35,7 @@ COPY --from=build /porcupine /porcupine
 COPY --from=build --chown=65532:65532 /data /data
 COPY --from=build /root/.duckdb/extensions /home/nonroot/.duckdb/extensions
 ENV HOME=/home/nonroot
+WORKDIR /
 EXPOSE 8080
 USER 65532:65532
 ENTRYPOINT ["/porcupine"]

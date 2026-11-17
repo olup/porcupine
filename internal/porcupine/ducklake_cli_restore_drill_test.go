@@ -38,6 +38,10 @@ func TestDuckLakeCLIRestoreDrill(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
 		defer stop()
+		if t.Failed() {
+			logs, _ := exec.CommandContext(cleanup, "docker", "logs", container).CombinedOutput()
+			t.Logf("recovered server logs: %s", logs)
+		}
 		_ = exec.CommandContext(cleanup, "docker", "rm", "-f", container).Run()
 		_ = exec.CommandContext(cleanup, "docker", "volume", "rm", volume).Run()
 	})
