@@ -184,3 +184,39 @@ func TestSharedControlRecordsAndEnforcesSchemaVersion(t *testing.T) {
 		t.Fatalf("newer shared schema accepted: %v", err)
 	}
 }
+
+func TestSharedControlRefusesUnknownUnversionedSchemas(t *testing.T) {
+	t.Parallel()
+	for name, ddl := range map[string]string{
+		"table":    `CREATE TABLE unrelated (value TEXT); INSERT INTO unrelated VALUES ('keep me')`,
+		"metadata": `CREATE TABLE metadata (key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES ('initialized','1')`,
+		"view":     `CREATE VIEW unrelated AS SELECT 42 AS answer`,
+		"sequence": `CREATE SEQUENCE unrelated`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			db, _ := sharedControlFixture(t)
+			ctx := context.Background()
+			if _, err := db.ExecContext(ctx, ddl); err != nil {
+				t.Fatal(err)
+			}
+			inventory := func() string {
+				t.Helper()
+				var objects string
+				if err := db.QueryRowContext(ctx, `SELECT string_agg(c.relname || ':' || c.relkind::text, ',' ORDER BY c.relname)
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema()`).Scan(&objects); err != nil {
+					t.Fatal(err)
+				}
+				return objects
+			}
+			before := inventory()
+			limits, _ := normalizeInteractiveQueries(nil)
+			if err := initializeSharedControl(ctx, db, adminToken, limits); err == nil || !strings.Contains(err.Error(), "unversioned shared control") {
+				t.Fatalf("unknown shared schema accepted: %v", err)
+			}
+			if after := inventory(); after != before {
+				t.Fatalf("rejected schema changed: before=%s after=%s", before, after)
+			}
+		})
+	}
+}

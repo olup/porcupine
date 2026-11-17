@@ -124,7 +124,7 @@ func migrateSharedControl(ctx context.Context, tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&raw)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			// Pre-versioning shared control reapplied version 1 on every start.
+			return errors.New("unversioned shared control schema is unsupported; use an empty dedicated schema")
 		case err != nil:
 			return err
 		default:
@@ -137,6 +137,16 @@ func migrateSharedControl(ctx context.Context, tx *sql.Tx) error {
 		return schemaTooNew("shared control", version, latest)
 	}
 	if version == 0 {
+		var occupied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=current_schema() AND c.relkind IN ('r','p','v','m','f','S')
+)`).Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied {
+			return errors.New("unversioned shared control schema is unsupported; use an empty dedicated schema")
+		}
 		if _, err := tx.ExecContext(ctx, sharedControlSteps[0]); err != nil {
 			return fmt.Errorf("apply shared control schema version 1: %w", err)
 		}
