@@ -668,7 +668,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fb.FlushLive(t.Context(), batch("fenced")); !errors.Is(err, errHostedProjectFenced) {
 		t.Fatalf("sealed project accepted live input: %v", err)
 	}
-	page, err := sb.PendingLiveCommitEffects(t.Context(), scope, 0, 100)
+	page, err := sb.PendingNativeCommitEffects(t.Context(), scope, 0, 100)
 	if err != nil || len(page.Evidence) == 0 {
 		t.Fatalf("sealed proof history unavailable: %+v, %v", page, err)
 	}
