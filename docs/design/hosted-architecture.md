@@ -136,6 +136,8 @@ SQLite's generated `sqlite_sequence` disappears with the journal; it is not an a
 
 Import checkpointing must recover the **original** chunk outcome, not reclassify its prior accepted rows as duplicates after a crash. Commit a stable chunk identity (job/file/offset/content hash), accepted/duplicate/ignored/unresolved/invalid counts and bounded sample references alongside the native changes; then compare-and-set the PostgreSQL offset/checkpoint. Retain this evidence until publication is reconciled, including project deletion. Test crashes after native commit, concurrent retry and changed chunk content. Historical imports remain excluded from live webhooks and automatic receipt-window S3 pipeline delivery.
 
+`internal/importer/historical.go` owns the shared historical row decisions. Source/version/profile ownership checks, person deletion guards, control sanitization, and safe explicit identify evidence moved from `internal/porcupine/import_rows_accept.go` into this pure reducer. Its detached state and returned changes contain no storage access or allocated IDs. SQLite still owns deduplication before reduction, transaction-local reads between rows, accepted IDs and clocks, snapshots, savepoint rollback, queue admission, receipts, and usage. This extraction does not enable a hosted import backend or change its checkpoint contract.
+
 Serialized SHA-256 state contains a partial raw input block, not just a digest. Keep it with immutable upload/parser objects on S3 or recompute it from retained chunks. Only final digests, offsets and references belong in PostgreSQL.
 
 ### Other durable local state

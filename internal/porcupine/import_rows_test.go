@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -204,5 +206,68 @@ func TestImportExplicitTargetOnlyIdentifyDoesNotInventLink(t *testing.T) {
 	s.db.QueryRow(`SELECT count(*) FROM identity_links`).Scan(&links)
 	if result.Accepted != 1 || result.Unresolved != 0 || !identified || len(traits) != 0 || links != 0 {
 		t.Fatal("target-only evidence must not create anonymous links or traits")
+	}
+}
+
+func TestHistoricalSQLiteSequenceDedupAndAcceptanceTime(t *testing.T) {
+	t.Parallel()
+	s := service(t, 100)
+	p, _ := project(t, s)
+	at := time.Date(2026, 11, 17, 12, 0, 0, 123456789, time.UTC)
+	s.eventRules.clock = func() time.Time { return at }
+	results := importRowsForTest(t, s, p, "persons",
+		`{"person_id":"internal","distinct_id":"user","person_version":18446744073709551614,"person_distinct_id_version":18446744073709551615,"properties":{"name":"first"}}`,
+		`{"person_id":"internal","distinct_id":"user","person_version":18446744073709551615,"person_distinct_id_version":18446744073709551615,"properties":{"name":"last","n":9007199254740993}}`,
+		`{"person_id":"internal","distinct_id":"user","person_version":18446744073709551613,"person_distinct_id_version":18446744073709551615,"properties":{"name":"stale"}}`)
+	if results[0].Accepted != 1 || results[1].Accepted != 1 || results[2].Ignored != 1 || results[2].Unresolved != 1 {
+		t.Fatalf("same-transaction version order: %+v", results)
+	}
+	var personVersion, mappingVersion, traits, uuid, timestamp, receivedAt string
+	var profileVersion, lastEvent int64
+	if err := s.db.QueryRow(`SELECT person_version,mapping_version,profile_version FROM posthog_import_person_state WHERE project_id=$1 AND distinct_id='user'`, p).Scan(&personVersion, &mappingVersion, &profileVersion); err != nil {
+		t.Fatal(err)
+	}
+	if personVersion != "18446744073709551615" || mappingVersion != "18446744073709551615" {
+		t.Fatalf("unsigned versions narrowed: %s %s", personVersion, mappingVersion)
+	}
+	if err := s.db.QueryRow(`SELECT traits FROM identity_profiles WHERE project_id=$1 AND identified_id='user'`, p).Scan(&traits); err != nil || traits != `{"n":9007199254740993,"name":"last"}` {
+		t.Fatalf("latest exact traits: %s %v", traits, err)
+	}
+	if err := s.db.QueryRow(`SELECT id,uuid,timestamp,received_at FROM events WHERE project_id=$1 ORDER BY id DESC LIMIT 1`, p).Scan(&lastEvent, &uuid, &timestamp, &receivedAt); err != nil || lastEvent != profileVersion || timestamp != at.Format(time.RFC3339Nano) || receivedAt != timestamp {
+		t.Fatalf("acceptance time/version: %d %d %s %s %v", lastEvent, profileVersion, timestamp, receivedAt, err)
+	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var usageBefore, usageAfter int64
+	if err = tx.QueryRow(`SELECT sum(accepted_events) FROM tenant_usage`).Scan(&usageBefore); err != nil {
+		t.Fatal(err)
+	}
+	// The duplicate UUID wins even when its supplied person state would create
+	// an unrelated identity. Cold receipts obey the same pre-reduction rule.
+	for _, cold := range []bool{false, true} {
+		row := importer.Row{Kind: "persons", Event: eventapi.Event{UUID: uuid}, Person: importer.Person{IdentifiedID: "must-not-exist", InternalID: "other", PersonVersion: 1, MappingVersion: 1, Properties: json.RawMessage(`{"unexpected":true}`)}}
+		var known map[string]int64
+		if cold {
+			row.Event.UUID = "cold-known"
+			known = map[string]int64{row.Event.UUID: 99}
+		}
+		got, err := s.eventRules.AcceptHistoricalTx(ctx, tx, p, row, known)
+		if err != nil || got != (ImportRowResult{Duplicates: 1}) {
+			t.Fatalf("duplicate reduction: %+v %v", got, err)
+		}
+	}
+	var extra int
+	if err = tx.QueryRow(`SELECT (SELECT count(*) FROM identity_profiles WHERE identified_id='must-not-exist')+(SELECT count(*) FROM posthog_import_person_state WHERE distinct_id='must-not-exist')`).Scan(&extra); err != nil || extra != 0 {
+		t.Fatalf("duplicate mutated person state: %d %v", extra, err)
+	}
+	if err = tx.QueryRow(`SELECT sum(accepted_events) FROM tenant_usage`).Scan(&usageAfter); err != nil || usageAfter != usageBefore || usageAfter != 2 {
+		t.Fatalf("duplicate changed usage: %d %d %v", usageBefore, usageAfter, err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 }

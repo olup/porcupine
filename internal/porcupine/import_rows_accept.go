@@ -13,61 +13,45 @@ import (
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-type importedPersonState struct {
-	sourceID                      string
-	found                         bool
-	personID                      string
-	personVersion, mappingVersion uint64
-	profileVersion                int64
-	deleted                       bool
-}
-
-func loadImportedPerson(ctx context.Context, tx *sql.Tx, project, distinct string) (importedPersonState, error) {
-	var state importedPersonState
-	var pv, mv string
-	err := tx.QueryRowContext(ctx, `SELECT person_id,person_version,mapping_version,profile_version,deleted,source_id FROM posthog_import_person_state WHERE project_id=$1 AND distinct_id=$2`, project, distinct).Scan(&state.personID, &pv, &mv, &state.profileVersion, &state.deleted, &state.sourceID)
-	if errors.Is(err, sql.ErrNoRows) {
+func loadHistoricalIdentity(ctx context.Context, tx *sql.Tx, project, distinct string) (importer.HistoricalIdentityState, error) {
+	var state importer.HistoricalIdentityState
+	if distinct == "" {
 		return state, nil
 	}
-	if err != nil {
+	var pv, mv string
+	person := &state.Person
+	err := tx.QueryRowContext(ctx, `SELECT person_id,person_version,mapping_version,profile_version,deleted,source_id FROM posthog_import_person_state WHERE project_id=$1 AND distinct_id=$2`, project, distinct).Scan(&person.PersonID, &pv, &mv, &person.ProfileVersion, &person.Deleted, &person.SourceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return state, err
 	}
-	state.found = true
-	state.personVersion, err = strconv.ParseUint(pv, 10, 64)
-	if err != nil {
+	if err == nil {
+		person.Found = true
+		person.PersonVersion, err = strconv.ParseUint(pv, 10, 64)
+		if err != nil {
+			return state, err
+		}
+		person.MappingVersion, err = strconv.ParseUint(mv, 10, 64)
+		if err != nil {
+			return state, err
+		}
+	}
+	var traits string
+	err = tx.QueryRowContext(ctx, `SELECT traits,version,is_identified FROM identity_profiles WHERE project_id=$1 AND identified_id=$2`, project, distinct).Scan(&traits, &state.ProfileVersion, &state.Profile.Identified)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return state, err
 	}
-	state.mappingVersion, err = strconv.ParseUint(mv, 10, 64)
+	if err == nil {
+		state.ProfileFound, state.Profile.Traits = true, json.RawMessage(traits)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT identified_id,version FROM identity_links WHERE project_id=$1 AND anonymous_id=$2`, project, distinct).Scan(&state.Link.Target, &state.Link.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
 	return state, err
 }
-func importProfileOwned(ctx context.Context, tx *sql.Tx, project, distinct, source string) (bool, error) {
-	var version int64
-	var identified bool
-	err := tx.QueryRowContext(ctx, `SELECT version,is_identified FROM identity_profiles WHERE project_id=$1 AND identified_id=$2`, project, distinct).Scan(&version, &identified)
-	if errors.Is(err, sql.ErrNoRows) {
-		state, e := loadImportedPerson(ctx, tx, project, distinct)
-		return !state.found || state.sourceID == source, e
-	}
-	if err != nil {
-		return false, err
-	}
-	if identified {
-		return false, nil
-	}
-	state, err := loadImportedPerson(ctx, tx, project, distinct)
-	return state.found && state.profileVersion == version && state.sourceID == source, err
-}
-func importIdentityEvidenceOwned(ctx context.Context, tx *sql.Tx, project, distinct, source string) (bool, error) {
-	owned, err := importProfileOwned(ctx, tx, project, distinct, source)
-	if err != nil || !owned {
-		return owned, err
-	}
-	state, err := loadImportedPerson(ctx, tx, project, distinct)
-	return !state.deleted, err
-}
 
-func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p importer.Person, profileVersion int64, source string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO posthog_import_person_state(project_id,distinct_id,person_id,person_version,mapping_version,profile_version,deleted,source_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,distinct_id) DO UPDATE SET person_id=excluded.person_id,person_version=excluded.person_version,mapping_version=excluded.mapping_version,profile_version=excluded.profile_version,deleted=excluded.deleted,source_id=excluded.source_id`, project, p.IdentifiedID, p.InternalID, strconv.FormatUint(p.PersonVersion, 10), strconv.FormatUint(p.MappingVersion, 10), profileVersion, p.Deleted, source)
+func saveImportedPerson(ctx context.Context, tx *sql.Tx, project, distinct string, state importer.HistoricalPersonState, profileVersion int64) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO posthog_import_person_state(project_id,distinct_id,person_id,person_version,mapping_version,profile_version,deleted,source_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,distinct_id) DO UPDATE SET person_id=excluded.person_id,person_version=excluded.person_version,mapping_version=excluded.mapping_version,profile_version=excluded.profile_version,deleted=excluded.deleted,source_id=excluded.source_id`, project, distinct, state.PersonID, strconv.FormatUint(state.PersonVersion, 10), strconv.FormatUint(state.MappingVersion, 10), profileVersion, state.Deleted, state.SourceID)
 	return err
 }
 
@@ -80,76 +64,41 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if row.Kind != "events" && row.Kind != "persons" {
 		return result, importer.ErrRow
 	}
-	event := row.Event
-	event.ProjectID = project
-	event.Imported = true
-	source := event.SourceID
-	if source == "" {
-		source = "posthog"
-	}
-	duplicate, err := localReceipt(ctx, tx, project, event.UUID)
+	duplicate, err := localReceipt(ctx, tx, project, row.Event.UUID)
 	if err != nil {
 		return result, err
 	}
-	if _, cold := known[event.UUID]; duplicate || cold {
+	if _, cold := known[row.Event.UUID]; duplicate || cold {
 		return ImportRowResult{Duplicates: 1}, nil
 	}
-	var personState importedPersonState
-	if row.Kind == "persons" {
-		p := row.Person
-		if !validIdentityID(p.IdentifiedID) {
-			return ImportRowResult{Ignored: 1, Unresolved: 1}, nil
-		}
-		personState, err = loadImportedPerson(ctx, tx, project, p.IdentifiedID)
+	target, anonymous := importer.HistoricalStateIDs(row)
+	var state importer.HistoricalState
+	state.Target, err = loadHistoricalIdentity(ctx, tx, project, target)
+	if err != nil {
+		return result, err
+	}
+	if anonymous != "" && anonymous != target {
+		state.Anonymous, err = loadHistoricalIdentity(ctx, tx, project, anonymous)
 		if err != nil {
 			return result, err
-		}
-		if personState.found && (personState.sourceID != source || p.InternalID != personState.personID && p.MappingVersion <= personState.mappingVersion || p.MappingVersion < personState.mappingVersion || p.MappingVersion == personState.mappingVersion && p.PersonVersion <= personState.personVersion) {
-			return ImportRowResult{Ignored: 1, Unresolved: 1}, nil
-		}
-		owned, err := importProfileOwned(ctx, tx, project, p.IdentifiedID, source)
-		if err != nil {
-			return result, err
-		}
-		link, _, err := identityLink(ctx, tx, project, p.IdentifiedID)
-		if err != nil {
-			return result, err
-		}
-		if !owned || link != "" {
-			return ImportRowResult{Ignored: 1, Unresolved: 1}, nil
-		}
-		if p.Deleted {
-			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_profiles WHERE project_id=$1 AND identified_id=$2)`, project, p.IdentifiedID).Scan(&exists); err != nil {
-				return result, err
-			}
-			if !exists {
-				err = saveImportedPerson(ctx, tx, project, p, 0, source)
-				return ImportRowResult{Ignored: 1}, err
-			}
-		}
-		properties := p.Properties
-		if p.Deleted {
-			properties = json.RawMessage(`{}`)
-		}
-		event.Event, event.DistinctID = "$set", p.IdentifiedID
-		event.Properties = properties
-		event.Timestamp = p.Timestamp.UTC().Format(time.RFC3339Nano)
-		if p.Timestamp.IsZero() {
-			event.Timestamp = rules.clock().UTC().Format(time.RFC3339Nano)
 		}
 	}
 	acceptedAt := rules.clock().UTC()
+	decision, err := importer.ReduceHistorical(row, state, acceptedAt)
+	if err != nil {
+		return result, err
+	}
+	result = ImportRowResult{Ignored: decision.Ignored, Unresolved: decision.Unresolved}
+	if decision.Accepted == 0 {
+		if decision.Person != nil {
+			err = saveImportedPerson(ctx, tx, project, target, *decision.Person, 0)
+		}
+		return result, err
+	}
+	event := decision.Event
+	event.ProjectID = project
 	event.ReceivedAt = acceptedAt.Format(time.RFC3339Nano)
 	event = lakeapi.EventWithMetadata(event)
-	// Imported control arguments cannot be replayed as live incremental updates.
-	// Persons snapshots hydrate profiles separately with explicit version guards.
-	control := isIdentityControl(event.Event) || event.Event == "$create_alias" || event.Event == "$groupidentify"
-	if control {
-		event.DistinctID = ""
-		event.Properties = json.RawMessage(`{}`)
-		event.Context = json.RawMessage(`{}`)
-	}
 	var pending, pendingBytes int64
 	if err = tx.QueryRowContext(ctx, `SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
 		return result, err
@@ -161,79 +110,32 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if err != nil {
 		return result, err
 	}
-	if control {
+	if decision.Control {
 		snapshot := lakeapi.IdentitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []lakeapi.IdentityLinkSnapshot{}}
-		if row.Kind == "persons" {
+		if profile := decision.Profile; profile != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,identified_id) DO UPDATE SET is_identified=excluded.is_identified,traits=excluded.traits,version=excluded.version`, project, profile.Target, profile.Identified, string(profile.Traits), event.ID); err != nil {
+				return result, err
+			}
+			if link := profile.Link; link != nil {
+				version := link.Version
+				if link.Create {
+					version = uint64(event.ID)
+					if _, err = tx.ExecContext(ctx, `INSERT INTO identity_links(project_id,anonymous_id,identified_id,version) VALUES($1,$2,$3,$4)`, project, link.Anonymous, link.Target, version); err != nil {
+						return result, err
+					}
+				}
+				snapshot.Links = append(snapshot.Links, lakeapi.IdentityLinkSnapshot{AnonymousID: link.Anonymous, IdentifiedID: link.Target, Version: strconv.FormatUint(version, 10)})
+			}
 			var traits map[string]any
-			properties := row.Person.Properties
-			if row.Person.Deleted {
-				properties = json.RawMessage(`{}`)
-			}
-			if ingestfmt.DecodeJSON(properties, &traits) != nil {
-				return result, importer.ErrRow
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,0,$3,$4) ON CONFLICT(project_id,identified_id) DO UPDATE SET traits=excluded.traits,version=excluded.version`, project, row.Person.IdentifiedID, string(properties), event.ID)
-			if err != nil {
+			if err = ingestfmt.DecodeJSON(profile.Traits, &traits); err != nil {
 				return result, err
 			}
-			snapshot.IdentifiedID, snapshot.Traits = row.Person.IdentifiedID, traits
-			if err = saveImportedPerson(ctx, tx, project, row.Person, event.ID, source); err != nil {
+			snapshot.IdentifiedID, snapshot.Traits = profile.Target, traits
+		}
+		if decision.Person != nil {
+			if err = saveImportedPerson(ctx, tx, project, target, *decision.Person, event.ID); err != nil {
 				return result, err
 			}
-			if !row.Person.Deleted {
-				result.Unresolved = 1
-			} // The internal person UUID does not prove an app-user target.
-		} else if row.Event.Event == "$identify" {
-			// The stated target is evidence; an anonymous link needs its explicit ID.
-			var properties map[string]any
-			ingestfmt.DecodeJSON(row.Event.Properties, &properties)
-			anonymousValue, hasAnonymous := properties["$anon_distinct_id"]
-			anonymous, anonymousString := anonymousValue.(string)
-			if validIdentityID(row.Event.DistinctID) && (!hasAnonymous || anonymousString && validIdentityID(anonymous)) {
-				targetOwned, e := importIdentityEvidenceOwned(ctx, tx, project, row.Event.DistinctID, source)
-				if e != nil {
-					return result, e
-				}
-				sourceOwned := true
-				existing := ""
-				if hasAnonymous && anonymous != row.Event.DistinctID {
-					sourceOwned, e = importIdentityEvidenceOwned(ctx, tx, project, anonymous, source)
-					if e != nil {
-						return result, e
-					}
-					existing, _, e = identityLink(ctx, tx, project, anonymous)
-					if e != nil {
-						return result, e
-					}
-				}
-				targetLink, _, e := identityLink(ctx, tx, project, row.Event.DistinctID)
-				if e != nil {
-					return result, e
-				}
-				if targetOwned && sourceOwned && existing == "" && targetLink == "" {
-					safe := row.Event
-					safe.ID = event.ID
-					safe.ProjectID = project
-					safeProperties := map[string]any{}
-					if hasAnonymous {
-						safeProperties["$anon_distinct_id"] = anonymous
-					}
-					safe.Properties, _ = json.Marshal(safeProperties)
-					ignored, e := applyIdentityState(ctx, tx, safe, &snapshot)
-					if e != nil {
-						return result, e
-					}
-					if ignored {
-						result.Unresolved = 1
-					}
-				} else {
-					result.Unresolved = 1
-				}
-			} else {
-				result.Unresolved = 1
-			}
-		} else {
-			result.Unresolved = 1
 		}
 		encoded, err := json.Marshal(snapshot)
 		if err != nil {
