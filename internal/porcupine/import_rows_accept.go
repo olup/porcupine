@@ -7,6 +7,9 @@ import (
 	"errors"
 	"strconv"
 	"time"
+
+	"github.com/olup/porcupine/internal/importer"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 type importedPersonState struct {
@@ -62,7 +65,7 @@ func importIdentityEvidenceOwned(ctx context.Context, tx *sql.Tx, project, disti
 	return !state.deleted, err
 }
 
-func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p ImportPerson, profileVersion int64, source string) error {
+func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p importer.Person, profileVersion int64, source string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO posthog_import_person_state(project_id,distinct_id,person_id,person_version,mapping_version,profile_version,deleted,source_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,distinct_id) DO UPDATE SET person_id=excluded.person_id,person_version=excluded.person_version,mapping_version=excluded.mapping_version,profile_version=excluded.profile_version,deleted=excluded.deleted,source_id=excluded.source_id`, project, p.IdentifiedID, p.InternalID, strconv.FormatUint(p.PersonVersion, 10), strconv.FormatUint(p.MappingVersion, 10), profileVersion, p.Deleted, source)
 	return err
 }
@@ -71,10 +74,10 @@ func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p Impor
 // transaction as local receipt checks and historical row acceptance.
 // No network work or outbound destination enqueueing occurs here.
 // known holds events found in DuckLake by coldKnown before the transaction.
-func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row ImportRow, known map[string]int64) (ImportRowResult, error) {
+func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row importer.Row, known map[string]int64) (ImportRowResult, error) {
 	var result ImportRowResult
 	if row.Kind != "events" && row.Kind != "persons" {
-		return result, errImportRow
+		return result, importer.ErrRow
 	}
 	event := row.Event
 	event.ProjectID = project
@@ -165,8 +168,8 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 			if row.Person.Deleted {
 				properties = json.RawMessage(`{}`)
 			}
-			if decodeIngestionJSON(properties, &traits) != nil {
-				return result, errImportRow
+			if ingestfmt.DecodeJSON(properties, &traits) != nil {
+				return result, importer.ErrRow
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,0,$3,$4) ON CONFLICT(project_id,identified_id) DO UPDATE SET traits=excluded.traits,version=excluded.version`, project, row.Person.IdentifiedID, string(properties), event.ID)
 			if err != nil {
@@ -182,7 +185,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 		} else if row.Event.Event == "$identify" {
 			// The stated target is evidence; an anonymous link needs its explicit ID.
 			var properties map[string]any
-			decodeIngestionJSON(row.Event.Properties, &properties)
+			ingestfmt.DecodeJSON(row.Event.Properties, &properties)
 			anonymousValue, hasAnonymous := properties["$anon_distinct_id"]
 			anonymous, anonymousString := anonymousValue.(string)
 			if validIdentityID(row.Event.DistinctID) && (!hasAnonymous || anonymousString && validIdentityID(anonymous)) {

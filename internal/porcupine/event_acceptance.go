@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 // eventRules is the shared policy for live and historical acceptance. Its clock
@@ -68,7 +70,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 				e.DistinctID = value
 			}
 		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
+		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
 			cookieless = true
 		}
 		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
@@ -119,7 +121,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		metadata := e.ingestion
 		if metadata == nil && source != "" {
 			enriched := eventWithMetadata(prepared)
-			metadata = &ingestionMetadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
+			metadata = &ingestfmt.Metadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
 		}
 		if metadata != nil {
 			if err := prepareIngestionMetadata(&prepared, metadata, source); err != nil {
@@ -213,11 +215,11 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 		if pending+int64(accepted) >= int64(a.rules.queueMax) {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "queue is full", retry: true}
 		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
+		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
 			e.DistinctID = cookielessID
 			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
 			if e.SourceID != "" {
-				e.Context = scrubIngestionContext(e.Context)
+				e.Context = ingestfmt.ScrubContext(e.Context)
 			}
 		}
 		identityInput := e

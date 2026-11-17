@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/importer"
 )
 
 func tenantAllowance(t *testing.T, s *Service, tenant string, limit int64) {
@@ -199,7 +201,7 @@ func TestTenantIngestionImportQuotaRetainsCheckpointAndDates(t *testing.T) {
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{projectID})
 	first := importTestRow("one")
 	data := append(append([]byte(nil), first...), importTestRow("two")...)
-	job := importTestCreate(t, s, projectID, token, "quota", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	job := importTestCreate(t, s, projectID, token, "quota", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 	blocked := importTestPut(t, s, projectID, job, job.Files[0], token, 0, data, 429)
 	if !strings.Contains(blocked.Body.String(), "ingestion_budget_exceeded") {
 		t.Fatal(blocked.Body.String())

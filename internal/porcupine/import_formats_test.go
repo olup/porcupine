@@ -7,14 +7,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/importer"
 )
 
-func createFormatImport(t *testing.T, s *Service, project, token, format, key string, data []byte) ImportUploadJob {
+func createFormatImport(t *testing.T, s *Service, project, token, format, key string, data []byte) importer.ImportUploadJob {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"format": format, "idempotency_key": key, "files": []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}})
+	body, _ := json.Marshal(map[string]any{"format": format, "idempotency_key": key, "files": []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}})
 	return importTestJob(t, importTestRequest(t, s, "POST", "/api/v1/projects/"+project+"/imports", token, body, nil, 201))
 }
-func finishFormatImport(t *testing.T, s *Service, project, token string, job ImportUploadJob, data []byte) ImportUploadJob {
+func finishFormatImport(t *testing.T, s *Service, project, token string, job importer.ImportUploadJob, data []byte) importer.ImportUploadJob {
 	t.Helper()
 	importTestPut(t, s, project, job, job.Files[0], token, job.Files[0].OffsetBytes, data, 200)
 	importTestRequest(t, s, "POST", importTestBase(project, job.ID)+"/files/"+job.Files[0].ID+"/complete", token, nil, nil, 200)
@@ -167,7 +169,7 @@ func TestHistoricalFormatValidationAndProtectedLiveIdentity(t *testing.T) {
 			`{"type":"track","message_id":"x","messageId":"x","name":"bad","event":"bad","timestamp":"2020-01-01T00:00:00Z","project_id":"forged"}`,
 			`{"type":"pageview","message_id":"x","message_id":"changed","timestamp":"2020-01-01T00:00:00Z"}`,
 		} {
-			if _, err := parseHistoricalImportRow([]byte(raw), "events", format); err == nil {
+			if _, err := importer.ParseRow([]byte(raw), "events", format); err == nil {
 				t.Fatal("accepted malformed historical row", format, raw)
 			}
 		}
@@ -196,7 +198,7 @@ func TestHistoricalFormatFrozenManifestAndRevocation(t *testing.T) {
 	id, token := key(t, s, []string{"imports:write", "events:write"}, []string{a})
 	data := historicalJourney(t, "native")
 	job := createFormatImport(t, s, a, token, "native", "fixed", data)
-	body, _ := json.Marshal(map[string]any{"format": "segment", "idempotency_key": "fixed", "files": []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}})
+	body, _ := json.Marshal(map[string]any{"format": "segment", "idempotency_key": "fixed", "files": []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}})
 	importTestRequest(t, s, "POST", "/api/v1/projects/"+a+"/imports", token, body, nil, 409)
 	request(t, s, "DELETE", "/api/v1/access-keys/"+id, adminToken, "", 204)
 	importTestPut(t, s, a, job, job.Files[0], token, 0, data, 401)
@@ -234,7 +236,7 @@ func TestImportDeliveryCursorExcludesLaterTraffic(t *testing.T) {
 		t.Fatal("unconfigured analytics must not claim queryable", after.Delivery)
 	}
 	for _, format := range []string{"native", "segment"} {
-		raw, _ := json.Marshal(map[string]any{"format": format, "idempotency_key": "persons-" + format, "files": []ImportUploadFileSpec{{Path: "persons.jsonl", Kind: "persons", SHA256: importTestSHA(nil)}}})
+		raw, _ := json.Marshal(map[string]any{"format": format, "idempotency_key": "persons-" + format, "files": []importer.ImportUploadFileSpec{{Path: "persons.jsonl", Kind: "persons", SHA256: importTestSHA(nil)}}})
 		importTestRequest(t, s, "POST", "/api/v1/projects/"+a+"/imports", adminToken, raw, nil, 400)
 	}
 }

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/importer"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 const sharedJourneySecret = "shared-worker-journey-routing-secret-test-only"
@@ -239,7 +241,7 @@ func TestSharedWorkerAdaptersGzipAndCookielessForwarding(t *testing.T) {
 	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-0'`).Scan(&left); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-1'`).Scan(&right); err != nil || left != right || left == cookielessSentinel {
+	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-1'`).Scan(&right); err != nil || left != right || left == ingestfmt.CookielessSentinel {
 		t.Fatal("edge hop changed the daily visitor identity", left, right, err)
 	}
 	if err := a.service.db.QueryRow(`SELECT timestamp FROM events WHERE ingestion_metadata LIKE '%native-gzip%'`).Scan(&occurred); err != nil || occurred != "2020-01-02T01:15:00.123456789Z" {
@@ -366,7 +368,7 @@ func TestSharedWorkerNativeCLIInterruptedImportResume(t *testing.T) {
 	if err := resume.Run(); err != nil {
 		t.Fatal("cross-edge CLI resume failed", err, diagnostic.String())
 	}
-	var job ImportUploadJob
+	var job importer.ImportUploadJob
 	if err := json.Unmarshal(output.Bytes(), &job); err != nil || job.State != "completed" || job.Counts.Accepted != 300 || job.Counts.Invalid != 0 || job.ID != jobID {
 		t.Fatal("CLI did not complete the same historical owner job", output.String(), err)
 	}

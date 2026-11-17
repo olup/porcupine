@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 const mutationMaxBytes = 64 << 20
@@ -99,7 +101,7 @@ func validateEventSnapshotActor(snapshot EventSnapshot, allowEmpty bool) (EventS
 	if strings.TrimSpace(snapshot.Event) == "" || len(snapshot.Event) > 500 || !allowEmpty && strings.TrimSpace(snapshot.DistinctID) == "" || len(snapshot.DistinctID) > 1000 {
 		return snapshot, apiError(400, "event and distinct_id are required and must fit limits")
 	}
-	if snapshot.DistinctID == cookielessSentinel {
+	if snapshot.DistinctID == ingestfmt.CookielessSentinel {
 		return snapshot, apiError(400, "event edits require a resolved distinct_id")
 	}
 	if strings.HasPrefix(snapshot.Event, "$") && snapshot.Event != "$pageview" && snapshot.Event != "$pageleave" && snapshot.Event != "$autocapture" && snapshot.Event != "$screen" && snapshot.Event != "$exception" {
@@ -122,7 +124,7 @@ func validateEventSnapshotActor(snapshot EventSnapshot, allowEmpty bool) (EventS
 	}
 	// Detach request maps before removing identity properties or server-owned markers.
 	var detached EventSnapshot
-	if err := decodeIngestionJSON(encoded, &detached); err != nil {
+	if err := ingestfmt.DecodeJSON(encoded, &detached); err != nil {
 		return snapshot, apiError(400, "invalid event snapshot")
 	}
 	return detached, nil

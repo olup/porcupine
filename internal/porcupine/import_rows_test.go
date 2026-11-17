@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/importer"
 )
 
 func importRowsForTest(t *testing.T, s *Service, project, kind string, raw ...string) []ImportRowResult {
@@ -13,10 +14,10 @@ func importRowsForTest(t *testing.T, s *Service, project, kind string, raw ...st
 }
 func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind string, raw ...string) []ImportRowResult {
 	t.Helper()
-	rows := make([]ImportRow, len(raw))
+	rows := make([]importer.Row, len(raw))
 	for i, value := range raw {
 		var err error
-		rows[i], err = parsePostHogImportRow([]byte(value), kind)
+		rows[i], err = importer.ParsePostHog([]byte(value), kind)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,25 +45,6 @@ func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind str
 		t.Fatal(err)
 	}
 	return results
-}
-func TestImportRowsActualPostHogJSONLines(t *testing.T) {
-	t.Parallel()
-	for _, properties := range []string{`{"large":9007199254740993,"$current_url":"https://example.test/"}`, `"{\"large\":9007199254740993,\"$current_url\":\"https://example.test/\"}"`} {
-		raw := fmt.Sprintf(`{"uuid":"archive-1","event":"$autocapture","distinct_id":"anon","timestamp":"2024-01-02T03:04:05.123456Z","properties":%s,"person_id":"internal-not-app","person_properties":{"stale":true},"elements_chain":"button.example","created_at":"2024-01-03T01:00:00Z"}`, properties)
-		row, err := parsePostHogImportRow([]byte(raw), "events")
-		if err != nil || row.Event.Timestamp != "2024-01-02T03:04:05.123456Z" || !strings.Contains(string(row.Event.Properties), `9007199254740993`) || !strings.Contains(string(row.Event.Properties), `$elements_chain`) {
-			t.Fatal("actual PostHog event normalization failed", err)
-		}
-	}
-	for _, raw := range []string{`{}`, `{"uuid":"x","uuid":"y","event":"v","distinct_id":"u","timestamp":"2024-01-01T00:00:00Z"}`, `{"uuid":"x","event":"v","distinct_id":"$posthog_cookieless","timestamp":"2024-01-01T00:00:00Z"}`, `{"uuid":"x","event":"v","distinct_id":"u","timestamp":"yesterday"}`, `{"uuid":"x","event":"v","distinct_id":"u","timestamp":"2024-01-01T00:00:00Z","properties":[]}`} {
-		if _, err := parsePostHogImportRow([]byte(raw), "events"); err == nil {
-			t.Errorf("malformed import row accepted: %s", raw)
-		}
-	}
-	row, err := parsePostHogImportRow([]byte(`{"uuid":"old-cookieless","event":"$pageview","distinct_id":"cookieless_archived_daily_hash","timestamp":"2024-01-01 00:00:00.001000","properties":{"cookieless":true,"$session_id":"private","$ip":"192.0.2.1"}}`), "events")
-	if err != nil || strings.Contains(string(row.Event.Properties), "private") || strings.Contains(string(row.Event.Properties), "192.0.2.1") {
-		t.Fatal("archived cookieless data reconstructed identity or kept known identifiers")
-	}
 }
 func TestImportRowsDedupBothDirectionsAndNoDestinations(t *testing.T) {
 	t.Parallel()

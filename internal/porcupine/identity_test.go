@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func identityCapture(t *testing.T, s *Service, token string, events []map[string]any, status int) map[string]any {
@@ -197,7 +199,7 @@ func TestIdentityCookielessAndMalformedControlsAreIsolatedNoops(t *testing.T) {
 	projectID, token := project(t, s)
 	controls := []map[string]any{
 		identifyEvent("cookieless-target", "cookieless_deadbeef", "anon", map[string]any{}, map[string]any{}),
-		identifyEvent("cookieless-source", "account", cookielessSentinel, map[string]any{}, map[string]any{}),
+		identifyEvent("cookieless-source", "account", ingestfmt.CookielessSentinel, map[string]any{}, map[string]any{}),
 		identifyEvent("derived-source", "account", "cookieless_deadbeef", map[string]any{}, map[string]any{}),
 		identifyEvent("empty-target", "", "anon", map[string]any{}, map[string]any{}),
 		{"uuid": "bad-anon", "event": "$identify", "distinct_id": "account", "properties": map[string]any{"$anon_distinct_id": 42}},
@@ -214,7 +216,7 @@ func TestIdentityCookielessAndMalformedControlsAreIsolatedNoops(t *testing.T) {
 	if count != 0 {
 		t.Fatal("cookieless or invalid input created a profile")
 	}
-	result = identityCapture(t, s, token, []map[string]any{identifyEvent("daily-sentinel", cookielessSentinel, "anon", map[string]any{}, map[string]any{})}, 200)
+	result = identityCapture(t, s, token, []map[string]any{identifyEvent("daily-sentinel", ingestfmt.CookielessSentinel, "anon", map[string]any{}, map[string]any{})}, 200)
 	if result["identity_ignored"] != float64(1) {
 		t.Fatal("shared sentinel linked daily identity")
 	}
@@ -251,7 +253,7 @@ func TestIdentityTraitAndQueueLimitsRollbackCanonicalState(t *testing.T) {
 		t.Fatal("oversized traits changed prior profile")
 	}
 	many := map[string]any{}
-	for i := range identityMaxTraitKeys + 1 {
+	for i := range ingestfmt.MaxTraitKeys + 1 {
 		many[fmt.Sprint(i)] = true
 	}
 	result = identityCapture(t, s, token, []map[string]any{setIdentityEvent("too-many", "other", many, map[string]any{})}, 200)
@@ -399,7 +401,7 @@ func TestIdentityControlsDiscardRawInputsBeforeSQLitePersistence(t *testing.T) {
 	s.queueMaxBytes = 3000
 	rejected := identifyEvent("rejected-control", "rejected-target-id", "bound-anon", map[string]any{"email": "rejected-pii-marker@example.test"}, map[string]any{})
 	rejected["properties"].(map[string]any)["raw-metadata"] = strings.Repeat("discarded-input-marker", 3000)
-	result := identityCapture(t, s, token, []map[string]any{rejected, identifyEvent("cookieless-control", cookielessSentinel, "rejected-cookieless-anon", map[string]any{"secret": "rejected-cookieless-pii-marker"}, map[string]any{})}, 200)
+	result := identityCapture(t, s, token, []map[string]any{rejected, identifyEvent("cookieless-control", ingestfmt.CookielessSentinel, "rejected-cookieless-anon", map[string]any{"secret": "rejected-cookieless-pii-marker"}, map[string]any{})}, 200)
 	if result["identity_ignored"] != float64(2) {
 		t.Fatal("conflicting and cookieless controls were not ignored")
 	}
@@ -435,7 +437,7 @@ func TestIdentityControlsDiscardRawInputsBeforeSQLitePersistence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, discarded := range []string{"not-part-of-canonical-profile", "rejected-target-id", "rejected-pii-marker@example.test", "discarded-input-marker", "rejected-cookieless-anon", "rejected-cookieless-pii-marker", cookielessSentinel} {
+		for _, discarded := range []string{"not-part-of-canonical-profile", "rejected-target-id", "rejected-pii-marker@example.test", "discarded-input-marker", "rejected-cookieless-anon", "rejected-cookieless-pii-marker", ingestfmt.CookielessSentinel} {
 			if strings.Contains(string(data), discarded) {
 				t.Fatalf("discarded input %q reached SQLite/WAL %s", discarded, filepath.Base(path))
 			}

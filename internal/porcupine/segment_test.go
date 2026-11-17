@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func segmentHeaders(key string) map[string]string {
@@ -197,9 +199,9 @@ func TestSegmentBodyWriteKeyGzipLimitsAndGeneratedIDs(t *testing.T) {
 		t.Fatal("omitted messageId did not generate distinct receipt IDs")
 	}
 	transportRequest(t, s, "POST", "/v1/track", body, map[string]string{"Content-Type": "text/plain"}, 415)
-	transportRequest(t, s, "POST", "/v1/track", []byte(`{"userId":"u","event":"big","properties":{"pad":"`+strings.Repeat("x", segmentEventLimit)+`"}}`), segmentHeaders(ingest), 413)
-	transportRequest(t, s, "POST", "/v1/batch", []byte(`{"batch":[{"type":"track","userId":"u","event":"big","properties":{"pad":"`+strings.Repeat("x", segmentEventLimit)+`"}}]}`), segmentHeaders(ingest), 400)
-	transportRequest(t, s, "POST", "/v1/batch", bytes.Repeat([]byte(" "), segmentBatchLimit+1), segmentHeaders(ingest), 413)
+	transportRequest(t, s, "POST", "/v1/track", []byte(`{"userId":"u","event":"big","properties":{"pad":"`+strings.Repeat("x", ingestfmt.SegmentEventLimit)+`"}}`), segmentHeaders(ingest), 413)
+	transportRequest(t, s, "POST", "/v1/batch", []byte(`{"batch":[{"type":"track","userId":"u","event":"big","properties":{"pad":"`+strings.Repeat("x", ingestfmt.SegmentEventLimit)+`"}}]}`), segmentHeaders(ingest), 400)
+	transportRequest(t, s, "POST", "/v1/batch", bytes.Repeat([]byte(" "), ingestfmt.SegmentBatchLimit+1), segmentHeaders(ingest), 413)
 	if eventCount(t, s) != 2 {
 		t.Fatal("size or type rejection changed durable events")
 	}
@@ -218,7 +220,7 @@ func TestSegmentSharedContextAmplificationIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(payload) >= segmentBatchLimit {
+	if len(payload) >= ingestfmt.SegmentBatchLimit {
 		t.Fatal("test must exercise expanded context, not raw request limit")
 	}
 	transportRequest(t, s, "POST", "/v1/batch", payload, segmentHeaders(""), 400)

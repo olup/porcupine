@@ -7,32 +7,14 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-)
 
-const identityMaxTraitsBytes = 32 << 10
-const identityMaxTraitKeys = 128
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+)
 
 func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
 
 func validIdentityID(id string) bool {
-	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != cookielessSentinel && !strings.HasPrefix(id, "cookieless_")
-}
-
-func identityTraits(raw any) (map[string]any, bool) {
-	if raw == nil {
-		return map[string]any{}, true
-	}
-	traits, ok := raw.(map[string]any)
-	if !ok || len(traits) > identityMaxTraitKeys {
-		return nil, false
-	}
-	for key := range traits {
-		if strings.TrimSpace(key) == "" || len(key) > 200 {
-			return nil, false
-		}
-	}
-	encoded, err := json.Marshal(traits)
-	return traits, err == nil && len(encoded) <= identityMaxTraitsBytes
+	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != ingestfmt.CookielessSentinel && !strings.HasPrefix(id, "cookieless_")
 }
 
 func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[string]any, bool, error) {
@@ -46,7 +28,7 @@ func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[s
 		return nil, false, err
 	}
 	var traits map[string]any
-	if err := decodeIngestionJSON([]byte(raw), &traits); err != nil || traits == nil {
+	if err := ingestfmt.DecodeJSON([]byte(raw), &traits); err != nil || traits == nil {
 		return nil, false, errors.New("invalid stored identity profile")
 	}
 	return traits, identified, nil
@@ -89,7 +71,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 		return true, nil
 	}
 	var properties map[string]any
-	if err := decodeIngestionJSON(event.Properties, &properties); err != nil {
+	if err := ingestfmt.DecodeJSON(event.Properties, &properties); err != nil {
 		return false, err
 	}
 	for _, key := range []string{"$set", "$set_once"} {
@@ -97,8 +79,8 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 			return true, nil
 		}
 	}
-	set, validSet := identityTraits(properties["$set"])
-	once, validOnce := identityTraits(properties["$set_once"])
+	set, validSet := ingestfmt.Traits(properties["$set"])
+	once, validOnce := ingestfmt.Traits(properties["$set_once"])
 	if !validSet || !validOnce {
 		return true, nil
 	}
@@ -156,7 +138,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 	for key, value := range set {
 		traits[key] = value
 	}
-	if _, valid := identityTraits(traits); !valid {
+	if _, valid := ingestfmt.Traits(traits); !valid {
 		return true, nil
 	}
 	encoded, err := json.Marshal(traits)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/olup/porcupine/internal/auth"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func mutationContext(id string) context.Context {
@@ -231,7 +232,7 @@ func TestMutationValidationAndAtomicWriteFailure(t *testing.T) {
 	for _, change := range []func(*EventEditInput){
 		func(i *EventEditInput) { i.Body.Snapshot.Event = "" },
 		func(i *EventEditInput) { i.Body.Snapshot.Event = "$identify" },
-		func(i *EventEditInput) { i.Body.Snapshot.DistinctID = cookielessSentinel },
+		func(i *EventEditInput) { i.Body.Snapshot.DistinctID = ingestfmt.CookielessSentinel },
 		func(i *EventEditInput) { i.Body.Snapshot.Properties = nil },
 		func(i *EventEditInput) { i.Body.Snapshot.Timestamp = "yesterday" },
 	} {

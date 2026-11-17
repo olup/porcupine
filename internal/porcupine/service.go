@@ -22,6 +22,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	_ "modernc.org/sqlite"
 )
 
@@ -590,7 +591,7 @@ type eventInput struct {
 	Timestamp  string          `json:"timestamp"`
 	Set        json.RawMessage `json:"$set,omitempty"`
 	SetOnce    json.RawMessage `json:"$set_once,omitempty"`
-	ingestion  *ingestionMetadata
+	ingestion  *ingestfmt.Metadata
 }
 type ingestInput struct {
 	eventInput

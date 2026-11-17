@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func sharedIngestionTestService(t *testing.T, dsn, worker string) *Service {
@@ -192,7 +194,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 		t.Helper()
 		batch := sharedIngestionBatch("cookie", prefix, 1)
 		batch.cookieless = true
-		batch.events[0].DistinctID = cookielessSentinel
+		batch.events[0].DistinctID = ingestfmt.CookielessSentinel
 		if _, err := s.acceptance.Accept(t.Context(), batch, peer, true); err != nil {
 			t.Fatal(err)
 		}
@@ -237,7 +239,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 	at = at.Add(-time.Second)
 	batch := sharedIngestionBatch("cookie", "rollback", 1)
 	batch.cookieless = true
-	batch.events[0].DistinctID = cookielessSentinel
+	batch.events[0].DistinctID = ingestfmt.CookielessSentinel
 	if _, err := a.acceptance.Accept(t.Context(), batch, peer, true); err == nil {
 		t.Fatal("expired identity day was resurrected")
 	}

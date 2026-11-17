@@ -1,4 +1,4 @@
-package porcupine
+package importer
 
 import (
 	"bytes"
@@ -10,31 +10,33 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/ingest"
 )
 
-var errImportRow = errors.New("invalid PostHog import row")
+var ErrRow = errors.New("invalid historical import row")
 
 // PostHog S3 JSONLines uses object properties and ISO8601 UTC timestamps.
 // JSON-encoded object strings and UTC ClickHouse timestamp text are accepted
 // for older exports; no producer can supply the destination project or source.
-func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
-	var row ImportRow
+func ParsePostHog(raw []byte, kind string) (Row, error) {
+	var row Row
 	row.Kind = kind
 	if len(raw) == 0 || len(raw) > 1<<20 {
-		return row, errImportRow
+		return row, ErrRow
 	}
 	var input map[string]json.RawMessage
-	if _, err := decodeSegmentObject(raw); err != nil {
-		return row, errImportRow
+	if _, err := ingest.DecodeObject(raw); err != nil {
+		return row, ErrRow
 	}
 	if json.Unmarshal(raw, &input) != nil || input == nil {
-		return row, errImportRow
+		return row, ErrRow
 	}
 	object := func(key string) (json.RawMessage, error) { return importProperties(input[key]) }
 	text := func(key string, limit int) (string, error) {
 		var value string
 		if json.Unmarshal(input[key], &value) != nil || strings.TrimSpace(value) == "" || len(value) > limit {
-			return "", errImportRow
+			return "", ErrRow
 		}
 		return value, nil
 	}
@@ -50,15 +52,15 @@ func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
 		if e.DistinctID, err = text("distinct_id", 1000); err != nil {
 			return row, err
 		}
-		if e.DistinctID == cookielessSentinel {
-			return row, errImportRow
+		if e.DistinctID == ingest.CookielessSentinel {
+			return row, ErrRow
 		} // A request sentinel cannot reconstruct an old daily ID.
 		if e.Properties, err = object("properties"); err != nil {
 			return row, err
 		}
 		var timestamp string
 		if json.Unmarshal(input["timestamp"], &timestamp) != nil {
-			return row, errImportRow
+			return row, ErrRow
 		}
 		parsed, err := parseImportTimestamp(timestamp)
 		if err != nil {
@@ -69,7 +71,7 @@ func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
 		if chain, ok := input["elements_chain"]; ok && string(chain) != "null" {
 			var value string
 			if json.Unmarshal(chain, &value) != nil {
-				return row, errImportRow
+				return row, ErrRow
 			}
 			if value != "" {
 				var properties map[string]json.RawMessage
@@ -95,12 +97,12 @@ func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
 		return row, nil
 	}
 	if kind != "persons" {
-		return row, errImportRow
+		return row, ErrRow
 	}
 	p := &row.Person
 	var err error
 	if value, exists := input["is_deleted"]; exists && json.Unmarshal(value, &p.Deleted) != nil {
-		return row, errImportRow
+		return row, ErrRow
 	}
 	if p.InternalID, err = text("person_id", 1000); err != nil {
 		return row, err
@@ -120,8 +122,8 @@ func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
 	decoder := json.NewDecoder(bytes.NewReader(p.Properties))
 	decoder.UseNumber()
 	decoder.Decode(&objectProperties)
-	if _, valid := identityTraits(objectProperties); !valid {
-		return row, errImportRow
+	if _, valid := ingest.Traits(objectProperties); !valid {
+		return row, ErrRow
 	}
 	if p.PersonVersion, err = importVersion(input["person_version"]); err != nil {
 		return row, err
@@ -132,7 +134,7 @@ func parsePostHogImportRow(raw []byte, kind string) (ImportRow, error) {
 	if rawTime, exists := input["created_at"]; exists && string(rawTime) != "null" {
 		var timestamp string
 		if json.Unmarshal(rawTime, &timestamp) != nil {
-			return row, errImportRow
+			return row, ErrRow
 		}
 		p.Timestamp, err = parseImportTimestamp(timestamp)
 		if err != nil {
@@ -154,31 +156,31 @@ func importProperties(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) > 0 && raw[0] == '"' {
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
-			return nil, errImportRow
+			return nil, ErrRow
 		}
 		raw = json.RawMessage(value)
 	}
-	if _, err := decodeSegmentObject(raw); err != nil {
-		return nil, errImportRow
+	if _, err := ingest.DecodeObject(raw); err != nil {
+		return nil, ErrRow
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(raw, &object) != nil || object == nil {
-		return nil, errImportRow
+		return nil, ErrRow
 	}
 	for _, value := range object {
 		decoder := json.NewDecoder(bytes.NewReader(value))
 		decoder.UseNumber()
 		var anyValue any
 		if decoder.Decode(&anyValue) != nil {
-			return nil, errImportRow
+			return nil, ErrRow
 		}
 		if decoder.Decode(&anyValue) != io.EOF {
-			return nil, errImportRow
+			return nil, ErrRow
 		}
 	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
-		return nil, errImportRow
+		return nil, ErrRow
 	}
 	return encoded, nil
 }
@@ -189,14 +191,14 @@ func importVersion(raw json.RawMessage) (uint64, error) {
 	var value string
 	if raw[0] == '"' {
 		if json.Unmarshal(raw, &value) != nil {
-			return 0, errImportRow
+			return 0, ErrRow
 		}
 	} else {
 		value = string(raw)
 	}
 	parsed, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
-		return 0, errImportRow
+		return 0, ErrRow
 	}
 	return parsed, nil
 }
@@ -206,5 +208,5 @@ func parseImportTimestamp(value string) (time.Time, error) {
 			return parsed.UTC(), nil
 		}
 	}
-	return time.Time{}, errImportRow
+	return time.Time{}, ErrRow
 }

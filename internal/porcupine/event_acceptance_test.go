@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
@@ -33,7 +35,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 			rules := &eventRules{clock: func() time.Time { return now }, queueMax: 20, queueMaxBytes: DefaultQueueMaxBytes}
 			prepared, err := prepareLiveBatch(projectID, "", eventBatch{
 				{UUID: "identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "browser", "$set": map[string]any{"plan": "new"}}},
-				{UUID: "page", Event: "$pageview", DistinctID: cookielessSentinel, Properties: map[string]any{"$current_url": "https://example.test"}},
+				{UUID: "page", Event: "$pageview", DistinctID: ingestfmt.CookielessSentinel, Properties: map[string]any{"$current_url": "https://example.test"}},
 			}, now)
 			if err != nil {
 				t.Fatal(err)

@@ -13,14 +13,15 @@ import (
 
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/importer"
 )
 
 type ImportUploadCreateInput struct {
 	ID   string `path:"id"`
 	Body struct {
-		Format         string                 `json:"format,omitempty" enum:"native,posthog,segment" default:"posthog"`
-		IdempotencyKey string                 `json:"idempotency_key" minLength:"1" maxLength:"200"`
-		Files          []ImportUploadFileSpec `json:"files" minItems:"1" maxItems:"4096"`
+		Format         string                          `json:"format,omitempty" enum:"native,posthog,segment" default:"posthog"`
+		IdempotencyKey string                          `json:"idempotency_key" minLength:"1" maxLength:"200"`
+		Files          []importer.ImportUploadFileSpec `json:"files" minItems:"1" maxItems:"4096"`
 	}
 }
 type ImportUploadInput struct {
@@ -40,17 +41,17 @@ type ImportUploadChunkInput struct {
 	SHA256   string `header:"X-Chunk-SHA256" required:"true"`
 	RawBody  []byte `contentType:"application/octet-stream"`
 }
-type ImportUploadOutput struct{ Body ImportUploadJob }
+type ImportUploadOutput struct{ Body importer.ImportUploadJob }
 type ImportUploadListInput struct {
 	ID     string `path:"id"`
 	Limit  int    `query:"limit" default:"20" minimum:"1" maximum:"100"`
 	Offset int    `query:"offset" default:"0" minimum:"0"`
 }
 type ImportUploadList struct {
-	Jobs       []ImportUploadJob `json:"jobs"`
-	Limit      int               `json:"limit"`
-	Offset     int               `json:"offset"`
-	NextOffset *int              `json:"next_offset,omitempty"`
+	Jobs       []importer.ImportUploadJob `json:"jobs"`
+	Limit      int                        `json:"limit"`
+	Offset     int                        `json:"offset"`
+	NextOffset *int                       `json:"next_offset,omitempty"`
 }
 type ImportUploadListOutput struct{ Body ImportUploadList }
 
@@ -107,7 +108,7 @@ func (s *Service) registerImportUploads(api huma.API, op func(string, string, st
 	huma.Register(api, operation("list-imports", "GET", base, "List bounded project import progress summaries", 200), s.imports.listImportUploads)
 	huma.Register(api, operation("get-import", "GET", base+"/{import_id}", "Read authoritative per-file byte offsets, counts and safe row samples", 200), s.imports.getImportUpload)
 	upload := operation("upload-import-chunk", "PUT", base+"/{import_id}/files/{file_id}", "Upload raw JSONL bytes with exact byte offset and SHA-256; cursor and accepted rows commit atomically", 200)
-	upload.MaxBodyBytes = importMaxChunkBytes
+	upload.MaxBodyBytes = importer.MaxChunkBytes
 	huma.Register(api, upload, s.imports.uploadImportChunk)
 	huma.Register(api, operation("complete-import-file", "POST", base+"/{import_id}/files/{file_id}/complete", "Validate final file SHA-256 and process the final JSONL row", 200), s.imports.completeImportFile)
 	huma.Register(api, operation("complete-import", "POST", base+"/{import_id}/complete", "Complete an import after every file completes; downstream delivery remains asynchronous", 200), s.imports.completeImportUpload)
@@ -121,9 +122,9 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if strings.TrimSpace(input.Body.IdempotencyKey) == "" || len(input.Body.IdempotencyKey) > 200 {
 		return nil, apiError(400, "idempotency_key must contain 1 to 200 bytes")
 	}
-	files, err := normalizeImportManifest(input.Body.Files)
+	files, err := importer.NormalizeManifest(input.Body.Files)
 	if err != nil {
-		return nil, err
+		return nil, apiError(400, err.Error())
 	}
 	format := input.Body.Format
 	if format == "" {
@@ -171,7 +172,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM import_uploads WHERE state='uploading'`).Scan(&active); err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
-	if active >= importMaxActiveJobs {
+	if active >= importer.MaxActiveJobs {
 		return nil, apiError(503, "active import limit reached")
 	}
 	id = newID()
@@ -183,7 +184,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if _, err := tx.ExecContext(ctx, `INSERT INTO import_uploads(id,project_id,actor_id,source_id,format,idempotency_hash,request_hash,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'uploading',$8,$9)`, id, input.ID, a.ID, source, format, keyHash, requestHash, now, now); err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
-	hashState, err := importHashState(sha256.New())
+	hashState, err := importer.HashState(sha256.New())
 	if err != nil {
 		return nil, apiError(503, "import checksum unavailable")
 	}
@@ -221,7 +222,7 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 	if err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
-	jobs := []ImportUploadJob{}
+	jobs := []importer.ImportUploadJob{}
 	for rows.Next() {
 		job, err := scanImportJob(rows)
 		if err != nil {
@@ -235,7 +236,7 @@ func (m *importManager) listImportUploads(ctx context.Context, input *ImportUplo
 	if err != nil {
 		return nil, apiError(503, "import storage unavailable")
 	}
-	result := ImportUploadList{Jobs: []ImportUploadJob{}, Limit: input.Limit, Offset: input.Offset}
+	result := ImportUploadList{Jobs: []importer.ImportUploadJob{}, Limit: input.Limit, Offset: input.Offset}
 	if len(jobs) > input.Limit {
 		next := input.Offset + input.Limit
 		result.NextOffset = &next
@@ -284,12 +285,12 @@ func (m *importManager) uploadImportChunk(ctx context.Context, input *ImportUplo
 	if err != nil || input.Offset == "" || strings.ContainsAny(input.Offset, "+ -\t\r\n") {
 		return nil, apiError(400, "Upload-Offset must be a nonnegative decimal byte offset")
 	}
-	if len(input.RawBody) == 0 || len(input.RawBody) > importMaxChunkBytes {
+	if len(input.RawBody) == 0 || len(input.RawBody) > importer.MaxChunkBytes {
 		return nil, apiError(413, "chunk must contain 1 to 262144 bytes")
 	}
 	sum := sha256.Sum256(input.RawBody)
 	digest := hex.EncodeToString(sum[:])
-	if !validImportSHA256(input.SHA256) || digest != strings.ToLower(input.SHA256) {
+	if !importer.ValidSHA256(input.SHA256) || digest != strings.ToLower(input.SHA256) {
 		return nil, apiError(400, "chunk SHA-256 mismatch")
 	}
 	a := principal(ctx)
@@ -314,12 +315,12 @@ func (m *importManager) uploadImportChunk(ctx context.Context, input *ImportUplo
 	if err != nil {
 		return nil, err
 	}
-	h, err := restoreImportHash(file.HashState)
+	h, err := importer.RestoreHash(file.HashState)
 	if err != nil {
 		return nil, apiError(503, "import checksum unavailable")
 	}
 	h.Write(input.RawBody)
-	work.file.HashState, err = importHashState(h)
+	work.file.HashState, err = importer.HashState(h)
 	if err != nil {
 		return nil, apiError(503, "import checksum unavailable")
 	}

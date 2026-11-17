@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 type largeEventReceipt struct {
@@ -29,9 +31,9 @@ type largeEventCrashState struct {
 }
 
 func largeEventPayload(offset, count int) []byte {
-	batch := make([]nativeMessage, count)
+	batch := make([]ingestfmt.Message, count)
 	for i := range batch {
-		batch[i] = nativeMessage{Type: "track", MessageID: fmt.Sprintf("large-%04d", offset+i), ActorID: "large-anonymous", Name: "large_event", Timestamp: "2026-11-13T12:00:00Z", Properties: map[string]any{"app": "same-app", "padding": strings.Repeat("x", 15<<10)}}
+		batch[i] = ingestfmt.Message{Type: "track", MessageID: fmt.Sprintf("large-%04d", offset+i), ActorID: "large-anonymous", Name: "large_event", Timestamp: "2026-11-13T12:00:00Z", Properties: map[string]any{"app": "same-app", "padding": strings.Repeat("x", 15<<10)}}
 	}
 	raw, _ := json.Marshal(batch)
 	return raw
