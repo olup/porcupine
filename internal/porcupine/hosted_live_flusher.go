@@ -109,6 +109,67 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 	})
 }
 
+// CommitImport coordinates already validated historical input. Upload storage,
+// actor authorization and manifest/file validation remain at the upload boundary.
+// It preflights the only PG cursor row before any new native import outcome.
+func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.ImportChunkInput) (lakeapi.NativeCommitEvidence, error) {
+	session, err := f.coordinator.Acquire(ctx, input.Key.Scope.Key)
+	if err != nil {
+		return lakeapi.NativeCommitEvidence{}, err
+	}
+	defer session.Release()
+	var result lakeapi.NativeCommitEvidence
+	err = session.RunNative(ctx, func(ctx context.Context) error {
+		scope, err := f.native.LookupHostedProjectExisting(ctx, input.Key.Scope.Key)
+		if err != nil {
+			return err
+		}
+		if scope != input.Key.Scope {
+			return output.ErrPipelineConflict
+		}
+		fence := session.Fence(scope.StreamID)
+		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
+			return err
+		}
+		prior, found, err := f.native.FindImportChunk(ctx, fence, input)
+		if err != nil {
+			return err
+		}
+		if err = f.reconcile(ctx, scope, fence, input.TenantID); err != nil {
+			return err
+		}
+		if found {
+			result = prior
+			return nil
+		}
+		if err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+			return f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(scope), input.TenantID)
+		}); err != nil {
+			return err
+		}
+		var ids lakeapi.EventIDReservation
+		if len(input.Candidates) > 0 {
+			ids, err = session.ReserveEventIDs(ctx, scope.StreamID, input.Key.ID(), len(input.Candidates))
+			if err != nil {
+				return err
+			}
+		}
+		result, err = f.native.CommitImportChunk(ctx, fence, input, ids)
+		if err != nil {
+			return err
+		}
+		if err = f.publisher.publish(ctx, output.PipelineBinding{}, result); err != nil {
+			return err
+		}
+		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, result.Sequence)
+		return nil
+	})
+	if err != nil {
+		return lakeapi.NativeCommitEvidence{}, err
+	}
+	return result, nil
+}
+
 // RecoverProject can run cold without producer credentials, payload or worker
 // disk. It fences before high-water capture and never creates missing projects.
 func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.ProjectWriteKey) error {

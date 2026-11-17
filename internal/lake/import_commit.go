@@ -144,6 +144,7 @@ func validateImportOutcome(o ImportChunkOutcome) error {
 }
 
 // CommitImportChunk returns the exact original result before any reclassification.
+// The integration caller must preflight its shared PG cursor before this call.
 // The outcome, imported canonical records, identity and common usage/proof commit
 // together. It publishes no output and never advances the control cursor itself.
 func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWriteFence, input ImportChunkInput, ids EventIDReservation) (NativeCommitEvidence, error) {

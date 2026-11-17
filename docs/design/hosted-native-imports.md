@@ -58,13 +58,20 @@ outcome lookup and publication remain available after sealing; new native writes
 require the open guard. A missing sequence, changed fingerprint, unknown kind,
 or mismatched file head fails closed.
 
+The disabled `hostedLiveFlusher.CommitImport` holds the common project session
+through original lookup, reconciliation, cursor preflight, native commit and
+publication. `PrepareNoOutputStreamTx` admits and charges the one shared cursor
+row before native data commits. Exhausted metadata capacity therefore rejects a
+first import without creating an unpublished native outcome. It reserves no
+webhook references, body bytes, artifacts or proof slots.
+
 The publisher dispatches by kind before live reservation validation. Live proofs
 retain actual output plans, immutable body verification and reservation
 settlement. Import proofs verify their original parser reference and use
 `PublishNoOutputEffectsTx` to advance the same cursor. This participant refuses
 any pending live reservation. It creates no plan, proof reservation, webhook
-references, output bodies or output jobs. A newly created common cursor charges
-one durable metadata row; an existing cursor adds no output capacity charge.
+references, output bodies or output jobs. Publication requires the cursor that preflight already charged and allocates no
+new row after native commit. An existing cursor adds no output capacity charge.
 
 The cursor and `usage.Store.PublishSourceTotalsTx` commit in one PostgreSQL
 transaction. Usage SourceID remains the native stream ID. Recovery uses original

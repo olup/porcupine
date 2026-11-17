@@ -70,9 +70,10 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	limits := output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
 		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
-			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}); e != nil {
+			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); e != nil {
 				return e
 			}
 		}
@@ -113,6 +114,11 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 			if e := sa.AdvanceRecoveryFence(ctx, fence); e != nil {
 				return e
 			}
+			if e := fa.publisher.transaction(ctx, func(tx *sql.Tx) error {
+				return fa.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(scope), input.TenantID)
+			}); e != nil {
+				return e
+			}
 			var ids lakeapi.EventIDReservation
 			var e error
 			if len(input.Candidates) > 0 {
@@ -126,16 +132,56 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		})
 		return result, e
 	}
-	bootstrap := makeInput("bootstrap", lakeapi.ImportFileCheckpoint{}, "finalize")
-	bootstrapProof, err := commit(bootstrap)
+	// A different real project's durable cursor fills instance metadata capacity.
+	// A first import must fail before committing native data when no row fits.
+	otherProject, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "metadata owner")
+	otherKey := lakeapi.ProjectWriteKey{SourceID: key.SourceID, ProjectID: otherProject}
+	otherScope, err := sa.InitializeHostedProject(t.Context(), otherKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = fb.RecoverProject(t.Context(), key); err != nil {
+	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "project", otherProject, limits); e != nil {
+			return e
+		}
+		one := limits
+		one.MetadataRows = 1
+		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "instance", "", one)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherInput := makeInput("metadata-owner", lakeapi.ImportFileCheckpoint{}, "finalize")
+	otherInput.Key.Scope = otherScope
+	otherInput.Parser, err = sa.Remote.PutImmutableImportCheckpoint(t.Context(), otherScope, "job", "metadata-owner", []byte(`{"Generation":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fa.CommitImport(t.Context(), otherInput); err != nil {
+		t.Fatal("real metadata owner", err)
+	}
+	bootstrap := makeInput("bootstrap", lakeapi.ImportFileCheckpoint{}, "finalize")
+	if _, err = fa.CommitImport(t.Context(), bootstrap); !errors.Is(err, output.ErrPipelineCapacity) {
+		t.Fatal("native import bypassed first-cursor metadata admission", err)
+	}
+	before, err := sa.PendingNativeEffects(t.Context(), scope, 0, 1)
+	if err != nil || before.NativeHighWater != 0 || len(before.Evidence) != 0 {
+		t.Fatal("metadata rejection left invisible native outcome", before, err)
+	}
+	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "instance", "", limits)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapProof, err := fa.CommitImport(t.Context(), bootstrap)
+	if err != nil {
 		t.Fatal("first metadata-only native cursor", err)
 	}
 	if bootstrapProof.AcceptedImport != 0 || bootstrapProof.Sequence != 1 {
 		t.Fatal(bootstrapProof)
+	}
+	var refs, queued, artifacts, proofs, metadata int64
+	if err = a.service.control.QueryRowContext(t.Context(), `SELECT used_refs,used_bytes,used_artifacts,used_proofs,used_rows FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&refs, &queued, &artifacts, &proofs, &metadata); err != nil || refs != 0 || queued != 0 || artifacts != 0 || proofs != 0 || metadata != 2 {
+		t.Fatal("import charged output capacity", refs, queued, artifacts, proofs, metadata, err)
 	}
 	firstID := eventapi.NewID()
 	if err = fa.FlushLive(t.Context(), live("first-live", firstID)); err != nil {
@@ -157,7 +203,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	release()
 	defer func() { p.DB = realDB; bridge.Close() }()
 	loseNative.Store(true)
-	if _, err = commit(input); err == nil || loseNative.Load() {
+	if _, err = fa.CommitImport(t.Context(), input); err == nil || loseNative.Load() {
 		t.Fatal("actual native response loss not exercised", err)
 	}
 	// No PG import cursor exists yet, but the original native result is durable.
@@ -224,7 +270,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 			t.Fatal("restored original checkpoint", err)
 		}
 	}
-	recovered, err := commit(input)
+	recovered, err := fb.CommitImport(t.Context(), input)
 	if err != nil || !reflect.DeepEqual(original, recovered) {
 		t.Fatal("original native outcome changed", original, recovered, err)
 	}
