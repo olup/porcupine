@@ -19,10 +19,14 @@ import (
 // This adapter has no production caller. Its only authority is the explicit
 // native credential persisted on the real PG definition, never a producer JWT.
 type hostedEffectPublisher struct {
-	control *sql.DB
-	effects *output.PGPipelineEffects
-	usage   *usage.Store
-	objects *lakeapi.DuckLakeObjectStore
+	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
+	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
+	control               *sql.DB
+	effects               *output.PGPipelineEffects
+	usage                 *usage.Store
+	objects               *lakeapi.DuckLakeObjectStore
+	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
+	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -74,6 +78,11 @@ func (p *hostedEffectPublisher) transaction(ctx context.Context, f func(*sql.Tx)
 func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope lakeapi.HostedProjectScope) (output.PipelinePlan, frozenLiveOutputPlan, error) {
 	var plan output.PipelinePlan
 	err := p.transaction(ctx, func(tx *sql.Tx) error {
+		if p.ensureCapacity != nil {
+			if err := p.ensureCapacity(ctx, tx, tenant, scope.Key.ProjectID); err != nil {
+				return err
+			}
+		}
 		var e error
 		plan, e = p.effects.FreezeLivePlanTx(ctx, tx, tenant, pipelineScope(scope))
 		return e
@@ -83,7 +92,13 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 		return plan, routing, err
 	}
 	for _, t := range plan.Targets {
-		raw, e := p.objects.ReadImmutableEffectObject(ctx, scope, nativeRef(t.Rule))
+		var raw []byte
+		var e error
+		if p.loadRule != nil {
+			raw, e = p.loadRule(ctx, tenant, scope.Key.ProjectID, t)
+		} else {
+			raw, e = p.objects.ReadImmutableEffectObject(ctx, scope, nativeRef(t.Rule))
+		}
 		if e != nil {
 			return plan, routing, e
 		}
@@ -170,7 +185,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 			members[i] = output.PipelineMember{UUID: id, Bytes: o.EventBytes[i]}
 			queued += o.EventBytes[i] + 1024
 		}
-		prepared = append(prepared, output.PipelineOutput{ID: o.FragmentID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "fragment", Body: pipelineRef(o.Body), Members: members, Charge: output.PipelineDemand{References: int64(len(members)), QueuedBytes: max(queued, o.Body.Bytes), MetadataRows: int64(1 + len(members)), ArtifactBytes: o.Body.Bytes}})
+		prepared = append(prepared, output.PipelineOutput{ID: o.FragmentID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "fragment", Fragment: &output.PipelineFragmentSpec{WindowStartMS: o.WindowStartMS, WindowEndMS: o.WindowEndMS, Rule: o.Target.Rule}, Body: pipelineRef(o.Body), Members: members, Charge: output.PipelineDemand{References: int64(len(members)), QueuedBytes: max(queued, o.Body.Bytes), MetadataRows: int64(1 + len(members)), ArtifactBytes: o.Body.Bytes}})
 	}
 	planRaw, err := json.Marshal(s.plan)
 	if err != nil {
@@ -254,11 +269,11 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	return staged, nil
 }
 
-func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.LiveCommitEvidence) (output.PipelinePublication, error) {
+func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) (output.PipelinePublication, error) {
 	fail := func() (output.PipelinePublication, error) {
 		return output.PipelinePublication{}, output.ErrPipelineConflict
 	}
-	if b.Scope != pipelineScope(e.Scope) || b.TenantID != e.TenantID || b.BatchID != e.BatchID || b.Epoch != e.FenceEpoch || b.PlanID != e.Effects.PlanID {
+	if e.Kind != lakeapi.NativeCommitLive || b.Scope != pipelineScope(e.Scope) || b.TenantID != e.TenantID || b.BatchID != e.OperationID || b.Epoch != e.FenceEpoch || b.PlanID != e.Effects.PlanID {
 		return fail()
 	}
 	owned := func(r output.PipelineRef) bool {
@@ -322,21 +337,75 @@ func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBin
 	}
 	return output.PipelinePublication{Manifest: pipelineRef(e.Effects.Manifest), Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint, Outputs: outputs}, nil
 }
-func nativeUsageReports(e lakeapi.LiveCommitEvidence) ([]usage.SourceTotals, error) {
+func nativeUsageReports(e lakeapi.NativeCommitEvidence) ([]usage.SourceTotals, error) {
 	if e.AccountedAt.IsZero() || len(e.Totals) == 0 || len(e.Totals) > 1000 {
 		return nil, output.ErrPipelineConflict
 	}
 	reports := make([]usage.SourceTotals, 0, len(e.Totals))
 	for _, t := range e.Totals {
-		if t.Day != usage.Day(e.AccountedAt) || t.Revision != e.Sequence || t.Live < e.AcceptedLive || t.Import < 0 {
+		if t.Day != usage.Day(e.AccountedAt) || t.Revision != e.Sequence || t.Live < e.AcceptedLive || t.Import < e.AcceptedImport {
 			return nil, output.ErrPipelineConflict
 		}
 		reports = append(reports, usage.SourceTotals{SourceID: e.Scope.StreamID, TenantID: e.TenantID, ProjectID: e.Scope.Key.ProjectID, Day: t.Day, Revision: t.Revision, Counters: usage.Counters{Live: t.Live, Import: t.Import}})
 	}
 	return reports, nil
 }
-func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.LiveCommitEvidence) error {
-	v, err := p.verify(ctx, b, e)
+func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) error {
+	return p.publishOn(ctx, b, e, nil)
+}
+
+func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession) error {
+	return p.publishEvidence(ctx, b, e, session, false)
+}
+
+// publishEvidence can settle existing durable proofs after a deletion fence.
+// It does not admit new native work or add an output cursor.
+func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession, deleting bool) error {
+	if err := lakeapi.ValidateNativeCommitEvidence(e); err != nil {
+		return err
+	}
+	var v output.PipelinePublication
+	var mutation hostedMutationIntent
+	var mutationUUID string
+	var err error
+	switch e.Kind {
+	case lakeapi.NativeCommitLive:
+		v, err = p.verify(ctx, b, e)
+	case lakeapi.NativeCommitImport:
+		if b != (output.PipelineBinding{}) {
+			return output.ErrPipelineConflict
+		}
+		_, err = p.objects.ReadImmutableImportCheckpoint(ctx, e.Scope, e.Import.Key.JobID, e.Import.Key.FileID, e.Import.Next.Parser)
+		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
+	case lakeapi.NativeCommitMutation:
+		if b != (output.PipelineBinding{}) || session == nil {
+			return output.ErrPipelineConflict
+		}
+		fence := session.Fence(e.Scope.StreamID)
+		if fence.Key != e.Scope.Key || fence.Epoch < e.FenceEpoch {
+			return output.ErrPipelineConflict
+		}
+		mutation, err = hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
+		if err != nil {
+			return err
+		}
+		if mutation.body.SHA256 != e.InputFingerprint || mutation.revision != int64(e.Mutation.Revision) || (mutation.operation == "delete") != e.Mutation.Deleted {
+			return output.ErrPipelineConflict
+		}
+		if mutation.state == "ready" && e.Mutation.Deleted && e.Mutation.ErrorCode == "" {
+			if p.cancelMutationWebhook == nil {
+				return output.ErrPipelineConflict
+			}
+			body, err := p.readHostedMutation(ctx, mutation)
+			if err != nil {
+				return err
+			}
+			mutationUUID = body.Projection.UUID
+		}
+		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
+	default:
+		return output.ErrPipelineConflict
+	}
 	if err != nil {
 		return err
 	}
@@ -344,12 +413,56 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 	if err != nil {
 		return err
 	}
-	err = p.transaction(ctx, func(tx *sql.Tx) error {
-		if _, e := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); e != nil {
-			return e
+	publishTx := func(ctx context.Context, tx *sql.Tx) error {
+		switch e.Kind {
+		case lakeapi.NativeCommitLive:
+			if _, err := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); err != nil {
+				return err
+			}
+		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
+			publishNoOutput := p.effects.PublishNoOutputEffectsTx
+			if deleting {
+				publishNoOutput = p.effects.PublishSealedProjectNoOutputEffectsTx
+				if e.Kind == lakeapi.NativeCommitImport && p.checkpointImport == nil {
+					return output.ErrPipelineConflict
+				}
+			}
+			advanced, err := publishNoOutput(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
+			if err != nil {
+				return err
+			}
+			if e.Kind == lakeapi.NativeCommitImport {
+				if advanced && p.checkpointImport != nil {
+					if err := p.checkpointImport(ctx, tx, e); err != nil {
+						return err
+					}
+				}
+				break
+			}
+			if !advanced {
+				if !mutation.settledBy(e) {
+					return output.ErrPipelineConflict
+				}
+				break
+			}
+			if mutationUUID != "" {
+				if err := p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUID); err != nil {
+					return err
+				}
+			}
+			if err := finishHostedMutationTx(ctx, tx, mutation, e); err != nil {
+				return err
+			}
+		default:
+			return output.ErrPipelineConflict
 		}
 		return p.usage.PublishSourceTotalsTx(ctx, tx, reports)
-	})
+	}
+	if session != nil {
+		err = session.RunControlTx(ctx, publishTx)
+	} else {
+		err = p.transaction(ctx, func(tx *sql.Tx) error { return publishTx(ctx, tx) })
+	}
 	if err == nil {
 		return nil
 	}
@@ -357,7 +470,13 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 	// checkpoint read can release the volatile batch in that case.
 	seq, hash, readErr := p.checkpoint(ctx, e.Scope, e.TenantID)
 	if readErr == nil && seq == e.Sequence && hash == e.ProofFingerprint {
-		return nil
+		if e.Kind != lakeapi.NativeCommitMutation {
+			return nil
+		}
+		receipt, readErr := hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
+		if readErr == nil && receipt.settledBy(e) {
+			return nil
+		}
 	}
 	return fmt.Errorf("effect publication not confirmed: %w", err)
 }

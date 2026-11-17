@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"time"
 
@@ -73,6 +74,17 @@ func (u *usageRuntime) synchronize(ctx context.Context) error {
 	}
 	return u.recorder.Acknowledge(ctx, totals)
 }
+func (s *Service) synchronizeUsage(ctx context.Context) error {
+	var err error
+	if s.hostedQueries != nil {
+		err = errors.Join(s.hostedQueries.observeReturns(ctx, s.control), s.hostedQueries.recorder.Observe(ctx))
+	}
+	if s.usage.recorder != nil {
+		err = errors.Join(err, s.usage.synchronize(ctx))
+	}
+	return err
+}
+
 func (s *Service) startUsage() {
 	u := s.usage
 	if u == nil {
@@ -88,11 +100,16 @@ func (s *Service) startUsage() {
 		nextSample := time.Time{}
 		for {
 			work, stop := context.WithTimeout(ctx, 30*time.Second)
-			_ = u.synchronize(work)
+			_ = s.synchronizeUsage(work)
 			if !u.clock().Before(nextSample) {
 				_ = s.sampleUsageStorage(work)
 				_ = u.store.Prune(work)
-				_ = u.recorder.Prune(work, u.config.RetentionDays)
+				if u.recorder != nil {
+					_ = u.recorder.Prune(work, u.config.RetentionDays)
+				}
+				if s.hostedQueries != nil {
+					_ = s.hostedQueries.recorder.PruneExecutions(work, u.config.RetentionDays)
+				}
 				nextSample = u.clock().Add(usage.SampleInterval)
 			}
 			stop()
@@ -115,7 +132,7 @@ func (s *Service) stopUsage() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = u.synchronize(ctx)
+	_ = s.synchronizeUsage(ctx)
 }
 
 // The durable start is committed before dispatch. Finish records elapsed native
@@ -160,7 +177,11 @@ func (s *Service) beginUsageQuery(ctx context.Context, project, operation string
 		}
 		return nil, InteractiveQueryConfig{}, nil, err
 	}
-	execution, err := s.usage.recorder.StartExecution(native, tenant.ID, project, operation)
+	recorder := s.usage.recorder
+	if s.hostedQueries != nil {
+		recorder = s.hostedQueries.recorder
+	}
+	execution, err := recorder.StartExecution(native, tenant.ID, project, operation)
 	if err != nil {
 		if stopped := finish(); stopped != nil {
 			return nil, InteractiveQueryConfig{}, nil, interactiveQueryResultError(native, stopped, nil)
@@ -176,7 +197,7 @@ type parquetUsageSampler interface {
 
 func (s *Service) sampleUsageStorage(ctx context.Context) error {
 	sampler := s.usage.sampler
-	if sampler == nil {
+	if sampler == nil || s.hostedQueries != nil {
 		return nil
 	}
 	// Only locally anchored projects are sampled. A remote owner is never opened

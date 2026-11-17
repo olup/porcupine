@@ -10,7 +10,9 @@ unresolved_queries BIGINT NOT NULL DEFAULT 0 CHECK(unresolved_queries>=0),last_o
 PRIMARY KEY(source_id,tenant_id,project_id,day_start));
 CREATE INDEX usage_rollups_period ON usage_rollups(day_start,tenant_id,project_id);`
 
-const JournalSchema = RollupSchema + `
+const JournalSchema = RollupSchema + ExecutionSchema
+
+const ExecutionSchema = `
 CREATE TABLE usage_executions (
 id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,day_start TEXT NOT NULL,operation TEXT NOT NULL CHECK(operation IN ('sql','catalog','profile')),
 elapsed_us BIGINT NOT NULL DEFAULT 0 CHECK(elapsed_us>=0),closed BIGINT NOT NULL DEFAULT 0 CHECK(closed IN (0,1)),lost BIGINT NOT NULL DEFAULT 0 CHECK(lost IN (0,1)),last_observed_at TEXT NOT NULL);

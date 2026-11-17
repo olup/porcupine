@@ -116,10 +116,10 @@ func TestDuckLakeS3SharedPostgresRecoverySealAndACK(t *testing.T) {
 		batch := LiveCommitBatch{ID: fmt.Sprintf("batch-%d", i), TenantID: "tenant-a", Scope: scope, Inputs: []LiveCommitInput{newLiveInput(t, key.ProjectID, "viewed", event.NewID(), "person", `{}`)}}
 		commitLiveFixture(t, a, owner, batch, &liveProofStager{objects: a.Remote, attempt: fence.AcquisitionID})
 	}
-	if err := a.AcknowledgeLiveEffects(ctx, fence, scope, 3); !errors.Is(err, ErrNativeEvidenceGap) {
+	if err := a.AcknowledgeNativeEffects(ctx, fence, scope, 3); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("future ACK accepted", err)
 	}
-	if err := a.AcknowledgeLiveEffects(ctx, fence, scope, 1); err != nil {
+	if err := a.AcknowledgeNativeEffects(ctx, fence, scope, 1); err != nil {
 		t.Fatal(err)
 	}
 	sealed, err := a.SealHostedProject(ctx, fence)
@@ -148,41 +148,41 @@ func TestDuckLakeS3SharedPostgresRecoverySealAndACK(t *testing.T) {
 	if err := b.AdvanceRecoveryFence(ctx, nextFence); err != nil {
 		t.Fatal(err)
 	}
-	page, err := b.PendingLiveCommitEffects(ctx, scope, 0, 1)
+	page, err := b.PendingNativeEffects(ctx, scope, 0, 1)
 	if err != nil || page.NativeHighWater != 2 || len(page.Evidence) != 1 || page.Evidence[0].Sequence != 1 {
 		t.Fatal(page, err)
 	}
 	if _, err := b.Remote.ReadImmutableEffectObject(ctx, scope, page.Evidence[0].Effects.Manifest); err != nil {
 		t.Fatal("original immutable effect unavailable", err)
 	}
-	if err := a.AcknowledgeLiveEffects(ctx, fence, scope, 2); !errors.Is(err, ErrProjectWriteFenceStale) {
+	if err := a.AcknowledgeNativeEffects(ctx, fence, scope, 2); !errors.Is(err, ErrProjectWriteFenceStale) {
 		t.Fatal("old epoch ACK accepted", err)
 	}
-	if err := b.AcknowledgeLiveEffects(ctx, nextFence, scope, 2); err != nil {
+	if err := b.AcknowledgeNativeEffects(ctx, nextFence, scope, 2); err != nil {
 		t.Fatal(err)
 	}
 	// Lost ACK responses and backward checkpoint replays converge monotonically.
 	for _, through := range []int64{2, 1, 0} {
-		if err := b.AcknowledgeLiveEffects(ctx, nextFence, scope, through); err != nil {
+		if err := b.AcknowledgeNativeEffects(ctx, nextFence, scope, through); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err = b.PendingLiveCommitEffects(ctx, scope, 2, 1)
+	page, err = b.PendingNativeEffects(ctx, scope, 2, 1)
 	if err != nil || page.AcknowledgedThrough != 2 {
 		t.Fatal(page, err)
 	}
 	p := b.Projects[key.ProjectID]
 	var proofs int
-	if err := p.DB.QueryRowContext(ctx, `SELECT count(*) FROM lake.live_commit_proofs`).Scan(&proofs); err != nil || proofs != 2 {
+	if err := p.DB.QueryRowContext(ctx, `SELECT count(*) FROM lake.native_commit_proofs`).Scan(&proofs); err != nil || proofs != 2 {
 		t.Fatal("ACK pruned proof", proofs, err)
 	}
-	if _, err := p.DB.ExecContext(ctx, `DELETE FROM lake.live_commit_proofs WHERE effect_seq=1`); err != nil {
+	if _, err := p.DB.ExecContext(ctx, `DELETE FROM lake.native_commit_proofs WHERE effect_seq=1`); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.AcknowledgeLiveEffects(ctx, nextFence, scope, 2); !errors.Is(err, ErrNativeEvidenceGap) {
+	if err := b.AcknowledgeNativeEffects(ctx, nextFence, scope, 2); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("ACK accepted missing retained history", err)
 	}
-	if _, err := b.PendingLiveCommitEffects(ctx, scope, 2, 1); !errors.Is(err, ErrNativeEvidenceGap) {
+	if _, err := b.PendingNativeEffects(ctx, scope, 2, 1); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("covered cursor hid missing history", err)
 	}
 	if _, err := a.SealHostedProject(ctx, fence); !errors.Is(err, ErrProjectWriteFenceStale) {
@@ -436,10 +436,10 @@ func TestDuckLakeS3SharedPostgresRecoveryTwoColdWorkers(t *testing.T) {
 			if err := worker.AdvanceRecoveryFence(ctx, fence); err != nil {
 				return err
 			}
-			if err := worker.AcknowledgeLiveEffects(ctx, fence, got, 0); err != nil {
+			if err := worker.AcknowledgeNativeEffects(ctx, fence, got, 0); err != nil {
 				return err
 			}
-			page, err := worker.PendingLiveCommitEffects(ctx, got, 0, 1)
+			page, err := worker.PendingNativeEffects(ctx, got, 0, 1)
 			if err != nil {
 				return err
 			}
@@ -447,7 +447,7 @@ func TestDuckLakeS3SharedPostgresRecoveryTwoColdWorkers(t *testing.T) {
 				return errors.New("empty sealed stream changed during recovery")
 			}
 			if earlier.Epoch > 0 {
-				if err := b.AcknowledgeLiveEffects(ctx, earlier, got, 0); !errors.Is(err, ErrProjectWriteFenceStale) {
+				if err := b.AcknowledgeNativeEffects(ctx, earlier, got, 0); !errors.Is(err, ErrProjectWriteFenceStale) {
 					return fmt.Errorf("stale recovery worker accepted: %v", err)
 				}
 			}

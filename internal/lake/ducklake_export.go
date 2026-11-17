@@ -65,8 +65,16 @@ func (s *DuckLakeStore) ValidateExport(ctx context.Context, project, raw string,
 // Export keeps a project lease and one native connection for the entire stream.
 // It uses the same guarded dialect as interactive queries without their row cap.
 func (s *DuckLakeStore) Export(ctx context.Context, project, raw string, parameters map[string]string, window *AnalyticalWindow, maxRowBytes int64, callbacks ExportStreamCallbacks) (ExportStreamResult, error) {
+	return s.export(ctx, project, raw, parameters, window, nil, maxRowBytes, callbacks)
+}
+
+func (s *DuckLakeStore) export(ctx context.Context, project, raw string, parameters map[string]string, window *AnalyticalWindow, snapshot *ExportSnapshot, maxRowBytes int64, callbacks ExportStreamCallbacks) (ExportStreamResult, error) {
 	var result ExportStreamResult
-	p, release, err := s.LeaseProject(ctx, project)
+	lease := s.LeaseProject
+	if snapshot != nil && s.SharedCatalog != nil {
+		lease = s.leaseHostedProjectExisting
+	}
+	p, release, err := lease(ctx, project)
 	if err != nil {
 		return result, err
 	}
@@ -84,7 +92,11 @@ func (s *DuckLakeStore) Export(ctx context.Context, project, raw string, paramet
 		return result, err
 	}
 	defer conn.Close()
-	if window != nil {
+	if snapshot != nil {
+		if err = createExportSnapshotView(ctx, conn, *snapshot); err != nil {
+			return result, err
+		}
+	} else if window != nil {
 		if window.StartMS < 0 || window.EndMS <= window.StartMS {
 			return result, ErrExportStreamInvalid
 		}
@@ -97,11 +109,13 @@ func (s *DuckLakeStore) Export(ctx context.Context, project, raw string, paramet
 		if _, err = conn.ExecContext(ctx, statement); err != nil {
 			return result, err
 		}
+	}
+	if snapshot != nil || window != nil {
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			if _, err := conn.ExecContext(cleanup, "DROP VIEW temp.main.events"); err != nil {
-				// A window must never leak to a later query on this pooled connection.
+				// An export-specific view must never leak to a later query on this pooled connection.
 				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 			}
 		}()

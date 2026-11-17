@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/importer"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type storedImportUploadFile struct {
 	LastOffset int64
 	LastSize   int64
 	LastSHA256 string
+	Checkpoint lakeapi.ImportFileCheckpoint
 }
 
 func importCheckAuthority(ctx context.Context, query oauthQueryer, actor auth.Principal, project string, clock time.Time) error {
@@ -87,7 +89,7 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	if err != nil {
 		return importer.ImportUploadJob{}, importLookupError(err)
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=$1 ORDER BY ordinal`, id)
+	rows, err := m.db.QueryContext(ctx, `SELECT `+m.importFileColumns()+` FROM import_upload_files WHERE job_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
 		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
@@ -122,6 +124,10 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	}
 	job.Delivery = &importer.ImportDelivery{}
 	job.Delivery.Enabled = m.deliveryEnabled
+	if m.hosted != nil {
+		job.Delivery.Ready = job.State == "completed"
+		return job.ImportUploadJob, nil
+	}
 	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=$1 AND id<=$2 AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
 		return importer.ImportUploadJob{}, apiError(503, "import delivery status unavailable")
 	}

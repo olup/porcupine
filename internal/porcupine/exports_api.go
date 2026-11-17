@@ -99,11 +99,7 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	if err := validateQueryParameters(input.Body.Parameters); err != nil {
 		return nil, err
 	}
-	canonical, err := s.lake.ValidateExport(ctx, input.ID, input.Body.SQL, input.Body.Parameters, false)
-	if err != nil {
-		return nil, err
-	}
-	job, err := s.exports.Submit(ctx, input.ID, output.ExportRequest{IdempotencyKey: input.Body.IdempotencyKey, SQL: canonical, Parameters: input.Body.Parameters, Format: input.Body.Format}, principal(ctx))
+	job, err := s.exports.Submit(ctx, input.ID, output.ExportRequest{IdempotencyKey: input.Body.IdempotencyKey, SQL: input.Body.SQL, Parameters: input.Body.Parameters, Format: input.Body.Format}, principal(ctx))
 	if err != nil {
 		return nil, err
 	}

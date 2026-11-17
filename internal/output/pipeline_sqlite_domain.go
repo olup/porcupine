@@ -33,7 +33,22 @@ type PipelineDependencies struct {
 }
 
 func NewSQLitePipelines(d PipelineDependencies, config *PipelineConfig) (*PipelineJobs, error) {
-	s, err := newSQLitePipelineRuntime(config)
+	s, err := newPipelineJobs(d, config)
+	if err != nil {
+		return nil, err
+	}
+	if s.Enabled() {
+		c := s.config
+		s.webhooks = newWebhookQueue(s.db, &webhookLimits{MaxQueuedEvents: c.WebhookMaxQueuedEvents, MaxQueuedBytes: c.WebhookMaxQueuedBytes, ProjectMaxQueuedEvents: c.WebhookProjectMaxQueuedEvents, ProjectMaxQueuedBytes: c.WebhookProjectMaxQueuedBytes, MaxAttempts: c.WebhookMaxAttempts, TimeoutSeconds: c.WebhookTimeoutSeconds}, s.clock, s.AuthorizeCreator, s.OpenSecret, s.beginActivity)
+		s.webhooks.Usage = s.usage
+		if d.WebhookClient != nil {
+			s.webhooks.Client = d.WebhookClient
+		}
+	}
+	return s, nil
+}
+func newPipelineJobs(d PipelineDependencies, config *PipelineConfig) (*PipelineJobs, error) {
+	s, err := newPipelineRuntime(config)
 	if err != nil {
 		return nil, err
 	}
@@ -50,20 +65,14 @@ func NewSQLitePipelines(d PipelineDependencies, config *PipelineConfig) (*Pipeli
 	if s.credentialMissing == nil {
 		s.credentialMissing = func(error) bool { return false }
 	}
-	if s.Enabled() {
-		c := s.config
-		s.webhooks = newWebhookQueue(s.db, &webhookLimits{MaxQueuedEvents: c.WebhookMaxQueuedEvents, MaxQueuedBytes: c.WebhookMaxQueuedBytes, ProjectMaxQueuedEvents: c.WebhookProjectMaxQueuedEvents, ProjectMaxQueuedBytes: c.WebhookProjectMaxQueuedBytes, MaxAttempts: c.WebhookMaxAttempts, TimeoutSeconds: c.WebhookTimeoutSeconds}, s.clock, s.AuthorizeCreator, s.OpenSecret, s.beginActivity)
-		s.webhooks.Usage = s.usage
-		if d.WebhookClient != nil {
-			s.webhooks.Client = d.WebhookClient
-		}
-	}
 	return s, nil
 }
-func (s *PipelineJobs) Enabled() bool          { return s != nil && s.aead != nil }
-func (s *PipelineJobs) Config() PipelineConfig { return s.config }
+
+func (s *PipelineJobs) UsesSharedControl() bool { return s != nil && s.pg != nil }
+func (s *PipelineJobs) Enabled() bool           { return s != nil && s.aead != nil }
+func (s *PipelineJobs) Config() PipelineConfig  { return s.config }
 func (s *PipelineJobs) Enqueuer() *WebhookEnqueuer {
-	if !s.Enabled() {
+	if !s.Enabled() || s.pg != nil {
 		return nil
 	}
 	return s.webhooks.Enqueuer()
@@ -71,6 +80,12 @@ func (s *PipelineJobs) Enqueuer() *WebhookEnqueuer {
 func (s *PipelineJobs) RunWebhook(ctx context.Context) (bool, error) {
 	if !s.Enabled() {
 		return false, nil
+	}
+	if s.pg != nil {
+		if s.pg.step == nil {
+			return false, nil
+		}
+		return s.pg.step(ctx)
 	}
 	return s.webhooks.Step(ctx)
 }
@@ -85,5 +100,8 @@ func (s *PipelineJobs) Close() {
 	s.Stop()
 	if s != nil && s.webhooks != nil {
 		s.webhooks.Client.CloseIdleConnections()
+	}
+	if s != nil && s.pg != nil && s.pg.client != nil {
+		s.pg.client.CloseIdleConnections()
 	}
 }

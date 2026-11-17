@@ -38,7 +38,7 @@ func TestHostedFlusherRequiresRealProviders(t *testing.T) {
 func TestHostedNativeUsageUsesOriginalBucket(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 1, 0, 30, 0, 0, time.FixedZone("east", 3600))
-	e := lakeapi.LiveCommitEvidence{Scope: lakeapi.HostedProjectScope{Key: lakeapi.ProjectWriteKey{ProjectID: "p"}, StreamID: "stream"}, TenantID: "t", Sequence: 7, AccountedAt: at, AcceptedLive: 1, Totals: []lakeapi.NativeSourceTotals{{Day: "2026-10-31T00:00:00Z", Revision: 7, Live: 15, Import: 3}}}
+	e := lakeapi.NativeCommitEvidence{Scope: lakeapi.HostedProjectScope{Key: lakeapi.ProjectWriteKey{ProjectID: "p"}, StreamID: "stream"}, TenantID: "t", Sequence: 7, AccountedAt: at, AcceptedLive: 1, Totals: []lakeapi.NativeSourceTotals{{Day: "2026-10-31T00:00:00Z", Revision: 7, Live: 15, Import: 3}}}
 	r, err := nativeUsageReports(e)
 	if err != nil || len(r) != 1 || r[0].SourceID != "stream" || r[0].Counters.Live != 15 || r[0].Counters.Import != 3 || r[0].LastObserved != "" {
 		t.Fatal(r, err)
@@ -409,7 +409,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if er != nil {
 		t.Fatal(er)
 	}
-	var original lakeapi.LiveCommitEvidence
+	var original lakeapi.NativeCommitEvidence
 	recovery, er := cb.Acquire(t.Context(), key)
 	if er != nil {
 		t.Fatal(er)
@@ -419,7 +419,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if e := sb.AdvanceRecoveryFence(ctx, fence); e != nil {
 			return e
 		}
-		page, e := sb.PendingLiveCommitEffects(ctx, scope, 2, 1)
+		page, e := sb.PendingNativeEffects(ctx, scope, 2, 1)
 		if e != nil {
 			return e
 		}
@@ -498,40 +498,52 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	// Capacity failure rolls native sequence/data/usage back before any body PUT.
-	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=3 WHERE scope_kind='project' AND scope_id=$1`, project)
+	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='active'`, project).Scan(&n); err != nil || n != 2 {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
-	session, err = ca.Acquire(t.Context(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, target := range []output.PipelineTarget{
-			{ID: "hook", Incarnation: "inc", RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)},
-			{ID: "batch-hook", Incarnation: "batch-inc", RuleRevision: "batch-rule", DestinationRevision: "batch-dest", CreatorID: creator, Rule: pipelineRef(batchRef)},
-		} {
-			if e := fa.publisher.effects.CompareAndSwapDefinitionTx(t.Context(), tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: "paused", Target: target}); e != nil {
-				return e
-			}
-		}
-		return nil
-	})
-	session.Release()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='paused'`, project).Scan(&n); err != nil || n != 2 {
-		t.Fatal("pause changed an unintended definition", n, err)
-	}
-
 	blocked := batch("blocked")
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
 		t.Fatal("full queue admitted", err)
 	}
+	setPipelineState := func(state string) {
+		t.Helper()
+		session, err := ca.Acquire(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Release()
+		err = session.RunControlTx(t.Context(), func(ctx context.Context, tx *sql.Tx) error {
+			for _, target := range []output.PipelineTarget{
+				{ID: "hook", Incarnation: "inc", RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)},
+				{ID: "batch-hook", Incarnation: "batch-inc", RuleRevision: "batch-rule", DestinationRevision: "batch-dest", CreatorID: creator, Rule: pipelineRef(batchRef)},
+			} {
+				if err := fa.publisher.effects.CompareAndSwapDefinitionTx(ctx, tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: state, Target: target}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPipelineState("paused")
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='paused'`, project).Scan(&n); err != nil || n != 2 {
+		t.Fatal("pause changed an unintended definition", n, err)
+	}
+	if err = fa.FlushLive(t.Context(), batch("skip-paused-pipelines")); err != nil {
+		t.Fatal("paused targets still reserved output capacity", err)
+	}
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
+		t.Fatal("paused targets received new jobs", n, err)
+	}
+
+	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
+
 	if err = fb.FlushLive(t.Context(), body); err != nil {
 		t.Fatal("duplicate at full quota", err)
 	}
@@ -609,6 +621,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	fa.policy.refreshed = time.Time{}
+	setPipelineState("active")
 	nativeProject, release, er := sa.LeaseProject(t.Context(), project)
 	if er != nil {
 		t.Fatal(er)
@@ -666,7 +679,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fb.FlushLive(t.Context(), batch("fenced")); !errors.Is(err, errHostedProjectFenced) {
 		t.Fatalf("sealed project accepted live input: %v", err)
 	}
-	page, err := sb.PendingLiveCommitEffects(t.Context(), scope, 0, 100)
+	page, err := sb.PendingNativeEffects(t.Context(), scope, 0, 100)
 	if err != nil || len(page.Evidence) == 0 {
 		t.Fatalf("sealed proof history unavailable: %+v, %v", page, err)
 	}
@@ -674,7 +687,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	var final int64
 	var proof string
 	err = a.service.control.QueryRow(`SELECT final_sequence,proof_sha FROM hosted_project_seals WHERE project_id=$1`, project).Scan(&final, &proof)
-	if err != nil || last.BatchID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
+	if err != nil || last.OperationID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
 		t.Fatalf("seal did not preserve and confirm the final native proof: %d, %q, %+v, %v", final, proof, last, err)
 	}
 	other.id = "other-tenant-after-a-seal"

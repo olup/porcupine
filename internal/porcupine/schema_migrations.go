@@ -79,15 +79,43 @@ tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind I
 storage_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,
 PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));`
 
+const catalogDescriptionSchema = `CREATE TABLE catalog_descriptions (
+project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+event_name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('event','property')),
+property_key TEXT NOT NULL, description TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL,
+PRIMARY KEY(project_id,event_name,kind,property_key));`
+
 // 6: operator usage rollups, samples and bounded replayable snapshots.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 7: project catalog descriptions.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
+
+//go:embed hosted_import_schema.sql
+var hostedImportSchema string
 
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, usage.ControlSchema, lakeapi.ProjectCoordinatorSchemaV1, output.PipelineSchemaV1, hostedProjectLifecycleSchema}
+// 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
+// 11: hosted mutations. 12: hosted historical upload checkpoints. 13: shared output jobs.
+// 14: hosted project activity and native seals.
+var sharedControlSteps = []string{
+	controlSchema + sharedControlSchema,
+	tenantDeletionSchema,
+	managedArtifactOwnershipSchema,
+	restoredArtifactHoldSchema,
+	externalAuthPostgresTriggers,
+	usage.ControlSchema,
+	lakeapi.ProjectCoordinatorSchemaV1,
+	output.PipelineSchemaV1,
+	catalogDescriptionSchema,
+	usage.ExecutionSchema,
+	hostedMutationSchemaV1,
+	hostedImportSchema,
+	output.PipelineJobsPostgresSchemaV1 + output.PipelineDeliverySchemaV1 + output.ExportPostgresSchemaV1,
+	hostedProjectLifecycleSchema,
+}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {

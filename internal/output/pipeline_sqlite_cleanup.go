@@ -3,6 +3,9 @@ package output
 import "context"
 
 func (s *PipelineJobs) CleanupProject(ctx context.Context, project string) error {
+	if s.pg != nil {
+		return s.cleanupHostedPipelineProject(ctx, project)
+	}
 	for {
 		worked, err := s.cleanupRetired(ctx, project, "")
 		if err != nil {

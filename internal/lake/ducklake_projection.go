@@ -32,8 +32,11 @@ CREATE TABLE IF NOT EXISTS lake.identity_profiles (
 CREATE TABLE IF NOT EXISTS lake.identity_links (
  anonymous_id VARCHAR, identified_id VARCHAR, version UBIGINT
 );
-CREATE OR REPLACE VIEW events AS
- SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
+`
+
+const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;`
+
+const duckLakeEventsSelect = `SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,
  COALESCE(l.identified_id,e.distinct_id) AS person_id,
  COALESCE(p.traits,'{}') AS person_properties,
@@ -41,8 +44,7 @@ CREATE OR REPLACE VIEW events AS
  FROM lake.current_events e
  LEFT JOIN lake.identity_links l ON l.anonymous_id=e.distinct_id
  LEFT JOIN lake.identity_profiles p ON p.identified_id=COALESCE(l.identified_id,e.distinct_id)
- WHERE e.identity_snapshot='';
-`
+ WHERE e.identity_snapshot=''`
 
 type PreparedLakeProjection struct {
 	projection EventProjection
@@ -155,15 +157,7 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 	controls := make(map[string]PreparedLakeProjection)
 	for _, prepared := range projections {
 		projection := prepared.projection
-		row := lakeProjectionRow{
-			UUID: projection.UUID, ID: projection.ID, ProjectID: projection.ProjectID,
-			Revision: projection.Revision, Deleted: projection.IsDeleted, ReceivedAt: projection.ReceivedAt,
-			Event: projection.Event.Event, DistinctID: projection.DistinctID, Properties: string(projection.Properties),
-			Timestamp: projection.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano),
-			ReceivedAtMS: prepared.received.UnixMilli(), SourceID: projection.SourceID, MessageID: projection.MessageID,
-			EventType: projection.EventType, Context: string(projection.Context), Imported: boolByte(projection.Imported),
-			Identity: projection.IdentitySnapshot, OriginalSnapshot: projection.OriginalSnapshot,
-		}
+		row := prepared.row()
 		if projection.IsDeleted {
 			row.EventTime, row.TimestampMS = "1970-01-01T00:00:00Z", 0
 		}
@@ -251,6 +245,19 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 		return err
 	}
 	return tx.Commit()
+}
+
+func (prepared PreparedLakeProjection) row() lakeProjectionRow {
+	projection := prepared.projection
+	return lakeProjectionRow{
+		UUID: projection.UUID, ID: projection.ID, ProjectID: projection.ProjectID,
+		Revision: projection.Revision, Deleted: projection.IsDeleted, ReceivedAt: projection.ReceivedAt,
+		Event: projection.Event.Event, DistinctID: projection.DistinctID, Properties: string(projection.Properties),
+		Timestamp: projection.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano),
+		ReceivedAtMS: prepared.received.UnixMilli(), SourceID: projection.SourceID, MessageID: projection.MessageID,
+		EventType: projection.EventType, Context: string(projection.Context), Imported: boolByte(projection.Imported),
+		Identity: projection.IdentitySnapshot, OriginalSnapshot: projection.OriginalSnapshot,
+	}
 }
 
 type lakeProjectionRow struct {
@@ -367,11 +374,15 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 		return EventProjection{}, err
 	}
 	defer tx.Rollback()
+	return loadEventProjection(ctx, tx, project, uuid)
+}
+
+func loadEventProjection(ctx context.Context, tx *sql.Tx, project, uuid string) (EventProjection, error) {
 	var revision uint64
 	var id int64
 	var deleted bool
 	var received string
-	err = tx.QueryRowContext(ctx, "SELECT event_id,revision,is_deleted,received_at FROM lake.heads WHERE uuid=?", uuid).Scan(&id, &revision, &deleted, &received)
+	err := tx.QueryRowContext(ctx, "SELECT event_id,revision,is_deleted,received_at FROM lake.heads WHERE uuid=?", uuid).Scan(&id, &revision, &deleted, &received)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EventProjection{}, ErrEventNotFound
 	}
@@ -523,11 +534,27 @@ func applicationCatalogVersion(ctx context.Context, db *sql.DB, catalog string, 
 			return 0, errors.New("hosted native write guard is missing")
 		}
 	}
-	if version >= hostedLakeSchemaVersion {
+	if version >= 4 {
 		expected["hosted_write_guard"]["tenant_id"] = "VARCHAR"
 		expected["live_commit_proofs"] = map[string]string{"proof_version": "INTEGER", "effect_seq": "BIGINT", "batch_id": "VARCHAR", "batch_fingerprint": "VARCHAR", "proof_fingerprint": "VARCHAR", "tenant_id": "VARCHAR", "fence_epoch": "BIGINT", "accounted_at": "VARCHAR", "accepted_live": "BIGINT", "plan_id": "VARCHAR", "manifest_key": "VARCHAR", "manifest_version": "VARCHAR", "manifest_sha256": "VARCHAR", "manifest_bytes": "BIGINT", "output_count": "BIGINT", "totals_json": "VARCHAR"}
 		expected["live_usage_totals"] = map[string]string{"day": "VARCHAR", "revision": "BIGINT", "accepted_live": "BIGINT", "accepted_import": "BIGINT"}
 		for _, table := range []string{"live_commit_proofs", "live_usage_totals"} {
+			if version >= 5 {
+				continue
+			}
+			if tables[table] == nil {
+				return 0, fmt.Errorf("hosted native %s is missing", table)
+			}
+		}
+	}
+	if version >= 5 {
+		delete(expected, "live_commit_proofs")
+		delete(expected, "live_usage_totals")
+		expected["native_usage_totals"] = map[string]string{"day": "VARCHAR", "revision": "BIGINT", "accepted_live": "BIGINT", "accepted_import": "BIGINT"}
+		expected["native_commit_proofs"] = map[string]string{"proof_version": "INTEGER", "effect_seq": "BIGINT", "operation_id": "VARCHAR", "input_fingerprint": "VARCHAR", "proof_fingerprint": "VARCHAR", "kind": "VARCHAR", "evidence_json": "VARCHAR"}
+		expected["import_file_heads"] = map[string]string{"job_id": "VARCHAR", "file_id": "VARCHAR", "manifest_sha256": "VARCHAR", "source_id": "VARCHAR", "format": "VARCHAR", "effect_seq": "BIGINT", "checkpoint_json": "VARCHAR"}
+		expected["import_person_state"] = map[string]string{"distinct_id": "VARCHAR", "person_id": "VARCHAR", "person_version": "UBIGINT", "mapping_version": "UBIGINT", "profile_version": "UBIGINT", "deleted": "BOOLEAN", "source_id": "VARCHAR"}
+		for _, table := range []string{"native_usage_totals", "native_commit_proofs", "import_file_heads", "import_person_state"} {
 			if tables[table] == nil {
 				return 0, fmt.Errorf("hosted native %s is missing", table)
 			}

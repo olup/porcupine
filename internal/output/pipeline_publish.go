@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
@@ -15,6 +16,7 @@ type PipelineOutput struct {
 	Body                                                                             PipelineRef
 	Members                                                                          []PipelineMember
 	Charge                                                                           PipelineDemand
+	Fragment                                                                         *PipelineFragmentSpec `json:",omitempty"`
 }
 type PipelinePublication struct {
 	Manifest    PipelineRef
@@ -110,6 +112,20 @@ func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sq
 		_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_jobs(source_id,project_id,catalog_id,stream_id,tenant_id,id,batch_id,pipeline_id,incarnation,rule_revision,destination_revision,creator_id,generation,kind,sequence,body_key,body_version,body_sha,body_bytes,state,refs,bytes,rows,artifacts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, a...)
 		if e != nil {
 			return false, e
+		}
+		if o.Fragment != nil {
+			if o.Kind != "fragment" || !o.Fragment.valid() {
+				return false, ErrPipelineConflict
+			}
+			raw, err := json.Marshal(o.Fragment)
+			if err != nil {
+				return false, err
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET fragment_spec=$6,window_start_ms=$7,window_end_ms=$8 WHERE `+pipelineScopeWhere+` AND id=$5`,
+				append(pipelineScopeArgs(b.Scope), o.ID, string(raw), o.Fragment.WindowStartMS, o.Fragment.WindowEndMS)...)
+			if err != nil {
+				return false, err
+			}
 		}
 		for i, m := range o.Members {
 			a := append(pipelineScopeArgs(b.Scope), o.ID, i, m.UUID, m.Bytes)
@@ -215,4 +231,116 @@ func (p *PGPipelineEffects) ReleaseAbsentReservationTx(ctx context.Context, tx *
 		return e
 	}
 	return p.finishReservation(ctx, tx, b)
+}
+
+// PrepareNoOutputStreamTx owns the one common cursor metadata row before a
+// native import commits. It reserves no output plan, body, references or proof
+// slots. The caller holds the common project session through native publication.
+func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string) error {
+	if tx == nil || !scope.valid() || !pipelineID(tenant) {
+		return ErrPipelineConflict
+	}
+	b := PipelineBinding{Scope: scope, TenantID: tenant}
+	if err := p.lockCapacity(ctx, tx, b, false); err != nil {
+		return err
+	}
+	var projectTenant string
+	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`, scope.ProjectID).Scan(&projectTenant); err != nil {
+		return err
+	}
+	if projectTenant != tenant {
+		return ErrPipelineAuthority
+	}
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_streams(source_id,project_id,catalog_id,stream_id,tenant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, append(pipelineScopeArgs(scope), tenant)...)
+	if err != nil {
+		return err
+	}
+	created, err := inserted.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if _, _, err = p.lockStream(ctx, tx, b); err != nil {
+		return err
+	}
+	var reserved bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere+`)`, pipelineScopeArgs(scope)...).Scan(&reserved); err != nil {
+		return err
+	}
+	if reserved {
+		return ErrPipelineConflict
+	}
+	if created > 0 {
+		// The capacity rows are already locked. Only cursor metadata is admitted;
+		// lowered webhook limits cannot reject a zero-demand import dimension.
+		for _, quotaScope := range [][2]string{{"instance", ""}, {"tenant", tenant}, {"project", scope.ProjectID}} {
+			var available int64
+			if err = tx.QueryRowContext(ctx, `SELECT limit_rows-used_rows FROM pipeline_capacity WHERE scope_kind=$1 AND scope_id=$2`, quotaScope[0], quotaScope[1]).Scan(&available); err != nil {
+				return err
+			}
+			if available < 1 {
+				return ErrPipelineCapacity
+			}
+		}
+		return p.charge(ctx, tx, b, PipelineDemand{MetadataRows: 1}, 1)
+	}
+
+	return nil
+}
+
+// PublishNoOutputEffectsTx joins verified native evidence to an already owned
+// stream cursor. Publication needs no new metadata admission after native commit.
+// Cumulative usage commits in this same transaction before native ACK.
+func (p *PGPipelineEffects) PublishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
+	return p.publishNoOutputEffectsTx(ctx, tx, scope, tenant, v, false)
+}
+
+// PublishSealedProjectNoOutputEffectsTx settles an already-committed native
+// proof after the caller verifies the native seal. The control tombstone must
+// still be pending and belong to this exact project and tenant.
+func (p *PGPipelineEffects) PublishSealedProjectNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
+	return p.publishNoOutputEffectsTx(ctx, tx, scope, tenant, v, true)
+}
+
+func (p *PGPipelineEffects) publishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication, deleting bool) (bool, error) {
+	if tx == nil || !scope.valid() || !pipelineID(tenant) || v.Sequence <= 0 || !pipelineHash(v.ProofSHA256) || v.Manifest != (PipelineRef{}) || len(v.Outputs) != 0 {
+		return false, ErrPipelineConflict
+	}
+	b := PipelineBinding{Scope: scope, TenantID: tenant}
+	if err := p.lockCapacity(ctx, tx, b, false); err != nil {
+		return false, err
+	}
+	var projectTenant string
+	query := `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`
+	if deleting {
+		query = `SELECT p.tenant_id FROM projects p JOIN project_deletions d
+ON d.project_id=p.id AND d.tenant_id=p.tenant_id WHERE p.id=$1 AND d.completed=0 FOR UPDATE OF p,d`
+	}
+	if err := tx.QueryRowContext(ctx, query, scope.ProjectID).Scan(&projectTenant); err != nil {
+		return false, err
+	}
+	if projectTenant != tenant {
+		return false, ErrPipelineAuthority
+	}
+	sequence, proof, err := p.lockStream(ctx, tx, b)
+	if err != nil {
+		return false, err
+	}
+	if sequence == v.Sequence && proof == v.ProofSHA256 {
+		return false, nil
+	}
+	if v.Sequence != sequence+1 {
+		return false, ErrPipelineConflict
+	}
+	var reserved bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere+`)`, pipelineScopeArgs(scope)...).Scan(&reserved); err != nil {
+		return false, err
+	}
+	if reserved {
+		return false, ErrPipelineConflict
+	}
+	updated, err := tx.ExecContext(ctx, `UPDATE pipeline_effect_streams SET sequence=$5,proof_sha=$6 WHERE `+pipelineScopeWhere, append(pipelineScopeArgs(scope), v.Sequence, v.ProofSHA256)...)
+	if err != nil {
+		return false, err
+	}
+	return true, pipelineOne(updated)
 }
