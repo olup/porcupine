@@ -1,0 +1,29 @@
+name: Hosted public binary
+on:
+  push:
+    branches: [ci/hosted-public-binary]
+permissions:
+  contents: read
+jobs:
+  public-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Exercise the public hosted server binary
+        shell: bash
+        run: |
+          set -o pipefail
+          git rev-parse HEAD^
+          bash scripts/aws-emulator-test.sh '^TestDuckLakeS3SharedPostgresHostedProfileProcesses$' 2>&1 | tee public-profile.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: hosted-public-profile
+          path: public-profile.log
