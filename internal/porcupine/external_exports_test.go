@@ -96,3 +96,37 @@ func TestExternalExportAuthorityExpiresBeforePublication(t *testing.T) {
 		})
 	}
 }
+
+func TestExternalExportControlOutageDoesNotRevokeExecution(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	s := f.s
+	enableTestExports(t, s, 10)
+	p := request(t, s, "POST", "/api/v1/projects", f.operator(t), `{"name":"bounded job"}`, 201)["project"].(map[string]any)["id"].(string)
+	reader := f.token(t, "reader", defaultTenantID, "events:read", s.resources.apiResource, p)
+	created := request(t, s, "POST", "/api/v1/projects/"+p+"/exports", reader, `{"idempotency_key":"control-outage","sql":"SELECT event FROM events"}`, 202)
+	job, err := s.loadExport(t.Context(), p, created["id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = s.claimExport(t.Context(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.control.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, authorityErr := s.exportJobActor(t.Context(), job)
+	if !authenticationUnavailable(authorityErr) {
+		t.Fatal("control outage became revoked execution", authorityErr)
+	}
+	s.failExport(t.Context(), job, authorityErr)
+	current, err := s.loadExport(t.Context(), p, job.ID)
+	if err != nil || current.State != ExportQueued || current.Error != "authorization_unavailable" || current.SQL == "" {
+		t.Fatal("retryable authority failure destroyed execution intent", current.State, current.Error, err)
+	}
+	f.now.Add(int64(6 * time.Minute / time.Millisecond))
+	if _, err := s.exportJobActor(t.Context(), job); !errors.Is(err, errExportAuthorizationExpired) {
+		t.Fatal("dependency outage extended finite authority", err)
+	}
+}

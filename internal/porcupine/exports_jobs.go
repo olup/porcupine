@@ -54,7 +54,13 @@ func (s *Service) exportJobActor(ctx context.Context, job storedExport) (auth.Pr
 		return auth.Principal{}, err
 	}
 	var tenant string
-	if err := s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err != nil || tenant != job.ExternalTenantID {
+	if err := s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, errExportRevoked
+		}
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if tenant != job.ExternalTenantID {
 		return auth.Principal{}, errExportRevoked
 	}
 	return auth.Principal{ID: job.ActorID, TenantIDs: []string{tenant}, Projects: []string{job.ProjectID}, Permissions: []string{"events:read"}}, nil

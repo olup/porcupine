@@ -85,6 +85,12 @@ func (s *Service) exportsLoop(ctx context.Context) {
 			s.terminalExport(job, ExportExpired, "authorization_expired")
 			continue
 		}
+		if authenticationUnavailable(err) {
+			if !s.waitExports(ctx, time.Second) {
+				return
+			}
+			continue
+		}
 		if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 			s.terminalExport(job, ExportCanceled, "creator_revoked")
 			continue
@@ -262,6 +268,9 @@ func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error
 	if errors.Is(err, errExportAuthorizationExpired) {
 		return err
 	}
+	if authenticationUnavailable(err) {
+		return err
+	}
 	if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 		return errExportRevoked
 	}
@@ -352,6 +361,11 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 		state, code = ExportExpired, "authorization_expired"
 	case err == nil && current.CancelRequested:
 		state, code = ExportCanceled, "canceled"
+	case authenticationUnavailable(actorErr) || authenticationUnavailable(failure):
+		code = "authorization_unavailable"
+		if job.Attempts < 3 {
+			state = ExportQueued
+		}
 	case actorErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID):
 		state, code = ExportCanceled, "creator_revoked"
 	case errors.Is(failure, errExportRevoked):
