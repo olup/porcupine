@@ -11,6 +11,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/olup/porcupine/internal/testfixtures"
 )
 
 // sharedPostgresDSN gives each test its own disposable database. Absence of the
@@ -19,6 +20,9 @@ func sharedPostgresDSN(t *testing.T) string {
 	t.Helper()
 	raw := os.Getenv("PORCUPINE_TEST_POSTGRES_DSN")
 	if raw == "" {
+		if err := testfixtures.CheckSelection(t.Name(), testfixtures.Postgres); err != nil {
+			t.Fatal(err)
+		}
 		t.Skip("set PORCUPINE_TEST_POSTGRES_DSN or run make shared-postgres-test")
 	}
 	dsn, err := url.Parse(raw)
