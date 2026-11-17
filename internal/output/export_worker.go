@@ -402,7 +402,7 @@ func (s *ExportJobs) cleanupExport(ctx context.Context, job storedExport) error 
 		if file.storage == "" || file.storage != s.store.OwnershipID() {
 			return errors.New("export cleanup requires its original bound storage namespace")
 		}
-		if err := s.retainArtifactOwnership(ctx, job.ProjectID, "export", s.store, file.key, file.id); err != nil {
+		if err := retainArtifactOwnership(ctx, s.control, job.ProjectID, "export", s.store, file.key, file.id); err != nil {
 			return err
 		}
 		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {

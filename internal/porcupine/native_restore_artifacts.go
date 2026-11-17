@@ -3,10 +3,8 @@ package porcupine
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 
-	"github.com/olup/porcupine/internal/exportstore"
 	"github.com/olup/porcupine/internal/output"
 )
 
@@ -22,27 +20,12 @@ func preserveNativeRestoreArtifactHolds(ctx context.Context, journal *sql.DB, co
 	for _, a := range exports {
 		artifacts = append(artifacts, artifact{project: a.Project, kind: "export", storage: a.Storage, key: a.Key, upload: a.Upload})
 	}
-	rows, err := journal.QueryContext(ctx, `SELECT p.project_id,p.config,f.object_key,f.upload_id FROM pipeline_s3_files f
-JOIN pipeline_s3_runs r ON r.id=f.run_id JOIN pipelines p ON p.id=r.pipeline_id WHERE r.state<>'succeeded'`)
+	pipelines, err := output.PipelineRestoreArtifacts(ctx, journal)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		a := artifact{kind: "pipeline"}
-		var config string
-		if err := rows.Scan(&a.project, &config, &a.key, &a.upload); err != nil {
-			rows.Close()
-			return err
-		}
-		var spec S3PipelineSpec
-		if json.Unmarshal([]byte(config), &spec) == nil && spec.Destination.Bucket != "" {
-			d := spec.Destination
-			a.storage = exportstore.NamespaceOwnershipID(exportstore.Config{Endpoint: d.Endpoint, Region: d.Region, Bucket: d.Bucket, Prefix: d.Prefix})
-		}
-		artifacts = append(artifacts, a)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
+	for _, a := range pipelines {
+		artifacts = append(artifacts, artifact{project: a.Project, kind: "pipeline", storage: a.Storage, key: a.Key, upload: a.Upload})
 	}
 	for _, a := range artifacts {
 		var tenant string

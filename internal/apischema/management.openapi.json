@@ -35785,7 +35785,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Replace encrypted credentials and destination; pending deliveries use the new destination"
+        "summary": "Replace encrypted credentials and destination; pending deliveries to the old destination are retired"
       }
     },
     "/api/v1/projects/{id}/pipelines/{pipeline_id}/pause": {

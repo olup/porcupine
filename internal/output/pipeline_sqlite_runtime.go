@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -16,16 +16,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/olup/porcupine/internal/delivery"
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
-	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 // PipelineConfig contains operator-owned settings. A nil config disables destinations.
 type PipelineConfig struct {
 	Key                           []byte
 	AllowedS3Endpoints            []string
-	ExportLimits                  output.ExportConfig
+	ExportLimits                  ExportConfig
 	WebhookMaxQueuedEvents        int
 	WebhookMaxQueuedBytes         int64
 	WebhookProjectMaxQueuedEvents int
@@ -34,7 +34,19 @@ type PipelineConfig struct {
 	WebhookTimeoutSeconds         int
 }
 
-type pipelineRuntime struct {
+type PipelineJobs struct {
+	db, control                 *sql.DB
+	clock                       func() time.Time
+	lake                        PipelineReader
+	usage                       *usage.Recorder
+	loadActor                   func(context.Context, string) (auth.Principal, error)
+	credentialMissing           func(error) bool
+	requireActive, requireOwner func(context.Context, string) error
+	beginActivity               func(context.Context, string) (context.Context, func(), bool)
+	acquire                     func(context.Context) (func(), bool)
+
+	s3StepMu     sync.Mutex
+	retiredMu    sync.Mutex
 	s3Lifecycle  sync.Map // per-pipeline exclusion between resume and remote deletion cleanup
 	admissionsMu sync.Mutex
 	admissions   map[*pipelineAdmission]struct{}
@@ -43,18 +55,19 @@ type pipelineRuntime struct {
 	aead        cipher.AEAD
 	fingerprint string
 	s3Origins   map[string]bool
-	webhooks    *delivery.WebhookQueue
+	webhooks    *sqliteWebhookQueue
 	webhookWake chan struct{}
 	s3Wake      chan struct{}
 	cancel      context.CancelFunc
 	workers     sync.WaitGroup
 }
 
-func newPipelineRuntime(input *PipelineConfig) (*pipelineRuntime, error) {
+func newSQLitePipelineRuntime(input *PipelineConfig) (*PipelineJobs, error) {
 	if input == nil {
 		return nil, nil
 	}
 	c := *input
+	c.AllowedS3Endpoints = append([]string(nil), c.AllowedS3Endpoints...)
 	if len(c.Key) != 32 {
 		return nil, errors.New("pipeline encryption key must be 32 bytes")
 	}
@@ -68,7 +81,7 @@ func newPipelineRuntime(input *PipelineConfig) (*pipelineRuntime, error) {
 	}
 	digest := sha256.Sum256(c.Key)
 	c.Key = nil
-	c.ExportLimits, err = output.NormalizeExportConfig(c.ExportLimits)
+	c.ExportLimits, err = NormalizeExportConfig(c.ExportLimits)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +114,7 @@ func newPipelineRuntime(input *PipelineConfig) (*pipelineRuntime, error) {
 		}
 		origins[origin] = true
 	}
-	return &pipelineRuntime{admissions: make(map[*pipelineAdmission]struct{}), config: c, aead: aead, fingerprint: hex.EncodeToString(digest[:]), s3Origins: origins, webhookWake: make(chan struct{}, 1), s3Wake: make(chan struct{}, 1)}, nil
+	return &PipelineJobs{admissions: make(map[*pipelineAdmission]struct{}), config: c, aead: aead, fingerprint: hex.EncodeToString(digest[:]), s3Origins: origins, webhookWake: make(chan struct{}, 1), s3Wake: make(chan struct{}, 1)}, nil
 }
 
 func pipelineS3Origin(raw string) (string, error) {
@@ -112,12 +125,12 @@ func pipelineS3Origin(raw string) (string, error) {
 	return u.Scheme + "://" + strings.ToLower(u.Host), nil
 }
 
-func (s *Service) validatePipelineS3Endpoint(raw string) error {
+func (s *PipelineJobs) ValidateS3Endpoint(raw string) error {
 	if raw == "" {
 		return nil
 	}
 	origin, err := pipelineS3Origin(raw)
-	if err != nil || s.pipelines == nil || !s.pipelines.s3Origins[origin] {
+	if err != nil || !s.Enabled() || !s.s3Origins[origin] {
 		return errors.New("S3 endpoint is not allowed by this deployment")
 	}
 	return nil
@@ -128,11 +141,11 @@ func pipelineAAD(projectID, pipelineID string) []byte {
 	return data
 }
 
-func (s *Service) sealPipelineSecret(projectID, pipelineID string, plaintext []byte) ([]byte, error) {
-	if s.pipelines == nil {
+func (s *PipelineJobs) SealSecret(projectID, pipelineID string, plaintext []byte) ([]byte, error) {
+	if !s.Enabled() {
 		return nil, errors.New("pipelines disabled")
 	}
-	aead := s.pipelines.aead
+	aead := s.aead
 	blob := make([]byte, 1+aead.NonceSize())
 	blob[0] = 1
 	if _, err := rand.Read(blob[1:]); err != nil {
@@ -141,11 +154,11 @@ func (s *Service) sealPipelineSecret(projectID, pipelineID string, plaintext []b
 	return aead.Seal(blob, blob[1:], plaintext, pipelineAAD(projectID, pipelineID)), nil
 }
 
-func (s *Service) openPipelineSecret(projectID, pipelineID string, blob []byte) ([]byte, error) {
-	if s.pipelines == nil {
+func (s *PipelineJobs) OpenSecret(projectID, pipelineID string, blob []byte) ([]byte, error) {
+	if !s.Enabled() {
 		return nil, errors.New("pipelines disabled")
 	}
-	aead := s.pipelines.aead
+	aead := s.aead
 	start := 1 + aead.NonceSize()
 	if len(blob) < start+aead.Overhead() || blob[0] != 1 {
 		return nil, errors.New("invalid encrypted destination")
@@ -153,24 +166,24 @@ func (s *Service) openPipelineSecret(projectID, pipelineID string, blob []byte) 
 	return aead.Open(nil, blob[1:start], blob[start:], pipelineAAD(projectID, pipelineID))
 }
 
-func (s *Service) initializePipelines(ctx context.Context) error {
+func (s *PipelineJobs) Initialize(ctx context.Context) error {
 	if err := s.verifyPipelineConfig(ctx); err != nil {
 		return err
 	}
-	if err := delivery.InitializeWebhooks(ctx, s.db); err != nil {
+	if err := initializeWebhooks(ctx, s.db); err != nil {
 		return err
 	}
 	return s.initializeS3Pipelines(ctx)
 }
 
-func (s *Service) verifyPipelineConfig(ctx context.Context) error {
+func (s *PipelineJobs) verifyPipelineConfig(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var exists, activeS3 bool
-	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pipelines),EXISTS(SELECT 1 FROM pipelines WHERE kind='s3' AND state='active')").Scan(&exists, &activeS3); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pipelines UNION ALL SELECT 1 FROM pipeline_retired_destinations),EXISTS(SELECT 1 FROM pipelines WHERE kind='s3' AND state='active')").Scan(&exists, &activeS3); err != nil {
 		return err
 	}
 	var previous string
@@ -178,7 +191,7 @@ func (s *Service) verifyPipelineConfig(ctx context.Context) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if s.pipelines == nil {
+	if !s.Enabled() {
 		if exists {
 			return errors.New("existing pipelines require their original encryption key")
 		}
@@ -187,32 +200,13 @@ func (s *Service) verifyPipelineConfig(ctx context.Context) error {
 	if activeS3 && s.lake == nil {
 		return errors.New("active S3 pipelines require an analytical store")
 	}
-	if exists && previous != s.pipelines.fingerprint {
+	if exists && previous != s.fingerprint {
 		return errors.New("pipeline encryption key does not match existing destinations")
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('pipeline_key_fingerprint',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", s.pipelines.fingerprint); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('pipeline_key_fingerprint',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", s.fingerprint); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-// Heavy queries share one slot so a batch cannot occupy the last interactive slot.
-func (s *Service) acquirePipelineExport(ctx context.Context) (func(), bool) {
-	if ctx.Err() != nil || len(s.querySlots) != 0 {
-		return nil, false
-	}
-	select {
-	case s.batchSlot <- struct{}{}:
-	default:
-		return nil, false
-	}
-	select {
-	case s.querySlots <- struct{}{}:
-		return func() { <-s.querySlots; <-s.batchSlot }, true
-	default:
-		<-s.batchSlot
-		return nil, false
-	}
 }
 
 func signalPipelineWorker(wake chan struct{}) {
@@ -222,23 +216,23 @@ func signalPipelineWorker(wake chan struct{}) {
 	}
 }
 
-func (s *Service) wakeWebhook() {
-	if s.pipelines != nil {
-		signalPipelineWorker(s.pipelines.webhookWake)
+func (s *PipelineJobs) WakeWebhook() {
+	if s.Enabled() {
+		signalPipelineWorker(s.webhookWake)
 	}
 }
 
-func (s *Service) pipelineWake() {
-	if s.pipelines == nil {
+func (s *PipelineJobs) Wake() {
+	if !s.Enabled() {
 		return
 	}
-	s.wakeWebhook()
-	signalPipelineWorker(s.pipelines.s3Wake)
+	s.WakeWebhook()
+	signalPipelineWorker(s.s3Wake)
 }
 
-func (s *Service) startPipelines() {
-	rt := s.pipelines
-	if rt == nil {
+func (s *PipelineJobs) Start() {
+	rt := s
+	if !s.Enabled() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -269,16 +263,17 @@ func (s *Service) startPipelines() {
 			}
 		}()
 	}
-	start("webhook", rt.webhookWake, rt.webhooks.Step)
+	start("webhook", rt.webhookWake, s.RunWebhook)
+	start("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "") })
 	if s.lake != nil {
-		start("s3", rt.s3Wake, s.stepPipelineS3)
+		start("s3", rt.s3Wake, s.RunS3)
 	}
 }
 
-func (s *Service) stopPipelines() {
-	if s.pipelines != nil && s.pipelines.cancel != nil {
-		s.pipelines.cancel()
-		s.pipelines.workers.Wait()
+func (s *PipelineJobs) Stop() {
+	if s != nil && s.cancel != nil {
+		s.cancel()
+		s.workers.Wait()
 	}
 }
 
@@ -290,9 +285,9 @@ type pipelineAdmission struct {
 	arrivedMS int64
 }
 
-func (s *Service) beginCaptureReceipt(projectID string) (time.Time, func()) {
-	rt := s.pipelines
-	if rt == nil || (s.lake == nil) {
+func (s *PipelineJobs) BeginReceipt(projectID string) (time.Time, func()) {
+	rt := s
+	if !s.Enabled() || s.lake == nil {
 		return s.clock().UTC(), func() {}
 	}
 	rt.admissionsMu.Lock()
@@ -307,8 +302,8 @@ func (s *Service) beginCaptureReceipt(projectID string) (time.Time, func()) {
 	}
 }
 
-func (s *Service) pipelineWindowHasAdmissions(projectID string, startMS, endMS int64) bool {
-	rt := s.pipelines
+func (s *PipelineJobs) WindowHasAdmissions(projectID string, startMS, endMS int64) bool {
+	rt := s
 	rt.admissionsMu.Lock()
 	defer rt.admissionsMu.Unlock()
 	for a := range rt.admissions {
@@ -321,9 +316,9 @@ func (s *Service) pipelineWindowHasAdmissions(projectID string, startMS, endMS i
 
 // Both operations touch the same destination's work. A resume must not restart
 // its worker while deletion is checking the remote commit marker.
-func (s *Service) lockS3Lifecycle(id string) (func(), error) {
-	if _, busy := s.pipelines.s3Lifecycle.LoadOrStore(id, struct{}{}); busy {
+func (s *PipelineJobs) lockS3Lifecycle(id string) (func(), error) {
+	if _, busy := s.s3Lifecycle.LoadOrStore(id, struct{}{}); busy {
 		return nil, apiError(409, "pipeline lifecycle change in progress")
 	}
-	return func() { s.pipelines.s3Lifecycle.Delete(id) }, nil
+	return func() { s.s3Lifecycle.Delete(id) }, nil
 }

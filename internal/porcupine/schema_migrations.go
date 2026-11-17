@@ -6,10 +6,11 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strconv"
+
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
-	"strconv"
 )
 
 // Each operational store has an ordered list of schema steps. steps[0] is the
@@ -55,6 +56,8 @@ tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 	// 7: cumulative source/bucket usage and durable query admissions.
 	usage.JournalSchema,
+	// 8: attempt fencing and old destination ownership after credential replacement.
+	output.PipelineSQLiteRetirementSchemaV1,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}

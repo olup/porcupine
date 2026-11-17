@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
-func (s *Service) s3PipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
+func (s *PipelineJobs) s3PipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 ORDER BY r.window_start_ms DESC,r.id LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
 	if err != nil {
 		return nil, err
@@ -28,27 +28,27 @@ func (s *Service) s3PipelineRunPage(ctx context.Context, project, pipeline strin
 	}
 	return out, rows.Err()
 }
-func (s *Service) getS3PipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
+func (s *PipelineJobs) getS3PipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
 	var r PipelineRun
 	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 AND r.id=$3`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
 	return r, err
 }
-func (s *Service) retryS3PipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
+func (s *PipelineJobs) retryS3PipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',attempts=0,next_attempt_ms=0,error_code='',completed_at_ms=0 WHERE id=$1 AND pipeline_id=$2 AND state='failed' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND project_id=$4)`, id, pipeline, pipeline, project)
 	if err != nil {
 		return false, err
 	}
 	n, err := result.RowsAffected()
 	if n == 1 {
-		s.pipelineWake()
+		s.Wake()
 	}
 	return n == 1, err
 }
-func (s *Service) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3PipelineSpec) (*exportstore.Store, error) {
-	if s.validatePipelineS3Endpoint(spec.Destination.Endpoint) != nil {
+func (s *PipelineJobs) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3PipelineSpec) (*exportstore.Store, error) {
+	if s.ValidateS3Endpoint(spec.Destination.Endpoint) != nil {
 		return nil, errors.New("destination_disabled")
 	}
-	plaintext, err := s.openPipelineSecret(p.ProjectID, p.ID, p.Secret)
+	plaintext, err := s.OpenSecret(p.ProjectID, p.ID, p.Secret)
 	if err != nil {
 		return nil, errors.New("credentials_unavailable")
 	}
@@ -59,7 +59,16 @@ func (s *Service) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3
 	d := spec.Destination
 	return exportstore.New(ctx, exportstore.Config{Bucket: d.Bucket, Region: d.Region, Prefix: d.Prefix, Endpoint: d.Endpoint, UsePathStyle: d.UsePathStyle, AccessKeyID: secret.AccessKeyID, SecretAccessKey: secret.SecretAccessKey, SessionToken: secret.SessionToken})
 }
-func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.Store, id string) error {
+func (s *PipelineJobs) cleanupPipelineS3Run(ctx context.Context, store *exportstore.Store, id, claim string) error {
+	if claim != "" {
+		var current bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$2)`, id, claim).Scan(&current); err != nil {
+			return err
+		}
+		if !current {
+			return errors.New("attempt_conflict")
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT object_key,upload_id FROM pipeline_s3_files WHERE run_id=$1`, id)
 	if err != nil {
 		return err
@@ -86,8 +95,13 @@ func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.S
 		}
 	}
 	for _, f := range files {
-		if err := s.retainArtifactOwnership(ctx, project, "pipeline_unpublished", store, f.key, f.upload); err != nil {
+		if err := retainArtifactOwnership(ctx, s.control, project, "pipeline_unpublished", store, f.key, f.upload); err != nil {
 			return err
+		}
+		if f.upload == "" {
+			if err = store.AbortKeyUploads(ctx, f.key); err != nil {
+				return err
+			}
 		}
 		if f.upload != "" {
 			if err = store.Abort(ctx, f.key, f.upload); err != nil {
@@ -97,14 +111,15 @@ func (s *Service) cleanupPipelineS3Run(ctx context.Context, store *exportstore.S
 		if err = store.Delete(ctx, f.key); err != nil {
 			return err
 		}
-		if _, err = s.db.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=$1 AND object_key=$2`, id, f.key); err != nil {
+		result, err := s.db.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=$1 AND object_key=$2 AND ($3='' OR EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$3))`, id, f.key, claim)
+		if err = pipelineCheckpoint(result, err); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) error {
-	if s.pipelines == nil {
+func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string) error {
+	if !s.Enabled() {
 		return apiError(503, "pipelines are not configured")
 	}
 	release, err := s.lockS3Lifecycle(id)
@@ -169,7 +184,7 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 			if !errors.Is(readErr, exportstore.ErrNotFound) {
 				return apiError(503, "pipeline commit status unavailable")
 			}
-			if s.cleanupPipelineS3Run(ctx, store, run.id) != nil {
+			if s.cleanupPipelineS3Run(ctx, store, run.id, "") != nil {
 				return apiError(503, "pipeline cleanup incomplete")
 			}
 		}
@@ -184,12 +199,12 @@ func (s *Service) deleteS3Pipeline(ctx context.Context, project, id string) erro
 type s3PipelineWork struct {
 	pipeline                                      storedPipeline
 	spec                                          S3PipelineSpec
-	id, state, attemptID, manifest                string
+	id, state, attemptID, claimID, manifest       string
 	start, end, eventWatermark, mutationWatermark int64
 	attempts                                      int
 }
 
-func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
+func (s *PipelineJobs) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -229,9 +244,9 @@ func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 	}
 	for _, w := range candidates {
 		var next int64
-		err = tx.QueryRowContext(ctx, `SELECT id,state,attempts,attempt_id,event_watermark,mutation_watermark,manifest,next_attempt_ms FROM pipeline_s3_runs WHERE pipeline_id=$1 AND window_start_ms=$2`, w.pipeline.ID, w.start).Scan(&w.id, &w.state, &w.attempts, &w.attemptID, &w.eventWatermark, &w.mutationWatermark, &w.manifest, &next)
+		err = tx.QueryRowContext(ctx, `SELECT id,state,attempts,attempt_id,claim_id,event_watermark,mutation_watermark,manifest,next_attempt_ms FROM pipeline_s3_runs WHERE pipeline_id=$1 AND window_start_ms=$2`, w.pipeline.ID, w.start).Scan(&w.id, &w.state, &w.attempts, &w.attemptID, &w.claimID, &w.eventWatermark, &w.mutationWatermark, &w.manifest, &next)
 		if errors.Is(err, sql.ErrNoRows) {
-			if s.pipelineWindowHasAdmissions(w.pipeline.ProjectID, w.start, w.end) {
+			if s.WindowHasAdmissions(w.pipeline.ProjectID, w.start, w.end) {
 				continue
 			}
 			w.id = eventapi.NewID()

@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/olup/porcupine/internal/output"
 	"slices"
+
+	"github.com/olup/porcupine/internal/output"
 )
 
 // purgeProjectLocalRecords removes only owner-local payloads and jobs. Shared
@@ -16,14 +17,14 @@ func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string)
 	if err := output.StageExportProjectCleanupTx(ctx, tx, projectID); err != nil {
 		return err
 	}
+	if err := output.DeletePipelineProjectTx(ctx, tx, projectID); err != nil {
+		return err
+	}
 	for _, statement := range []string{
 		"DELETE FROM import_upload_samples WHERE job_id IN (SELECT id FROM import_uploads WHERE project_id=?)",
 		"DELETE FROM import_upload_files WHERE job_id IN (SELECT id FROM import_uploads WHERE project_id=?)",
 		"DELETE FROM import_uploads WHERE project_id=?",
 		"DELETE FROM posthog_import_person_state WHERE project_id=?",
-		// Deleting pipelines cascades to webhook deliveries, members, S3 runs and files.
-		"DELETE FROM pipelines WHERE project_id=?",
-		"DELETE FROM webhook_queue_usage WHERE scope='project:' || ?",
 		"DELETE FROM mutation_outbox WHERE project_id=?",
 		"DELETE FROM mutation_audit WHERE project_id=?",
 		"DELETE FROM event_heads WHERE project_id=?",

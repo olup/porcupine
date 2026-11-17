@@ -454,18 +454,19 @@ func resetNativeRestoreJournal(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "import_upload_samples", "import_upload_files"} {
+	for _, table := range []string{"import_upload_samples", "import_upload_files"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("reset restored %s: %w", table, err)
 		}
+	}
+	if err := output.ResetRestoredPipelinesTx(ctx, tx); err != nil {
+		return err
 	}
 	if err := output.ResetRestoredExportsTx(ctx, tx); err != nil {
 		return err
 	}
 	for _, statement := range []string{
-		`UPDATE pipelines SET state='paused',secret=X''`,
 		`UPDATE import_uploads SET state='cancelled',error='cancelled by offline credential reset' WHERE state NOT IN ('completed','failed','cancelled')`,
-		`DELETE FROM webhook_queue_usage`,
 		`DELETE FROM metadata WHERE key='native_backup_writer_id'`,
 		`INSERT INTO metadata(key,value) VALUES('native_restore_credentials_reset','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 	} {

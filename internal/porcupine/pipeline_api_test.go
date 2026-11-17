@@ -7,16 +7,33 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/output"
 )
 
-func attachTestPipelines(s *Service, runtime *pipelineRuntime) {
-	s.pipelines = runtime
-	configureWebhooks(s, s.acceptance.(*durableAcceptance), runtime)
+func newTestPipelineConfig(c *output.PipelineConfig) (*output.PipelineConfig, error) {
+	_, err := output.NewSQLitePipelines(output.PipelineDependencies{}, c)
+	return c, err
 }
-
+func attachTestPipelines(s *Service, c *output.PipelineConfig) { mustConfigureTestPipelines(s, c) }
+func mustConfigureTestPipelines(s *Service, c *output.PipelineConfig) {
+	if err := s.configurePipelines(c); err != nil {
+		panic(err)
+	}
+}
+func testPipelineConfig(s *Service) *output.PipelineConfig {
+	c := s.pipelines.Config()
+	c.Key = bytes.Repeat([]byte{7}, 32)
+	return &c
+}
+func updateTestPipelines(s *Service, update func(*output.PipelineConfig)) {
+	c := testPipelineConfig(s)
+	update(c)
+	mustConfigureTestPipelines(s, c)
+}
 func enableTestPipelines(t *testing.T, s *Service) {
 	t.Helper()
-	runtime, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{7}, 32)})
+	runtime, err := newTestPipelineConfig(&output.PipelineConfig{Key: bytes.Repeat([]byte{7}, 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,14 +76,14 @@ func TestPipelineHTTPPermissionIsolationRedactionAndRotation(t *testing.T) {
 			}
 		}
 	}
-	stored, err := s.loadPipeline(context.Background(), id, pipelineID)
+	stored, err := loadTestPipeline(s, context.Background(), id, pipelineID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(stored.Secret, []byte("private-pipeline-secret")) || bytes.Contains(stored.Secret, []byte(endpoint)) || bytes.Contains(stored.Config, []byte(endpoint)) {
 		t.Fatal("destination not encrypted")
 	}
-	plaintext, err := s.openPipelineSecret(id, pipelineID, stored.Secret)
+	plaintext, err := s.pipelines.OpenSecret(id, pipelineID, stored.Secret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +94,11 @@ func TestPipelineHTTPPermissionIsolationRedactionAndRotation(t *testing.T) {
 	if rotated["id"] != pipelineID {
 		t.Fatal("rotation replaced pipeline")
 	}
-	updated, err := s.loadPipeline(context.Background(), id, pipelineID)
+	updated, err := loadTestPipeline(s, context.Background(), id, pipelineID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plaintext, err = s.openPipelineSecret(id, pipelineID, updated.Secret)
+	plaintext, err = s.pipelines.OpenSecret(id, pipelineID, updated.Secret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +106,7 @@ func TestPipelineHTTPPermissionIsolationRedactionAndRotation(t *testing.T) {
 		t.Fatal("rotation did not replace only credentials")
 	}
 	request(t, s, "PUT", base+"/"+pipelineID+"/credentials", manager, `{"credentials":{"headers":{"Host":"private-invalid-header"}}}`, 400)
-	after, err := s.loadPipeline(context.Background(), id, pipelineID)
+	after, err := loadTestPipeline(s, context.Background(), id, pipelineID)
 	if err != nil || !bytes.Equal(updated.Secret, after.Secret) {
 		t.Fatal("invalid replacement changed credentials")
 	}
@@ -216,11 +233,11 @@ func TestPipelineS3InspectableRuleAndWriteOnlyRotation(t *testing.T) {
 		}
 	}
 	request(t, s, "PUT", base+"/"+pipelineID+"/credentials", adminToken, `{"credentials":{"access_key_id":"new-private-id","secret_access_key":"new-private-secret"}}`, 200)
-	stored, err := s.loadPipeline(context.Background(), id, pipelineID)
+	stored, err := loadTestPipeline(s, context.Background(), id, pipelineID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plaintext, err := s.openPipelineSecret(id, pipelineID, stored.Secret)
+	plaintext, err := s.pipelines.OpenSecret(id, pipelineID, stored.Secret)
 	if err != nil || !bytes.Contains(plaintext, []byte("new-private-secret")) || bytes.Contains(plaintext, []byte("private-s3-secret")) {
 		t.Fatal("S3 secret not replaced")
 	}
@@ -257,4 +274,57 @@ func TestPipelineOpenAPIOAuthScopesAndSecretSchemas(t *testing.T) {
 			t.Fatalf("credential %s lacks write-only schema", name)
 		}
 	}
+}
+
+type testStoredPipeline struct {
+	ID, ProjectID, ActorID, Kind, State string
+	Config                              json.RawMessage
+	Secret                              []byte
+}
+
+func loadTestPipeline(s *Service, ctx context.Context, project, id string) (testStoredPipeline, error) {
+	var p testStoredPipeline
+	var config string
+	err := s.db.QueryRowContext(ctx, `SELECT id,project_id,actor_id,kind,state,config,secret FROM pipelines WHERE project_id=? AND id=?`, project, id).Scan(&p.ID, &p.ProjectID, &p.ActorID, &p.Kind, &p.State, &config, &p.Secret)
+	p.Config = json.RawMessage(config)
+	return p, err
+}
+func testS3RunPage(s *Service, ctx context.Context, project, pipeline string, limit, offset int) ([]output.PipelineRun, error) {
+	r, err := s.pipelines.Runs(ctx, project, pipeline, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return r.Runs, nil
+}
+func testS3Run(s *Service, ctx context.Context, project, pipeline, id string) (output.PipelineRun, error) {
+	r, err := s.pipelines.Run(ctx, project, pipeline, id)
+	if err != nil {
+		return output.PipelineRun{}, err
+	}
+	return *r, nil
+}
+
+type testPipelineManifest struct {
+	Version       int
+	ProjectID     string `json:"project_id"`
+	PipelineID    string `json:"pipeline_id"`
+	RunID         string `json:"run_id"`
+	WindowStartMS int64  `json:"window_start_ms"`
+	WindowEndMS   int64  `json:"window_end_ms"`
+	Format        string
+	Rows          int64
+	Columns       []struct{ Name string }
+	Files         []struct {
+		Key                       string
+		Rows, Bytes, DecodedBytes int64
+		SHA256                    string
+	}
+}
+
+func retryTestPipelineRun(s *Service, ctx context.Context, project, pipeline, id string) (bool, error) {
+	r, err := s.pipelines.Retry(ctx, project, pipeline, id)
+	if err != nil {
+		return false, err
+	}
+	return r, nil
 }

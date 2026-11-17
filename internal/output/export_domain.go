@@ -1,4 +1,4 @@
-// Package output owns private export jobs, attempts, artifacts and retention.
+// Package output owns export and pipeline jobs, attempts, artifacts and retention.
 package output
 
 import (

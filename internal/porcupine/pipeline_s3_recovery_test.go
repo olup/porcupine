@@ -88,12 +88,12 @@ func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixt
 	f.s.clock = func() time.Time { return time.UnixMilli(f.clockMS.Load()).UTC() }
 	server := httptest.NewServer(f.s3)
 	t.Cleanup(server.Close)
-	f.s.pipelines.s3Origins[server.URL] = true
+	updateTestPipelines(f.s, func(c *output.PipelineConfig) { c.AllowedS3Endpoints = append(c.AllowedS3Endpoints, server.URL) })
 	limits, err := output.NormalizeExportConfig(output.ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.s.pipelines.config.ExportLimits = limits
+	updateTestPipelines(f.s, func(c *output.PipelineConfig) { c.ExportLimits = limits })
 	var ingest string
 	f.project, ingest = project(t, f.s)
 	var source struct {
@@ -113,7 +113,7 @@ func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixt
 	spec := testS3Spec()
 	spec.SQL = "SELECT uuid, json_extract_string(properties,'$.note') AS note FROM events ORDER BY uuid"
 	spec.Destination.Endpoint = server.URL
-	bodyBytes, err := json.Marshal(PipelineCreateBody{Name: "recovery contract", Kind: "s3", S3: &spec, Credentials: PipelineCredentials{AccessKeyID: "recovery-test-key", SecretAccessKey: "recovery-test-secret"}})
+	bodyBytes, err := json.Marshal(PipelineCreateBody{Name: "recovery contract", Kind: "s3", S3: &spec, Credentials: output.PipelineCredentials{AccessKeyID: "recovery-test-key", SecretAccessKey: "recovery-test-secret"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func pipelineRecoveryBody(t *testing.T) string {
 
 func (f *pipelineRecoveryFixture) step(t *testing.T) {
 	t.Helper()
-	if progress, err := f.s.stepPipelineS3(context.Background()); err != nil || !progress {
+	if progress, err := f.s.pipelines.RunS3(context.Background()); err != nil || !progress {
 		t.Fatalf("S3 worker step: progress=%v err=%v", progress, err)
 	}
 }
@@ -220,7 +220,7 @@ func TestPipelineS3RecoveryNativeRowFailureDoesNotCommitWindow(t *testing.T) {
 	t.Parallel()
 	body := strings.Replace(pipelineRecoveryBody(t), strings.Repeat("c", 750), strings.Repeat("c", 8192), 1)
 	f := newPipelineRecoveryFixture(t, body)
-	f.s.pipelines.config.ExportLimits.MaxRowBytes = 1024
+	updateTestPipelines(f.s, func(c *output.PipelineConfig) { c.ExportLimits.MaxRowBytes = 1024 })
 	f.step(t)
 	first := f.state(t)
 	if first.state != "queued" || first.attempts != 1 || first.manifest != "" || first.cursor != f.start.UnixMilli() || first.files != 0 {
@@ -235,7 +235,7 @@ func TestPipelineS3RecoveryNativeRowFailureDoesNotCommitWindow(t *testing.T) {
 	if markers != 0 || puts != 0 || completed < 1 || objects != 0 || uploads != 0 || aborted == 0 || deleted < 2 {
 		t.Fatal("native row failure published a marker or retained multipart data")
 	}
-	f.s.pipelines.config.ExportLimits.MaxRowBytes = 8 << 20
+	updateTestPipelines(f.s, func(c *output.PipelineConfig) { c.ExportLimits.MaxRowBytes = 8 << 20 })
 	f.clockMS.Store(f.start.Add(64 * time.Second).UnixMilli())
 	f.step(t)
 	second := f.state(t)

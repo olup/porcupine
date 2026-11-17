@@ -1,10 +1,11 @@
-package delivery
+package output
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+
 	"io"
 	"net/http"
 	"os"
@@ -41,7 +42,7 @@ func (h webhookTestHost) BeginWebhookActivity(ctx context.Context, project strin
 	return ctx, h.finish, true
 }
 
-func webhookQueueFixture(t *testing.T, host webhookTestHost) (*WebhookQueue, *time.Time) {
+func webhookQueueFixture(t *testing.T, host webhookTestHost) (*sqliteWebhookQueue, *time.Time) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
@@ -53,7 +54,7 @@ func webhookQueueFixture(t *testing.T, host webhookTestHost) (*WebhookQueue, *ti
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(string(schema)); err != nil {
+	if _, err := db.Exec(string(schema) + PipelineSQLiteRetirementSchemaV1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`PRAGMA foreign_keys=ON;
@@ -71,15 +72,15 @@ INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,creat
 		host.finish = func() {}
 	}
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
-	q := NewWebhookQueue(db, &WebhookLimits{MaxQueuedEvents: 100, MaxQueuedBytes: 1 << 20, ProjectMaxQueuedEvents: 100, ProjectMaxQueuedBytes: 1 << 20, MaxAttempts: 8, TimeoutSeconds: 10}, func() time.Time { return now }, host)
+	q := newWebhookQueue(db, &webhookLimits{MaxQueuedEvents: 100, MaxQueuedBytes: 1 << 20, ProjectMaxQueuedEvents: 100, ProjectMaxQueuedBytes: 1 << 20, MaxAttempts: 8, TimeoutSeconds: 10}, func() time.Time { return now }, host.AuthorizeWebhook, host.OpenWebhookSecret, host.BeginWebhookActivity)
 	t.Cleanup(q.Client.CloseIdleConnections)
-	if err := InitializeWebhooks(t.Context(), db); err != nil {
+	if err := initializeWebhooks(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	return q, &now
 }
 
-func enqueueWebhookTestEvent(t *testing.T, q *WebhookQueue) string {
+func enqueueWebhookTestEvent(t *testing.T, q *sqliteWebhookQueue) string {
 	t.Helper()
 	tx, err := q.db.BeginTx(t.Context(), nil)
 	if err != nil {
@@ -223,7 +224,7 @@ func TestWebhookCanceledSendRequeuesBeforeLeaseFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := InitializeWebhooks(t.Context(), q.db); err != nil {
+		if err := initializeWebhooks(t.Context(), q.db); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,3 +265,7 @@ func TestWebhookAcknowledgmentRollbackKeepsAttemptReplayable(t *testing.T) {
 		t.Fatal("acknowledgment failure stranded delivery", progress, sends, err)
 	}
 }
+
+type webhookTransport func(*http.Request) (*http.Response, error)
+
+func (f webhookTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

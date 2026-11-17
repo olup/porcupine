@@ -33,6 +33,6 @@ porcupine list-pipeline-runs --id PROJECT_ID --pipeline-id PIPELINE_ID
 porcupine pause-pipeline --id PROJECT_ID --pipeline-id PIPELINE_ID
 ```
 
-Pause before replacing destination credentials or investigating failures. SQL, filters, and schedules are immutable; delete and recreate the pipeline to change them. Credential rotation has its own operation.
+Pause before replacing destination credentials or investigating failures. SQL, filters, and schedules are immutable; delete and recreate the pipeline to change them. Credential rotation has its own operation. Replacement retires pending work for the old destination, including an account change at the same URL. New events use the replacement. Unavailable cleanup keeps the old encrypted S3 identity and can delay project deletion.
 
 Deleting a project cancels pending local delivery. It cannot remove copies already received by a webhook or external bucket. Retain the encryption key with the instance's private recovery material.

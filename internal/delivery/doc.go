@@ -1,5 +1,3 @@
-// Package delivery owns durable webhook attempts and formats analytical output.
-// Acceptance and mutation callers supply their own transaction. Current actor
-// authorization, destination decryption and project activity are explicit host
-// capabilities; the delivery module does not own their state.
+// Package delivery encodes outbound payloads and provides bounded, SSRF-safe
+// webhook transport. PipelineJobs owns queue state and delivery attempts.
 package delivery

@@ -325,3 +325,33 @@ func (s *Store) PresignUntil(ctx context.Context, key string, deadline time.Time
 	}
 	return signed, expires, nil
 }
+
+// AbortKeyUploads reconciles a crash after Begin returned remotely but before its
+// upload ID was checkpointed. Only uploads for the exact owned key are aborted.
+func (s *Store) AbortKeyUploads(ctx context.Context, key string) error {
+	full, err := s.objectKey(key)
+	if err != nil {
+		return err
+	}
+	var keyMarker, uploadMarker *string
+	for {
+		out, err := s.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: aws.String(s.bucket), Prefix: aws.String(full), KeyMarker: keyMarker, UploadIdMarker: uploadMarker, MaxUploads: aws.Int32(1000)})
+		if err != nil {
+			return storageError(ctx)
+		}
+		for _, u := range out.Uploads {
+			if aws.ToString(u.Key) == full && aws.ToString(u.UploadId) != "" {
+				if err = s.Abort(ctx, key, aws.ToString(u.UploadId)); err != nil {
+					return err
+				}
+			}
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			return nil
+		}
+		if aws.ToString(out.NextKeyMarker) == aws.ToString(keyMarker) && aws.ToString(out.NextUploadIdMarker) == aws.ToString(uploadMarker) {
+			return ErrStorage
+		}
+		keyMarker, uploadMarker = out.NextKeyMarker, out.NextUploadIdMarker
+	}
+}
