@@ -79,6 +79,10 @@ func (s *Service) beginTenantAdministration(ctx context.Context, tenantID string
 		tx.Rollback()
 		return nil, apiError(503, "tenant membership storage unavailable")
 	}
+	if err := requireTenantActive(ctx, tx, tenantID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 	if err := s.requireTenantAdminCurrent(ctx, tx, principal(ctx), tenantID); err != nil {
 		tx.Rollback()
 		return nil, err

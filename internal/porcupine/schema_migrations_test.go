@@ -167,20 +167,20 @@ func TestSharedControlRecordsAndEnforcesSchemaVersion(t *testing.T) {
 	db, _ := sharedControlFixture(t)
 	queries, _ := normalizeInteractiveQueries(nil)
 	ctx := context.Background()
-	if err := initializeSharedControl(ctx, db, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	var version string
 	if err := db.QueryRow(`SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil || version != fmt.Sprint(len(sharedControlSteps)) {
 		t.Fatalf("shared schema version %q (%v)", version, err)
 	}
-	if err := initializeSharedControl(ctx, db, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal("restart at the current version failed:", err)
 	}
 	if _, err := db.Exec(`UPDATE metadata SET value='99' WHERE key='schema_version'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := initializeSharedControl(ctx, db, adminToken, queries); err == nil || !strings.Contains(err.Error(), "newer than this server supports") {
+	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err == nil || !strings.Contains(err.Error(), "newer than this server supports") {
 		t.Fatalf("newer shared schema accepted: %v", err)
 	}
 }
@@ -211,7 +211,7 @@ func TestSharedControlRefusesUnknownUnversionedSchemas(t *testing.T) {
 			}
 			before := inventory()
 			limits, _ := normalizeInteractiveQueries(nil)
-			if err := initializeSharedControl(ctx, db, adminToken, limits); err == nil || !strings.Contains(err.Error(), "unversioned shared control") {
+			if err := initializeSharedControl(ctx, db, adminToken, limits, false); err == nil || !strings.Contains(err.Error(), "unversioned shared control") {
 				t.Fatalf("unknown shared schema accepted: %v", err)
 			}
 			if after := inventory(); after != before {

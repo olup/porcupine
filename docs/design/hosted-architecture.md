@@ -93,7 +93,7 @@ Source: `internal/porcupine/journal_schema.sql` and all numbered `journalSchema.
 <!-- journal-inventory:start -->
 | Journal table | Hosted target | Recovery class | State and recovery rule |
 | --- | --- | --- | --- |
-| `access_keys` | PostgreSQL | Exactly once | Authoritative credential state; remove the local shadow. Revocation remains live. |
+| `access_keys` | Removed | Exactly once | This journal table contains inert foreign-key anchors. Authoritative native credentials already live in control storage. PostgreSQL jobs keep their audit subjects without a local credential shadow. |
 | `cookieless_keys` | PostgreSQL | Exactly once | One durable daily secret shared by workers. |
 | `delivery_quarantine` | Removed | Best effort | Failed live flushes stay bounded in memory, with diagnostics and the stated loss contract. |
 | `delivery_ready` | Removed | Best effort | Memory admission/flush scheduling replaces this local index. |
@@ -101,12 +101,14 @@ Source: `internal/porcupine/journal_schema.sql` and all numbered `journalSchema.
 | `event_receipts` | Removed | Best effort | No synchronous hosted receipt; post-commit deduplication uses heads. |
 | `events` | Removed | Best effort | No hosted SQL inbox; memory until durable DuckLake/S3 commit. |
 | `export_files` | PostgreSQL | At least once | Multipart/object metadata references S3 output; idempotent publication/cleanup. |
+| `export_external_authority` | PostgreSQL | Exactly once | Original external execution issuer, tenant and expiry remain bound to the admitted job/project. No bearer, refresh secret or local human authority. |
 | `export_jobs` | PostgreSQL | At least once | Durable authorization, query, analytical snapshot and attempt state. |
 | `identity_links` | DuckLake | Exactly once | Versioned links per retained UUID in the guarded commit. |
 | `identity_profiles` | DuckLake | Exactly once | Same transaction as links; duplicates have no identity effect. |
 | `import_upload_files` | PostgreSQL | At least once | Durable offsets/checksums; bytes, parser tails and serialized rolling hashes on S3. |
 | `import_upload_samples` | PostgreSQL | Exactly once | Bounded line/reason records keyed by job/file/row, without event bodies. |
 | `import_uploads` | PostgreSQL | At least once | Stable chunk identity and original outcomes survive native commit/checkpoint retries. |
+| `journal_actor_tenants` | Removed | Exactly once | Transient local audit-anchor ownership, not permissions or a worker registry. Phase 5 removes these links with local anchors when jobs move to PostgreSQL; job audit metadata remains. |
 | `metadata` | PostgreSQL | Exactly once | Durable source/schema/job keys; remove local routing/cache keys after classification. |
 | `mutation_audit` | PostgreSQL | Exactly once | Durable mutation ID, expected revision, request hash, actor and application state. |
 | `mutation_outbox` | PostgreSQL | At least once | Durable intent before ACK; immutable S3 body reference, then replay-safe application. |

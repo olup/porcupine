@@ -28,7 +28,7 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	config, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(ctx, db, "short", config); err == nil {
+	if err := initializeSharedControl(ctx, db, "short", config, false); err == nil {
 		t.Fatal("first shared initialization accepted an unusable bootstrap")
 	}
 	var tables int
@@ -48,7 +48,7 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 			if i%2 == 1 {
 				connection = second
 			}
-			failures <- initializeSharedControl(ctx, connection, adminToken, config)
+			failures <- initializeSharedControl(ctx, connection, adminToken, config, false)
 		})
 	}
 	group.Wait()
@@ -69,7 +69,7 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&principal); err != nil || principal == "" {
 		t.Fatal("missing stable bootstrap principal", err)
 	}
-	if err := initializeSharedControl(ctx, second, "", config); err != nil {
+	if err := initializeSharedControl(ctx, second, "", config, false); err != nil {
 		t.Fatal("restart incorrectly required bootstrap secret", err)
 	}
 	var retained string
@@ -87,7 +87,7 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
 	config, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(ctx, db, adminToken, config); err != nil {
+	if err := initializeSharedControl(ctx, db, adminToken, config, false); err != nil {
 		t.Fatal(err)
 	}
 	local := service(t, 20)
@@ -159,7 +159,7 @@ func TestSharedControlRevokesDependentCredentials(t *testing.T) {
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
 	config, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(ctx, db, adminToken, config); err != nil {
+	if err := initializeSharedControl(ctx, db, adminToken, config, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"machine", "service-key", "human", "grant-one", "grant-two"} {

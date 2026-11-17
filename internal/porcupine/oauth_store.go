@@ -58,19 +58,32 @@ func (s *Service) loadCredentialActorFrom(ctx context.Context, query oauthQuerye
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&result.ID, &permissions, &projects, &result.SourceID)
 	if err != nil {
-		return auth.Principal{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, err
+		}
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
-		return auth.Principal{}, errors.New("invalid current credential grants")
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if s.externalAuthEnabled() {
+		result, err = constrainTenantCredentialActor(ctx, query, result)
+		if err != nil {
+			return auth.Principal{}, err
+		}
+		return constrainServiceKeyActor(ctx, query, result)
 	}
 	var emailHuman bool
 	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1)`, id).Scan(&emailHuman); err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if emailHuman {
 		result, err = loadEmailHuman(ctx, query, id)
 		if err != nil {
-			return auth.Principal{}, err
+			if errors.Is(err, sql.ErrNoRows) {
+				return auth.Principal{}, err
+			}
+			return auth.Principal{}, auth.ErrUnavailable
 		}
 	}
 	result, err = constrainTenantCredentialActor(ctx, query, result)
@@ -98,20 +111,24 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oautherrors.ErrInvalidClient
 		}
-		return nil, err
+		return nil, auth.ErrUnavailable
 	}
 	if json.Unmarshal([]byte(permissions), &client.Permissions) != nil || json.Unmarshal([]byte(projects), &client.Projects) != nil {
-		return nil, errors.New("invalid OAuth client grants")
+		return nil, auth.ErrUnavailable
 	}
 	if json.Unmarshal([]byte(grants), &client.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &client.RedirectURIs) != nil {
-		return nil, errors.New("invalid OAuth registration")
+		return nil, auth.ErrUnavailable
 	}
 	normalizedGrants, normalizedRedirects, method, err := auth.NormalizeOAuthClientRegistration(client.GrantTypes, client.RedirectURIs, client.AuthMethod)
 	if err != nil {
-		return nil, errors.New("invalid OAuth registration")
+		return nil, auth.ErrUnavailable
 	}
 	client.GrantTypes, client.RedirectURIs, client.AuthMethod = normalizedGrants, normalizedRedirects, method
 	client.Principal, err = constrainTenantCredentialActor(ctx, query, client.Principal)
+	if err != nil {
+		return nil, err
+	}
+	client.Projects, err = activeProjects(ctx, query, client.Projects)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +192,7 @@ type oauthTokenStore struct{ s *Service }
 
 func (store oauthTokenStore) Create(ctx context.Context, info liboauth.TokenInfo) error {
 	issue, ok := ctx.Value(oauthIssueContextKey{}).(oauthIssue)
-	if !ok || store.s.oauth == nil || (issue.resource != store.s.oauth.apiResource && issue.resource != store.s.oauth.mcpResource) || info.GetAccess() == "" || info.GetCode() != "" || info.GetRefresh() != "" {
+	if !ok || store.s.oauth == nil || (issue.resource != store.s.resources.apiResource && issue.resource != store.s.resources.mcpResource) || info.GetAccess() == "" || info.GetCode() != "" || info.GetRefresh() != "" {
 		return oautherrors.ErrInvalidRequest
 	}
 	tx, err := store.s.control.BeginTx(ctx, nil)
@@ -243,14 +260,14 @@ func (store oauthTokenStore) GetByAccess(ctx context.Context, raw string) (liboa
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oautherrors.ErrInvalidAccessToken
 		}
-		return nil, err
+		return nil, auth.ErrUnavailable
 	}
 	if store.s.clock().UnixMilli() >= expires {
 		return nil, oautherrors.ErrExpiredAccessToken
 	}
 	var projects []string
 	if json.Unmarshal([]byte(projectsJSON), &projects) != nil {
-		return nil, oautherrors.ErrInvalidAccessToken
+		return nil, auth.ErrUnavailable
 	}
 	token := models.NewToken()
 	token.SetAccess(raw)
@@ -279,7 +296,7 @@ func (oauthTokenStore) GetByRefresh(context.Context, string) (liboauth.TokenInfo
 }
 
 func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource string) (auth.Principal, error) {
-	if s.oauth == nil || (resource != s.oauth.apiResource && resource != s.oauth.mcpResource) {
+	if s.oauth == nil || (resource != s.resources.apiResource && resource != s.resources.mcpResource) {
 		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
 	info, err := (oauthTokenStore{s: s}).GetByAccess(ctx, raw)
@@ -297,6 +314,9 @@ func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource stri
 		current, err = s.loadCredentialActor(ctx, info.GetClientID())
 	}
 	if err != nil {
+		if authenticationUnavailable(err) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
 		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
 	if stored.grantID != "" && tenantAdminConsent(strings.Fields(info.GetScope())) && len(current.TenantAdmins) == 1 {

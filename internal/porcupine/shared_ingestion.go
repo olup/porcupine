@@ -55,6 +55,9 @@ func (s *Service) nextSharedEventID(ctx context.Context, _ *sql.Tx) (int64, erro
 }
 
 func (s *Service) prepareSharedAcceptance(ctx context.Context, project string) error {
+	if err := s.requireProjectActive(ctx, project); err != nil {
+		return err
+	}
 	period, _ := tenantMonth(s.clock())
 	var current bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shared_tenant_cache c JOIN projects p ON p.tenant_id=c.tenant_id
@@ -150,6 +153,19 @@ func (s *Service) publishSharedUsage(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	for _, u := range pending {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1)`, u.tenant).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			deleted, err := tenantDeletionExists(ctx, tx, u.tenant)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				continue
+			}
+		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO worker_tenant_usage(worker_id,tenant_id,period_start,accepted_events) VALUES($1,$2,$3,0) ON CONFLICT DO NOTHING`, s.shared.config.WorkerID, u.tenant, u.period); err != nil {
 			return err
 		}

@@ -100,7 +100,7 @@ func (w *exportSink) beginFile() error {
 	}
 	w.files++
 	artifact := exportArtifact{Index: w.files, Key: fmt.Sprintf("%s/%s/part-%06d.%s.gz", w.job.ID, w.job.AttemptID, w.files, w.job.Format)}
-	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key) VALUES($1,$2,$3,$4)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key,storage_id) VALUES($1,$2,$3,$4,$5)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key, w.s.exports.store.OwnershipID()); err != nil {
 		return errExportSink
 	}
 	upload, err := w.s.exports.store.Begin(w.ctx, artifact.Key)

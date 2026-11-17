@@ -49,7 +49,7 @@ func TestTenantAdminEmailOAuthEmptyTenantAndRoleBounds(t *testing.T) {
 	if token.Extra("scope") != tenantAdminScope {
 		t.Fatal("tenant consent issued another OAuth scope")
 	}
-	current, err := s.authenticateResource(t.Context(), token.AccessToken, s.oauth.apiResource)
+	current, err := s.authenticateResource(t.Context(), token.AccessToken, s.resources.apiResource)
 	if err != nil || current.Admin() || len(current.TenantAdmins) != 1 || current.TenantAdmins[0] != a || len(current.Projects) != 0 {
 		t.Fatalf("empty tenant did not yield bounded administration: %+v %v", current, err)
 	}
@@ -125,7 +125,7 @@ func TestTenantAdminEmailOAuthMCPIsolationAndRevocation(t *testing.T) {
 	request(t, j.service, "DELETE", "/api/v1/tenants/"+a+"/members/"+human, operator, "", 409)
 	request(t, j.service, "POST", "/api/v1/tenants/"+a+"/members", operator, `{"email":"backup@example.test","role":"admin"}`, 201)
 	request(t, j.service, "DELETE", "/api/v1/tenants/"+a+"/members/"+human, operator, "", 204)
-	if _, err := j.service.authenticateResource(t.Context(), token.AccessToken, j.service.oauth.mcpResource); err == nil {
+	if _, err := j.service.authenticateResource(t.Context(), token.AccessToken, j.service.resources.mcpResource); err == nil {
 		t.Fatal("revoked tenant membership retained MCP authority")
 	}
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "porcupine_call", Arguments: mcpCallInput{OperationID: "get-tenant", Path: map[string]string{"tenant_id": a}}})
@@ -230,7 +230,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := initializeSharedControl(ctx, control, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, control, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	other, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
@@ -265,7 +265,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := &Service{db: local, control: database, shared: &sharedRuntime{}, oauth: oauth, eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
+		s := &Service{db: local, control: database, shared: &sharedRuntime{}, oauth: oauth, resources: newResourceRuntime(oauth.issuer), eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
 		if err := s.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 	app := j.client("porcupine-local-tenant-admin", localOAuthCallback, []string{tenantAdminScope})
 	token := j.browserLoginSelection(t, app, "shared-admin@example.test", "/mcp", "tenant", defaultTenantID, "other", 200)
 	for _, s := range []*Service{a, b} {
-		current, err := s.authenticateResource(ctx, token.AccessToken, s.oauth.mcpResource)
+		current, err := s.authenticateResource(ctx, token.AccessToken, s.resources.mcpResource)
 		if err != nil || current.Admin() || !current.CanAdminTenant(defaultTenantID) || current.CanAdminTenant("other") {
 			t.Fatalf("shared tenant administration lost its boundary: %+v %v", current, err)
 		}
@@ -318,7 +318,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range []*Service{a, b} {
-		if _, err := s.authenticateResource(ctx, token.AccessToken, s.oauth.mcpResource); err == nil {
+		if _, err := s.authenticateResource(ctx, token.AccessToken, s.resources.mcpResource); err == nil {
 			t.Fatal("tenant revocation remained authorized on another worker")
 		}
 	}

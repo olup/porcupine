@@ -368,12 +368,12 @@ func TestIdentityConcurrentConflictsChooseOneCanonicalTarget(t *testing.T) {
 func TestIdentityServerOnlyStillRequiresActualProjectOAuth(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
 	var created map[string]any
 	f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]any{"name": "server identities", "ingestion_mode": "server_only"}, 201, &created)
 	projectID := created["project"].(map[string]any)["id"].(string)
 	writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{projectID})
-	access := f.token(t, writer.ClientID, writer.ClientSecret, f.s.oauth.apiResource)
+	access := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.apiResource)
 	var legacy AccessKeyCreated
 	f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "selector", "permissions": []string{"events:write"}, "projects": []string{projectID}}, 201, &legacy)
 	control := identifyEvent("server-control", "application-user", "", map[string]any{"plan": "server"}, map[string]any{})

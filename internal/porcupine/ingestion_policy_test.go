@@ -17,7 +17,7 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 		t.Run(fmt.Sprintf("allow_legacy_%t", legacy), func(t *testing.T) {
 			f := newOAuthIntegration(t)
 			f.s.oauth.config.AllowLegacyKeys = legacy
-			admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+			admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
 			var created map[string]any
 			f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]string{"name": "Confidential server events", "ingestion_mode": "server_only"}, 201, &created)
 			project := created["project"].(map[string]any)
@@ -38,10 +38,10 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 				t.Fatal("project listing lost ingestion policy")
 			}
 			writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id})
-			writeToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.oauth.apiResource)
-			mcpToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.oauth.mcpResource)
+			writeToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.apiResource)
+			mcpToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.mcpResource)
 			reader := f.createClient(t, admin.AccessToken, []string{"events:read"}, []string{id})
-			readToken := f.token(t, reader.ClientID, reader.ClientSecret, f.s.oauth.apiResource)
+			readToken := f.token(t, reader.ClientID, reader.ClientSecret, f.s.resources.apiResource)
 			var oldKey AccessKeyCreated
 			f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "Legacy project selector", "permissions": []string{"events:write"}, "projects": []string{id}}, 201, &oldKey)
 			event := func(uuid string) map[string]any {
@@ -86,7 +86,7 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 				t.Fatal("cross-project server-only request stored events")
 			}
 			multi := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id, other})
-			multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.oauth.apiResource)
+			multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.resources.apiResource)
 			f.call(t, "POST", "/capture/", multiToken.AccessToken, event("ambiguous-server-project"), 403, nil)
 			selected := event("oauth-selected-server-project")
 			selected["api_key"] = oldKey.Token

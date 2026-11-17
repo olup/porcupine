@@ -138,7 +138,7 @@ func scanTenantMembership(row interface{ Scan(...any) error }) (TenantMembership
 }
 
 func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human auth.Principal) (auth.Principal, error) {
-	rows, err := query.QueryContext(ctx, selectTenantMembers+` JOIN access_keys k ON k.id=m.human_id WHERE m.human_id=$1 AND m.revoked_at IS NULL AND k.revoked_at IS NULL ORDER BY m.tenant_id`, human.ID)
+	rows, err := query.QueryContext(ctx, selectTenantMembers+` JOIN access_keys k ON k.id=m.human_id WHERE m.human_id=$1 AND m.revoked_at IS NULL AND k.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=m.tenant_id) ORDER BY m.tenant_id`, human.ID)
 	if err != nil {
 		return auth.Principal{}, err
 	}
@@ -172,7 +172,7 @@ func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human
 		for _, g := range m.Grants {
 			overrides[g.ProjectID] = g.Permissions
 		}
-		projects, err := query.QueryContext(ctx, `SELECT id FROM projects WHERE tenant_id=$1 ORDER BY id`, m.TenantID)
+		projects, err := query.QueryContext(ctx, `SELECT id FROM projects WHERE tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=projects.id) ORDER BY id`, m.TenantID)
 		if err != nil {
 			return auth.Principal{}, err
 		}

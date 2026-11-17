@@ -33,6 +33,7 @@ func enableOAuthManagementTest(t *testing.T, s *Service) {
 		t.Fatal(err)
 	}
 	s.oauth = &oauthRuntime{}
+	s.resources = newResourceRuntime("https://oauth.example")
 }
 
 func oauthClientInput(name string, permissions, projects []string) *OAuthClientCreateInput {

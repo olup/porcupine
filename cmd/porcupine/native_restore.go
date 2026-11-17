@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"strings"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/porcupine"
@@ -28,6 +30,21 @@ func (s settings) runNativeRestore(ctx context.Context, input io.Reader, output 
 	if decoder.Decode(&trailer) != io.EOF {
 		return errors.New("native restore accepts exactly one private JSON request")
 	}
+	authConfig, err := s.authConfiguration()
+	if err != nil {
+		return err
+	}
+	if authConfig == nil {
+		configured := s.get("PORCUPINE_AUTH_MODE") != ""
+		configFields(reflect.ValueOf(FileConfig{}), "", func(name string, _ reflect.Value, _ bool) {
+			if s.get(name) != "" && (strings.HasPrefix(name, "PORCUPINE_OAUTH_") || strings.HasPrefix(name, "PORCUPINE_OIDC_") || strings.HasPrefix(name, "PORCUPINE_SMTP_") || name == "PORCUPINE_ADMIN_EMAIL" || name == "PORCUPINE_BOOTSTRAP_TOKEN" || name == "PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP") {
+				configured = true
+			}
+		})
+		if configured {
+			authConfig = &porcupine.AuthConfig{Mode: "builtin"}
+		}
+	}
 	backup, err := s.nativeBackupConfiguration()
 	if err != nil {
 		return err
@@ -44,7 +61,7 @@ func (s settings) runNativeRestore(ctx context.Context, input io.Reader, output 
 		target = &lakeapi.DuckLakeConfig{}
 	}
 	target.Directory = request.TargetDuckLakeDirectory
-	result, err := porcupine.RestoreNativeBackup(ctx, porcupine.NativeRestoreConfig{Request: request, Backup: backupConfig, DuckLake: *target})
+	result, err := porcupine.RestoreNativeBackup(ctx, porcupine.NativeRestoreConfig{Request: request, Backup: backupConfig, DuckLake: *target, Auth: authConfig})
 	if err != nil {
 		return err
 	}

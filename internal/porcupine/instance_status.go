@@ -18,23 +18,25 @@ const (
 )
 
 type InstanceChecks struct {
-	SQLite             DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
-	DuckLake           DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second."`
-	SharedControl      DependencyStatus `json:"shared_control,omitempty" enum:"ok,unavailable" doc:"Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation."`
-	WorkerRegistration DependencyStatus `json:"worker_registration,omitempty" enum:"ok,unavailable" doc:"Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation."`
-	QueryExecution     DependencyStatus `json:"query_execution,omitempty" enum:"ok,unavailable" doc:"Shared analytical execution health on this worker, without a native query probe. Unavailable when draining or a project is quarantined; omitted in local mode."`
+	ExternalAuthentication DependencyStatus `json:"external_authentication,omitempty" enum:"ok,unavailable" doc:"Configured external signing-key cache freshness. This check does not contact the issuer. Unavailable does not block public ingestion or native machine keys."`
+	SQLite                 DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
+	DuckLake               DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second."`
+	SharedControl          DependencyStatus `json:"shared_control,omitempty" enum:"ok,unavailable" doc:"Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation."`
+	WorkerRegistration     DependencyStatus `json:"worker_registration,omitempty" enum:"ok,unavailable" doc:"Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation."`
+	QueryExecution         DependencyStatus `json:"query_execution,omitempty" enum:"ok,unavailable" doc:"Shared analytical execution health on this worker, without a native query probe. Unavailable when draining or a project is quarantined; omitted in local mode."`
 }
 
 type InstanceConfiguration struct {
-	Analytics        bool `json:"analytics" doc:"An embedded DuckDB/DuckLake analytical store is configured. Its live check is reported separately."`
-	NativeS3Storage  bool `json:"native_s3_storage" doc:"DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials."`
-	QueryExports     bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
-	WebhookPipelines bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
-	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
-	EmailSignIn      bool `json:"email_sign_in" doc:"Email sign-in is configured. No verification email is sent."`
-	OIDCSignIn       bool `json:"oidc_sign_in" doc:"Upstream OIDC sign-in is configured. No identity-provider request is performed."`
-	SharedControl    bool `json:"shared_control" doc:"Shared PostgreSQL metadata and authentication storage is configured. No connection details are disclosed."`
-	OwnerRouting     bool `json:"owner_routing" doc:"Durable project-owner routing is configured. Its worker registration check is reported separately."`
+	ExternalAuthentication bool `json:"external_authentication" doc:"The integrated identity provider is replaced by an external access-token issuer. Native ingestion and machine keys remain supported."`
+	Analytics              bool `json:"analytics" doc:"An embedded DuckDB/DuckLake analytical store is configured. Its live check is reported separately."`
+	NativeS3Storage        bool `json:"native_s3_storage" doc:"DuckLake analytical object storage is configured. Does not probe bucket access or expose its endpoint, prefix or credentials."`
+	QueryExports           bool `json:"query_exports" doc:"Private query export storage is configured. No remote storage request is performed."`
+	WebhookPipelines       bool `json:"webhook_pipelines" doc:"The encrypted pipeline runtime is configured. Does not inspect or test project destinations."`
+	S3QueryPipelines       bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
+	EmailSignIn            bool `json:"email_sign_in" doc:"Email sign-in is configured. No verification email is sent."`
+	OIDCSignIn             bool `json:"oidc_sign_in" doc:"Upstream OIDC sign-in is configured. No identity-provider request is performed."`
+	SharedControl          bool `json:"shared_control" doc:"Shared PostgreSQL metadata and authentication storage is configured. No connection details are disclosed."`
+	OwnerRouting           bool `json:"owner_routing" doc:"Durable project-owner routing is configured. Its worker registration check is reported separately."`
 }
 
 type InstanceStatus struct {
@@ -62,13 +64,21 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Status: "ok", Version: Version, CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		Checks: InstanceChecks{SQLite: dependencyOK, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
-			Analytics: s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
+			ExternalAuthentication: s.externalAuthEnabled(),
+			Analytics:              s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && s.lake != nil,
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil && s.oauth.config.Email.SendCode != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.browser != nil && s.oauth.browser.HasOIDC(),
 			SharedControl:    s.shared != nil,
 			OwnerRouting:     s.shared != nil,
 		},
+	}
+	if s.externalAuthEnabled() {
+		result.Checks.ExternalAuthentication = dependencyOK
+		if !s.resources.external.SigningKeysAvailable(s.clock()) {
+			result.Checks.ExternalAuthentication = dependencyUnavailable
+			result.Status = "degraded"
+		}
 	}
 	if s.shared != nil {
 		health := s.sharedQueries.status()

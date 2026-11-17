@@ -5,6 +5,7 @@ import "slices"
 const TenantAdminScope = "tenant:admin"
 
 type Principal struct {
+	External           *ExternalGrant
 	ProjectPermissions map[string][]string
 	TenantAdmins       []string
 	TenantIDs          []string

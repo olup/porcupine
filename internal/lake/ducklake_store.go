@@ -604,7 +604,11 @@ func (s *DuckLakeStore) DeleteProject(ctx context.Context, project string) error
 		return err
 	}
 	defer tx.Rollback()
-	for _, statement := range []string{"DELETE FROM cleanup_progress WHERE project_id=?", "DELETE FROM catalogs WHERE project_id=?", "DELETE FROM deleting_projects WHERE project_id=?"} {
+	for _, statement := range []string{
+		"DELETE FROM catalogs WHERE project_id=?",
+		`INSERT INTO cleanup_progress(project_id,next_attempt,last_attempt,state) VALUES(?,0,0,'deleted')
+ON CONFLICT(project_id) DO UPDATE SET state='deleted',failed=0,next_attempt=0,last_attempt=0,last_success=0`,
+	} {
 		if _, err := tx.ExecContext(ctx, statement, project); err != nil {
 			return err
 		}

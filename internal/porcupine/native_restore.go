@@ -28,13 +28,15 @@ type NativeRestoreRequest struct {
 	TargetControlDBPath          string `json:"target_control_db_path,omitempty"`
 	TargetDuckLakeDirectory      string `json:"target_ducklake_directory"`
 	ResetCredentialsAcknowledged bool   `json:"reset_credentials_acknowledged"`
-	BootstrapToken               string `json:"bootstrap_token"`
+	AuthMode                     string `json:"auth_mode,omitempty"`
+	BootstrapToken               string `json:"bootstrap_token,omitempty"`
 	ChownToNonroot               bool   `json:"chown_to_nonroot,omitempty"`
 }
 type NativeRestoreConfig struct {
 	Request  NativeRestoreRequest
 	Backup   lakeapi.NativeBackupConfig
 	DuckLake lakeapi.DuckLakeConfig
+	Auth     *AuthConfig
 }
 type NativeRestoreIngestionKey struct {
 	ProjectID string `json:"project_id"`
@@ -44,13 +46,30 @@ type NativeRestoreIngestionKey struct {
 type NativeRestoreResult struct {
 	BackupID        string                      `json:"backup_id"`
 	SourceID        string                      `json:"source_id"`
-	RecoveryAdminID string                      `json:"recovery_admin_id"`
+	RecoveryAdminID string                      `json:"recovery_admin_id,omitempty"`
 	IngestionKeys   []NativeRestoreIngestionKey `json:"ingestion_keys"`
 	Warning         string                      `json:"warning"`
 }
 
 func (r NativeRestoreRequest) String() string   { return "NativeRestoreRequest{credentials:redacted}" }
 func (r NativeRestoreRequest) GoString() string { return r.String() }
+
+func nativeRestoreAuthMode(request NativeRestoreRequest, destination *AuthConfig) (string, error) {
+	mode := request.AuthMode
+	if destination != nil {
+		if mode != "" && mode != destination.Mode {
+			return "", errors.New("restore auth_mode differs from destination authentication configuration")
+		}
+		mode = destination.Mode
+	}
+	if mode == "" && destination == nil {
+		mode = "builtin"
+	}
+	if mode != "builtin" && mode != "external" {
+		return "", errors.New("restore auth_mode must be builtin or external")
+	}
+	return mode, nil
+}
 
 func normalizeNativeRestorePaths(r *NativeRestoreRequest) error {
 	if r.TargetControlDBPath == "" {
@@ -98,7 +117,14 @@ func validateNativeRestoreRequest(r NativeRestoreRequest) error {
 	if !r.ResetCredentialsAcknowledged {
 		return errors.New("restore requires explicit acknowledgment that all credentials and outbound work will be reset")
 	}
-	if len(r.BootstrapToken) < 32 || strings.TrimSpace(r.BootstrapToken) != r.BootstrapToken {
+	mode, err := nativeRestoreAuthMode(r, nil)
+	if err != nil {
+		return err
+	}
+	if mode == "external" && r.BootstrapToken != "" {
+		return errors.New("external restore recovers through an external JWT operator and cannot accept a bootstrap_token")
+	}
+	if mode == "builtin" && (len(r.BootstrapToken) < 32 || strings.TrimSpace(r.BootstrapToken) != r.BootstrapToken) {
 		return errors.New("a fresh private recovery bootstrap token of at least 32 characters is required")
 	}
 	if !filepath.IsAbs(r.TargetDBPath) || !filepath.IsAbs(r.TargetControlDBPath) || !filepath.IsAbs(r.TargetDuckLakeDirectory) {
@@ -289,27 +315,60 @@ func nativeRestoreTableSchemas(ctx context.Context, db *sql.DB) (map[string]stri
 	return result, nil
 }
 
-func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB, bootstrap string) (NativeRestoreResult, error) {
+func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB, bootstrap, mode string) (NativeRestoreResult, error) {
 	result := NativeRestoreResult{IngestionKeys: []NativeRestoreIngestionKey{}, Warning: "Physical DuckLake snapshot history is rebuilt. Data deleted after the checkpoint cannot be inferred or reconciled by this restore."}
+	mode, err := nativeRestoreAuthMode(NativeRestoreRequest{AuthMode: mode}, nil)
+	if err != nil {
+		return result, err
+	}
+	if mode == "external" && bootstrap != "" {
+		return result, errors.New("external restore cannot accept a bootstrap_token")
+	}
+	if err := checkControlAuthMode(ctx, control, mode == "external"); err != nil {
+		return result, err
+	}
+	for _, store := range []struct {
+		db     *sql.DB
+		schema schemaStore
+	}{{journal, journalSchema}, {control, localControlSchema}} {
+		if err := migrateSQLite(ctx, store.db, store.schema); err != nil {
+			return result, err
+		}
+	}
 	tx, err := control.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
 
-	for _, credential := range []struct{ table, column string }{
-		{"access_keys", "token_hash"}, {"oauth_clients", "secret_hash"}, {"oauth_tokens", "token_hash"},
-		{"oauth_refresh_tokens", "token_hash"}, {"oauth_authorization_codes", "code_hash"}, {"oauth_authorization_requests", "request_hash"},
-	} {
+	if mode == "builtin" {
+		for _, credential := range []struct{ table, column string }{
+			{"access_keys", "token_hash"}, {"oauth_clients", "secret_hash"}, {"oauth_tokens", "token_hash"},
+			{"oauth_refresh_tokens", "token_hash"}, {"oauth_authorization_codes", "code_hash"}, {"oauth_authorization_requests", "request_hash"},
+		} {
 
-		var duplicate bool
-		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+credential.table+" WHERE "+credential.column+"=?)", hash(bootstrap)).Scan(&duplicate); err != nil {
-			return result, err
-		}
-		if duplicate {
-			return result, errors.New("recovery bootstrap token must differ from every archived credential")
+			var duplicate bool
+			if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+credential.table+" WHERE "+credential.column+"=?)", hash(bootstrap)).Scan(&duplicate); err != nil {
+				return result, err
+			}
+			if duplicate {
+				return result, errors.New("recovery bootstrap token must differ from every archived credential")
+			}
 		}
 	}
+	if err := preserveNativeRestoreArtifactHolds(ctx, journal, tx); err != nil {
+		return result, err
+	}
+	// Commit the safety inventory before any reset can discard the journal's
+	// last object reference. A crash between these transactions is retry-safe.
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	tx, err = control.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx, `SELECT k.name,k.projects,k.source_id FROM access_keys k WHERE k.revoked_at IS NULL AND json_array_length(k.permissions)=1 AND json_extract(k.permissions,'$[0]')='events:write' AND json_array_length(k.projects)=1 AND NOT EXISTS(SELECT 1 FROM oauth_clients c WHERE c.client_id=k.id) AND NOT EXISTS(SELECT 1 FROM service_api_keys s WHERE s.principal_id=k.id)`)
 	if err != nil {
@@ -337,19 +396,27 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?),token_hash='restored-revoked-'||id`, now()); err != nil {
 		return result, err
 	}
-	for _, table := range []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "tenant_credentials", "oauth_clients", "oidc_identities", "email_humans"} {
+	tables := []string{"service_api_keys", "tenant_credentials", "oauth_clients"}
+	if mode == "builtin" {
+		tables = []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "tenant_credentials", "oauth_clients", "oidc_identities", "email_humans"}
+	}
+	for _, table := range tables {
 
 		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return result, fmt.Errorf("reset restored %s: %w", table, err)
 		}
 	}
 
-	result.RecoveryAdminID = eventapi.NewID()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'recovery bootstrap admin',?,'["instance:admin"]','["*"]',?)`, result.RecoveryAdminID, hash(bootstrap), now()); err != nil {
-		return result, err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('oauth_bootstrap_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, result.RecoveryAdminID); err != nil {
-		return result, err
+	if mode == "builtin" {
+		result.RecoveryAdminID = eventapi.NewID()
+		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'recovery bootstrap admin',?,'["instance:admin"]','["*"]',?)`, result.RecoveryAdminID, hash(bootstrap), now()); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('oauth_bootstrap_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, result.RecoveryAdminID); err != nil {
+			return result, err
+		}
+	} else {
+		result.Warning += " Recover administration with an external JWT operator; no local recovery administrator was created."
 	}
 	for _, key := range keys {
 		var mixed bool
@@ -382,7 +449,7 @@ func resetNativeRestoreJournal(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "export_files", "project_deletion_files", "import_upload_samples", "import_upload_files"} {
+	for _, table := range []string{"webhook_members", "webhook_deliveries", "webhook_cooldowns", "pipeline_s3_files", "pipeline_s3_runs", "export_files", "export_external_authority", "project_deletion_files", "import_upload_samples", "import_upload_files"} {
 		if table == "project_deletion_files" {
 			var exists bool
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {

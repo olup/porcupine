@@ -111,6 +111,13 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 			if deletes.Load() != want {
 				t.Fatalf("object delete/abort calls %d want %d", deletes.Load(), want)
 			}
+			wantInventory := 0
+			if scenario == "absent_commit" {
+				wantInventory = 1
+			}
+			if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE project_id=$1 AND kind='pipeline_unpublished'`, a).Scan(&count); err != nil || count != wantInventory {
+				t.Fatal("unpublished ownership inventory included committed customer files or lost pending files", count, wantInventory, err)
+			}
 			if scenario == "matching_commit" {
 				if err = s.deleteS3Pipeline(context.Background(), a, id); err == nil {
 					t.Fatal("repeated delete should report missing pipeline")

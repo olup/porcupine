@@ -6,7 +6,7 @@
 
 Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Database identity, provider discovery, and remote storage connectivity are checked at actual startup.
 
-A fresh instance needs the generated bootstrap token. An already initialized instance may omit it; a configured token must contain at least 16 characters. Changing the configured token does not replace an existing stored credential. Preserve generated secrets when applying the [recommended laptop and VM profiles](../hosting.md#configure-the-development-build).
+A fresh builtin instance needs the generated bootstrap token. An already initialized builtin instance may omit it; a configured token must contain at least 16 characters. Changing the configured token does not replace an existing stored credential. [External authentication](external-auth.md) instead uses a trusted operator JWT and rejects bootstrap, SMTP, and builtin provider settings. Preserve generated secrets when applying the [recommended laptop and VM profiles](../hosting.md#configure-the-development-build).
 
 ## Configuration sections
 
@@ -20,6 +20,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `oauth` | `issuer`, `token_lifetime_seconds`, `allow_legacy_keys`, `restore_identity_bootstrap` |
+| `auth` | `mode` defaults to `builtin`; `external` selects a resource server with `public_url` and the explicit issuer, JWKS, audiences, algorithms, token types, clock tolerance, and token lifetime in `auth.external`. See the [external contract](external-auth.md). |
 | `email` | `admin_email`, `host`, `port`, `tls`, `from`, `username`, `password_file` |
 | `oidc` | `issuer`, `client_id`, and either `client_secret` or `client_secret_file` |
 | `ducklake` | `memory_mb`, `threads`, `max_open_projects`, maintenance/cleanup settings, `postgres_url` or `postgres_url_file`, and analytical `s3` |

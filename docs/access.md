@@ -2,6 +2,8 @@
 
 Humans sign in with their email identity and authorize each CLI or MCP connection. A backend or shared team agent uses a service credential. The server checks the same permissions through HTTP, CLI, and MCP.
 
+**Unreleased:** an instance can replace builtin sign-in with an [external access-token issuer](reference/external-auth.md). That provider manages people and grants. Porcupine still enforces tenant/project boundaries and manages native machine keys; local email invitations and memberships are disabled in that mode. The steps below describe builtin sign-in.
+
 ## Connect a person
 
 For v0.14.0, [configure team sign-in](reference/connect-your-team.md) and [invite their email address](reference/email-accounts.md). The invitation grants access and sends a notice. It does not create a sign-in code. The person requests a verification code when connecting a tool, then selects the projects and permissions to authorize.

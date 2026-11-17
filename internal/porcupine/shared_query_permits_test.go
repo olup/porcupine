@@ -38,7 +38,7 @@ func sharedQueryTestFixture(t *testing.T) (string, *Service, *Service) {
 	initialized := make(chan error, 2)
 	for _, s := range []*Service{first, second} {
 		go func(s *Service) {
-			initialized <- initializeSharedControl(context.Background(), s.control, adminToken, s.interactiveConfig)
+			initialized <- initializeSharedControl(context.Background(), s.control, adminToken, s.interactiveConfig, false)
 		}(s)
 	}
 	for range 2 {

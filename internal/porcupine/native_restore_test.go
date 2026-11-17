@@ -66,7 +66,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatal(err)
 	}
 	for _, old := range []string{adminToken, ingest, oldReader} {
-		if _, err := resetNativeRestoreCredentials(ctx, s.db, s.control, old); err == nil {
+		if _, err := resetNativeRestoreCredentials(ctx, s.db, s.control, old, "builtin"); err == nil {
 			t.Fatal("archived access or ingestion credential reused as recovery root")
 		}
 	}
@@ -74,7 +74,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatal(err)
 	}
 	fresh := strings.Repeat("fresh-recovery", 3)
-	result, err := resetNativeRestoreCredentials(ctx, s.db, s.control, fresh)
+	result, err := resetNativeRestoreCredentials(ctx, s.db, s.control, fresh, "builtin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,12 +158,12 @@ func TestNativeRestoreOAuthCredentialsAndRevokedHumanOTPStayInvalid(t *testing.T
 		t.Fatal(err)
 	}
 	for _, old := range []string{clientSecret, oldAdmin, oldAccess.AccessToken, oldAccess.RefreshToken, oldCode} {
-		if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, old); err == nil {
+		if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, old, "builtin"); err == nil {
 			t.Fatal("archived OAuth credential reused as recovery root")
 		}
 	}
 	fresh := strings.Repeat("fresh-offline-admin", 3)
-	if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, fresh); err != nil {
+	if _, err := resetNativeRestoreCredentials(context.Background(), s.db, s.control, fresh, "builtin"); err != nil {
 		t.Fatal(err)
 	}
 	request(t, s, "GET", "/api/v1/projects", oldAdmin, "", 401)
@@ -220,7 +220,7 @@ func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T)
 	if err = verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err != nil {
 		t.Fatal("same-release schema was rejected", err)
 	}
-	if _, err = resetNativeRestoreCredentials(context.Background(), s.db, s.control, strings.Repeat("fresh-offline-admin", 3)); err != nil {
+	if _, err = resetNativeRestoreCredentials(context.Background(), s.db, s.control, strings.Repeat("fresh-offline-admin", 3), "builtin"); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"webhook_deliveries", "webhook_members", "pipeline_s3_runs", "pipeline_s3_files", "export_files", "project_deletion_files"} {

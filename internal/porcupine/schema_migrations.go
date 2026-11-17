@@ -38,20 +38,47 @@ var journalSchema = schemaStore{name: "journal", steps: []string{
 	`ALTER TABLE event_receipts ADD COLUMN recorded_at_ms INTEGER NOT NULL DEFAULT 0;
 UPDATE event_receipts SET recorded_at_ms=CAST(strftime('%s','now') AS INTEGER)*1000;
 CREATE INDEX event_receipts_recorded ON event_receipts(recorded_at_ms)`,
+	// 4: bind cleanup to the namespace used before the first external upload.
+	`ALTER TABLE export_files ADD COLUMN storage_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE project_deletion_files ADD COLUMN storage_id TEXT NOT NULL DEFAULT '';`,
+	// 5: finite authority for exports submitted with an external access token.
+	`CREATE TABLE export_external_authority (
+job_id TEXT PRIMARY KEY REFERENCES export_jobs(id) ON DELETE CASCADE,
+tenant_id TEXT NOT NULL,issuer TEXT NOT NULL,expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0)) WITHOUT ROWID;
+CREATE INDEX export_external_authority_expiry ON export_external_authority(expires_at_ms);`,
+	// 6: external audit anchors have tenant ownership, never authorization grants.
+	`CREATE TABLE journal_actor_tenants (
+actor_id TEXT NOT NULL REFERENCES access_keys(id) ON DELETE CASCADE,
+tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
 
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+const tenantDeletionSchema = `CREATE TABLE tenant_deletions (
+tenant_id TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('deleting','logically_deleted','purged')),
+started_at TEXT NOT NULL,updated_at TEXT NOT NULL,error_code TEXT NOT NULL DEFAULT '');
+CREATE TABLE tenant_deletion_usage (
+tenant_id TEXT NOT NULL,project_id TEXT NOT NULL DEFAULT '',period_start TEXT NOT NULL,
+accepted_events BIGINT NOT NULL CHECK(accepted_events>=0),PRIMARY KEY(tenant_id,project_id,period_start));`
+
+const managedArtifactOwnershipSchema = `CREATE TABLE managed_artifact_ownership (
+tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('export','pipeline_unpublished')),
+storage_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,
+PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));`
+
+const restoredArtifactHoldSchema = `CREATE TABLE restored_artifact_holds (
+tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('export','pipeline')),
+storage_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,
+PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));`
+
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema,
-	// 2: globally ordered native write epochs on the dedicated control session.
-	lakeapi.ProjectCoordinatorSchemaV1,
-}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, lakeapi.ProjectCoordinatorSchemaV1}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {

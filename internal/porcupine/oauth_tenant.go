@@ -25,10 +25,10 @@ func (s *Service) tenantAdminOptions(ctx context.Context, query oauthQueryer, hu
 	}
 	statement := `SELECT t.id,t.name FROM tenants t JOIN tenant_memberships m ON m.tenant_id=t.id
 		JOIN access_keys k ON k.id=m.human_id WHERE m.human_id=$1 AND m.role='admin'
-		AND m.revoked_at IS NULL AND k.revoked_at IS NULL ORDER BY t.name,t.id`
+		AND m.revoked_at IS NULL AND k.revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=t.id) ORDER BY t.name,t.id`
 	args := []any{human.ID}
 	if human.Admin() {
-		statement = `SELECT id,name FROM tenants ORDER BY name,id`
+		statement = `SELECT id,name FROM tenants WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=tenants.id) ORDER BY name,id`
 		args = nil
 	}
 	rows, err := query.QueryContext(ctx, statement, args...)
@@ -48,6 +48,12 @@ func (s *Service) tenantAdminOptions(ctx context.Context, query oauthQueryer, hu
 }
 
 func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, human auth.Principal, tenantID string) (auth.Principal, error) {
+	if err := requireTenantActive(ctx, query, tenantID); err != nil {
+		if authenticationUnavailable(err) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
+		return auth.Principal{}, errInteractiveGrant
+	}
 	if !human.EmailHuman || tenantID == "" || tenantID == "*" {
 		return auth.Principal{}, errInteractiveGrant
 	}
@@ -59,7 +65,10 @@ func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, huma
 		statement = `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1)`
 		args = []any{tenantID}
 	}
-	if err := query.QueryRowContext(ctx, statement, args...).Scan(&allowed); err != nil || !allowed {
+	if err := query.QueryRowContext(ctx, statement, args...).Scan(&allowed); err != nil {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if !allowed {
 		return auth.Principal{}, errInteractiveGrant
 	}
 	a := auth.Principal{
@@ -71,16 +80,19 @@ func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, huma
 	rows, err := query.QueryContext(ctx, `SELECT p.id FROM projects p WHERE p.tenant_id=$1
 		AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) ORDER BY p.id`, tenantID)
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var project string
 		if err := rows.Scan(&project); err != nil {
-			return auth.Principal{}, err
+			return auth.Principal{}, auth.ErrUnavailable
 		}
 		a.Projects = append(a.Projects, project)
 		a.ProjectPermissions[project] = slices.Clone(auth.ProjectPermissions())
 	}
-	return a, rows.Err()
+	if rows.Err() != nil {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	return a, nil
 }

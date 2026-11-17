@@ -4,12 +4,15 @@ package exportstore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +35,7 @@ var (
 	ErrClosed      = errors.New("multipart upload is closed")
 	ErrFailed      = errors.New("multipart upload has failed; abort required")
 	ErrPartLimit   = errors.New("multipart upload exceeds 10000 parts")
+	ErrExpired     = errors.New("export download authorization expired")
 	segmentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	regionPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	bucketPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
@@ -47,6 +51,7 @@ type Store struct {
 	client         *s3.Client
 	presigner      *s3.PresignClient
 	bucket, prefix string
+	ownershipID    string
 	transport      *http.Transport
 }
 
@@ -91,8 +96,17 @@ func New(ctx context.Context, c Config) (*Store, error) {
 		return nil, storageError(ctx)
 	}
 
-	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", transport: transport}, nil
+	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", ownershipID: NamespaceOwnershipID(c), transport: transport}, nil
 }
+
+func NamespaceOwnershipID(c Config) string {
+	identity := sha256.Sum256([]byte(strings.Join([]string{c.Endpoint, c.Region, c.Bucket, strings.TrimSuffix(c.Prefix, "/")}, "\x00")))
+	return hex.EncodeToString(identity[:])
+}
+
+// OwnershipID identifies the object namespace without retaining its identifying
+// labels or access credentials in a deletion inventory.
+func (s *Store) OwnershipID() string { return s.ownershipID }
 
 // Close releases idle connections after callers have stopped all uploads.
 func (s *Store) Close() { s.transport.CloseIdleConnections() }
@@ -283,4 +297,31 @@ func (s *Store) Presign(ctx context.Context, key string, ttl time.Duration) (str
 		return "", storageError(ctx)
 	}
 	return out.URL, nil
+}
+
+// PresignUntil checks the actual signed expiry, including time spent resolving
+// credentials inside the SDK. No returned URL may outlive the absolute bound.
+func (s *Store) PresignUntil(ctx context.Context, key string, deadline time.Time, maxTTL time.Duration) (string, time.Time, error) {
+	ttl := min(maxTTL, time.Until(deadline))
+	if ttl < time.Second {
+		return "", time.Time{}, ErrExpired
+	}
+	signed, err := s.Presign(ctx, key, ttl)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	u, err := url.Parse(signed)
+	if err != nil {
+		return "", time.Time{}, ErrStorage
+	}
+	date, err := time.Parse("20060102T150405Z", u.Query().Get("X-Amz-Date"))
+	seconds, durationErr := strconv.ParseInt(u.Query().Get("X-Amz-Expires"), 10, 64)
+	if err != nil || durationErr != nil || seconds < 1 || seconds > int64(7*24*time.Hour/time.Second) {
+		return "", time.Time{}, ErrStorage
+	}
+	expires := date.Add(time.Duration(seconds) * time.Second)
+	if expires.After(deadline) || !time.Now().Before(deadline) {
+		return "", time.Time{}, ErrExpired
+	}
+	return signed, expires, nil
 }

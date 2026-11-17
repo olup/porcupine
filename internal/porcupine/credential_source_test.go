@@ -69,7 +69,7 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 		t.Fatal("OAuth client lost source binding", err)
 	}
 	issued := oauthProtocolRequest(t, s, client["client_id"].(string), client["client_secret"].(string), oauthGrantForm(), 200)
-	tokenActor, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource)
+	tokenActor, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.resources.apiResource)
 	if err != nil || tokenActor.SourceID != sourceID || len(tokenActor.Projects) != 1 || tokenActor.Projects[0] != projectID {
 		t.Fatal("OAuth access token lost bound source/project", tokenActor, err)
 	}
@@ -87,7 +87,7 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 		t.Fatal("default source changed", err)
 	}
 	request(t, s, "DELETE", "/api/v1/oauth-clients/"+client["client_id"].(string), adminToken, "", 204)
-	if _, err = s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource); err == nil {
+	if _, err = s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.resources.apiResource); err == nil {
 		t.Fatal("revoked source credential still authenticates")
 	}
 }

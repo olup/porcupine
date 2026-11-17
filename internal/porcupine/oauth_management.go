@@ -18,6 +18,9 @@ import (
 // initializeOAuthClients preserves principal IDs shared by grants and async jobs.
 // The bootstrap alias is pinned once and never rotates to a newer administrator.
 func (s *Service) initializeOAuthClients(ctx context.Context) error {
+	if s.externalAuthEnabled() {
+		return nil
+	}
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -88,7 +91,7 @@ type OAuthClientCreateInput struct {
 type OAuthClientCreated struct {
 	TenantID                string   `json:"tenant_id,omitempty"`
 	ClientID                string   `json:"client_id"`
-	ClientSecret            string   `json:"client_secret,omitempty" doc:"One-time OAuth token-exchange secret. It is never a bearer token or ingestion key."`
+	ClientSecret            string   `json:"client_secret,omitempty" doc:"One-time OAuth token-exchange secret in builtin mode only. Absent in external mode, which uses native API/MCP keys without a local token endpoint. Never a bearer or ingestion key."`
 	Name                    string   `json:"name"`
 	SourceID                string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions             []string `json:"permissions"`
@@ -118,13 +121,20 @@ type OAuthClientDeleteInput struct {
 func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	s.registerInteractiveOAuthManagement(api, op)
 	base := "/api/v1/oauth-clients"
-	huma.Register(api, op("create-oauth-client", "POST", base, "Create a scoped machine OAuth client and return its secret once", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
+	createSummary := "Create a scoped machine OAuth client and return its secret once"
+	if s.externalAuthEnabled() {
+		createSummary = "Create a native machine account; issue static API or MCP keys separately, without local OAuth token exchange"
+	}
+	huma.Register(api, op("create-oauth-client", "POST", base, createSummary, auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
 	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
 	huma.Register(api, op("revoke-oauth-client", "DELETE", base+"/{id}", "Revoke an OAuth principal and its issued tokens; the last administrator is protected", auth.OperationAccess{Permission: "instance:admin"}, 204), s.managementRevokeOAuthClient)
 }
 
 func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthClientCreateInput) (*OAuthClientCreateOutput, error) {
-	if s.oauth == nil {
+	if s.externalAuthEnabled() && (len(input.Body.GrantTypes) > 0 && !slices.Equal(input.Body.GrantTypes, []string{"client_credentials"}) || len(input.Body.RedirectURIs) > 0) {
+		return nil, apiError(400, "external mode supports native machine accounts only; register interactive applications at the external issuer")
+	}
+	if s.resources == nil {
 		return nil, apiError(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
@@ -146,7 +156,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err != nil {
 		return nil, apiError(400, "invalid OAuth client registration")
 	}
-	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
+	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth == nil || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
 		return nil, apiError(400, "tenant administration requires a dedicated interactive email client")
 	}
 	if slices.Contains(grants, "authorization_code") {
@@ -179,6 +189,15 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return nil, apiError(503, "credential storage unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
+		return nil, err
+	}
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -189,6 +208,9 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, apiError(500, "storage error")
+	}
+	if s.externalAuthEnabled() {
+		secret = ""
 	}
 	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{ClientID: id, ClientSecret: secret, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, CreatedAt: created, GrantTypes: grants, RedirectURIs: redirects, TokenEndpointAuthMethod: authMethod}}, nil
 }
@@ -223,6 +245,13 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id LEFT JOIN tenant_cre
 	}
 	if rows.Err() != nil {
 		return nil, apiError(500, "storage error")
+	}
+	rows.Close()
+	for i := range items {
+		items[i].Projects, err = activeProjects(ctx, s.control, items[i].Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
 	}
 	return &OAuthClientListOutput{Body: OAuthClientList{Enabled: s.oauth != nil, OAuthClients: items}}, nil
 }

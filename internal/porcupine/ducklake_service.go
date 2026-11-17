@@ -74,15 +74,16 @@ func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []
 	if s.lake == nil {
 		return errors.New("analytical delivery is disabled")
 	}
-	if s.shared != nil {
-		checked := map[string]bool{}
-		for _, projection := range projections {
-			if !checked[projection.ProjectID] {
-				if err := s.requireSharedProjectOwner(ctx, projection.ProjectID); err != nil {
-					return err
-				}
-				checked[projection.ProjectID] = true
+	checked := map[string]bool{}
+	for _, projection := range projections {
+		if !checked[projection.ProjectID] {
+			if err := s.requireProjectActive(ctx, projection.ProjectID); err != nil {
+				return err
 			}
+			if err := s.requireSharedProjectOwner(ctx, projection.ProjectID); err != nil {
+				return err
+			}
+			checked[projection.ProjectID] = true
 		}
 	}
 	return s.lake.Apply(ctx, projections)

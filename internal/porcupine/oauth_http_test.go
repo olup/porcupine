@@ -32,7 +32,7 @@ func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
 func TestOAuthOpenAPIAndPublicKeyCreation(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	project, _ := f.project(t, admin)
 	f.call(t, "POST", "/api/v1/access-keys", admin, map[string]any{"name": "wrong service key", "permissions": []string{"events:read"}, "projects": []string{project}}, 400, nil)
 	f.call(t, "POST", "/api/v1/access-keys", admin, map[string]any{"name": "browser ingestion", "permissions": []string{"events:write"}, "projects": []string{project}}, 201, nil)

@@ -29,7 +29,7 @@ type ServiceKeySpec struct {
 }
 
 func (s *Service) registerServiceKeys(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
-	if s.oauth == nil {
+	if s.resources == nil {
 		return
 	}
 	huma.Register(api, op("create-service-api-key", "POST", "/api/v1/oauth-clients/{id}/api-keys",
@@ -54,6 +54,15 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 		return nil, apiError(503, "service key storage unavailable")
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return nil, apiError(503, "service key storage unavailable")
+	}
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
+		return nil, err
+	}
 	parent, err := loadOAuthClient(ctx, tx, input.ID)
 	if err != nil || parent.ID != input.ID {
 		return nil, apiError(404, "active service account not found")
@@ -104,14 +113,14 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 }
 
 func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource string) (auth.Principal, error) {
-	if s.oauth == nil || len(raw) != len(serviceKeyPrefix)+43 || !strings.HasPrefix(raw, serviceKeyPrefix) {
+	if s.resources == nil || len(raw) != len(serviceKeyPrefix)+43 || !strings.HasPrefix(raw, serviceKeyPrefix) {
 		return auth.Principal{}, errors.New("invalid service key")
 	}
 	var audience string
 	switch resource {
-	case s.oauth.apiResource:
+	case s.resources.apiResource:
 		audience = "api"
-	case s.oauth.mcpResource:
+	case s.resources.mcpResource:
 		audience = "mcp"
 	default:
 		return auth.Principal{}, errors.New("invalid service key resource")
@@ -122,10 +131,13 @@ func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource stri
 		JOIN access_keys k ON k.id=b.principal_id JOIN access_keys parent ON parent.id=b.client_id
 		WHERE k.token_hash=$1 AND b.audience=$2 AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
-		return auth.Principal{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, err
+		}
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
-		return auth.Principal{}, errors.New("invalid service key grants")
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	return constrainServiceKeyActor(ctx, s.control, a)
 }
@@ -137,14 +149,17 @@ func constrainServiceKeyActor(ctx context.Context, query oauthQueryer, a auth.Pr
 		return a, nil
 	}
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	a, err = constrainTenantCredentialActor(ctx, query, a)
 	if err != nil {
 		return auth.Principal{}, err
 	}
 	parent, err := loadOAuthClient(ctx, query, parentID)
-	if err != nil || !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.TenantIDs, parent.TenantIDs) {
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.TenantIDs, parent.TenantIDs) {
 		return auth.Principal{}, errors.New("service key parent authority unavailable")
 	}
 	for _, project := range a.Projects {

@@ -81,7 +81,7 @@ func openLocalSQLite(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, queries InteractiveQueryConfig) error {
+func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, queries InteractiveQueryConfig, external bool) error {
 	if err := migrateSQLite(ctx, db, localControlSchema); err != nil {
 		return err
 	}
@@ -93,20 +93,30 @@ func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, q
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
 	if errors.Is(err, sql.ErrNoRows) {
-		if len(bootstrap) < 16 {
-			return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization")
-		}
-		id := eventapi.NewID()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrap), now()); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1),('local_control_source_id',$2)`, id, eventapi.NewID()); err != nil {
-			return err
+		if external {
+			_, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('auth_mode','external'),('local_control_source_id',$1)`, eventapi.NewID())
+			if err != nil {
+				return err
+			}
+		} else {
+			if len(bootstrap) < 16 {
+				return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization")
+			}
+			id := eventapi.NewID()
+			if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrap), now()); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1),('local_control_source_id',$2)`, id, eventapi.NewID()); err != nil {
+				return err
+			}
 		}
 	} else if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,'Default',$2,1,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
+	if err := checkControlAuthMode(ctx, tx, external); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT $1,'Default',$2,1,$3,$4,$5,$6 WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=$1) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -184,6 +194,17 @@ func (s *Service) publishLocalUsage(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	for _, report := range reports {
+		deleted, err := tenantDeletionExists(ctx, tx, report.tenant)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_deletion_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
+ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_deletion_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_deletion_usage.accepted_events END`, report.tenant, report.period, report.count); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
 ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_usage.accepted_events END`, report.tenant, report.period, report.count); err != nil {
 			return err

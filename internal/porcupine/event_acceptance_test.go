@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
@@ -91,6 +93,31 @@ func TestLiveAcceptanceHTTPDoesNotAcknowledgeFailedParticipant(t *testing.T) {
 	response := request(t, s, "POST", "/capture/", "", captureBody(ingest, "not-acknowledged"), 503)
 	if response["accepted"] != nil || response["receipts"] != nil || eventCount(t, s) != 0 {
 		t.Fatal("transport acknowledged an uncommitted event", projectID, response)
+	}
+}
+
+func TestLiveAcceptanceHTTPPreservesAuthorityFailureStatus(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{403, 404, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
+			s := service(t, 10)
+			_, ingest := project(t, s)
+			// Scope validation succeeds first. Model a fence change or control
+			// outage at the existing admission boundary, before journal writes.
+			s.eventRules.prepareAcceptance = func(context.Context, string) error {
+				return apiError(status, "project authority refused")
+			}
+			before := sharedAdmissionSnapshot(t, s)
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/capture/", strings.NewReader(captureBody(ingest, "refused"))))
+			if w.Code != status || (w.Header().Get("Retry-After") == "1") != (status == 503) {
+				t.Fatalf("status=%d retry=%q body=%s", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+			}
+			if sharedAdmissionSnapshot(t, s) != before {
+				t.Fatal("refused HTTP admission changed durable state")
+			}
+		})
 	}
 }
 

@@ -12,9 +12,11 @@ Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-prof
 
 ## Authentication and scope
 
-Send a Bearer credential issued for `ISSUER/api/v1`. A person can authorize the [CLI](../../cli/README.md) with email sign-in. A machine can use an [API-audience service key](service-keys.md) or exchange its client credentials for a short-lived [OAuth access token](oauth.md).
+Send a Bearer credential for the instance's `/api/v1` resource. In builtin mode, a person authorizes the [CLI](../../cli/README.md) with email sign-in. A machine uses an [API-audience service key](service-keys.md) or exchanges its client credentials for a short-lived [OAuth access token](oauth.md).
 
-On first startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
+**Unreleased external mode:** [externally issued access JWTs](external-auth.md) use the configured API audience. Native service keys remain available. Local token exchange, human invitations, memberships, and consent management are absent. Machine-account operations remain available, but return no local OAuth secret in this mode.
+
+On first builtin startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
 principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
 original secret. Subsequent startups preserve state; changing the environment
 does not reset credentials. The alias stays pinned to that first administrator.
@@ -251,7 +253,7 @@ with the same envelope.
 | `422` | Request schema validation failed, including wrong types, required fields, or invalid limits |
 | `429` | Analytics concurrency or database resource limit exceeded |
 | `500` | Storage or internal error |
-| `503` | Analytics storage, reader provisioning, or delivery-status storage unavailable |
+| `503` | Authentication dependency, analytics storage, reader provisioning, or delivery-status storage unavailable; authentication failures include `Retry-After` and do not mark the credential invalid |
 
 Management requests with a body use uncompressed JSON, except for binary PostHog import chunks. Browser CORS configuration
 applies to ingestion endpoints only. `events:edit` and `events:delete` authorize

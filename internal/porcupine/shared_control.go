@@ -70,7 +70,7 @@ func openSharedControl(ctx context.Context, config SharedConfig) (*sql.DB, error
 
 // Serialize schema installation and initial credentials across all processes.
 // The lock is transactional, so a failed bootstrap leaves no partial authority.
-func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig) error {
+func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, external bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -85,20 +85,29 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
 	if errors.Is(err, sql.ErrNoRows) {
-		if len(bootstrapToken) < 16 {
-			return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization")
-		}
-		id := eventapi.NewID()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrapToken), now()); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1)`, id); err != nil {
-			return err
+		if external {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('auth_mode','external')`); err != nil {
+				return err
+			}
+		} else {
+			if len(bootstrapToken) < 16 {
+				return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization")
+			}
+			id := eventapi.NewID()
+			if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrapToken), now()); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1)`, id); err != nil {
+				return err
+			}
 		}
 	} else if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,'Default',$2,1,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
+	if err := checkControlAuthMode(ctx, tx, external); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT $1,'Default',$2,1,$3,$4,$5,$6 WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=$1) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_source_id',$1) ON CONFLICT(key) DO NOTHING`, eventapi.NewID()); err != nil {

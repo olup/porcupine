@@ -34,8 +34,8 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 				t.Fatal(err)
 			}
 		}
-		if _, err = s.db.Exec(`INSERT INTO export_files(job_id,attempt_id,file_index,object_key,upload_id)
-		    VALUES(?,?,1,?,?)`, jobID, attempt, key, up.ID()); err != nil {
+		if _, err = s.db.Exec(`INSERT INTO export_files(job_id,attempt_id,file_index,object_key,upload_id,storage_id)
+		    VALUES(?,?,1,?,?,?)`, jobID, attempt, key, up.ID(), s.exports.store.OwnershipID()); err != nil {
 			t.Fatal(err)
 		}
 		return key, up.ID()
@@ -93,6 +93,13 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 		if err := s.purgeProjectExports(ctx, job.ProjectID); err != nil {
 			t.Fatal(err)
 		}
+	}
+	var inventory int
+	if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE tenant_id='default' AND project_id=$1 AND kind='export' AND storage_id=$2`, job.ProjectID, s.exports.store.OwnershipID()).Scan(&inventory); err != nil || inventory != 2 {
+		t.Fatal("physical-purge ownership inventory was lost or duplicated", inventory, err)
+	}
+	if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE project_id=$1`, other).Scan(&inventory); err != nil || inventory != 0 {
+		t.Fatal("cleanup inventoried another project's objects", inventory, err)
 	}
 	s3.mu.Lock()
 	defer s3.mu.Unlock()
