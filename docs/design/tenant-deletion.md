@@ -95,3 +95,15 @@ Coordinate real PostgreSQL and S3 tests with the root test schedule. Preserve lo
 2. Can cumulative usage survive as unlabeled tenant-ID and period totals outside tenant foreign keys? Decision: preserve the minimal operator-only audit. This avoids silently refunding or erasing accounting history. No prices or billing policy are introduced.
 3. Does deletion preserve published objects in a customer's pipeline destination? Decision: preserve published customer artifacts, matching existing project-pipeline behavior. Clean only artifacts still owned by unfinished Porcupine jobs.
 4. Is the default tenant deletable? Decision: yes, with startup honoring its tombstone and future omitted-tenant creates returning 404.
+
+## Fact ledger
+
+| Source | Destination | Preserved fact or decision |
+| --- | --- | --- |
+| User control-plane supplement, tenant deletion | Operator contract and cleanup loop | One authenticated operator operation shared by HTTP, MCP, and CLI. Immediate fence, owned credential revocation, existing project cleanup, restart recovery, and status. |
+| Existing project deletion, native deletion, and pipeline tests | Ownership inventory and implementation | Compose analytical/export cleanup and unpublished pipeline cleanup. Preserve published customer outputs and native no-resurrection tombstones. |
+| User hosted architecture and root policy review | States and backend limitation | No physical-purge claim without applicable version proof. Preserve PITR retention. Owner-local shared completion waits for the shared operational-state backend. |
+| Existing human revocation triggers and two-tenant requirement | Scope pruning and public authority views | Preserve shared humans, B memberships, B machine credentials, and mixed-tenant B tool connections. Keep inert global IDs without effective A authority. |
+| Existing cumulative acceptance accounting and usage policy review | `tenant_deletion_usage` | Keep minimal opaque IDs and numeric UTC period totals without refunds, event bodies, identifying labels, or a pricing decision. |
+
+Managed export keys currently contain job and attempt IDs rather than the project ID. A future physical-purge verifier must preserve their ownership inventory before logical cleanup discards export checkpoints. The current logical-only status does not prove that noncurrent versions can be attributed or removed afterward.

@@ -283,6 +283,9 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result la
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
+		return err
+	}
 	columns, err := json.Marshal(result.Columns)
 	if err != nil {
 		return lakeapi.ErrExportStreamInvalid
