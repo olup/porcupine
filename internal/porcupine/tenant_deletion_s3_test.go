@@ -7,7 +7,7 @@ import (
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func TestTenantDeletionS3ManagedObjectsPreserveB(t *testing.T) {
+func TestDuckLakeS3TenantDeletionManagedObjectsPreserveB(t *testing.T) {
 	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	s, _ := nativeS3Service(t, fixture)
