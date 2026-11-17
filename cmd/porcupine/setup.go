@@ -74,8 +74,23 @@ func run(args []string, input io.Reader, output io.Writer) error {
 		return err
 	}
 	if restore {
-		if s.get("PORCUPINE_PROFILE") == string(porcupine.ProfileHosted) {
+		switch porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")) {
+		case porcupine.ProfileHosted:
 			return errors.New("hosted profile recovery uses PostgreSQL and S3")
+		case "", porcupine.ProfileStandalone:
+		default:
+			return errors.New("restore-native-backup requires the standalone profile")
+		}
+		for _, name := range []string{
+			"PORCUPINE_CONTROL_DATABASE_URL", "PORCUPINE_CONTROL_DATABASE_URL_FILE",
+			"PORCUPINE_DUCKLAKE_POSTGRES_URL", "PORCUPINE_DUCKLAKE_POSTGRES_URL_FILE",
+		} {
+			if s.get(name) != "" {
+				return errors.New("restore-native-backup cannot use PostgreSQL storage settings")
+			}
+		}
+		if mode := porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")); mode != "" && mode != porcupine.AcceptanceModeDurable {
+			return errors.New("restore-native-backup requires durable acceptance")
 		}
 		return s.runNativeRestore(context.Background(), input, output)
 	}
@@ -97,13 +112,16 @@ func run(args []string, input io.Reader, output io.Writer) error {
 		if config.Profile == porcupine.ProfileHosted {
 			delete(defaults, "PORCUPINE_DB")
 			delete(defaults, "PORCUPINE_DUCKLAKE_DIR")
+		} else {
+			defaults["PORCUPINE_PROFILE"] = string(porcupine.ProfileStandalone)
+			defaults["PORCUPINE_ACCEPTANCE_MODE"] = string(porcupine.AcceptanceModeDurable)
 		}
 		for key, value := range defaults {
 			if _, ok := values[key]; !ok {
 				values[key] = value
 			}
 		}
-		if _, ok := values["PORCUPINE_CONTROL_DB"]; !ok && config.Shared == nil {
+		if _, ok := values["PORCUPINE_CONTROL_DB"]; !ok && config.Profile != porcupine.ProfileHosted {
 			values["PORCUPINE_CONTROL_DB"] = values["PORCUPINE_DB"] + ".control"
 		}
 		encoder := json.NewEncoder(output)
@@ -124,9 +142,6 @@ func validateServerConfig(addr string, config porcupine.Config) error {
 	}
 	if config.BootstrapToken != "" && len(config.BootstrapToken) < 16 {
 		return errors.New("a configured bootstrap_token must have at least 16 characters; run porcupine init for a fresh instance")
-	}
-	if config.Shared != nil && (config.DuckLake.PostgresURL == "" || config.DuckLake.S3 == nil) {
-		return errors.New("shared deployment requires PostgreSQL DuckLake metadata and analytical S3 data")
 	}
 	return porcupine.ValidateConfig(config)
 }

@@ -18,7 +18,7 @@ func (s settings) analyticsConfiguration() (*lakeapi.DuckLakeConfig, error) {
 		directory = defaultAnalyticsDirectory(s.get("PORCUPINE_DB"))
 	}
 	config := &lakeapi.DuckLakeConfig{Directory: directory, S3: remote}
-	config.PostgresURL, err = s.sharedSecretSetting("PORCUPINE_DUCKLAKE_POSTGRES_URL")
+	config.PostgresURL, err = s.secretSetting("PORCUPINE_DUCKLAKE_POSTGRES_URL")
 	if err != nil {
 		return nil, err
 	}

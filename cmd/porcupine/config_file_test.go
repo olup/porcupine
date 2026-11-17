@@ -111,9 +111,8 @@ func TestConfigCheckRedactsAllCredentialFields(t *testing.T) {
 	t.Parallel()
 	s := settings{
 		"PORCUPINE_BOOTSTRAP_TOKEN": "secret", "PORCUPINE_DUCKLAKE_POSTGRES_URL": "postgres://user:secret@db/test",
-		"PORCUPINE_CONTROL_DATABASE_URL": "postgres://user:secret@db/control", "PORCUPINE_SHARED_ROUTING_SECRET": "secret",
-		"PORCUPINE_WORKER_URL":         "https://user:secret@worker.example.com",
-		"PORCUPINE_OIDC_CLIENT_SECRET": "secret", "PORCUPINE_SMTP_PASSWORD_FILE": "/secret/file",
+		"PORCUPINE_CONTROL_DATABASE_URL": "postgres://user:secret@db/control",
+		"PORCUPINE_OIDC_CLIENT_SECRET":   "secret", "PORCUPINE_SMTP_PASSWORD_FILE": "/secret/file",
 		"PORCUPINE_DUCKLAKE_S3_SECRET_ACCESS_KEY": "secret", "PORCUPINE_EXPORT_S3_SESSION_TOKEN": "secret", "PORCUPINE_BACKUP_S3_ACCESS_KEY_ID": "secret",
 	}
 	for name, value := range s.redacted() {
@@ -349,5 +348,43 @@ func TestListenDefaultFileAndEnvironmentPrecedence(t *testing.T) {
 	address, _, err := (settings{"PORCUPINE_ADDR": "127.0.0.1:9090"}).serviceConfig()
 	if err != nil || address != "0.0.0.0:9191" {
 		t.Fatalf("environment did not win: %q %v", address, err)
+	}
+}
+
+func TestConfigRejectsLegacyOwnerRouting(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"worker_id", "worker_url", "routing_secret", "routing_secret_file"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "porcupine.json")
+			const original = "{}"
+			if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			legacy := `{"shared":{"` + key + `":"private-routing-value"}}`
+			var output bytes.Buffer
+			err := run([]string{"config", "install", "--config", path}, strings.NewReader(legacy), &output)
+			if err == nil || !strings.Contains(err.Error(), "owner routing has been removed") || strings.Contains(err.Error(), "private-routing-value") {
+				t.Fatalf("invalid owner routing diagnostic: %v", err)
+			}
+			body, err := os.ReadFile(path)
+			if err != nil || string(body) != original || output.Len() != 0 {
+				t.Fatal("legacy settings were installed")
+			}
+		})
+	}
+}
+
+func TestConfigRejectsLegacyOwnerRoutingEnvironment(t *testing.T) {
+	for _, name := range []string{"PORCUPINE_WORKER_ID", "PORCUPINE_WORKER_URL", "PORCUPINE_SHARED_ROUTING_SECRET", "PORCUPINE_SHARED_ROUTING_SECRET_FILE"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "private-routing-value")
+			path := filepath.Join(t.TempDir(), "porcupine.json")
+			var output bytes.Buffer
+			err := run([]string{"config", "check", "--config", path}, nil, &output)
+			if err == nil || !strings.Contains(err.Error(), name+" is obsolete") || strings.Contains(err.Error(), "private-routing-value") || output.Len() != 0 {
+				t.Fatalf("invalid obsolete environment diagnostic: %v", err)
+			}
+		})
 	}
 }
