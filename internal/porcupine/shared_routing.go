@@ -122,29 +122,6 @@ func (s *Service) initializeSharedRouting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.control.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(5786939852849845332)`); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shared_workers (
-worker_id TEXT PRIMARY KEY,volume_id TEXT NOT NULL UNIQUE,route_url TEXT NOT NULL,
-registration_token TEXT NOT NULL,registered_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
-CREATE TABLE IF NOT EXISTS shared_project_owners (
-project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-worker_id TEXT NOT NULL REFERENCES shared_workers(worker_id),epoch BIGINT NOT NULL DEFAULT 1 CHECK(epoch>0));
-CREATE TABLE IF NOT EXISTS shared_route_nonces (
-nonce TEXT PRIMARY KEY,expires_at TIMESTAMPTZ NOT NULL);
-CREATE INDEX IF NOT EXISTS shared_route_nonce_expiry ON shared_route_nonces(expires_at);`); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	conn, err := s.control.Conn(ctx)
 	if err != nil {
 		return err

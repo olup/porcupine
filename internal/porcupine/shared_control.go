@@ -78,8 +78,8 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(5786939852849845331)`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, controlSchema+sharedControlSchema); err != nil {
-		return fmt.Errorf("initialize shared control schema: %w", err)
+	if err := migrateSharedControl(ctx, tx); err != nil {
+		return err
 	}
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)

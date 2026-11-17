@@ -25,26 +25,6 @@ type ServiceKeySpec struct {
 	Projects    []string `json:"projects" minItems:"1" maxItems:"64" doc:"Subset of the service account's projects."`
 }
 
-func (s *Service) initializeServiceKeys(ctx context.Context) error {
-	if s.shared != nil {
-		return nil
-	}
-	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS service_api_keys(
-		principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),
-		client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
-		audience TEXT NOT NULL CHECK(audience IN ('api','mcp'))
-	);
-	CREATE INDEX IF NOT EXISTS service_api_keys_by_client ON service_api_keys(client_id);
-	CREATE TRIGGER IF NOT EXISTS revoke_service_api_keys AFTER UPDATE OF revoked_at,permissions,projects,source_id ON access_keys
-	WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL) OR NEW.permissions<>OLD.permissions
-	     OR NEW.projects<>OLD.projects OR NEW.source_id<>OLD.source_id
-	BEGIN
-		UPDATE access_keys SET revoked_at=coalesce(NEW.revoked_at,datetime('now')) WHERE revoked_at IS NULL
-		AND id IN (SELECT principal_id FROM service_api_keys WHERE client_id=NEW.id);
-	END;`)
-	return err
-}
-
 func (s *Service) registerServiceKeys(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
 	if s.oauth == nil {
 		return

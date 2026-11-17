@@ -61,9 +61,6 @@ func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]a
 		if err := service.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if err := service.initializeServiceKeys(ctx); err != nil {
-			t.Fatal(err)
-		}
 		if err := service.initializeOAuth(ctx); err != nil {
 			t.Fatal(err)
 		}

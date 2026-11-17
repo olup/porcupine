@@ -326,40 +326,6 @@ func TestIdentityControlPermanentReceiptRetryCannotReapply(t *testing.T) {
 	}
 }
 
-func TestIdentityQueueAccountingMigratesExistingDatabase(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { s.Close() }()
-	_, token := project(t, s)
-	request(t, s, "POST", "/capture/", "", captureBody(token, "legacy-ordinary"), 200)
-	_, before := queueUsage(t, s)
-	if _, err := s.db.Exec(`DROP TRIGGER queue_usage_insert; DROP TRIGGER queue_usage_update; DROP TRIGGER queue_usage_delete; ALTER TABLE events DROP COLUMN identity_snapshot; DELETE FROM metadata WHERE key='identity_queue_accounting';`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(Config{DBPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count, size := queueUsage(t, s); count != 1 || size != before {
-		t.Fatal("legacy queue accounting changed ordinary bytes")
-	}
-	identityCapture(t, s, token, []map[string]any{identifyEvent("new-control", "account", "anon", map[string]any{"trait": "new"}, map[string]any{})}, 200)
-	var actual int64
-	if err := s.db.QueryRow(`SELECT sum(` + queueByteExpression("") + `) FROM events`).Scan(&actual); err != nil {
-		t.Fatal(err)
-	}
-	if count, size := queueUsage(t, s); count != 2 || size != actual || size <= before {
-		t.Fatal("upgraded triggers did not charge private snapshot bytes")
-	}
-}
-
 func TestIdentityConcurrentConflictsChooseOneCanonicalTarget(t *testing.T) {
 	t.Parallel()
 	s := service(t, 100)

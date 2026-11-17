@@ -31,37 +31,6 @@ func validIdentityID(id string) bool {
 	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != cookielessSentinel && !strings.HasPrefix(id, "cookieless_")
 }
 
-func (s *Service) initializeIdentity(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var column bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('events') WHERE name='identity_snapshot')`).Scan(&column); err != nil {
-		return err
-	}
-	if !column {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE events ADD COLUMN identity_snapshot TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS identity_profiles (
-project_id TEXT NOT NULL REFERENCES projects(id),identified_id TEXT NOT NULL,
-is_identified INTEGER NOT NULL CHECK(is_identified IN (0,1)),
-traits TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),
-PRIMARY KEY(project_id,identified_id)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS identity_links (
-project_id TEXT NOT NULL REFERENCES projects(id),anonymous_id TEXT NOT NULL,identified_id TEXT NOT NULL,
-version INTEGER NOT NULL CHECK(version>0),PRIMARY KEY(project_id,anonymous_id),
-FOREIGN KEY(project_id,identified_id) REFERENCES identity_profiles(project_id,identified_id)) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS identity_links_target ON identity_links(project_id,identified_id);`)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 func identityTraits(raw any) (map[string]any, bool) {
 	if raw == nil {
 		return map[string]any{}, true

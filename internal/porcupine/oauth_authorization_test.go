@@ -3,12 +3,13 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"golang.org/x/time/rate"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 func interactiveCode(t *testing.T, f *oidcFixture) string {

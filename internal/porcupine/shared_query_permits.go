@@ -67,30 +67,6 @@ func armSharedQueryWatchdog(hardDeadline time.Time, s3RequestTimeoutSeconds, met
 	}
 }
 
-func (s *Service) initializeSharedQueryPermits(ctx context.Context) error {
-	tx, err := s.control.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(22591942986388057)`); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shared_query_permits (
-  permit_id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  worker_id TEXT NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL
- );
- CREATE INDEX IF NOT EXISTS shared_query_permits_tenant_expiry ON shared_query_permits(tenant_id,expires_at);
- CREATE INDEX IF NOT EXISTS shared_query_permits_project_expiry ON shared_query_permits(project_id,expires_at)`)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // acquireSharedQueryPermit rechecks policy while holding its authoritative tenant
 // row. Every process participates in the same transaction; local worker slots
 // remain a separate protection for each process's own native engines.

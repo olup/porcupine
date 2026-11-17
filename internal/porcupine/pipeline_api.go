@@ -73,15 +73,6 @@ type PipelineRetry struct {
 }
 type PipelineRetryOutput struct{ Body PipelineRetry }
 
-func (s *Service) initializePipelineSchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS pipelines (
- id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), actor_id TEXT NOT NULL REFERENCES access_keys(id),
- kind TEXT NOT NULL CHECK(kind IN ('webhook','s3')), name TEXT NOT NULL,
- state TEXT NOT NULL CHECK(state IN ('active','paused')), config TEXT NOT NULL, secret BLOB NOT NULL, created_at_ms INTEGER NOT NULL);
- CREATE INDEX IF NOT EXISTS pipelines_project ON pipelines(project_id,created_at_ms,id);`)
-	return err
-}
-
 func (s *Service) registerPipelines(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
 	read := operationAccess{Permission: "pipelines:read", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}
 	write := operationAccess{Permission: "pipelines:write", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}

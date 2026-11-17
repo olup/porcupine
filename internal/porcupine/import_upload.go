@@ -117,67 +117,6 @@ type storedImportUploadFile struct {
 	LastSHA256 string
 }
 
-func (s *Service) initializeImports(ctx context.Context) error {
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('events') WHERE name='is_imported')`).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE events ADD COLUMN is_imported INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS import_uploads (
-id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),actor_id TEXT NOT NULL REFERENCES access_keys(id),source_id TEXT NOT NULL DEFAULT 'posthog',format TEXT NOT NULL DEFAULT 'posthog',delivery_cursor INTEGER NOT NULL DEFAULT 0,
-idempotency_hash TEXT NOT NULL,request_hash TEXT NOT NULL,state TEXT NOT NULL,
-created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',
-UNIQUE(project_id,actor_id,idempotency_hash));
-CREATE INDEX IF NOT EXISTS import_uploads_project ON import_uploads(project_id,created_at,id);
-CREATE INDEX IF NOT EXISTS import_uploads_active ON import_uploads(state);
-CREATE TABLE IF NOT EXISTS import_upload_files (
-id TEXT PRIMARY KEY,job_id TEXT NOT NULL REFERENCES import_uploads(id),ordinal INTEGER NOT NULL,path TEXT NOT NULL,kind TEXT NOT NULL,
-size_bytes INTEGER NOT NULL,offset_bytes INTEGER NOT NULL DEFAULT 0,sha256 TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'uploading',
-line_number INTEGER NOT NULL DEFAULT 0,tail BLOB NOT NULL DEFAULT X'',discarding INTEGER NOT NULL DEFAULT 0,hash_state BLOB NOT NULL,
-last_offset INTEGER NOT NULL DEFAULT -1,last_size INTEGER NOT NULL DEFAULT 0,last_sha256 TEXT NOT NULL DEFAULT '',
-rows INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0,duplicates INTEGER NOT NULL DEFAULT 0,
-ignored INTEGER NOT NULL DEFAULT 0,unresolved INTEGER NOT NULL DEFAULT 0,invalid INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',
-UNIQUE(job_id,path),UNIQUE(job_id,ordinal));
-CREATE INDEX IF NOT EXISTS import_upload_files_order ON import_upload_files(job_id,ordinal);
-CREATE TABLE IF NOT EXISTS import_upload_samples (
-job_id TEXT NOT NULL REFERENCES import_uploads(id),file_id TEXT NOT NULL REFERENCES import_upload_files(id),row_number INTEGER NOT NULL,reason TEXT NOT NULL,
-PRIMARY KEY(job_id,file_id,row_number)) WITHOUT ROWID;`); err != nil {
-		return err
-	}
-	var sourceColumn bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('import_uploads') WHERE name='source_id')`).Scan(&sourceColumn); err != nil {
-		return err
-	}
-	if !sourceColumn {
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE import_uploads ADD COLUMN source_id TEXT NOT NULL DEFAULT 'posthog'`); err != nil {
-			return err
-		}
-	}
-	for _, column := range []struct{ name, definition string }{
-		{"format", "TEXT NOT NULL DEFAULT 'posthog'"}, {"delivery_cursor", "INTEGER NOT NULL DEFAULT 0"},
-	} {
-		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('import_uploads') WHERE name=$1)`, column.name).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			if _, err := s.db.ExecContext(ctx, `ALTER TABLE import_uploads ADD COLUMN `+column.name+` `+column.definition); err != nil {
-				return err
-			}
-			if column.name == "delivery_cursor" {
-				if _, err := s.db.ExecContext(ctx, `UPDATE import_uploads SET delivery_cursor=coalesce((SELECT max(id) FROM events WHERE events.project_id=import_uploads.project_id),0)`); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return s.initializeImportRows(ctx)
-}
-
 func normalizeImportManifest(files []ImportUploadFileSpec) ([]ImportUploadFileSpec, error) {
 	if len(files) == 0 || len(files) > importMaxFiles {
 		return nil, apiError(400, "manifest must contain 1 to 4096 files")

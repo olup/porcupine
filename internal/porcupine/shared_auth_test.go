@@ -68,9 +68,6 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		if err := s.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.initializeServiceKeys(ctx); err != nil {
-			t.Fatal(err)
-		}
 		if err := s.initializeOAuth(ctx); err != nil {
 			t.Fatal(err)
 		}

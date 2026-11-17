@@ -14,41 +14,15 @@ import (
 var errWebhookCapacity = errors.New("webhook queue is full")
 var errWebhookDeliveryMissing = errors.New("webhook delivery unavailable")
 
-// Payload-bearing failures remain charged until retried or canceled. Successful
-// audit records contain no event payload and have bounded retention.
+// initializeWebhook seeds webhook accounting and requeues deliveries
+// interrupted by a previous process.
 func (s *Service) initializeWebhook(ctx context.Context) error {
 	if s.pipelines != nil && s.pipelines.webhookClient == nil {
 		s.pipelines.webhookClient = newWebhookHTTPClient()
 	}
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS webhook_deliveries (
- id TEXT PRIMARY KEY,pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
- project_id TEXT NOT NULL,event_uuid TEXT NOT NULL,payload TEXT NOT NULL,bytes INTEGER NOT NULL,
- frozen INTEGER NOT NULL DEFAULT 0,event_count INTEGER NOT NULL DEFAULT 1,window_start_ms INTEGER NOT NULL DEFAULT 0,window_end_ms INTEGER NOT NULL DEFAULT 0,
- state TEXT NOT NULL CHECK(state IN ('queued','sending','delivered','failed','canceled')),
- attempts INTEGER NOT NULL DEFAULT 0,next_attempt_ms INTEGER NOT NULL,last_status INTEGER NOT NULL DEFAULT 0,
- error_code TEXT NOT NULL DEFAULT '',created_at_ms INTEGER NOT NULL,completed_at_ms INTEGER NOT NULL DEFAULT 0,
- UNIQUE(pipeline_id,event_uuid));
- CREATE TABLE IF NOT EXISTS webhook_cooldowns(pipeline_id TEXT PRIMARY KEY REFERENCES pipelines(id) ON DELETE CASCADE,not_before_ms INTEGER NOT NULL,failures INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS webhook_members(project_id TEXT NOT NULL,pipeline_id TEXT NOT NULL,event_uuid TEXT NOT NULL,delivery_id TEXT NOT NULL REFERENCES webhook_deliveries(id) ON DELETE CASCADE,PRIMARY KEY(pipeline_id,event_uuid)) WITHOUT ROWID;
- CREATE INDEX IF NOT EXISTS webhook_chunk ON webhook_deliveries(pipeline_id,state,window_end_ms,attempts,created_at_ms);
- CREATE INDEX IF NOT EXISTS webhook_appendable ON webhook_deliveries(pipeline_id,window_end_ms,created_at_ms DESC,id DESC) WHERE state='queued' AND frozen=0 AND event_count<100 AND bytes<1048576;
- CREATE INDEX IF NOT EXISTS webhook_due ON webhook_deliveries(state,next_attempt_ms,created_at_ms);
- CREATE INDEX IF NOT EXISTS webhook_project_event ON webhook_deliveries(project_id,event_uuid);
- CREATE INDEX IF NOT EXISTS webhook_completed ON webhook_deliveries(completed_at_ms);
- CREATE INDEX IF NOT EXISTS webhook_project_completed ON webhook_deliveries(project_id,completed_at_ms,id);
- INSERT OR IGNORE INTO metadata(key,value) VALUES('webhook_history_changes','0'),('webhook_history_pruned_ms','0');
- CREATE TRIGGER IF NOT EXISTS webhook_history_change AFTER UPDATE OF payload ON webhook_deliveries WHEN OLD.payload<>'' AND NEW.payload='' BEGIN UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='webhook_history_changes'; END;
- CREATE TABLE IF NOT EXISTS webhook_queue_usage(scope TEXT PRIMARY KEY,count INTEGER NOT NULL,bytes INTEGER NOT NULL) WITHOUT ROWID;
- INSERT OR IGNORE INTO webhook_queue_usage VALUES('instance',0,0);
- CREATE TRIGGER IF NOT EXISTS webhook_usage_insert AFTER INSERT ON webhook_deliveries WHEN NEW.payload<>'' BEGIN
- INSERT INTO webhook_queue_usage(scope,count,bytes) VALUES('project:'||NEW.project_id,NEW.event_count,NEW.bytes) ON CONFLICT(scope) DO UPDATE SET count=count+NEW.event_count,bytes=bytes+NEW.bytes;
- UPDATE webhook_queue_usage SET count=count+NEW.event_count,bytes=bytes+NEW.bytes WHERE scope='instance'; END;
- CREATE TRIGGER IF NOT EXISTS webhook_usage_update AFTER UPDATE OF payload,bytes,event_count ON webhook_deliveries BEGIN
- INSERT OR IGNORE INTO webhook_queue_usage(scope,count,bytes) VALUES('project:'||NEW.project_id,0,0);
- UPDATE webhook_queue_usage SET count=count+CASE WHEN NEW.payload<>'' THEN NEW.event_count ELSE 0 END-CASE WHEN OLD.payload<>'' THEN OLD.event_count ELSE 0 END,bytes=bytes+NEW.bytes-OLD.bytes WHERE scope IN ('instance','project:'||NEW.project_id); END;
- CREATE TRIGGER IF NOT EXISTS webhook_usage_delete AFTER DELETE ON webhook_deliveries WHEN OLD.payload<>'' BEGIN
- UPDATE webhook_queue_usage SET count=count-OLD.event_count,bytes=bytes-OLD.bytes WHERE scope IN ('instance','project:'||OLD.project_id); END;
- UPDATE webhook_deliveries SET state='queued',next_attempt_ms=0 WHERE state='sending';`)
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO metadata(key,value) VALUES('webhook_history_changes','0'),('webhook_history_pruned_ms','0');
+INSERT OR IGNORE INTO webhook_queue_usage VALUES('instance',0,0);
+UPDATE webhook_deliveries SET state='queued',next_attempt_ms=0 WHERE state='sending';`)
 	return err
 }
 

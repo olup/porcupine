@@ -173,7 +173,7 @@ func TestQueueByteCapacityReleasedByDeliveryAndMutation(t *testing.T) {
 	}
 }
 
-func TestQueueByteAccountingMigrationAndRestart(t *testing.T) {
+func TestQueueByteAccountingSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
@@ -183,7 +183,7 @@ func TestQueueByteAccountingMigrationAndRestart(t *testing.T) {
 	_, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "two"), 200)
-	if _, err := s.db.Exec(`UPDATE events SET delivered=1 WHERE uuid='two'; DROP TRIGGER queue_usage_insert; DROP TRIGGER queue_usage_delete; DROP TRIGGER queue_usage_update; DROP TABLE queue_usage;`); err != nil {
+	if _, err := s.db.Exec(`UPDATE events SET delivered=1 WHERE uuid='two'`); err != nil {
 		s.Close()
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestQueueByteAccountingMigrationAndRestart(t *testing.T) {
 		}
 		if count, bytes := queueUsage(t, s); count != 1 || bytes != expected {
 			s.Close()
-			t.Fatal("existing queue was not backfilled once or restart double-counted it")
+			t.Fatal("restart changed queue accounting")
 		}
 		request(t, s, "POST", "/capture/", "", queueBody(ingest, "three"), 503)
 		request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)

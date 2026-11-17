@@ -22,48 +22,6 @@ func (s *Service) initializeInteractiveOAuth(ctx context.Context) error {
 	if s.shared != nil {
 		return nil
 	}
-	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_authorization_requests(
- request_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES access_keys(id),redirect_uri TEXT NOT NULL,
- scope TEXT NOT NULL,resource TEXT NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,peer_hash TEXT NOT NULL DEFAULT '');
- CREATE TABLE IF NOT EXISTS oauth_interactive_grants(
- id TEXT PRIMARY KEY,principal_id TEXT NOT NULL UNIQUE REFERENCES access_keys(id),human_id TEXT NOT NULL REFERENCES access_keys(id),
- client_id TEXT NOT NULL REFERENCES access_keys(id),resource TEXT NOT NULL,created_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL);
- CREATE INDEX IF NOT EXISTS oauth_grants_human ON oauth_interactive_grants(human_id);
- CREATE INDEX IF NOT EXISTS oauth_grants_client ON oauth_interactive_grants(client_id);
- CREATE TABLE IF NOT EXISTS oauth_authorization_codes(
- code_hash TEXT PRIMARY KEY,grant_id TEXT NOT NULL REFERENCES oauth_interactive_grants(id),client_id TEXT NOT NULL,
- redirect_uri TEXT NOT NULL,challenge TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,used_at_ms INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE IF NOT EXISTS oauth_refresh_tokens(
- token_hash TEXT PRIMARY KEY,grant_id TEXT NOT NULL REFERENCES oauth_interactive_grants(id),family_id TEXT NOT NULL,
- client_id TEXT NOT NULL,scope TEXT NOT NULL,projects_json TEXT NOT NULL,expires_at_ms INTEGER NOT NULL,used_at_ms INTEGER NOT NULL DEFAULT 0);
- CREATE INDEX IF NOT EXISTS oauth_refresh_grant ON oauth_refresh_tokens(grant_id);
- CREATE INDEX IF NOT EXISTS oauth_refresh_expiry ON oauth_refresh_tokens(expires_at_ms);
- CREATE INDEX IF NOT EXISTS oauth_code_grant ON oauth_authorization_codes(grant_id);
- CREATE TABLE IF NOT EXISTS oauth_interactive_access(
- token_hash TEXT PRIMARY KEY REFERENCES oauth_tokens(token_hash) ON DELETE CASCADE,grant_id TEXT NOT NULL REFERENCES oauth_interactive_grants(id),family_id TEXT NOT NULL);
- CREATE TRIGGER IF NOT EXISTS oauth_human_client_revocation AFTER UPDATE OF revoked_at,permissions,projects ON access_keys
- WHEN NEW.revoked_at IS NOT NULL OR NEW.permissions<>OLD.permissions OR NEW.projects<>OLD.projects BEGIN
- UPDATE access_keys SET revoked_at=coalesce(NEW.revoked_at,datetime('now'))
- WHERE id IN(SELECT principal_id FROM oauth_interactive_grants WHERE human_id=NEW.id OR client_id=NEW.id) AND revoked_at IS NULL;
- END;`)
-	if err != nil {
-		return err
-	}
-	for _, column := range []struct{ table, name, definition string }{{"oauth_tokens", "interactive_grant_id", "TEXT NOT NULL DEFAULT ''"}, {"oauth_authorization_requests", "peer_hash", "TEXT NOT NULL DEFAULT ''"}, {"oauth_interactive_grants", "resource", "TEXT NOT NULL DEFAULT ''"}} {
-		var exists bool
-		if err = s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info($1) WHERE name=$2)`, column.table, column.name).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			if _, err = s.control.ExecContext(ctx, `ALTER TABLE `+column.table+` ADD COLUMN `+column.name+` `+column.definition); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = s.control.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS oauth_tokens_interactive_grant ON oauth_tokens(interactive_grant_id)`)
-	if err != nil {
-		return err
-	}
 	return s.retireManualInvitations(ctx)
 }
 

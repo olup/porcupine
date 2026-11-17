@@ -17,10 +17,7 @@ func sharedDeletionFixture(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	s := &Service{control: db, shared: &sharedRuntime{config: SharedConfig{WorkerID: "deletion-test"}}, interactiveConfig: queries}
-	if err := s.initializeSharedQueryPermits(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE shared_project_owners(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,worker_id TEXT NOT NULL,epoch BIGINT NOT NULL DEFAULT 1);
+	if _, err := db.Exec(`INSERT INTO shared_workers(worker_id,volume_id,route_url,registration_token) VALUES('owner-a','volume-a','http://a.invalid','token-a'),('owner-b','volume-b','http://b.invalid','token-b');
  INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('removed','default','Removed','now','mixed'),('kept','default','Kept','now','mixed');
  INSERT INTO shared_project_owners(project_id,worker_id) VALUES('removed','owner-a'),('kept','owner-b')`); err != nil {
 		t.Fatal(err)
