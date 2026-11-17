@@ -216,3 +216,64 @@ func (p *PGPipelineEffects) ReleaseAbsentReservationTx(ctx context.Context, tx *
 	}
 	return p.finishReservation(ctx, tx, b)
 }
+
+// PublishNoOutputEffectsTx joins a verified non-output native outcome to the
+// common stream cursor. It never creates a live plan, reservation or job. The
+// caller publishes cumulative usage in this same transaction before native ACK.
+func (p *PGPipelineEffects) PublishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
+	if tx == nil || !scope.valid() || !pipelineID(tenant) || v.Sequence <= 0 || !pipelineHash(v.ProofSHA256) || v.Manifest != (PipelineRef{}) || len(v.Outputs) != 0 {
+		return false, ErrPipelineConflict
+	}
+	b := PipelineBinding{Scope: scope, TenantID: tenant}
+	if err := p.lockCapacity(ctx, tx, b, false); err != nil {
+		return false, err
+	}
+	var projectTenant string
+	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`, scope.ProjectID).Scan(&projectTenant); err != nil {
+		return false, err
+	}
+	if projectTenant != tenant {
+		return false, ErrPipelineAuthority
+	}
+	args := append(pipelineScopeArgs(scope), tenant)
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_streams(source_id,project_id,catalog_id,stream_id,tenant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, args...)
+	if err != nil {
+		return false, err
+	}
+	created, err := inserted.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	sequence, proof, err := p.lockStream(ctx, tx, b)
+	if err != nil {
+		return false, err
+	}
+	if sequence == v.Sequence && proof == v.ProofSHA256 {
+		return false, nil
+	}
+	if v.Sequence != sequence+1 {
+		return false, ErrPipelineConflict
+	}
+	var reserved bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere+`)`, pipelineScopeArgs(scope)...).Scan(&reserved); err != nil {
+		return false, err
+	}
+	if reserved {
+		return false, ErrPipelineConflict
+	}
+	if created > 0 {
+		b.Demand = PipelineDemand{MetadataRows: 1}
+		if err = p.lockCapacity(ctx, tx, b, true); err != nil {
+			return false, err
+		}
+		if err = p.charge(ctx, tx, b, b.Demand, 1); err != nil {
+			return false, err
+		}
+	}
+	args = append(pipelineScopeArgs(scope), v.Sequence, v.ProofSHA256)
+	updated, err := tx.ExecContext(ctx, `UPDATE pipeline_effect_streams SET sequence=$5,proof_sha=$6 WHERE `+pipelineScopeWhere, args...)
+	if err != nil {
+		return false, err
+	}
+	return true, pipelineOne(updated)
+}

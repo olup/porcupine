@@ -101,7 +101,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 			if e = f.publisher.publish(ctx, binding, v.Evidence); e != nil {
 				return e
 			}
-			_ = f.native.AcknowledgeLiveEffects(ctx, fence, scope, v.Evidence.Sequence)
+			_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, v.Evidence.Sequence)
 			return nil
 		default:
 			return output.ErrPipelineConflict
@@ -139,13 +139,13 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 		return err
 	}
 	// Initial one-unpublished-batch discipline makes a single proof sufficient.
-	page, err := f.native.PendingLiveCommitEffects(ctx, scope, seq, 2)
+	page, err := f.native.PendingNativeEffects(ctx, scope, seq, 2)
 	if err != nil {
 		return err
 	}
 
 	if seq > 0 {
-		covered, e := f.native.PendingLiveCommitEffects(ctx, scope, seq-1, 1)
+		covered, e := f.native.PendingNativeEffects(ctx, scope, seq-1, 1)
 		if e != nil {
 			return e
 		}
@@ -161,8 +161,18 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 		return resErr
 	}
 	if len(page.Evidence) == 1 {
-		if resErr != nil {
-			return resErr
+		switch page.Evidence[0].Kind {
+		case lakeapi.NativeCommitLive:
+			if resErr != nil {
+				return resErr
+			}
+		case lakeapi.NativeCommitImport:
+			if resErr == nil {
+				return output.ErrPipelineConflict
+			}
+			binding = output.PipelineBinding{}
+		default:
+			return output.ErrPipelineConflict
 		}
 		if err = f.publisher.publish(ctx, binding, page.Evidence[0]); err != nil {
 			return err
@@ -183,7 +193,7 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 		}
 	}
 	if seq > page.AcknowledgedThrough {
-		_ = f.native.AcknowledgeLiveEffects(ctx, fence, scope, seq)
+		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, seq)
 	}
 	return nil
 }

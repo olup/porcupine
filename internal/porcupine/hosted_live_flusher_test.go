@@ -38,7 +38,7 @@ func TestHostedFlusherRequiresRealProviders(t *testing.T) {
 func TestHostedNativeUsageUsesOriginalBucket(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 1, 0, 30, 0, 0, time.FixedZone("east", 3600))
-	e := lakeapi.LiveCommitEvidence{Scope: lakeapi.HostedProjectScope{Key: lakeapi.ProjectWriteKey{ProjectID: "p"}, StreamID: "stream"}, TenantID: "t", Sequence: 7, AccountedAt: at, AcceptedLive: 1, Totals: []lakeapi.NativeSourceTotals{{Day: "2026-10-31T00:00:00Z", Revision: 7, Live: 15, Import: 3}}}
+	e := lakeapi.NativeCommitEvidence{Scope: lakeapi.HostedProjectScope{Key: lakeapi.ProjectWriteKey{ProjectID: "p"}, StreamID: "stream"}, TenantID: "t", Sequence: 7, AccountedAt: at, AcceptedLive: 1, Totals: []lakeapi.NativeSourceTotals{{Day: "2026-10-31T00:00:00Z", Revision: 7, Live: 15, Import: 3}}}
 	r, err := nativeUsageReports(e)
 	if err != nil || len(r) != 1 || r[0].SourceID != "stream" || r[0].Counters.Live != 15 || r[0].Counters.Import != 3 || r[0].LastObserved != "" {
 		t.Fatal(r, err)
@@ -409,7 +409,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if er != nil {
 		t.Fatal(er)
 	}
-	var original lakeapi.LiveCommitEvidence
+	var original lakeapi.NativeCommitEvidence
 	recovery, er := cb.Acquire(t.Context(), key)
 	if er != nil {
 		t.Fatal(er)
@@ -419,7 +419,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if e := sb.AdvanceRecoveryFence(ctx, fence); e != nil {
 			return e
 		}
-		page, e := sb.PendingLiveCommitEffects(ctx, scope, 2, 1)
+		page, e := sb.PendingNativeEffects(ctx, scope, 2, 1)
 		if e != nil {
 			return e
 		}

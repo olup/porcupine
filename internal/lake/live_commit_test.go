@@ -164,7 +164,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if fenceWitnessCount(t, pa, failed.Inputs[0].Event.UUID) != 0 {
 		t.Fatal("failed stage retained UUID")
 	}
-	page, err := a.PendingLiveCommitEffects(ctx, scope, 0, 10)
+	page, err := a.PendingNativeEffects(ctx, scope, 0, 10)
 	if err != nil || page.NativeHighWater != 1 || len(page.Evidence) != 1 {
 		t.Fatal(page, err)
 	}
@@ -188,7 +188,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if len(recovered.selected) != 0 {
 		t.Fatal("replay staged outputs again")
 	}
-	page, err = b.PendingLiveCommitEffects(ctx, scope, 0, 10)
+	page, err = b.PendingNativeEffects(ctx, scope, 0, 10)
 	if err != nil || len(page.Evidence) != 1 || !reflect.DeepEqual(page.Evidence[0], committed.Evidence) {
 		t.Fatal(page, err)
 	}
@@ -211,7 +211,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if _, ok := commitLiveFixture(t, b, successor, duplicate, recovered).(DuplicateLiveBatch); !ok {
 		t.Fatal("duplicate batch fabricated new proof")
 	}
-	page, err = b.PendingLiveCommitEffects(ctx, scope, 0, 10)
+	page, err = b.PendingNativeEffects(ctx, scope, 0, 10)
 	if err != nil || page.NativeHighWater != 2 || len(page.Evidence) != 2 {
 		t.Fatal(page, err)
 	}
@@ -219,22 +219,22 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if err := pa.DB.QueryRowContext(ctx, `SELECT id FROM lake.current_events WHERE uuid=?`, ordinaryID).Scan(&replayID); err != nil || replayID != firstID {
 		t.Fatal("canonical ID changed", firstID, replayID, err)
 	}
-	if _, err := b.PendingLiveCommitEffects(ctx, scope, 3, 10); !errors.Is(err, ErrNativeEvidenceGap) {
+	if _, err := b.PendingNativeEffects(ctx, scope, 3, 10); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("future checkpoint was accepted", err)
 	}
-	if one, err := b.PendingLiveCommitEffects(ctx, scope, 0, 1); err != nil || len(one.Evidence) != 1 || one.Evidence[0].Sequence != 1 {
+	if one, err := b.PendingNativeEffects(ctx, scope, 0, 1); err != nil || len(one.Evidence) != 1 || one.Evidence[0].Sequence != 1 {
 		t.Fatal("complete bounded page was rejected", one, err)
 	}
-	if _, err := pa.DB.ExecContext(ctx, `DELETE FROM lake.live_commit_proofs WHERE effect_seq=2`); err != nil {
+	if _, err := pa.DB.ExecContext(ctx, `DELETE FROM lake.native_commit_proofs WHERE effect_seq=2`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.PendingLiveCommitEffects(ctx, scope, 0, 10); !errors.Is(err, ErrNativeEvidenceGap) {
+	if _, err := b.PendingNativeEffects(ctx, scope, 0, 10); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("short page masked missing final proof", err)
 	}
-	if _, err := pa.DB.ExecContext(ctx, `DELETE FROM lake.live_commit_proofs WHERE effect_seq=1`); err != nil {
+	if _, err := pa.DB.ExecContext(ctx, `DELETE FROM lake.native_commit_proofs WHERE effect_seq=1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.PendingLiveCommitEffects(ctx, scope, 0, 10); !errors.Is(err, ErrNativeEvidenceGap) {
+	if _, err := b.PendingNativeEffects(ctx, scope, 0, 10); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("missing proof history was skipped", err)
 	}
 }

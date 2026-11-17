@@ -135,7 +135,7 @@ func (c *hostedNativeBoundaryConn) ExecContext(ctx context.Context, q string, a 
 	if strings.HasPrefix(q, "UPDATE lake.hosted_write_guard SET generation=generation+1,ack_effect_seq") && c.failACK.CompareAndSwap(true, false) {
 		return nil, errors.New("injected real native ACK failure")
 	}
-	if strings.HasPrefix(q, "INSERT INTO lake.live_commit_proofs (") {
+	if strings.HasPrefix(q, "INSERT INTO lake.native_commit_proofs (") {
 		c.proof = true
 	}
 	if c.tx != nil {
