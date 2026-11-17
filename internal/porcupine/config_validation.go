@@ -11,6 +11,9 @@ import (
 // ValidateConfig checks operator settings without opening a database, contacting
 // an identity provider, or starting workers. File credentials are read by the caller.
 func ValidateConfig(c Config) error {
+	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
+		return err
+	}
 	if err := validateSharedConfiguration(c); err != nil {
 		return err
 	}

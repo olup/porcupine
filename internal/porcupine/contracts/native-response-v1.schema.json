@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://olup.github.io/porcupine/schemas/native-response-v1.schema.json",
+  "title": "Porcupine native live acknowledgment v1",
+  "description": "The same native route returns one of two server-selected acknowledgment contracts. Buffered received counts validated memory-admitted input rows, including retries and duplicates. It does not report committed unique events. An absent event_id or duplicate field is unknown, never zero or false.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "durability",
+        "accepted",
+        "duplicates",
+        "identity_ignored",
+        "receipts"
+      ],
+      "properties": {
+        "status": {
+          "const": 1
+        },
+        "durability": {
+          "const": "durable"
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicates": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "identity_ignored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_id",
+              "uuid",
+              "event_id",
+              "duplicate"
+            ],
+            "properties": {
+              "message_id": {
+                "type": "string"
+              },
+              "uuid": {
+                "type": "string"
+              },
+              "event_id": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$"
+              },
+              "duplicate": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "durability",
+        "received",
+        "receipts"
+      ],
+      "properties": {
+        "status": {
+          "const": 1
+        },
+        "durability": {
+          "const": "buffered"
+        },
+        "received": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_id",
+              "uuid"
+            ],
+            "properties": {
+              "message_id": {
+                "type": "string"
+              },
+              "uuid": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

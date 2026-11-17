@@ -11,7 +11,7 @@ import (
 
 func attachTestPipelines(s *Service, runtime *pipelineRuntime) {
 	s.pipelines = runtime
-	configureWebhooks(s, runtime)
+	configureWebhooks(s, s.acceptance.(*durableAcceptance), runtime)
 }
 
 func enableTestPipelines(t *testing.T, s *Service) {

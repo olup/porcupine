@@ -53,7 +53,7 @@ func sharedIngestionProject(t *testing.T, s *Service, id string) {
 func sharedIngestionBatch(project, prefix string, n int) preparedLiveBatch {
 	batch := preparedLiveBatch{projectID: project}
 	for i := range n {
-		batch.events = append(batch.events, eventapi.Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()})
+		batch.events = append(batch.events, validatedLiveEvent{event: eventapi.Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()}})
 	}
 	return batch
 }
@@ -83,14 +83,14 @@ func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
 		}
 	}
 	first, err := a.acceptance.Accept(t.Context(), sharedIngestionBatch("a", "a", 6), ingestionPeer{}, true)
-	if err != nil || first.accepted != 6 {
+	if err != nil || durableResultForTest(t, first).accepted != 6 {
 		t.Fatal(first, err)
 	}
 	second, err := b.acceptance.Accept(t.Context(), sharedIngestionBatch("b", "b", 6), ingestionPeer{}, true)
-	if err != nil || second.accepted != 6 {
+	if err != nil || durableResultForTest(t, second).accepted != 6 {
 		t.Fatal(second, err)
 	}
-	if first.receipts[0].EventID == second.receipts[0].EventID {
+	if durableResultForTest(t, first).receipts[0].EventID == durableResultForTest(t, second).receipts[0].EventID {
 		t.Fatal("independent workers reused a global ID")
 	}
 	if got := sharedUsageCount(t, a); got != 0 {
@@ -110,7 +110,7 @@ func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
 		t.Fatal("refreshed global usage did not stop new events", err)
 	}
 	duplicate, err := a.acceptance.Accept(t.Context(), sharedIngestionBatch("a", "a", 6), ingestionPeer{}, true)
-	if err != nil || duplicate.accepted != 0 || duplicate.duplicates != 6 || duplicate.receipts[0].EventID != first.receipts[0].EventID {
+	if err != nil || durableResultForTest(t, duplicate).accepted != 0 || durableResultForTest(t, duplicate).duplicates != 6 || durableResultForTest(t, duplicate).receipts[0].EventID != durableResultForTest(t, first).receipts[0].EventID {
 		t.Fatal("owner retry changed stable IDs or consumed quota", duplicate, err)
 	}
 	var count int
@@ -160,7 +160,7 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	// Restart the allocator without reusing abandoned values from its old range.
 	s.sharedIngestion.nextID, s.sharedIngestion.endID = 0, 0
 	last, err := s.acceptance.Accept(t.Context(), sharedIngestionBatch("recover", "after", 1), ingestionPeer{}, true)
-	if err != nil || last.receipts[0].EventID == first.receipts[0].EventID {
+	if err != nil || durableResultForTest(t, last).receipts[0].EventID == durableResultForTest(t, first).receipts[0].EventID {
 		t.Fatal(last, err)
 	}
 	if err = s.syncSharedIngestion(t.Context()); err != nil {
@@ -195,7 +195,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 		t.Helper()
 		batch := sharedIngestionBatch("cookie", prefix, 1)
 		batch.cookieless = true
-		batch.events[0].DistinctID = ingestfmt.CookielessSentinel
+		batch.events[0].event.DistinctID = ingestfmt.CookielessSentinel
 		if _, err := s.acceptance.Accept(t.Context(), batch, peer, true); err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 	at = at.Add(-time.Second)
 	batch := sharedIngestionBatch("cookie", "rollback", 1)
 	batch.cookieless = true
-	batch.events[0].DistinctID = ingestfmt.CookielessSentinel
+	batch.events[0].event.DistinctID = ingestfmt.CookielessSentinel
 	if _, err := a.acceptance.Accept(t.Context(), batch, peer, true); err == nil {
 		t.Fatal("expired identity day was resurrected")
 	}
@@ -253,11 +253,12 @@ func TestSharedIngestionExplicitIDHookKeepsAtomicIdentity(t *testing.T) {
 	var next int64 = 100
 	s.allocateID = func(context.Context, *sql.Tx) (int64, error) { next++; return next, nil }
 	batch := sharedIngestionBatch(project, "identity", 1)
-	batch.events[0].Event = "$identify"
-	batch.events[0].DistinctID = "known"
-	batch.events[0].Properties = []byte(`{"$anon_distinct_id":"anonymous","$set":{"plan":"team"}}`)
+	batch.events[0].event.Event = "$identify"
+	batch.events[0].event.DistinctID = "known"
+	batch.events[0].event.Properties = []byte(`{"$anon_distinct_id":"anonymous","$set":{"plan":"team"}}`)
+	batch.events[0], _ = validateLiveEvent(batch.events[0].event)
 	result, err := s.acceptance.Accept(t.Context(), batch, ingestionPeer{}, true)
-	if err != nil || result.receipts[0].EventID != "101" {
+	if err != nil || durableResultForTest(t, result).receipts[0].EventID != "101" {
 		t.Fatal(result, err)
 	}
 	var version int64

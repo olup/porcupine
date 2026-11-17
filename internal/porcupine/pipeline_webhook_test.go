@@ -56,7 +56,7 @@ func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
 	for i := range 201 {
 		events = append(events, eventapi.Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)})
 	}
-	if err = s.acceptance.enqueueWebhooks(context.Background(), tx, events); err != nil {
+	if err = durableAcceptanceForTest(t, s).enqueueWebhooks(context.Background(), tx, events); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(); err != nil {
@@ -74,7 +74,7 @@ func TestWebhookEventRetryAndCapacity(t *testing.T) {
 	s, p, token, id := webhookTestService(t, "event")
 	_ = p
 	s.pipelines.config.WebhookProjectMaxQueuedEvents = 1
-	configureWebhooks(s, s.pipelines)
+	configureWebhooks(s, durableAcceptanceForTest(t, s), s.pipelines)
 	body := captureBody(token, "one")
 	request(t, s, "POST", "/capture/", "", body, 200)
 	request(t, s, "POST", "/capture/", "", captureBody(token, "two"), 503)
@@ -127,7 +127,7 @@ func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
 	defer tx.Rollback()
 	for i := range 5 {
 		event := eventapi.Event{ProjectID: p, UUID: fmt.Sprintf("unicode-%d", i), Event: "purchase", Properties: properties, ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
+		if err := durableAcceptanceForTest(t, s).enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -181,7 +181,7 @@ func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T)
 	tx, _ := s.db.Begin()
 	for _, uuid := range []string{"deleted-before-send", "deleted-after-attempt", "survivor"} {
 		event := eventapi.Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
+		if err := durableAcceptanceForTest(t, s).enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -305,7 +305,7 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 		t.Helper()
 		tx, _ := s.db.Begin()
 		defer tx.Rollback()
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}}); err != nil {
+		if err := durableAcceptanceForTest(t, s).enqueueWebhooks(context.Background(), tx, []eventapi.Event{{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {
