@@ -38,15 +38,19 @@ func ValidateNativeCommitEvidence(e NativeCommitEvidence) error {
 	}
 	switch e.Kind {
 	case NativeCommitLive:
-		if e.AcceptedLive <= 0 || e.AcceptedImport != 0 || e.Import != nil || e.Effects.PlanID == "" || e.Effects.OutputCount < 0 {
+		if e.AcceptedLive <= 0 || e.AcceptedImport != 0 || e.Import != nil || e.Mutation != nil || e.Effects.PlanID == "" || e.Effects.OutputCount < 0 {
 			return errors.New("invalid native live outcome")
 		}
 	case NativeCommitImport:
-		if e.AcceptedLive != 0 || e.Import == nil || e.Effects != (StagedLiveEffects{}) || e.Import.Delta.Accepted != e.AcceptedImport || !e.Import.AccountedAt.Equal(e.AccountedAt) || e.Import.Key.Scope != e.Scope || e.Import.Key.ID() != e.OperationID {
+		if e.AcceptedLive != 0 || e.Import == nil || e.Mutation != nil || e.Effects != (StagedLiveEffects{}) || e.Import.Delta.Accepted != e.AcceptedImport || !e.Import.AccountedAt.Equal(e.AccountedAt) || e.Import.Key.Scope != e.Scope || e.Import.Key.ID() != e.OperationID {
 			return errors.New("invalid native import outcome")
 		}
 		if err := validateImportOutcome(*e.Import); err != nil {
 			return err
+		}
+	case NativeCommitMutation:
+		if e.AcceptedLive != 0 || e.AcceptedImport != 0 || e.Import != nil || e.Effects != (StagedLiveEffects{}) || e.Mutation == nil || !e.Mutation.valid() {
+			return errors.New("invalid native mutation outcome")
 		}
 	default:
 		return errors.New("unsupported native commit kind")
