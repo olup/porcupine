@@ -84,7 +84,12 @@ func TestDuckLakeLocalMutationAndInlineMaintenanceConverge(t *testing.T) {
 		cancel()
 		<-finished
 		if maintenanceErr != nil {
-			t.Error("concurrent inline maintenance failed", maintenanceErr)
+			var native *duckdb.Error
+			if errors.As(maintenanceErr, &native) {
+				t.Errorf("concurrent inline maintenance failed, native type=%v: %v", native.Type, maintenanceErr)
+			} else {
+				t.Error("concurrent inline maintenance failed", maintenanceErr)
+			}
 		}
 	}()
 	for revision := uint64(1); revision <= 40; revision++ {

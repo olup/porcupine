@@ -30,7 +30,8 @@ func TestNativeTransactionRetryIsTypedBoundedAndCancelable(t *testing.T) {
 		failure := &duckdb.Error{Type: duckdb.ErrorTypeTransaction, Msg: "persistent conflict"}
 		attempts := 0
 		err := retryNativeTransaction(t.Context(), func() error { attempts++; return failure })
-		if !errors.Is(err, failure) || attempts != 16 {
+		var exhausted *nativeConflictRetryLimit
+		if !errors.Is(err, failure) || attempts != 16 || !errors.As(err, &exhausted) || exhausted.attempts != 16 {
 			t.Fatal("native retry budget did not preserve the error", attempts, err)
 		}
 	})
