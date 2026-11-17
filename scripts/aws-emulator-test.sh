@@ -78,6 +78,7 @@ test -n "$secret_key"
   PORCUPINE_TEST_DUCKLAKE_S3_REGION=us-east-1 \
   "PORCUPINE_TEST_DUCKLAKE_S3_ACCESS_KEY_ID=$access_key" \
   "PORCUPINE_TEST_DUCKLAKE_S3_SECRET_ACCESS_KEY=$secret_key" \
+  "PORCUPINE_TEST_HOSTED_BUFFERED_VISIBILITY=${PORCUPINE_TEST_HOSTED_BUFFERED_VISIBILITY:-0}" \
   CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
     go test ./internal/porcupine -count=1 -timeout=180s -v \
     -run "$pattern"
