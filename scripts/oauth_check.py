@@ -214,7 +214,7 @@ class Checker:
         self.check("MCP OAuth initialization", status == 200 and isinstance(initialized.get("result"), dict))
         status, _, tools = self.mcp("tools/list", {})
         self.check("MCP OAuth tools discovery", status == 200 and
-                   {tool.get("name") for tool in tools.get("result", {}).get("tools", [])} == {"porcupine_docs", "porcupine_call"})
+                   {tool.get("name") for tool in tools.get("result", {}).get("tools", [])} == {"porcupine_docs", "porcupine_call", "porcupine_schema", "porcupine_query"})
         status, _, schema = self.mcp("tools/call", {"name": "porcupine_call", "arguments": {
             "operation_id": "get-event-schema", "path": {"id": self.project_id}}})
         result = schema.get("result", {})

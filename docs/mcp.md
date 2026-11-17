@@ -1,12 +1,12 @@
 # MCP reference
 
-To connect a client, follow [Connect your tools](connect-tools.md). This reference describes the two MCP tools, their request shapes, and their responses.
+To connect a client, follow [Connect your tools](connect-tools.md). This reference describes the four MCP tools, their request shapes, and their responses.
 
-Porcupine exposes two tools over stateless Streamable HTTP at `/mcp`. The
+Porcupine exposes four tools over stateless Streamable HTTP at `/mcp`: two read-only analytics tools, `porcupine_schema` and `porcupine_query`, and two generic tools, `porcupine_docs` and `porcupine_call`, for every other operation. The
 implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 v1.8.0 in the existing Go process. It requires no additional service.
 
-The server and both tools advertise the small Porcupine logo through MCP `icons`
+The server and every tool advertise the small Porcupine logo through MCP `icons`
 metadata, with 96-pixel PNG variants for light and dark backgrounds. Images are
 embedded as data URIs, so clients need no image download or additional credentials.
 Each client decides whether and where to display the icon. To regenerate the
@@ -32,6 +32,34 @@ Access tokens expire after 15 minutes by default. Machine clients repeat the tok
 Unauthorized requests include the discovery URL `ISSUER/.well-known/oauth-protected-resource/mcp`. [OAuth configuration](oauth.md) controls the issuer and optional legacy-key migration. Public browser write keys authorize ingestion only.
 
 The endpoint rejects cross-origin browser requests. When a reverse proxy forwards to a loopback listener, set its upstream Host header to the loopback host. Clients connect to the public HTTPS URL.
+
+## Read-only analytics with `porcupine_schema` and `porcupine_query`
+
+Not yet in a release: these tools are on `main` after v0.14.0.
+
+Most analysis needs two calls. Both tools are annotated as read-only, idempotent and non-destructive, so a client can approve them without approving `porcupine_call`. They dispatch through the same routes as `get-event-schema`, `get-event-catalog` and `query-events`, and the same token, permission and project checks apply. A credential without `events:read` on the project receives status `403`.
+
+`project_id` is optional when the credential grants exactly one project. Credentials with several projects, or with every project, must name one; use `list-projects` through `porcupine_docs` and `porcupine_call` to find it.
+
+`porcupine_schema` returns `schema` (the `get-event-schema` body: dialect, columns, functions, limits and delivery status) and `catalog` (the `get-event-catalog` body: observed event names):
+
+```json
+{"name":"porcupine_schema","arguments":{}}
+```
+
+Add `event` to list that event's sampled property keys and types instead. `property_prefix`, `property_kind`, `property_limit` and `property_cursor` behave as in `get-event-catalog`. When `property_cursor` is set, the response omits `schema`:
+
+```json
+{"name":"porcupine_schema","arguments":{"event":"signup","property_kind":"custom"}}
+```
+
+`porcupine_query` runs one SELECT with bound `$name` parameters and returns the `query-events` status and body:
+
+```json
+{"name":"porcupine_query","arguments":{"sql":"SELECT count(*) AS total FROM events WHERE event = $event","parameters":{"event":"signup"}}}
+```
+
+Rows are in `body.result.data`. Failures set `isError` and keep the API `code`, `hint` and `field`.
 
 ## Discovery with `porcupine_docs`
 
@@ -126,16 +154,16 @@ bodies are limited to 2 MiB. An oversized result returns a tool error with statu
 the result. The structured result and text fallback increase the final wire
 size beyond the captured API body size.
 
-`porcupine_docs` is annotated as read-only and idempotent. `porcupine_call` is
-annotated as potentially destructive and non-idempotent because it can create
-or revoke credentials. Both have `openWorldHint: false`. These hints inform
+`porcupine_docs`, `porcupine_schema` and `porcupine_query` are annotated as
+read-only and idempotent. `porcupine_call` is annotated as potentially
+destructive and non-idempotent because it can create or revoke credentials. All four have `openWorldHint: false`. These hints inform
 clients; server-side token scopes and project grants enforce access independently.
 
 The available operations include project and key management, queue inspection,
 SQL schema discovery, observed event and property discovery, read-only
 SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
-operations to the same discovery catalog; the tool count remains two. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
+operations to the same discovery catalog; the tool count does not change. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
 operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
 
 For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,

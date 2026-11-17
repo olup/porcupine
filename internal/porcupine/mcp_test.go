@@ -93,8 +93,8 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 			}
 			assertMCPIcons(t, info.Icons)
 			tools, err := session.ListTools(ctx, nil)
-			if err != nil || len(tools.Tools) != 2 {
-				t.Fatalf("expected two tools: %+v, %v", tools, err)
+			if err != nil || len(tools.Tools) != 4 {
+				t.Fatalf("expected four tools: %+v, %v", tools, err)
 			}
 			for _, tool := range tools.Tools {
 				if !reflect.DeepEqual(tool.Icons, info.Icons) {
@@ -103,8 +103,9 @@ func TestMCPRealClientDiscoveryAndLifecycle(t *testing.T) {
 				if tool.OutputSchema == nil || tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
 					t.Fatalf("missing output schema or closed-world annotation: %+v", tool)
 				}
-				if tool.Name == "porcupine_docs" && !tool.Annotations.ReadOnlyHint {
-					t.Fatal("docs must be read-only")
+				readOnly := tool.Name == "porcupine_docs" || tool.Name == "porcupine_schema" || tool.Name == "porcupine_query"
+				if readOnly && (!tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint) {
+					t.Fatalf("%s must be advertised as read-only and non-destructive", tool.Name)
 				}
 				if tool.Name == "porcupine_call" && (tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint) {
 					t.Fatal("generic API call must advertise possible mutation and destruction")

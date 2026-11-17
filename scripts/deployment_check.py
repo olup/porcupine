@@ -83,7 +83,7 @@ def main():
     status, initialized = mcp('initialize', {'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'deployment-check','version':'1'}})
     check('MCP initialization over deployed transport', status == 200 and 'result' in initialized)
     status, tools = mcp('tools/list', {})
-    check('MCP two-tool discovery', status == 200 and {t['name'] for t in tools['result']['tools']} == {'porcupine_docs','porcupine_call'})
+    check('MCP tool discovery', status == 200 and {t['name'] for t in tools['result']['tools']} == {'porcupine_docs','porcupine_call','porcupine_schema','porcupine_query'})
     status, docs = mcp('tools/call', {'name':'porcupine_docs','arguments':{'operation_id':'query-events'}})
     check('MCP query contract', status == 200 and not docs['result'].get('isError'))
     status, queried = mcp('tools/call', {'name':'porcupine_call','arguments':{'operation_id':'query-events','path':{'id':pid},'body':query}})

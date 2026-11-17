@@ -91,8 +91,8 @@ func TestDuckLakeEventProfileAgentHTTPMCPAndRevocation(t *testing.T) {
 	defer host.Close()
 	ctx, session := mcpTestSession(t, host.URL, reader, "2025-11-25")
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 2 {
-		t.Fatalf("expected two progressive discovery tools: %v %v", tools, err)
+	if err != nil || len(tools.Tools) != 4 {
+		t.Fatalf("expected discovery, call and two read-only analytics tools: %v %v", tools, err)
 	}
 	docs := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{OperationID: "get-event-profile"}, false)
 	if docs["contract"] == nil {
