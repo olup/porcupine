@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"compress/gzip"
@@ -24,7 +24,7 @@ var (
 )
 
 type exportSink struct {
-	s                         *Service
+	s                         *ExportJobs
 	ctx                       context.Context
 	job                       storedExport
 	limiter                   *rate.Limiter
@@ -42,8 +42,8 @@ type exportSinkFile struct {
 	digest   hashpkg.Hash
 }
 
-func newExportSink(ctx context.Context, s *Service, job storedExport) *exportSink {
-	return &exportSink{s: s, ctx: ctx, job: job, limiter: rate.NewLimiter(rate.Limit(s.exports.config.BandwidthBytesPerSecond), 64<<10), lastProgress: time.Now()}
+func newExportSink(ctx context.Context, s *ExportJobs, job storedExport) *exportSink {
+	return &exportSink{s: s, ctx: ctx, job: job, limiter: rate.NewLimiter(rate.Limit(s.config.BandwidthBytesPerSecond), 64<<10), lastProgress: time.Now()}
 }
 
 func (w *exportSink) setColumns(columns []lakeapi.AnalyticsResultColumn) error {
@@ -70,7 +70,7 @@ func (w *exportSink) writeRow(values []json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	if w.current != nil && w.current.artifact.Rows > 0 && w.current.artifact.DecodedBytes+int64(len(row)) > w.s.exports.config.FileBytes {
+	if w.current != nil && w.current.artifact.Rows > 0 && w.current.artifact.DecodedBytes+int64(len(row)) > w.s.config.FileBytes {
 		if err = w.completeFile(); err != nil {
 			return err
 		}
@@ -95,15 +95,15 @@ func (w *exportSink) beginFile() error {
 	if w.files >= 10000 {
 		return errExportOutputLimit
 	}
-	if int64(len(w.encoder.Header())) > w.s.exports.config.MaxOutputBytes-w.decoded {
+	if int64(len(w.encoder.Header())) > w.s.config.MaxOutputBytes-w.decoded {
 		return errExportOutputLimit
 	}
 	w.files++
 	artifact := exportArtifact{Index: w.files, Key: fmt.Sprintf("%s/%s/part-%06d.%s.gz", w.job.ID, w.job.AttemptID, w.files, w.job.Format)}
-	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key,storage_id) VALUES($1,$2,$3,$4,$5)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key, w.s.exports.store.OwnershipID()); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key,storage_id) VALUES($1,$2,$3,$4,$5)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key, w.s.store.OwnershipID()); err != nil {
 		return errExportSink
 	}
-	upload, err := w.s.exports.store.Begin(w.ctx, artifact.Key)
+	upload, err := w.s.store.Begin(w.ctx, artifact.Key)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (w *exportSink) beginFile() error {
 }
 
 func (w *exportSink) writeDecoded(data []byte) error {
-	if int64(len(data)) > w.s.exports.config.MaxOutputBytes-w.decoded {
+	if int64(len(data)) > w.s.config.MaxOutputBytes-w.decoded {
 		return errExportOutputLimit
 	}
 	n, err := w.current.gzip.Write(data)

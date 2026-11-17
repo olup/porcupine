@@ -65,7 +65,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		Checks: InstanceChecks{SQLite: dependencyOK, DuckLake: dependencyNotConfigured},
 		Configuration: InstanceConfiguration{
 			ExternalAuthentication: s.externalAuthEnabled(),
-			Analytics:              s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
+			Analytics:              s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports.Enabled(), WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && s.lake != nil,
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil && s.oauth.config.Email.SendCode != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.browser != nil && s.oauth.browser.HasOIDC(),

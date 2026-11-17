@@ -173,13 +173,13 @@ func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.exportActor(context.Background(), principal.ID); err != nil {
+	if _, err = f.s.loadCredentialActor(context.Background(), principal.ID); err != nil {
 		t.Fatal("new grant not authorized", err)
 	}
 	if _, err = f.s.control.Exec(`UPDATE oauth_interactive_grants SET expires_at_ms=? WHERE principal_id=?`, f.s.clock().Add(-time.Second).UnixMilli(), principal.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
+	if _, err = f.s.loadCredentialActor(context.Background(), principal.ID); err == nil {
 		t.Fatal("expired grant retained background read authority")
 	}
 	tx, err := f.s.db.BeginTx(context.Background(), nil)
@@ -187,7 +187,7 @@ func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
+	if _, err = f.s.loadCredentialActor(context.Background(), principal.ID); err == nil {
 		t.Fatal("expired grant retained publication transaction authority")
 	}
 }
@@ -208,7 +208,7 @@ func TestOAuthInteractiveRevocationAndAdminGrantManagement(t *testing.T) {
 		t.Fatal("admin cannot inspect human grant identity", grants)
 	}
 	request(t, f.s, "DELETE", "/api/v1/oauth-grants/"+principal.ID, admin, "", 204)
-	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
+	if _, err = f.s.loadCredentialActor(context.Background(), principal.ID); err == nil {
 		t.Fatal("grant revoke retained background authority")
 	}
 	if _, err = f.s.authenticateOAuthToken(context.Background(), access, f.host.URL+"/mcp"); err == nil {
@@ -367,7 +367,7 @@ func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
 	if f.s.control.QueryRow(`SELECT revoked_at FROM access_keys WHERE id=?`, principal.ID).Scan(&revoked) != nil || revoked == nil {
 		t.Fatal("client revocation did not durably revoke consent principal")
 	}
-	if _, err = f.s.exportActor(context.Background(), principal.ID); err == nil {
+	if _, err = f.s.loadCredentialActor(context.Background(), principal.ID); err == nil {
 		t.Fatal("client revoked but background actor active")
 	}
 }

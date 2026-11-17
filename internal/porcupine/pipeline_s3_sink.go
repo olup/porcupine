@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	stdhash "hash"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 	"golang.org/x/time/rate"
 )
 
@@ -40,7 +42,7 @@ type pipelineS3Sink struct {
 	s                         *Service
 	work                      *s3PipelineWork
 	store                     *exportstore.Store
-	config                    ExportConfig
+	config                    output.ExportConfig
 	encoder                   *delivery.RowEncoder
 	resultColumns             []lakeapi.AnalyticsResultColumn
 	limiter                   *rate.Limiter
@@ -59,7 +61,7 @@ func newPipelineS3Sink(ctx context.Context, s *Service, w *s3PipelineWork, store
 }
 func (w *pipelineS3Sink) columns(columns []lakeapi.AnalyticsResultColumn) error {
 	if w.encoder != nil {
-		return errExportSink
+		return errPipelineSink
 	}
 	names := make([]string, len(columns))
 	for i, column := range columns {
@@ -67,7 +69,7 @@ func (w *pipelineS3Sink) columns(columns []lakeapi.AnalyticsResultColumn) error 
 	}
 	encoder, err := delivery.NewRowEncoder(w.work.spec.Format, names)
 	if err != nil {
-		return errExportSink
+		return errPipelineSink
 	}
 	w.encoder = encoder
 	w.resultColumns = append([]lakeapi.AnalyticsResultColumn{}, columns...)
@@ -100,7 +102,7 @@ func (w *pipelineS3Sink) row(values []json.RawMessage) error {
 }
 func (w *pipelineS3Sink) beginFile() error {
 	if len(w.files) >= 10000 {
-		return errExportOutputLimit
+		return errPipelineOutputLimit
 	}
 	key := fmt.Sprintf("%s/%d/%s/part-%06d.%s.gz", w.work.pipeline.ID, w.work.start, w.work.attemptID, len(w.files)+1, w.work.spec.Format)
 	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) VALUES($1,$2)`, w.work.id, key); err != nil {
@@ -132,7 +134,7 @@ func (w *pipelineS3Sink) beginFile() error {
 }
 func (w *pipelineS3Sink) writeDecoded(data []byte) error {
 	if int64(len(data)) > w.config.MaxOutputBytes-w.decoded {
-		return errExportOutputLimit
+		return errPipelineOutputLimit
 	}
 	n, err := w.gzip.Write(data)
 	w.decoded += int64(n)
@@ -147,7 +149,7 @@ type pipelineS3Compressed pipelineS3Sink
 
 func (w *pipelineS3Compressed) Write(data []byte) (int, error) {
 	if int64(len(data)) > w.config.MaxOutputBytes-w.compressed {
-		return 0, errExportOutputLimit
+		return 0, errPipelineOutputLimit
 	}
 	written := 0
 	for len(data) > 0 {
@@ -195,3 +197,7 @@ func (w *pipelineS3Sink) finish() (pipelineS3Manifest, error) {
 	}
 	return pipelineS3Manifest{Version: 1, ProjectID: w.work.pipeline.ProjectID, PipelineID: w.work.pipeline.ID, RunID: w.work.id, WindowStartMS: w.work.start, WindowEndMS: w.work.end, Format: w.work.spec.Format, Rows: w.rows, Columns: w.resultColumns, Files: w.files}, nil
 }
+
+var errPipelineSink = errors.New("export object write failed")
+var errPipelineOutputLimit = errors.New("export output limit")
+var errPipelinePressure = errors.New("export delivery pressure")

@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -106,17 +106,19 @@ func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *t
 func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 	t.Parallel()
 	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
-	request(t, s, "POST", "/capture/", "", captureBody(func() string { _, token := project(t, s); return token }(), "other-project-pressure"), 200)
+	if _, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES('other','default','other','now'); INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at) VALUES('other','pressure','purchase','u','{}','now','now')`); err != nil {
+		t.Fatal(err)
+	}
 	ready, err := s.exportAdmission(context.Background(), job)
 	if err != nil || !ready {
 		t.Fatal("unrelated low pending counts blocked completed project barrier", err)
 	}
-	s.exports.config.QueueThreshold = 0
+	s.config.QueueThreshold = 0
 	ready, err = s.exportAdmission(context.Background(), job)
 	if err != nil || ready {
 		t.Fatal("global delivery pressure ignored", err)
 	}
-	s.exports.config.QueueThreshold = 1000
+	s.config.QueueThreshold = 1000
 	if _, err = s.db.Exec(`INSERT INTO metadata(key,value) VALUES('last_delivery_error','private message')`); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +135,7 @@ func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), job.ActorID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.exportCanContinue(context.Background(), job); !errors.Is(err, errExportRevoked) {
+	if err = s.exportCanContinue(context.Background(), job); !errors.Is(err, ErrExportRevoked) {
 		t.Fatal("worker ignored revoked creator", err)
 	}
 }
@@ -151,7 +153,7 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The existing persisted running attempt models a process dying after a chunk completed.
-	s.startExports()
+	s.Start()
 	deadline := time.Now().Add(4 * time.Second)
 	var current storedExport
 	for time.Now().Before(deadline) {
@@ -161,7 +163,7 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	s.stopExports()
+	s.Stop()
 	if current.State != ExportSucceeded || current.AttemptID == job.AttemptID || current.Attempts != 2 {
 		t.Fatalf("restart did not retry from a fresh attempt: %+v", current)
 	}
@@ -178,9 +180,8 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 
 func TestExportWorkerStopWithoutStartedRuntime(t *testing.T) {
 	t.Parallel()
-	s := service(t, 20)
-	enableTestExports(t, s, 100)
-	s.stopExports()
+	s, _ := exportWorkerFixture(t, &exportTestS3{})
+	s.Stop()
 }
 
 func TestExportWorkerRevalidatesPersistedSQL(t *testing.T) {
@@ -204,14 +205,12 @@ func TestExportWorkerNativeRowFailureCleansCompletedChunks(t *testing.T) {
 	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
-	_, writer := key(t, s, []string{"events:write"}, []string{job.ProjectID})
 	for _, row := range []struct{ id, padding string }{{"a", "short"}, {"b", "short"}, {"c", "short"}, {"d", strings.Repeat("x", 1024)}} {
-		raw, _ := json.Marshal(map[string]any{"api_key": writer, "uuid": row.id, "event": "purchase", "distinct_id": "u", "properties": map[string]any{"padding": row.padding}})
-		request(t, s, "POST", "/capture/", "", string(raw), 200)
+		applyExportEvent(t, s, job.ProjectID, row.id, row.padding)
 	}
-	duckLakeJourneyDrain(t, s)
-	s.exports.config.FileBytes = 1
-	s.exports.config.MaxRowBytes = 128
+
+	s.config.FileBytes = 1
+	s.config.MaxRowBytes = 128
 	job.SQL = "SELECT uuid,properties FROM events ORDER BY uuid"
 	job.Parameters = nil
 	s.runExport(context.Background(), job)
@@ -259,5 +258,95 @@ func TestExportWorkerShutdownRequeuesWithoutPublishing(t *testing.T) {
 	}
 	if current.State != ExportQueued || current.Error != "interrupted" || current.SQL == "" || current.CleanupPending {
 		t.Fatalf("shutdown lost resume state: %+v", current)
+	}
+}
+
+func TestExportJobsIsolatedSuccessTransactionRollbackAndReplay(t *testing.T) {
+	t.Parallel()
+	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
+	ctx := t.Context()
+	if _, err := s.db.Exec(`CREATE TRIGGER reject_usage BEFORE INSERT ON usage_rollups BEGIN SELECT RAISE(ABORT,'usage unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	s.runExport(ctx, job)
+	current, err := s.loadExport(ctx, job.ProjectID, job.ID)
+	if err != nil || current.State != ExportQueued || current.Bytes == 0 {
+		t.Fatal("failed usage transaction published success or lost attempt", current, err)
+	}
+	var bytes int64
+	if err := s.db.QueryRow(`SELECT coalesce(sum(export_bytes),0) FROM usage_rollups`).Scan(&bytes); err != nil || bytes != 0 {
+		t.Fatal("rolled back success was metered", bytes, err)
+	}
+	if _, err := s.db.Exec(`DROP TRIGGER reject_usage`); err != nil {
+		t.Fatal(err)
+	}
+	worked, err := s.RunOne(ctx)
+	if err != nil || !worked {
+		t.Fatal("retry did not execute", worked, err)
+	}
+	current, err = s.loadExport(ctx, job.ProjectID, job.ID)
+	if err != nil || current.State != ExportSucceeded {
+		t.Fatal("retry failed", current, err)
+	}
+	if err := s.db.QueryRow(`SELECT coalesce(sum(export_bytes),0) FROM usage_rollups`).Scan(&bytes); err != nil || bytes != current.Bytes {
+		t.Fatal("winning output metered incorrectly", bytes, current.Bytes, err)
+	}
+	// A repeated publication must lose the same state predicate before AddTx.
+	sink := &exportSink{compressed: current.Bytes}
+	if err := s.publishExport(ctx, current, lakeapi.ExportStreamResult{}, sink); !errors.Is(err, errExportCanceled) {
+		t.Fatal("terminal publication replay won", err)
+	}
+	var replayed int64
+	if err := s.db.QueryRow(`SELECT coalesce(sum(export_bytes),0) FROM usage_rollups`).Scan(&replayed); err != nil || replayed != bytes {
+		t.Fatal("publication replay was metered", replayed, bytes, err)
+	}
+}
+
+func TestExportJobsCancelCommitsBeforeSignalingActiveAttempt(t *testing.T) {
+	t.Parallel()
+	s, job := exportWorkerFixture(t, &exportTestS3{})
+	called := false
+	s.activeJob = job.ID
+	s.activeCancel = func() {
+		called = true
+		var requested, cleanup bool
+		if err := s.db.QueryRow(`SELECT cancel_requested,cleanup_pending FROM export_jobs WHERE id=?`, job.ID).Scan(&requested, &cleanup); err != nil || !requested || !cleanup {
+			t.Error("active attempt signaled before durable cancellation", err)
+		}
+	}
+	if _, err := s.Cancel(t.Context(), job.ProjectID, job.ID, fixtureActor()); err != nil || !called {
+		t.Fatal("creator cancellation did not signal", called, err)
+	}
+}
+
+func TestExportJobsFiniteExecutionOutageRetainsOriginalExpiry(t *testing.T) {
+	t.Parallel()
+	s, job := exportWorkerFixture(t, &exportTestS3{})
+	at := s.clock()
+	s.issuer = "https://issuer.example"
+	job.ExternalTenantID = "default"
+	job.ExternalIssuer = s.issuer
+	job.ExternalExpiresAtMS = at.Add(5 * time.Minute).UnixMilli()
+	if _, err := s.db.Exec(`INSERT INTO export_external_authority(job_id,tenant_id,issuer,expires_at_ms) VALUES(?,?,?,?)`, job.ID, job.ExternalTenantID, job.ExternalIssuer, job.ExternalExpiresAtMS); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exportJobActor(t.Context(), job); err != nil {
+		t.Fatal("valid private authority rejected", err)
+	}
+	if err := s.control.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.exportJobActor(t.Context(), job)
+	if !authenticationUnavailable(err) {
+		t.Fatal("control outage became revoked authority", err)
+	}
+	s.failExport(t.Context(), job, err)
+	current, err := s.loadExport(t.Context(), job.ProjectID, job.ID)
+	if err != nil || current.State != ExportQueued || current.Error != "authorization_unavailable" || current.SQL == "" {
+		t.Fatal("outage destroyed running execution intent", current, err)
+	}
+	s.clock = func() time.Time { return at.Add(6 * time.Minute) }
+	if _, err := s.exportJobActor(t.Context(), job); !errors.Is(err, errExportAuthorizationExpired) {
+		t.Fatal("outage extended finite execution authority", err)
 	}
 }

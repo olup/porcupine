@@ -24,6 +24,7 @@ import (
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 const sharedJourneySecret = "shared-worker-journey-routing-secret-test-only"
@@ -567,7 +568,7 @@ func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture) (*sharedJo
 			Shared:   &SharedConfig{DatabaseURL: control, WorkerID: worker, RouteURL: "http://" + host.Listener.Addr().String(), RoutingSecret: []byte(sharedJourneySecret)},
 			DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), PostgresURL: catalogs, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true, MaintenanceInterval: 24 * time.Hour}}
 		if fixture.storage.CACertFile == "" {
-			config.Exports = &ExportConfig{S3: exportstore.Config{Endpoint: fixture.storage.Endpoint, Region: fixture.storage.Region, Bucket: fixture.storage.Bucket,
+			config.Exports = &output.ExportConfig{S3: exportstore.Config{Endpoint: fixture.storage.Endpoint, Region: fixture.storage.Region, Bucket: fixture.storage.Bucket,
 				Prefix: fixture.storage.Prefix + "/exports", AccessKeyID: fixture.storage.AccessKeyID, SecretAccessKey: fixture.storage.SecretAccessKey, UsePathStyle: true},
 				MaxExecutionSeconds: 10, BandwidthBytesPerSecond: 10 << 20}
 		}

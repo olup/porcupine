@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 )
 
 // The reset deliberately cannot act on source destinations. Preserve only
@@ -14,23 +15,14 @@ import (
 func preserveNativeRestoreArtifactHolds(ctx context.Context, journal *sql.DB, control *sql.Tx) error {
 	type artifact struct{ project, kind, storage, key, upload string }
 	var artifacts []artifact
-	rows, err := journal.QueryContext(ctx, `SELECT j.project_id,f.storage_id,f.object_key,f.upload_id FROM export_files f JOIN export_jobs j ON j.id=f.job_id
-UNION SELECT project_id,storage_id,object_key,upload_id FROM project_deletion_files`)
+	exports, err := output.ExportRestoreArtifacts(ctx, journal)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		a := artifact{kind: "export"}
-		if err := rows.Scan(&a.project, &a.storage, &a.key, &a.upload); err != nil {
-			rows.Close()
-			return err
-		}
-		artifacts = append(artifacts, a)
+	for _, a := range exports {
+		artifacts = append(artifacts, artifact{project: a.Project, kind: "export", storage: a.Storage, key: a.Key, upload: a.Upload})
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	rows, err = journal.QueryContext(ctx, `SELECT p.project_id,p.config,f.object_key,f.upload_id FROM pipeline_s3_files f
+	rows, err := journal.QueryContext(ctx, `SELECT p.project_id,p.config,f.object_key,f.upload_id FROM pipeline_s3_files f
 JOIN pipeline_s3_runs r ON r.id=f.run_id JOIN pipelines p ON p.id=r.pipeline_id WHERE r.state<>'succeeded'`)
 	if err != nil {
 		return err

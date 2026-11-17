@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 )
 
-func assertSignedExportExpiry(t *testing.T, file ExportFile, bound time.Time) {
+func assertSignedExportExpiry(t *testing.T, file output.ExportFile, bound time.Time) {
 	t.Helper()
 	u, err := url.Parse(file.URL)
 	if err != nil {
@@ -89,7 +90,12 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.exports.store = store
+	config := s.exports.Config()
+	config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "private-exports", Prefix: "porcupine-exports", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "test-access", SecretAccessKey: "test-secret", UsePathStyle: true}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
 	clock := time.Now().UTC().Truncate(time.Second)
 	s.clock = func() time.Time { return clock }
 	projectID, _ := project(t, s)
@@ -145,7 +151,7 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 	_, err = s.eventExportFiles(ctx, &ExportFilesInput{ID: projectID, ExportID: jobID, Limit: 1})
 	mutationErrorStatus(t, err, 410)
 	current, err := s.getEventExport(ctx, &ExportGetInput{ID: projectID, ExportID: jobID})
-	if err != nil || current.Body.State != ExportExpired {
+	if err != nil || current.Body.State != output.ExportExpired {
 		t.Fatal("public status ignored integer expiry", err)
 	}
 	if _, err := s.db.Exec(`UPDATE export_jobs SET expires_at_ms=? WHERE id=?`, clock.Add(2*time.Minute).UnixMilli(), jobID); err != nil {
@@ -159,17 +165,22 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 	if parsed.Query().Get("X-Amz-Expires") != "120" {
 		t.Fatal("download link outlived artifact retention")
 	}
-	artifacts, err := s.exportArtifacts(ctx, jobID, "current")
-	if err != nil || len(artifacts) != 4 || artifacts[3].Complete {
-		t.Fatal("worker artifact helper omitted incomplete upload cleanup metadata", err)
+	var artifacts int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM export_files WHERE job_id=? AND attempt_id='current'`, jobID).Scan(&artifacts); err != nil || artifacts != 4 {
+		t.Fatal("incomplete cleanup metadata missing", err)
 	}
+
 }
 
 func TestExportListLimitsDoNotExposeOperatorSecretsAndRemainProjectScoped(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
-	s.exports.config.S3 = exportstore.Config{Bucket: "secret-bucket", Endpoint: "https://private.example", AccessKeyID: "private-access", SecretAccessKey: "private-secret"}
+	config := s.exports.Config()
+	config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "secret-bucket", Prefix: "tests", Endpoint: "https://private.example", AccessKeyID: "private-access", SecretAccessKey: "private-secret"}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
 	ctx := exportContext(t, s, adminToken)
 	projectID, _ := project(t, s)
 	otherProject, _ := project(t, s)

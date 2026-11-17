@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/output"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/time/rate"
@@ -243,7 +244,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 
 	// A queued export records the durable principal, independent of any token's lifespan.
 	enableTestExports(t, f.s, 3)
-	var job ExportJob
+	var job output.ExportJob
 	f.call(t, "POST", "/api/v1/projects/"+a+"/exports", read.AccessToken, ExportCreateBody{IdempotencyKey: "oauth-owner", SQL: "SELECT count() FROM events", Format: "jsonl"}, 202, &job)
 	var owner string
 	if err := f.s.db.QueryRow(`SELECT actor_id FROM export_jobs WHERE id=?`, job.ID).Scan(&owner); err != nil {
@@ -288,7 +289,7 @@ func TestOAuthIntegrationExpiryAndDiscovery(t *testing.T) {
 	token := f.token(t, created.ClientID, created.ClientSecret, resource)
 	f.call(t, "GET", "/api/v1/projects/"+a+"/events", token.AccessToken, nil, 200, nil)
 	enableTestExports(t, f.s, 3)
-	var queued ExportJob
+	var queued output.ExportJob
 	f.call(t, "POST", "/api/v1/projects/"+a+"/exports", token.AccessToken, ExportCreateBody{IdempotencyKey: "expiring-token-owner", SQL: "SELECT count() FROM events", Format: "jsonl"}, 202, &queued)
 	f.now.Add(int64(61 * time.Second))
 	f.call(t, "GET", "/api/v1/projects/"+a+"/events", token.AccessToken, nil, 401, nil)

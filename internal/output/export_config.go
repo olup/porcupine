@@ -1,8 +1,8 @@
-package porcupine
+package output
 
 import "errors"
 
-func normalizeExportConfig(c ExportConfig) (ExportConfig, error) {
+func NormalizeExportConfig(c ExportConfig) (ExportConfig, error) {
 	if c.MaxExecutionSeconds == 0 {
 		c.MaxExecutionSeconds = 86400
 	}

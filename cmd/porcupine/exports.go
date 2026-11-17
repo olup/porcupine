@@ -5,10 +5,10 @@ import (
 	"strconv"
 
 	"github.com/olup/porcupine/internal/exportstore"
-	"github.com/olup/porcupine/internal/porcupine"
+	"github.com/olup/porcupine/internal/output"
 )
 
-func (s settings) exportConfiguration() (*porcupine.ExportConfig, error) {
+func (s settings) exportConfiguration() (*output.ExportConfig, error) {
 	for _, name := range []string{"PORCUPINE_EXPORT_MAX_READ_BYTES", "PORCUPINE_EXPORT_MEMORY_BYTES", "PORCUPINE_EXPORT_TEMPORARY_BYTES"} {
 		if s.get(name) != "" {
 			return nil, errors.New(name + " is not enforced by DuckDB and is no longer supported")
@@ -24,7 +24,7 @@ func (s settings) exportConfiguration() (*porcupine.ExportConfig, error) {
 		}
 		return nil, nil
 	}
-	c := &porcupine.ExportConfig{S3: exportstore.Config{
+	c := &output.ExportConfig{S3: exportstore.Config{
 		Bucket: bucket, Prefix: s.get("PORCUPINE_EXPORT_S3_PREFIX"), Region: s.get("PORCUPINE_EXPORT_S3_REGION"),
 		Endpoint: s.get("PORCUPINE_EXPORT_S3_ENDPOINT"), AccessKeyID: s.get("PORCUPINE_EXPORT_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: s.get("PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY"), SessionToken: s.get("PORCUPINE_EXPORT_S3_SESSION_TOKEN"),
@@ -48,7 +48,7 @@ func (s settings) exportConfiguration() (*porcupine.ExportConfig, error) {
 	return c, nil
 }
 
-func (s settings) readExportLimits(c *porcupine.ExportConfig) error {
+func (s settings) readExportLimits(c *output.ExportConfig) error {
 
 	var seconds, queued, hours int64
 	fields := []struct {

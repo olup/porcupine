@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -6,17 +6,24 @@ import (
 	"errors"
 )
 
-// stageProjectExportCleanup runs in the project-removal transaction after the
+// StageExportProjectCleanupTx runs in the project-removal transaction after the
 // writers drain. The checkpoints must survive deletion of export_jobs/files.
-func (s *Service) stageProjectExportCleanup(ctx context.Context, tx *sql.Tx, projectID string) error {
+func StageExportProjectCleanupTx(ctx context.Context, tx *sql.Tx, projectID string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO project_deletion_files(project_id,object_key,upload_id,storage_id)
 		SELECT j.project_id,f.object_key,f.upload_id,f.storage_id FROM export_jobs j
 		JOIN export_files f ON f.job_id=j.id WHERE j.project_id=$1
 		ON CONFLICT(project_id,object_key,upload_id) DO NOTHING`, projectID)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM export_files WHERE job_id IN (SELECT id FROM export_jobs WHERE project_id=$1)`, projectID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM export_jobs WHERE project_id=$1`, projectID)
 	return err
 }
 
-func (s *Service) purgeProjectExports(ctx context.Context, projectID string) error {
+func (s *ExportJobs) CleanupProject(ctx context.Context, projectID string) error {
 	for {
 		var key, uploadID, storageID string
 		err := s.db.QueryRowContext(ctx, `SELECT object_key,upload_id,storage_id FROM project_deletion_files
@@ -27,13 +34,13 @@ func (s *Service) purgeProjectExports(ctx context.Context, projectID string) err
 		if err != nil {
 			return err
 		}
-		if s.exports == nil || s.exports.store == nil {
+		if s == nil || s.store == nil {
 			return errExportSink
 		}
-		if storageID == "" || storageID != s.exports.store.OwnershipID() {
+		if storageID == "" || storageID != s.store.OwnershipID() {
 			return errors.New("export cleanup requires its original bound storage namespace")
 		}
-		if err := s.retainArtifactOwnership(ctx, projectID, "export", s.exports.store, key, uploadID); err != nil {
+		if err := s.retainArtifactOwnership(ctx, projectID, "export", s.store, key, uploadID); err != nil {
 			return err
 		}
 		if err = s.removeExportArtifact(ctx, key, uploadID); err != nil {
@@ -46,15 +53,15 @@ func (s *Service) purgeProjectExports(ctx context.Context, projectID string) err
 	}
 }
 
-func (s *Service) removeExportArtifact(ctx context.Context, key, uploadID string) error {
-	if s.exports == nil || s.exports.store == nil {
+func (s *ExportJobs) removeExportArtifact(ctx context.Context, key, uploadID string) error {
+	if s == nil || s.store == nil {
 		return errExportSink
 	}
 	if uploadID != "" {
-		if err := s.exports.store.Abort(ctx, key, uploadID); err != nil {
+		if err := s.store.Abort(ctx, key, uploadID); err != nil {
 			return err
 		}
 	}
 	// Complete may have committed despite a lost acknowledgment; always delete.
-	return s.exports.store.Delete(ctx, key)
+	return s.store.Delete(ctx, key)
 }
