@@ -71,8 +71,9 @@ retention, owner routing settings and local native backups.
 - The two-process fixture proves startup, steady-path acceptance and
   replacement in an isolated environment. S3 validation may use the AWS
   Emulator. Emulator results describe the tested requests and observable
-  storage behavior. Production capacity and a loss-age objective still need
-  separate measurements.
+  storage behavior. The [buffered visibility experiment](hosted-buffered-visibility.md)
+  records receipt-to-query time, worker kills, and S3 write interruption.
+  Production capacity still needs separate measurements.
 
 The [architecture and phase gates](hosted-architecture.md) apply before public
 enablement.
