@@ -177,6 +177,7 @@ func startHostedProfileBinary(t *testing.T, binary, dsn, scratch string, fixture
 		t.Fatal(err)
 	}
 	command := exec.Command(binary, "--config", configFile)
+	command.Dir = scratch
 	command.Env = slices.DeleteFunc(os.Environ(), func(item string) bool {
 		return strings.HasPrefix(item, "PORCUPINE_")
 	})

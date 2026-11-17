@@ -4,7 +4,7 @@ These settings belong to the server executable. The standalone API client has it
 
 `porcupine init` creates `porcupine.json` with mode 0600 and random bootstrap and pipeline secrets. It refuses to overwrite an existing file. The server reads that file by default. `--config FILE` takes precedence over `PORCUPINE_CONFIG`. A missing explicitly selected file is an error. Environment settings on the server process override matching JSON values. A host shell's environment is not automatically passed into a container.
 
-Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Database identity, provider discovery, and remote storage connectivity are checked at actual startup.
+Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Startup checks the configured database and analytical registry. Confirm analytical S3 access with an ingestion and query before routing traffic.
 
 A fresh builtin instance needs the generated bootstrap token. An already initialized builtin instance may omit it; a configured token must contain at least 16 characters. Changing the configured token does not replace an existing stored credential. [External authentication](external-auth.md) instead uses a trusted operator JWT and rejects bootstrap, SMTP, and builtin provider settings. Preserve generated secrets when applying the [recommended laptop and VM profiles](../hosting.md#configure-the-development-build).
 
