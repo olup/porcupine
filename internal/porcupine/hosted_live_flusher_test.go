@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -71,8 +72,12 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
 	var rejectEffects, blockEffects atomic.Bool
+	var effectPuts atomic.Int64
 	effectEntered, resumeEffects := make(chan struct{}), make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
+			effectPuts.Add(1)
+		}
 		if rejectEffects.Load() && r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -212,6 +217,56 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A real 100-target plan can exceed its preparation memory bound before the
+	// numeric reservation. Refuse it before any PUT, with no native growth or
+	// unresolved reservation, rather than encoding all fanout then rejecting.
+	fanout := make([]output.PipelineTarget, 99)
+	session, err = ca.Acquire(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		for i := range fanout {
+			fanout[i] = output.PipelineTarget{ID: fmt.Sprintf("fanout-%02d", i), Incarnation: fmt.Sprintf("fanout-inc-%02d", i), RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)}
+			if e := fa.publisher.effects.CompareAndSwapDefinitionTx(t.Context(), tx, nil, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: "active", Target: fanout[i]}); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	session.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversized := batch("prepared-byte-cap")
+	oversized.events[0].input.event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
+	putsBefore := effectPuts.Load()
+	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) {
+		t.Fatal("oversized preparation accepted", err)
+	}
+	if effectPuts.Load() != putsBefore {
+		t.Fatal("preparation bound uploaded an object before refusal")
+	}
+	if _, err = fa.publisher.reservation(t.Context(), scope); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("preparation overflow retained a reservation", err)
+	}
+	session, err = ca.Acquire(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		for _, target := range fanout {
+			if e := fa.publisher.effects.CompareAndSwapDefinitionTx(t.Context(), tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: "retired", Target: target}); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	session.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	var loseCommit atomic.Bool
 	wrapped, er := installLostHostedCommit(a.service.shared.config.DatabaseURL, fa.publisher, &loseCommit)
 	if er != nil {

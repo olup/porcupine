@@ -170,8 +170,8 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 		seq = page.Evidence[0].Sequence
 	} else if resErr == nil {
 		// Complete retained history after a committed successor fence proves the
-		// unresolved batch did not commit. Cleanup remains charged and prevents an
-		// unsafe same-batch retry until its previous namespace has been removed.
+		// unresolved batch did not commit. Cleanup remains charged under the original acquisition. A retry
+		// owns a separately charged, disjoint acquisition namespace.
 		if binding.Epoch >= fence.Epoch {
 			return output.ErrPipelineConflict
 		}

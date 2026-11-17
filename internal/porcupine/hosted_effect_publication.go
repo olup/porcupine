@@ -32,6 +32,9 @@ type hostedPublicationManifest struct {
 	Outputs                                                  []output.PipelineOutput
 	PlanRef                                                  output.PipelineRef
 }
+
+const maxHostedPreparedObjectBytes int64 = 64 << 20
+
 type hostedPreparedObject struct {
 	ref  lakeapi.ImmutableObjectRef
 	body []byte
@@ -118,9 +121,14 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	}
 	stager.planID = s.plan.ID
 	objects := []hostedPreparedObject{}
+	var preparedBytes int64
 	stager.put = func(_ context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
+		if int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
+			return lakeapi.ImmutableObjectRef{}, output.ErrPipelineCapacity
+		}
 		ref, _, e := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, raw)
 		if e == nil {
+			preparedBytes += int64(len(raw))
 			objects = append(objects, hostedPreparedObject{ref: ref, body: raw})
 		}
 		return ref, e

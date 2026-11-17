@@ -64,6 +64,9 @@ func validatePipelinePreparation(b PipelineBinding, plan PipelinePlan, outputs [
 // ReserveCurrentEffectsTx rechecks authoritative selection in capacity-first
 // order while acquiring the reservation. Call under the common project session.
 func (p *PGPipelineEffects) ReserveCurrentEffectsTx(ctx context.Context, tx *sql.Tx, b PipelineBinding, prepared []PipelineOutput) error {
+	if tx == nil || !b.valid() {
+		return ErrPipelineConflict
+	}
 	if err := p.lockCapacity(ctx, tx, b, false); err != nil {
 		return err
 	}
