@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
+
+	usageapi "github.com/olup/porcupine/internal/usage"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
@@ -84,6 +87,21 @@ func TestSharedOperatorAPIProvisioner(t *testing.T) {
 	usage := call(b.URL, http.MethodGet, "/tenants/"+tenantA+"/usage", "", 200)
 	if usage["accepted_events"] != "1" || usage["remaining_events"] != "0" {
 		t.Fatalf("hosted publication did not update the tenant budget: %v", usage)
+	}
+	// Advance the rollup retention clock without changing the budget month.
+	meter := usageapi.NewStore(serviceA.control, true, usageapi.Config{RetentionDays: 1}, func() time.Time {
+		return time.Now().AddDate(0, 0, 2)
+	})
+	if err := meter.Prune(t.Context()); err != nil {
+		t.Fatal("prune hosted daily usage", err)
+	}
+	var daily int64
+	if err := serviceA.control.QueryRow(`SELECT coalesce(sum(live_events),0) FROM usage_rollups WHERE tenant_id=$1`, tenantA).Scan(&daily); err != nil || daily != 0 {
+		t.Fatalf("retained daily events = %d after pruning: %v", daily, err)
+	}
+	usage = call(a.URL, http.MethodGet, "/tenants/"+tenantA+"/usage", "", 200)
+	if usage["accepted_events"] != "1" || usage["remaining_events"] != "0" {
+		t.Fatalf("daily rollup expiry changed the tenant budget: %v", usage)
 	}
 
 	// Revoking the provisioner's API key is itself a standard operator call.

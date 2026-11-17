@@ -460,6 +460,7 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 		default:
 			return output.ErrPipelineConflict
 		}
+		// A replay of an already committed checkpoint has no new acceptance.
 		count := e.AcceptedLive + e.AcceptedImport
 		if advanced && count > 0 {
 			start, _ := tenantMonth(e.AccountedAt)
