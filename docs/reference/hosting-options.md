@@ -36,7 +36,7 @@ The standalone setup below remains the default. Start a fresh data directory for
 Install Git, curl, OpenSSL, jq, the [standalone CLI](../../cli/README.md), Docker, and Docker Compose 2.24.4 or newer. Use a POSIX shell, such as WSL on Windows.
 
 ```sh
-git clone https://github.com/olup/porcupine.git
+git clone --branch v0.14.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 (

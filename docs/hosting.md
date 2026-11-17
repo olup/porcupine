@@ -52,7 +52,22 @@ docker compose --profile tools run --rm config-check
 docker compose up -d porcupine
 ```
 
-The one Compose file uses profiles for setup tools and optional PostgreSQL. Email, S3, and backups use external providers configured in the same JSON file. Preserve this file privately with recovery material. The image runs as user 65532, so a host-mounted private file must be readable by that container user.
+The generated file is `/data/porcupine.json` in the `porcupine-data` volume. The one Compose file uses profiles for setup tools and optional PostgreSQL. Email, S3, and backups use external providers configured in the same JSON file.
+
+To change the container's configuration, keep a private local copy. Stop the server before replacing the file, edit the copy, and copy it back before checking and starting:
+
+```sh
+umask 077
+docker compose stop porcupine
+docker compose cp porcupine:/data/porcupine.json ./porcupine.private.json
+chmod 600 ./porcupine.private.json
+# Edit porcupine.private.json with your local editor.
+docker compose cp ./porcupine.private.json porcupine:/data/porcupine.json
+docker compose --profile tools run --rm config-check
+docker compose up -d porcupine
+```
+
+Preserve the generated secrets when editing. Keep the private copy outside source control and remove it when no longer needed. The image runs as user 65532, so any host-mounted private file must be readable by that container user. Preserve the configuration with recovery material. Do not apply the v0.14.0 release overlay to this source-build setup; that published image does not understand the new config commands.
 
 Use the quickstart's tagged checkout for the older v0.14.0 Compose workflow.
 
