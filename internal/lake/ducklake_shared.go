@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -72,10 +73,7 @@ func (s *DuckLakeStore) ConfigureSharedPostgres(ctx context.Context, db *sql.DB)
 }
 
 func (s *DuckLakeStore) initializeSharedNative(ctx context.Context) error {
-	var actual string
-	if err := s.Registry.QueryRowContext(ctx, "SELECT id FROM source").Scan(&actual); err != nil || actual != s.Config.SharedSourceID {
-		return errors.New("shared DuckLake source identity changed")
-	}
+	actual := s.Config.SharedSourceID
 	db, err := sql.Open("pgx", s.Config.PostgresURL)
 	if err != nil {
 		return errors.New("shared analytical registry unavailable")
@@ -89,10 +87,8 @@ func (s *DuckLakeStore) initializeSharedNative(ctx context.Context) error {
 		return err
 	}
 	defer finish()
-	_, err = db.ExecContext(bounded, `CREATE TABLE IF NOT EXISTS pc_native_sources(source_id text PRIMARY KEY,fingerprint text NOT NULL);
- CREATE TABLE IF NOT EXISTS pc_native_projects(source_id text NOT NULL REFERENCES pc_native_sources(source_id),project_id text NOT NULL,catalog_id text NOT NULL,ready integer NOT NULL DEFAULT 0,deleted integer NOT NULL DEFAULT 0,PRIMARY KEY(source_id,project_id));`)
-	if err != nil {
-		return errors.New("shared analytical registry unavailable")
+	if err := migrateNativeRegistry(bounded, db); err != nil {
+		return fmt.Errorf("shared analytical registry migration: %w", err)
 	}
 	c := s.Config.S3
 	digest := sha256.Sum256([]byte(c.Bucket + "\x00" + c.Prefix + "\x00" + c.Endpoint + "\x00" + c.Region))
@@ -104,30 +100,19 @@ func (s *DuckLakeStore) initializeSharedNative(ctx context.Context) error {
 	if err := db.QueryRowContext(bounded, "SELECT fingerprint FROM pc_native_sources WHERE source_id=$1", actual).Scan(&stored); err != nil || stored != fingerprint {
 		return errors.New("shared analytical storage configuration changed")
 	}
+	s.registry = &postgresNativeRegistry{db: db, source: actual, fingerprint: fingerprint, timeout: time.Duration(s.Config.MetadataTimeoutSeconds) * time.Second}
 	return nil
 }
 
 func (s *DuckLakeStore) sharedNativeProject(ctx context.Context, project string) (string, bool, error) {
-	id := SharedNativeCatalogID(s.Config.SharedSourceID, project)
-	if _, err := s.SharedCatalog.ExecContext(ctx, "INSERT INTO pc_native_projects(source_id,project_id,catalog_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", s.Config.SharedSourceID, project, id); err != nil {
+	record, err := s.registry.ensure(ctx, project)
+	if err != nil {
 		return "", false, errors.New("shared analytical registry unavailable")
 	}
-	var actual string
-	var ready, deleted int
-	if err := s.SharedCatalog.QueryRowContext(ctx, "SELECT catalog_id,ready,deleted FROM pc_native_projects WHERE source_id=$1 AND project_id=$2", s.Config.SharedSourceID, project).Scan(&actual, &ready, &deleted); err != nil {
-		return "", false, errors.New("shared analytical registry unavailable")
-	}
-	if actual != id {
-		return "", false, errors.New("shared analytical catalog identity changed")
-	}
-	if deleted != 0 {
-		s.Registry.ExecContext(ctx, "DELETE FROM catalogs WHERE project_id=?", project)
+	if record.Deleted {
 		return "", false, errSharedNativeDeleted
 	}
-	if _, err := s.Registry.ExecContext(ctx, "INSERT INTO catalogs(project_id,id,ready) VALUES(?,?,?) ON CONFLICT(project_id) DO UPDATE SET id=excluded.id,ready=excluded.ready", project, id, ready); err != nil {
-		return "", false, err
-	}
-	return actual, ready == 1, nil
+	return record.CatalogID, record.Ready, nil
 }
 
 // The SQL lock serializes schema creation. Projection correctness relies on the
@@ -243,9 +228,6 @@ func (s *DuckLakeStore) deleteSharedNativeProject(ctx context.Context, project s
 	if p := s.Projects[project]; p != nil && len(p.leases) == 0 {
 		p.DB.Close()
 		delete(s.Projects, project)
-	}
-	if _, err = s.Registry.ExecContext(ctx, "DELETE FROM catalogs WHERE project_id=?", project); err != nil {
-		return err
 	}
 	return os.RemoveAll(s.ProjectDirectory(project))
 }

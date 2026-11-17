@@ -10,9 +10,12 @@ Agents connecting to a running instance should start with the
 - Register management operations with Huma. Set the operation ID and authorization
   metadata so HTTP and MCP share their contract. After an API change, run
   `make cli-generate`; it regenerates the offline OpenAPI snapshot and standalone CLI catalog. Commit both generated artifacts. The snapshot is never an authorization registry.
-- Change a database schema only by appending a numbered step in
-  `internal/porcupine/schema_migrations.go`; never edit a released step or add
-  DDL to startup code. The schema tests compare startup with the steps.
+- Change a database schema only by appending a numbered step in its schema
+  owner's migration registry. Core journal/control migrations belong to
+  `internal/porcupine/schema_migrations.go`; native catalog and registry
+  migrations belong to `internal/lake`. Never edit a released step or add DDL
+  to startup code. Refuse unknown unversioned formats and future versions.
+  Each owner's schema tests compare initialization with its numbered steps.
 - Keep instance administration separate from project-scoped event permissions.
 - Resolve project scope from credentials, never trust an ingestion payload's project ID.
 - Preserve durable acceptance in standalone mode and all currently implemented journal-backed paths: acknowledge only after the bounded SQLite queue commits. The planned hosted buffered mode has an explicit best-effort acknowledgment contract; follow [the hosted architecture](docs/design/hosted-architecture.md) and its phase gates before implementing it. Never apply buffered acknowledgment to standalone implicitly or describe the hosted target as shipped.
