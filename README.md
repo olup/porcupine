@@ -73,7 +73,7 @@ Import historical events with `porcupine import --project PROJECT_ID --format na
 
 ```sh
 make check              # fast loop: contracts, vet, formatting and short Go tests
-make check-full         # what CI requires: the same checks with every test under -race
+make check-full         # complete local validation; CI runs the same race suite in parallel groups
 make integration        # native smoke, S3 and offline restore drills
 make integration-s3     # local HTTP/TLS S3-compatible fixtures
 make compat-install

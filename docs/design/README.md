@@ -18,6 +18,7 @@ These records explain decisions and report measurements at the commit and config
 - [Maintenance investigation](ducklake-maintenance.md) and [prolonged-load record](ducklake-maintenance-soak.md)
 - [Large-batch behavior](ducklake-large-batches.md)
 - [Load-testing tools](load-testing.md) and [SDK contract tests](sdk-compatibility-tests.md)
+- [Test and CI feedback measurements](ci-feedback.md)
 
 ## Contributing
 
