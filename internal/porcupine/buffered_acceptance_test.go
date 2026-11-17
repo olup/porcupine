@@ -576,3 +576,54 @@ func TestBufferedCookielessKeyBoundaryAndFinalCapacityRecheck(t *testing.T) {
 		t.Fatal("admission did not finish")
 	}
 }
+
+func TestBufferedAcceptanceDropsOnlyFencedProject(t *testing.T) {
+	t.Parallel()
+	calls := make(chan bufferedFlushBatch, 2)
+	removed := make(chan struct{})
+	kept := make(chan struct{})
+	writer := liveFlusherFunc(func(ctx context.Context, batch bufferedFlushBatch) error {
+		calls <- batch
+		if batch.projectID == "removed" {
+			select {
+			case <-removed:
+				return errHostedProjectFenced
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		select {
+		case <-kept:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	cfg := testBufferConfig()
+	cfg.flushBytes = 1
+	first := testBufferBatch(t, "removed", 1)
+	buffer := newTestBuffer(t, cfg, writer)
+	if _, err := buffer.Accept(t.Context(), first, ingestionPeer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := nextFlush(t, calls).projectID; got != "removed" {
+		t.Fatal("unexpected first flush", got)
+	}
+	if _, err := buffer.Accept(t.Context(), first, ingestionPeer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	other := testBufferBatch(t, "kept", 1)
+	if _, err := buffer.Accept(t.Context(), other, ingestionPeer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := nextFlush(t, calls).projectID; got != "kept" {
+		t.Fatal("unexpected second project", got)
+	}
+	close(removed)
+	got := waitBuffer(t, buffer, func(s bufferSnapshot) bool { return s.projects == 1 })
+	if got.events != 1 || got.inflight != 1 || got.failed {
+		t.Fatalf("deletion affected the other project or retained payloads: %+v", got)
+	}
+	close(kept)
+	waitBuffer(t, buffer, func(s bufferSnapshot) bool { return s.projects == 0 })
+}

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
@@ -32,6 +33,18 @@ func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordi
 	}
 	return &hostedLiveFlusher{native: native, coordinator: coordinator, publisher: &hostedEffectPublisher{control: control, effects: effects, usage: meter, objects: native.Remote}, policy: hostedIngestionPolicy{db: control}}, nil
 }
+func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project string) (func(), error) {
+	tx, err := f.publisher.control.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := lockActiveHostedProject(ctx, tx, project); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return func() { _ = tx.Rollback() }, nil
+}
+
 func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch) error {
 	if b.id == "" || b.projectID == "" || len(b.events) == 0 {
 		return output.ErrPipelineConflict
@@ -42,6 +55,11 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		return err
 	}
 	defer session.Release()
+	ticket := eventapi.NewID()
+	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
+	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
+		return err
+	}
 	return session.RunNative(ctx, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
@@ -86,7 +104,18 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 			return e
 		}
 		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing, admission: &f.policy}
-		result, e := f.native.CommitLive(ctx, fence, batch, ids, stager)
+		result, e := f.native.CommitLiveGuarded(ctx, fence, batch, ids, stager, func(ctx context.Context, commit func() error) error {
+			return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+				currentTenant, err := lockActiveHostedProject(ctx, tx, key.ProjectID)
+				if err != nil {
+					return err
+				}
+				if currentTenant != tenant {
+					return errHostedProjectFenced
+				}
+				return commit()
+			})
+		})
 		if e != nil {
 			return e
 		}
@@ -117,6 +146,11 @@ func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.Proj
 		return err
 	}
 	defer session.Release()
+	ticket := eventapi.NewID()
+	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
+	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
+		return err
+	}
 	return session.RunNative(ctx, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {

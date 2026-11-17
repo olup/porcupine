@@ -648,4 +648,38 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("cold ACK retry", err)
 	}
 
+	// Lose a native response immediately before deleting the tenant project.
+	// Recovery must reconcile the proof rather than dropping its usage or data.
+	unpublished := batch("unpublished-before-deletion")
+	loseNative.Store(true)
+	if err = fa.FlushLive(t.Context(), unpublished); err == nil || loseNative.Load() {
+		t.Fatalf("did not exercise committed native response loss: %v", err)
+	}
+	if err = a.service.beginControlProjectDeletion(t.Context(), project); err != nil {
+		t.Fatal(err)
+	}
+	for _, flusher := range []*hostedLiveFlusher{fb, fa} {
+		if err = flusher.sealDeletedProject(t.Context(), key); err != nil {
+			t.Fatal("cold deletion seal", err)
+		}
+	}
+	if err = fb.FlushLive(t.Context(), batch("fenced")); !errors.Is(err, errHostedProjectFenced) {
+		t.Fatalf("sealed project accepted live input: %v", err)
+	}
+	page, err := sb.PendingLiveCommitEffects(t.Context(), scope, 0, 100)
+	if err != nil || len(page.Evidence) == 0 {
+		t.Fatalf("sealed proof history unavailable: %+v, %v", page, err)
+	}
+	last := page.Evidence[len(page.Evidence)-1]
+	var final int64
+	var proof string
+	err = a.service.control.QueryRow(`SELECT final_sequence,proof_sha FROM hosted_project_seals WHERE project_id=$1`, project).Scan(&final, &proof)
+	if err != nil || last.BatchID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
+		t.Fatalf("seal did not preserve and confirm the final native proof: %d, %q, %+v, %v", final, proof, last, err)
+	}
+	other.id = "other-tenant-after-a-seal"
+	other.events[0].input.event.UUID = eventapi.NewID()
+	if err = fb.FlushLive(t.Context(), other); err != nil {
+		t.Fatal("sealed A blocked tenant B", err)
+	}
 }

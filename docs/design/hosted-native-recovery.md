@@ -82,3 +82,49 @@ ownership. A control checkpoint restored behind unavailable proof must fail;
 ACK alone cannot authorize pruning, source-key replacement, or recharging old
 history. Production providers and every remaining Phase 5 caller migration are
 separate units.
+
+## Hosted project deletion staging
+
+Hosted startup can bind the final-seal callback to the existing deletion
+recovery loop once all hosted providers participate. Direct project deletion
+commits the control tombstone before returning that cleanup is pending.
+Tenant deletion uses the existing transaction to fence all of its projects.
+Recovery enumerates those fences in PostgreSQL without claiming a worker
+journal. The hosted capability remains unbound in ordinary service startup.
+
+Hosted work that can touch project files or send external requests registers
+an opaque, unique activity ticket in PostgreSQL before dispatch. The
+transaction locks the active tenant and project and then checks both
+tombstones in a new statement. This serializes ticket registration with
+deletion, including readers which waited for a row lock. Operation owners
+remove their ticket only after dispatch has returned. Hosted query permit
+expiry can free concurrency capacity while the ticket still blocks cleanup.
+Hosted live commits also recheck the control fence and hold the same row
+locks across the native commit. Independent PostgreSQL session failure can
+interrupt this protection. A higher native fence and the immutable seal cut
+still determine which native writes committed.
+
+An abandoned ticket has no automatic timeout. If the process returned but
+missed a control acknowledgement, retry removal with the original ticket.
+If the process cannot report a return, retain the ticket until offline
+recovery has proven quiescence. That proof requires identifying all executors
+for the deployment, blocking their restart and verifying they have
+terminated. Confirm through the storage provider and any relevant delivery
+destination that outstanding multipart operations and external requests
+have drained or been resolved. A PostgreSQL session disappearing, heartbeat
+stopping, or query permit expiring does not establish this evidence. There
+is no public operation to force a ticket clear.
+
+Once all actual-return tickets clear, the deletion worker can acquire a new
+native write fence, verify the seal cut, publish the final committed live
+effects and require a native acknowledgement through that exact sequence.
+It records the project, tenant, source, catalog, stream and final proof
+fingerprint in PostgreSQL. An unavailable catalog or missing proof keeps
+deletion pending. Shared mutations and imports must bring their original
+outcomes into this same publication protocol before startup binds the
+callback in a deployment that accepts those operations.
+
+A recorded seal leaves the project and tenant tombstones pending while
+shared job inventory, retention and physical object reconciliation are
+outstanding. The seal path leaves catalogs and objects readable for restore
+and makes no physical purge claim.
