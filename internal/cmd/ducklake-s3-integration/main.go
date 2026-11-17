@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/olup/porcupine/internal/testfixtures"
 )
 
 const siloImage = "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
@@ -37,7 +38,8 @@ func main() {
 	expectedVersion := flag.String("expected-version", "", "Require this server version in image mode")
 	useTLS := flag.Bool("tls", false, "Use a private TLS S3 fixture for the native test suite")
 	probe := flag.Bool("probe", false, "Run the isolated internal image probe")
-	pattern := flag.String("run", "^TestDuckLakeS3", "Go test name pattern in native suite mode")
+	suite := flag.String("suite", testfixtures.NativeS3, "Integration suite: s3 or shared")
+	pattern := flag.String("run", "", "Override the suite's Go test name pattern in native suite mode")
 	race := flag.Bool("race", true, "Enable the Go race detector in native suite mode")
 	timeout := flag.Duration("timeout", 180*time.Second, "Go test timeout in native suite mode")
 	flag.Parse()
@@ -51,7 +53,14 @@ func main() {
 		if *timeout <= 0 {
 			return errors.New("native integration timeout must be positive")
 		}
-		return run(ctx, *useTLS, *pattern, *race, *timeout)
+		selection, err := testfixtures.Pattern(*suite)
+		if err != nil {
+			return err
+		}
+		if *pattern != "" {
+			selection = *pattern
+		}
+		return run(ctx, *useTLS, selection, *race, *timeout)
 	}
 	if err := execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

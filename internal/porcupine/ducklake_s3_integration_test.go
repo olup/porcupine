@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/testfixtures"
 )
 
 var duckLakeS3ExtensionOnce sync.Once
@@ -41,6 +42,9 @@ func nativeS3Fixture(t *testing.T) duckLakeS3Fixture {
 	t.Helper()
 	endpoint := os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_ENDPOINT")
 	if endpoint == "" {
+		if err := testfixtures.CheckSelection(t.Name(), testfixtures.S3); err != nil {
+			t.Fatal(err)
+		}
 		t.Skip("run make ducklake-s3-test for the isolated native S3 fixture")
 	}
 	parsed, err := url.Parse(endpoint)

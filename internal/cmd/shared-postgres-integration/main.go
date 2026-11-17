@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	postgres "github.com/fergusstrange/embedded-postgres/v2"
+	"github.com/olup/porcupine/internal/testfixtures"
 )
 
 const postgresVersion postgres.PostgresVersion = "17.11.1"
@@ -24,12 +25,20 @@ const postgresVersion postgres.PostgresVersion = "17.11.1"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	pattern := flag.String("run", "^TestShared", "Go test name pattern")
+	pattern := flag.String("run", "", "Override the shared suite's Go test name pattern")
 	race := flag.Bool("race", false, "Enable the Go race detector")
 	flag.Parse()
 	command := flag.Args()
 	if len(command) == 0 {
-		command = []string{"go", "test", "./internal/porcupine", "./internal/lake", "./internal/auth", "-run", *pattern, "-count=1", "-timeout=600s"}
+		selection, err := testfixtures.Pattern(testfixtures.Shared)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if *pattern != "" {
+			selection = *pattern
+		}
+		command = []string{"go", "test", "./internal/porcupine", "./internal/lake", "./internal/auth", "-run", selection, "-count=1", "-timeout=600s"}
 		if *race {
 			command = append(command, "-race")
 		}
