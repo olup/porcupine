@@ -3,7 +3,7 @@
 Unit A2, unreleased. `DuckLakeStore.MaintainHostedProject` adds an explicit
 compaction entry point for an already-held project coordinator session. The
 hosted profile runs it through a shared due schedule. Legacy `Maintain`, `CleanupDue`, and arbitrary
-`MaintenanceCommand` calls still refuse hosted v4 catalogs. Standalone and
+`MaintenanceCommand` calls still refuse fenced hosted catalogs. Standalone and
 shared-v2 maintenance keep their existing behavior.
 
 ## Native snapshot fence
@@ -144,8 +144,8 @@ project drop, snapshot expiration, or proof/history pruning.
 
 Compaction changes physical file layout while preserving the existing logical
 history. It supplies no event/effect publication, restore-retention policy,
-physical reader/drop drain, catalog removal, or orphan purge guarantee. The native registry migration adds a separate due
-schedule for compaction.
+physical reader/drop drain, catalog removal, or orphan purge guarantee. The
+native registry migration adds a separate due schedule for compaction.
 
 ## Documentation fact ledger
 
