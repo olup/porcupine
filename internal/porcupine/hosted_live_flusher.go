@@ -328,7 +328,7 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 	month := start.Format(time.RFC3339)
 	if p.month != month || time.Since(p.refreshed) >= hostedPolicyRefreshInterval {
 		// One grouped shared read, never a per-event control call or escrow.
-		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(sum(u.live_events+u.import_events),0) FROM tenants t LEFT JOIN usage_rollups u ON u.tenant_id=t.id AND u.day_start >= $1 AND u.day_start < $2 GROUP BY t.id,t.ingestion_allowed,t.ingestion_monthly_events`, month, end.Format(time.RFC3339))
+		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1`, month)
 		if err != nil {
 			return err
 		}
