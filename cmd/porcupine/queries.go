@@ -2,7 +2,7 @@ package main
 
 import "github.com/olup/porcupine/internal/porcupine"
 
-func interactiveQueryConfiguration() (*porcupine.InteractiveQueryConfig, error) {
+func (s settings) interactiveQueryConfiguration() (*porcupine.InteractiveQueryConfig, error) {
 	c := &porcupine.InteractiveQueryConfig{}
 	for _, field := range []struct {
 		name     string
@@ -14,7 +14,7 @@ func interactiveQueryConfiguration() (*porcupine.InteractiveQueryConfig, error) 
 		{"PORCUPINE_QUERY_MAX_ROWS", &c.MaxRows, 1, 100000},
 		{"PORCUPINE_QUERY_MAX_RESULT_BYTES", &c.MaxResultBytes, 256, 64 << 20},
 	} {
-		value, err := analyticsInteger(field.name, 0, field.min, field.max)
+		value, err := s.analyticsInteger(field.name, 0, field.min, field.max)
 		if err != nil {
 			return nil, err
 		}

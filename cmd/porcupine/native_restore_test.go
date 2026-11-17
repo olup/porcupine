@@ -16,7 +16,7 @@ func TestNativeRestoreCommandRejectsUnsafePrivateInput(t *testing.T) {
 		`{}` + strings.Repeat(" ", 64<<10),
 	} {
 		var output bytes.Buffer
-		err := runNativeRestore(context.Background(), strings.NewReader(body), &output)
+		err := (settings{}).runNativeRestore(context.Background(), strings.NewReader(body), &output)
 		if err == nil {
 			t.Fatal("unsafe restore request accepted")
 		}
@@ -30,7 +30,7 @@ func TestNativeRestoreCommandValidatesTargetResourceEnvironment(t *testing.T) {
 	t.Setenv("PORCUPINE_DUCKLAKE_MEMORY_MB", "not-a-memory-budget")
 	t.Setenv("PORCUPINE_DUCKLAKE_DIR", t.TempDir())
 	var output bytes.Buffer
-	err := runNativeRestore(context.Background(), strings.NewReader(`{}`), &output)
+	err := (settings{}).runNativeRestore(context.Background(), strings.NewReader(`{}`), &output)
 	if err == nil || !strings.Contains(err.Error(), "PORCUPINE_DUCKLAKE_MEMORY_MB") {
 		t.Fatal("restore ignored target resource configuration", err)
 	}

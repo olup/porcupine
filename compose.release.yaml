@@ -1,6 +1,12 @@
 # Use with compose.yaml (Docker Compose 2.24.4+).
+x-release: &release
+  build: !reset null
+  image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.14.0}
+  pull_policy: missing
 services:
   porcupine:
-    build: !reset null
-    image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.14.0}
-    pull_policy: missing
+    <<: *release
+  init:
+    <<: *release
+  config-check:
+    <<: *release

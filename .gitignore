@@ -21,3 +21,6 @@
 
 /benchmark-results/
 /porcupine
+
+# Operator configuration includes generated credentials.
+/porcupine.json

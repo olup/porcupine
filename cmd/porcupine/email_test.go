@@ -187,23 +187,23 @@ func TestSMTPConfiguration(t *testing.T) {
 	for _, name := range []string{"PORCUPINE_SMTP_HOST", "PORCUPINE_SMTP_PORT", "PORCUPINE_SMTP_TLS", "PORCUPINE_SMTP_FROM", "PORCUPINE_SMTP_USERNAME", "PORCUPINE_SMTP_PASSWORD_FILE", "PORCUPINE_ADMIN_EMAIL", "PORCUPINE_OAUTH_ISSUER"} {
 		t.Setenv(name, "")
 	}
-	if config, err := emailConfiguration(); err != nil || config != nil {
+	if config, err := (settings{}).emailConfiguration(); err != nil || config != nil {
 		t.Fatal("SMTP should be opt-in")
 	}
 	t.Setenv("PORCUPINE_SMTP_HOST", "smtp.example.test")
 	t.Setenv("PORCUPINE_SMTP_FROM", "Porcupine <porcupine@example.test>")
-	if _, err := emailConfiguration(); err == nil {
+	if _, err := (settings{}).emailConfiguration(); err == nil {
 		t.Fatal("missing OAuth issuer")
 	}
 	t.Setenv("PORCUPINE_OAUTH_ISSUER", "https://analytics.example.test")
 	t.Setenv("PORCUPINE_ADMIN_EMAIL", "operator@example.test")
-	if c, err := emailConfiguration(); err != nil || c.SendCode == nil || c.AdminEmail != "operator@example.test" {
+	if c, err := (settings{}).emailConfiguration(); err != nil || c.SendCode == nil || c.AdminEmail != "operator@example.test" {
 		t.Fatal("valid TLS relay settings rejected")
 	}
 	for name, value := range map[string]string{"PORCUPINE_SMTP_HOST": "https://smtp.example.test", "PORCUPINE_SMTP_PORT": "0", "PORCUPINE_SMTP_TLS": "off", "PORCUPINE_SMTP_FROM": "a@example.test\r\nBcc: b@example.test", "PORCUPINE_SMTP_USERNAME": "unpaired", "PORCUPINE_SMTP_PASSWORD_FILE": "unpaired"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, value)
-			if _, err := emailConfiguration(); err == nil {
+			if _, err := (settings{}).emailConfiguration(); err == nil {
 				t.Fatal("invalid SMTP configuration was accepted")
 			}
 		})
@@ -214,13 +214,13 @@ func TestSMTPConfiguration(t *testing.T) {
 	}
 	t.Setenv("PORCUPINE_SMTP_USERNAME", "mailer")
 	t.Setenv("PORCUPINE_SMTP_PASSWORD_FILE", f)
-	if _, err := emailConfiguration(); err != nil {
+	if _, err := (settings{}).emailConfiguration(); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(f, []byte("bad\x00secret"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emailConfiguration(); err == nil {
+	if _, err := (settings{}).emailConfiguration(); err == nil {
 		t.Fatal("invalid secret was accepted")
 	}
 }

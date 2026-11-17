@@ -1,39 +1,49 @@
+# One server configuration for local files, email, S3, backups and shared control.
+# Build:     docker compose build porcupine
+# First run: docker compose --profile setup run --rm init
+# Then:     docker compose up -d porcupine
+x-server: &server
+  build: .
+  image: ${PORCUPINE_IMAGE:-porcupine:dev}
+  volumes:
+    - porcupine-data:/data
+
 services:
   porcupine:
-    build: .
+    <<: *server
+    command: ["--config", "/data/porcupine.json"]
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
-    environment:
-      PORCUPINE_BOOTSTRAP_TOKEN: ${PORCUPINE_BOOTSTRAP_TOKEN:?Set a private bootstrap token}
-      PORCUPINE_CONTROL_DB: ${PORCUPINE_CONTROL_DB:-}
-      PORCUPINE_TRUSTED_PROXIES: ${PORCUPINE_TRUSTED_PROXIES:-}
-      PORCUPINE_ALLOWED_ORIGINS: ${PORCUPINE_ALLOWED_ORIGINS:-}
-      PORCUPINE_QUEUE_MAX_EVENTS: ${PORCUPINE_QUEUE_MAX_EVENTS:-100000}
-      PORCUPINE_QUEUE_MAX_BYTES: ${PORCUPINE_QUEUE_MAX_BYTES:-268435456}
-      PORCUPINE_DUCKLAKE_DIR: /data/ducklake
-      PORCUPINE_DUCKLAKE_MEMORY_MB: ${PORCUPINE_DUCKLAKE_MEMORY_MB:-512}
-      PORCUPINE_DUCKLAKE_THREADS: ${PORCUPINE_DUCKLAKE_THREADS:-2}
-      PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS: ${PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS:-4}
-      PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL: ${PORCUPINE_DUCKLAKE_MAINTENANCE_INTERVAL:-2s}
-      PORCUPINE_DUCKLAKE_CLEANUP_ENABLED: ${PORCUPINE_DUCKLAKE_CLEANUP_ENABLED:-true}
-      PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION: ${PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION:-168h}
-      PORCUPINE_DUCKLAKE_CLEANUP_GRACE: ${PORCUPINE_DUCKLAKE_CLEANUP_GRACE:-48h}
-      PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL: ${PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL:-1h}
-      PORCUPINE_PIPELINE_KEY: ${PORCUPINE_PIPELINE_KEY:-}
-      PORCUPINE_PIPELINE_KEY_FILE: ${PORCUPINE_PIPELINE_KEY_FILE:-}
-      PORCUPINE_PIPELINE_S3_ENDPOINTS: ${PORCUPINE_PIPELINE_S3_ENDPOINTS:-}
-      PORCUPINE_EXPORT_MAX_EXECUTION_SECONDS: ${PORCUPINE_EXPORT_MAX_EXECUTION_SECONDS:-86400}
-      PORCUPINE_EXPORT_MAX_OUTPUT_BYTES: ${PORCUPINE_EXPORT_MAX_OUTPUT_BYTES:-1099511627776}
-      PORCUPINE_EXPORT_FILE_BYTES: ${PORCUPINE_EXPORT_FILE_BYTES:-268435456}
-      PORCUPINE_EXPORT_MAX_ROW_BYTES: ${PORCUPINE_EXPORT_MAX_ROW_BYTES:-8388608}
-      PORCUPINE_EXPORT_BANDWIDTH_BYTES_PER_SECOND: ${PORCUPINE_EXPORT_BANDWIDTH_BYTES_PER_SECOND:-5242880}
-      PORCUPINE_EXPORT_QUEUE_THRESHOLD: ${PORCUPINE_EXPORT_QUEUE_THRESHOLD:-1000}
-      PORCUPINE_EXPORT_MAX_QUEUED_JOBS: ${PORCUPINE_EXPORT_MAX_QUEUED_JOBS:-100}
-      PORCUPINE_EXPORT_RETENTION_HOURS: ${PORCUPINE_EXPORT_RETENTION_HOURS:-168}
-    volumes:
-      - porcupine-data:/data
     mem_limit: 2g
     stop_grace_period: 30s
+
+  init:
+    <<: *server
+    profiles: [setup]
+    command: ["init", "--docker", "--config", "/data/porcupine.json"]
+
+  config-check:
+    <<: *server
+    profiles: [tools]
+    command: ["config", "check", "--config", "/data/porcupine.json"]
+
+  postgres:
+    image: postgres:17-bookworm
+    profiles: [shared]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: porcupine
+      POSTGRES_DB: porcupine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porcupine -d porcupine"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   porcupine-data:
+  postgres-data:

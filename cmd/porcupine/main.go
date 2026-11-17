@@ -17,90 +17,19 @@ import (
 )
 
 func main() {
-	if dispatchNativeRestore() {
-		return
-	}
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println(porcupine.Version)
-		return
-	}
-	if len(os.Args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: porcupine [--version|restore-native-backup]")
-		os.Exit(2)
-	}
-	addr := os.Getenv("PORCUPINE_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8080"
-	}
-	queueMax := 100000
-	if raw := os.Getenv("PORCUPINE_QUEUE_MAX_EVENTS"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			slog.Error("PORCUPINE_QUEUE_MAX_EVENTS must be a positive integer")
-			os.Exit(1)
-		}
-		queueMax = n
-	}
-	queueMaxBytes, err := queueMaxBytesFromEnvironment()
-	if err != nil {
-		slog.Error("queue configuration", "error", err)
+	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	var allowedOrigins []string
-	if raw := os.Getenv("PORCUPINE_ALLOWED_ORIGINS"); raw != "" {
-		allowedOrigins = strings.Split(raw, ",")
-	}
-	var trustedProxies []string
-	if raw := os.Getenv("PORCUPINE_TRUSTED_PROXIES"); raw != "" {
-		trustedProxies = strings.Split(raw, ",")
-	}
-	duckLake, err := analyticsConfiguration()
+}
+
+func serve(config porcupine.Config, addr string) error {
+	s, err := porcupine.Open(config)
 	if err != nil {
-		slog.Error("analytics configuration", "error", err)
-		os.Exit(1)
-	}
-	interactiveConfig, err := interactiveQueryConfiguration()
-	if err != nil {
-		slog.Error("interactive query configuration", "error", err)
-		os.Exit(1)
-	}
-	exportConfig, err := exportConfiguration()
-	if err != nil {
-		slog.Error("export configuration", "error", err)
-		os.Exit(1)
-	}
-	pipelineConfig, err := pipelineConfiguration()
-	if err != nil {
-		slog.Error("pipeline configuration", "error", err)
-		os.Exit(1)
-	}
-	oauthConfig, err := oauthConfiguration()
-	if err != nil {
-		slog.Error("OAuth configuration", "error", err)
-		os.Exit(1)
-	}
-	backupConfig, err := nativeBackupConfiguration()
-	if err != nil {
-		slog.Error("native backup configuration", "error", err)
-		os.Exit(1)
-	}
-	sharedConfig, err := sharedConfiguration()
-	if err != nil {
-		slog.Error("shared deployment configuration", "error", err)
-		os.Exit(1)
-	}
-	receiptRetention, err := receiptRetentionFromEnvironment()
-	if err != nil {
-		slog.Error("receipt configuration", "error", err)
-		os.Exit(1)
-	}
-	s, err := porcupine.Open(porcupine.Config{ReceiptRetention: receiptRetention, DBPath: os.Getenv("PORCUPINE_DB"), ControlDBPath: os.Getenv("PORCUPINE_CONTROL_DB"), BootstrapToken: os.Getenv("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig})
-	if err != nil {
-		slog.Error("open storage", "error", err)
-		os.Exit(1)
+		return err
 	}
 	defer s.Close()
-	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(duckLake) + time.Duration(interactiveConfig.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(config.DuckLake) + time.Duration(config.InteractiveQueries.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -113,35 +42,75 @@ func main() {
 	}()
 	slog.Info("Porcupine listening", "address", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("HTTP server", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
-func queueMaxBytesFromEnvironment() (int64, error) {
-	raw := os.Getenv("PORCUPINE_QUEUE_MAX_BYTES")
+func (s settings) serviceConfig() (string, porcupine.Config, error) {
+	addr := s.get("PORCUPINE_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+	queueMax := 100000
+	if raw := s.get("PORCUPINE_QUEUE_MAX_EVENTS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return "", porcupine.Config{}, errors.New("PORCUPINE_QUEUE_MAX_EVENTS must be a positive integer")
+		}
+		queueMax = n
+	}
+	queueMaxBytes, err := s.queueMaxBytesFromEnvironment()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	var allowedOrigins []string
+	if raw := s.get("PORCUPINE_ALLOWED_ORIGINS"); raw != "" {
+		allowedOrigins = strings.Split(raw, ",")
+	}
+	var trustedProxies []string
+	if raw := s.get("PORCUPINE_TRUSTED_PROXIES"); raw != "" {
+		trustedProxies = strings.Split(raw, ",")
+	}
+	duckLake, err := s.analyticsConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	interactiveConfig, err := s.interactiveQueryConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	exportConfig, err := s.exportConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	pipelineConfig, err := s.pipelineConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	oauthConfig, err := s.oauthConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	backupConfig, err := s.nativeBackupConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	sharedConfig, err := s.sharedConfiguration()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	return addr, porcupine.Config{DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+}
+
+func (s settings) queueMaxBytesFromEnvironment() (int64, error) {
+	raw := s.get("PORCUPINE_QUEUE_MAX_BYTES")
 	if raw == "" {
 		return porcupine.DefaultQueueMaxBytes, nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
 		return 0, errors.New("PORCUPINE_QUEUE_MAX_BYTES must be a positive integer")
-	}
-	return value, nil
-}
-
-// receiptRetentionFromEnvironment bounds local retry receipts; "0" keeps them all.
-func receiptRetentionFromEnvironment() (time.Duration, error) {
-	raw := os.Getenv("PORCUPINE_RECEIPT_RETENTION")
-	if raw == "" {
-		return 30 * 24 * time.Hour, nil
-	}
-	if raw == "0" {
-		return 0, nil
-	}
-	value, err := time.ParseDuration(raw)
-	if err != nil || value < 24*time.Hour {
-		return 0, errors.New("PORCUPINE_RECEIPT_RETENTION must be 0 or a duration of at least 24h")
 	}
 	return value, nil
 }

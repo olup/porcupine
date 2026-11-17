@@ -8,13 +8,13 @@ import (
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
-func sharedConfiguration() (*porcupine.SharedConfig, error) {
-	database, err := sharedSecretSetting("PORCUPINE_CONTROL_DATABASE_URL")
+func (s settings) sharedConfiguration() (*porcupine.SharedConfig, error) {
+	database, err := s.sharedSecretSetting("PORCUPINE_CONTROL_DATABASE_URL")
 	if err != nil {
 		return nil, err
 	}
-	worker, route := os.Getenv("PORCUPINE_WORKER_ID"), os.Getenv("PORCUPINE_WORKER_URL")
-	secret, err := sharedSecretSetting("PORCUPINE_SHARED_ROUTING_SECRET")
+	worker, route := s.get("PORCUPINE_WORKER_ID"), s.get("PORCUPINE_WORKER_URL")
+	secret, err := s.sharedSecretSetting("PORCUPINE_SHARED_ROUTING_SECRET")
 	if err != nil {
 		return nil, err
 	}
@@ -27,8 +27,8 @@ func sharedConfiguration() (*porcupine.SharedConfig, error) {
 	return &porcupine.SharedConfig{DatabaseURL: database, WorkerID: worker, RouteURL: route, RoutingSecret: []byte(secret)}, nil
 }
 
-func sharedSecretSetting(name string) (string, error) {
-	value, file := os.Getenv(name), os.Getenv(name+"_FILE")
+func (s settings) sharedSecretSetting(name string) (string, error) {
+	value, file := s.get(name), s.get(name+"_FILE")
 	if value != "" && file != "" {
 		return "", errors.New(name + " and its _FILE option are mutually exclusive")
 	}
