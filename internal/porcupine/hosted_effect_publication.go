@@ -19,10 +19,11 @@ import (
 // This adapter has no production caller. Its only authority is the explicit
 // native credential persisted on the real PG definition, never a producer JWT.
 type hostedEffectPublisher struct {
-	control *sql.DB
-	effects *output.PGPipelineEffects
-	usage   *usage.Store
-	objects *lakeapi.DuckLakeObjectStore
+	control          *sql.DB
+	effects          *output.PGPipelineEffects
+	usage            *usage.Store
+	objects          *lakeapi.DuckLakeObjectStore
+	checkpointImport func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -367,8 +368,14 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 				return err
 			}
 		case lakeapi.NativeCommitImport:
-			if _, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v); err != nil {
+			advanced, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
+			if err != nil {
 				return err
+			}
+			if advanced && p.checkpointImport != nil {
+				if err := p.checkpointImport(ctx, tx, e); err != nil {
+					return err
+				}
 			}
 		default:
 			return output.ErrPipelineConflict
