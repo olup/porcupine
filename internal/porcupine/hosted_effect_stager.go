@@ -58,6 +58,7 @@ type hostedImmutableEffects struct {
 	fence   lakeapi.ProjectWriteFence
 	plan    frozenLiveOutputPlan
 	planID  string
+	put     func(context.Context, []byte) (lakeapi.ImmutableObjectRef, error)
 }
 
 func newHostedImmutableEffects(objects *lakeapi.DuckLakeObjectStore, fence lakeapi.ProjectWriteFence, plan frozenLiveOutputPlan) (*hostedImmutableEffects, error) {
@@ -127,7 +128,7 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 			if err != nil {
 				return err
 			}
-			body, err := s.objects.PutImmutableEffectObject(ctx, selected.Scope, s.fence.AcquisitionID, raw)
+			body, err := s.stageObject(ctx, raw)
 			if err != nil {
 				return err
 			}
@@ -212,6 +213,13 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 	if err != nil {
 		return lakeapi.StagedLiveEffects{}, err
 	}
-	staged.Manifest, err = s.objects.PutImmutableEffectObject(ctx, selected.Scope, s.fence.AcquisitionID, raw)
+	staged.Manifest, err = s.stageObject(ctx, raw)
 	return staged, err
+}
+
+func (s *hostedImmutableEffects) stageObject(ctx context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
+	if s.put != nil {
+		return s.put(ctx, raw)
+	}
+	return s.objects.PutImmutableEffectObject(ctx, s.plan.Scope, s.fence.AcquisitionID, raw)
 }

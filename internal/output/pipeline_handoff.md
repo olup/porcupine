@@ -25,9 +25,13 @@ prepared outputs and verifies their digest, exact member count, concrete object
 charges and plan/manifest object allowance before admitting the reservation.
 The binding carries an explicit conservative manifest-byte limit; publication
 requires the verified immutable manifest reference to fit that limit. Plan IDs include detached rule
-references and creator/incarnation/destination revisions. The binding also pins
-the immutable plan reference, prepared-output digest, batch, epoch, acquisition
-and attempt artifact prefix. A reservation stores ownership before external I/O.
+references and creator/incarnation/destination revisions. The binding also records the pre-PUT plan content reference, prepared-output
+content digest, batch, epoch, acquisition and attempt artifact prefix. Prepared
+body digests exclude the optional version ID which storage returns after PUT;
+publication retains actual version pins and the integration verifies them.
+Verified zero selected outputs may omit plan/manifest objects entirely, while
+the real frozen PG plan survives until settlement. Their transient metadata is
+released without creating artifact cleanup, retaining the charged stream cursor. A reservation stores ownership before external I/O.
 The prefix must be an actual disjoint attempt namespace, never a shared bucket
 root. Storage/version/multipart enumeration and immutable-object verification
 belong to the integration adapter, which must preserve the original namespace.
@@ -53,9 +57,10 @@ Publication deletes settled reservation and frozen-plan rows. The cumulative
 stream checkpoint remains; there is no eternal per-batch accounting ledger.
 Jobs and cleanup inventory retain charges until verified cleanup CAS removes
 them. A permanent stream checkpoint retains one metadata-row charge after batch
-cleanup; later reservations on that stream do not recharge it. Stable batch retry
-is refused while its prior cleanup owner exists, so a new native proof cannot
-collide with unsettled cleanup ownership. Native seal/history/restore barriers must govern eventual stream checkpoint
+cleanup; later reservations on that stream do not recharge it. Proven-absent cleanup uses the original acquisition ID and disjoint prefix.
+A same-batch retry may reserve a new acquisition while the old uncertain
+artifacts remain charged. Publication cleanup retains its batch owner and keeps
+referencing jobs protected. Cleanup CAS binds owner, generation and exact prefix. Native seal/history/restore barriers must govern eventual stream checkpoint
 removal; this component supplies no unsafe checkpoint-pruning operation.
 
 ## Authority, destination changes and claims

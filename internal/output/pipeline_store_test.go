@@ -266,14 +266,14 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	retry.AcquisitionID = "new-acquisition"
 	retry.ArtifactPrefix = "namespace/retry/"
 	tx, _ = db.Begin()
-	if e := p.ReserveEffectsTx(ctx, tx, retry, plan, v.Outputs); !errors.Is(e, ErrPipelineConflict) {
-		t.Fatal("retry admitted over prior cleanup owner", e)
+	if e := p.ReserveEffectsTx(ctx, tx, retry, plan, v.Outputs); !errors.Is(e, ErrPipelineCapacity) {
+		t.Fatal("retry escaped charged prior attempt capacity", e)
 	}
 	tx.Rollback()
 	var clean PipelineCleanupClaim
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		var e error
-		clean, e = p.ClaimCleanupTx(ctx, tx, b.Scope, b.TenantID, b.BatchID, "cleanup")
+		clean, e = p.ClaimCleanupTx(ctx, tx, b.Scope, b.TenantID, b.AcquisitionID, "cleanup")
 		return e
 	})
 	stale := clean
@@ -293,7 +293,7 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	})
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		var e error
-		clean, e = p.ClaimCleanupTx(ctx, tx, retry.Scope, retry.TenantID, retry.BatchID, "cleanup2")
+		clean, e = p.ClaimCleanupTx(ctx, tx, retry.Scope, retry.TenantID, retry.AcquisitionID, "cleanup2")
 		return e
 	})
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteCleanupTx(ctx, tx, clean) })
@@ -380,5 +380,86 @@ func TestSharedPipelineEffectsPlanArtifactAndCheckpointRemainCharged(t *testing.
 	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
 	if pipelineCount(t, db, `SELECT artifacts FROM pipeline_effect_cleanup`) != 20 {
 		t.Fatal("plan and manifest ownership not retained")
+	}
+}
+
+func TestSharedPipelineEffectsAbsentAttemptDoesNotOwnRetry(t *testing.T) {
+	t.Parallel()
+	db, p := pipelineFixture(t)
+	b, plan, v := pipelinePrepare(t, db, p)
+	ctx := t.Context()
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		return p.ReleaseAbsentReservationTx(ctx, tx, b, PipelineSettlement{SuccessorEpoch: 2, Outcome: PipelineReleaseReservation})
+	})
+	retry := b
+	retry.Epoch = 2
+	retry.AcquisitionID = "retry-acquisition"
+	retry.ArtifactPrefix = "namespace/retry/"
+	v.Outputs[0].Generation = retry.AcquisitionID
+	retry.PreparedSHA256 = PipelinePreparedSHA256(v.Outputs)
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, retry, plan, v.Outputs) })
+	if pipelineCount(t, db, `SELECT used_artifacts FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`) != 2*b.Demand.ArtifactBytes {
+		t.Fatal("old uncertain attempt not charged alongside retry")
+	}
+	var c PipelineCleanupClaim
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		var e error
+		c, e = p.ClaimCleanupTx(ctx, tx, b.Scope, b.TenantID, b.AcquisitionID, "clean-old")
+		return e
+	})
+	if c.Prefix != b.ArtifactPrefix || c.Generation != b.AcquisitionID {
+		t.Fatal("cleanup crossed attempts", c)
+	}
+	wrong := c
+	wrong.Prefix = retry.ArtifactPrefix
+	tx, _ := db.Begin()
+	if e := p.CompleteCleanupTx(ctx, tx, wrong); !errors.Is(e, sql.ErrNoRows) {
+		t.Fatal("wrong cleanup namespace accepted", e)
+	}
+	tx.Rollback()
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteCleanupTx(ctx, tx, c) })
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		got, e := p.ReservationTx(ctx, tx, b.Scope)
+		if e == nil && got != retry {
+			t.Fatal("cleanup modified retry", got)
+		}
+		return e
+	})
+	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, retry, v); return e })
+}
+
+func TestSharedPipelineEffectsNoSelectedOutputsNeedNoArtifacts(t *testing.T) {
+	t.Parallel()
+	db, p := pipelineFixture(t)
+	b, plan, _ := pipelinePrepare(t, db, p)
+	ctx := t.Context()
+	b.PlanRef = PipelineRef{}
+	b.PreparedSHA256 = PipelinePreparedSHA256([]PipelineOutput{})
+	b.ManifestBytesLimit = 0
+	b.Demand = PipelineDemand{MetadataRows: int64(3 + len(plan.Targets)), ProofSlots: 1}
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, []PipelineOutput{}) })
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		_, e := p.PublishReservedEffectsTx(ctx, tx, b, PipelinePublication{Sequence: 1, ProofSHA256: strings.Repeat("e", 64), Outputs: []PipelineOutput{}})
+		return e
+	})
+	if pipelineCount(t, db, `SELECT count(*) FROM pipeline_effect_cleanup`) != 0 {
+		t.Fatal("empty selection left artifact cleanup")
+	}
+	if pipelineCount(t, db, `SELECT used_refs+used_bytes+used_rows+used_artifacts+used_proofs FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`) != 1 {
+		t.Fatal("empty selection retained transient charge")
+	}
+}
+func TestPipelinePreparationContentDigestRetainsVersionPins(t *testing.T) {
+	t.Parallel()
+	original := []PipelineOutput{{ID: "body", Body: PipelineRef{Key: "key", SHA256: strings.Repeat("b", 64), Bytes: 12}}}
+	digest := PipelinePreparedSHA256(original)
+	original[0].Body.VersionID = "actual-returned-pin"
+	if PipelinePreparedSHA256(original) != digest || original[0].Body.VersionID != "actual-returned-pin" {
+		t.Fatal("version pin changed preparation or was discarded")
+	}
+	original[0].Body.Bytes++
+	if PipelinePreparedSHA256(original) == digest {
+		t.Fatal("content changed without changing preparation")
 	}
 }

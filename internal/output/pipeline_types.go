@@ -80,7 +80,16 @@ type PipelineBinding struct {
 }
 
 func (b PipelineBinding) valid() bool {
-	return b.Scope.valid() && pipelineID(b.TenantID) && pipelineID(b.BatchID) && pipelineHash(b.PlanID) && pipelineHash(b.PreparedSHA256) && pipelineID(b.AcquisitionID) && len(b.ArtifactPrefix) > 0 && len(b.ArtifactPrefix) <= 2048 && b.Epoch > 0 && b.PlanRef.valid() && b.Demand.valid() && b.Demand.ProofSlots == 1 && b.Demand.MetadataRows >= 1 && b.ManifestBytesLimit >= 0 && b.Demand.ArtifactBytes >= b.PlanRef.Bytes && b.ManifestBytesLimit <= b.Demand.ArtifactBytes-b.PlanRef.Bytes
+	return b.Scope.valid() && pipelineID(b.TenantID) && pipelineID(b.BatchID) && pipelineHash(b.PlanID) && pipelineHash(b.PreparedSHA256) && pipelineID(b.AcquisitionID) && len(b.ArtifactPrefix) > 0 && len(b.ArtifactPrefix) <= 2048 && b.Epoch > 0 && b.validPlanRef() && b.Demand.valid() && b.Demand.ProofSlots == 1 && b.Demand.MetadataRows >= 1 && b.ManifestBytesLimit >= 0 && b.Demand.ArtifactBytes >= b.PlanRef.Bytes && b.ManifestBytesLimit <= b.Demand.ArtifactBytes-b.PlanRef.Bytes
+}
+
+func (b PipelineBinding) validPlanRef() bool {
+	if b.PlanRef.valid() {
+		return true
+	}
+	// No selected output needs no immutable artifact. The real frozen plan still
+	// resides in bounded PG metadata until native proof publication settles it.
+	return b.PlanRef == (PipelineRef{}) && b.PreparedSHA256 == PipelinePreparedSHA256([]PipelineOutput{}) && b.Demand.References == 0 && b.Demand.QueuedBytes == 0 && b.Demand.ArtifactBytes == 0 && b.ManifestBytesLimit == 0
 }
 
 // ResolveCreatorTx must use the existing auth adapter and current credential/consent
