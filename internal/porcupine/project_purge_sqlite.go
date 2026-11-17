@@ -87,12 +87,16 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string, built
 		return err
 	}
 	for _, p := range principals {
-		if builtin && deletingTenant {
+		if deletingTenant {
 			// These are globally shared parents. Their existing update triggers
 			// revoke every derived connection, including unrelated tenants.
 			// Keep inert historical IDs here and prune each tool/token instead.
 			var sharedParent bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1 UNION ALL SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`, p.id).Scan(&sharedParent); err != nil {
+			parentQuery := `SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`
+			if builtin {
+				parentQuery = `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1 UNION ALL SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`
+			}
+			if err := tx.QueryRowContext(ctx, parentQuery, p.id).Scan(&sharedParent); err != nil {
 				return err
 			}
 			if sharedParent {

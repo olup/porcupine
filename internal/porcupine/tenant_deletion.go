@@ -105,10 +105,10 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 		return apiError(503, "tenant deletion unavailable")
 	}
 	defer tx.Rollback()
-	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
 		return err
 	}
 	deleted, err := tenantDeletionExists(ctx, tx, tenant)

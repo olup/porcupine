@@ -38,12 +38,15 @@ func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
 	}
 	client := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts", operator, externalBody(t, map[string]any{"name": "machine", "permissions": []string{"events:read"}, "projects": []string{pa}}), 201)
 	key := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts/"+client["client_id"].(string)+"/api-keys", operator, externalBody(t, map[string]any{"name": "worker", "audience": "api", "permissions": []string{"events:read"}, "projects": []string{pa}}), 201)["token"].(string)
+	global := request(t, s, "POST", "/api/v1/oauth-clients", operator, externalBody(t, map[string]any{"name": "shared machine", "permissions": []string{"events:read"}, "projects": []string{pa, pb}}), 201)["client_id"].(string)
+	globalBKey := request(t, s, "POST", "/api/v1/oauth-clients/"+global+"/api-keys", operator, externalBody(t, map[string]any{"name": "B only", "audience": "api", "permissions": []string{"events:read"}, "projects": []string{pb}}), 201)["token"].(string)
 	request(t, s, "DELETE", "/api/v1/tenants/"+a, operator, "", 202)
 	waitTenantDeletion(t, s, a, "logically_deleted")
 	request(t, s, "GET", "/api/v1/projects/"+pa+"/events", reader, "", 401)
 	request(t, s, "GET", "/api/v1/projects/"+pa+"/events", key, "", 401)
 	request(t, s, "GET", "/api/v1/projects/"+pa+"/events", operator, "", 404)
 	request(t, s, "GET", "/api/v1/projects/"+pb+"/events", operator, "", 200)
+	request(t, s, "GET", "/api/v1/projects/"+pb+"/events", globalBKey, "", 200)
 	request(t, s, "POST", "/capture/", "", captureBody(kb, "B-still-live"), 200)
 	for _, check := range []struct {
 		id    string
@@ -78,6 +81,7 @@ func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	request(t, f.s, "GET", "/api/v1/projects/"+pb+"/events", readerB, "", 200)
+	request(t, f.s, "GET", "/api/v1/projects/"+pb+"/events", globalBKey, "", 200)
 	request(t, f.s, "GET", "/api/v1/projects/"+pa+"/events", reader, "", 401)
 }
 

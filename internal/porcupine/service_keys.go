@@ -54,11 +54,11 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 		return nil, apiError(503, "service key storage unavailable")
 	}
 	defer tx.Rollback()
-	if err := s.requireExternalCurrent(ctx, tx); err != nil {
-		return nil, err
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
+	}
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
 	}
 	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
 		return nil, err

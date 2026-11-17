@@ -130,3 +130,52 @@ func TestExternalExportControlOutageDoesNotRevokeExecution(t *testing.T) {
 		t.Fatal("dependency outage extended finite authority", err)
 	}
 }
+
+func TestExternalExportDownloadExpiresDuringMetadataOrSigning(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	s := f.s
+	enableTestExports(t, s, 10)
+	store, err := exportstore.New(t.Context(), exportstore.Config{Region: "us-east-1", Bucket: "external-results", Prefix: "isolated", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	s.exports.store = store
+	p := request(t, s, "POST", "/api/v1/projects", f.operator(t), `{"name":"two output files"}`, 201)["project"].(map[string]any)["id"].(string)
+	reader := f.token(t, "reader", defaultTenantID, "events:read", s.resources.apiResource, p)
+	created := request(t, s, "POST", "/api/v1/projects/"+p+"/exports", reader, `{"idempotency_key":"download-race","sql":"SELECT event FROM events"}`, 202)
+	id := created["id"].(string)
+	if _, err := s.db.Exec(`UPDATE export_jobs SET state='succeeded',attempt_id='complete',expires_at_ms=$1 WHERE id=$2`, f.clock.Add(time.Hour).UnixMilli(), id); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if _, err := s.db.Exec(`INSERT INTO export_files(job_id,attempt_id,file_index,object_key,complete) VALUES($1,'complete',$2,$3,1)`, id, i, fmt.Sprintf("jobs/%s/%d.jsonl.gz", id, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	actor, err := s.authenticateResource(t.Context(), reader, s.resources.apiResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(t.Context(), actorContextKey{}, actor)
+	for _, advanceAt := range []int{2, 3} {
+		t.Run(fmt.Sprint(advanceAt), func(t *testing.T) {
+			originalClock := s.clock
+			defer func() { s.clock = originalClock }()
+			calls := 0
+			s.clock = func() time.Time {
+				calls++
+				if calls >= advanceAt {
+					return f.clock.Add(6 * time.Minute)
+				}
+				return f.clock
+			}
+			files, err := s.eventExportFiles(ctx, &ExportFilesInput{ID: p, ExportID: id, Limit: 2})
+			mutationErrorStatus(t, err, 410)
+			if files != nil || calls < advanceAt {
+				t.Fatal("download returned URLs after expiry during metadata or between signatures")
+			}
+		})
+	}
+}
