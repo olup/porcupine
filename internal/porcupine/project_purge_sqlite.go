@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/olup/porcupine/internal/output"
 	"slices"
 )
 
 // purgeProjectLocalRecords removes only owner-local payloads and jobs. Shared
 // credential grants are pruned separately in the control transaction.
 func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string) error {
+	if err := output.StageExportProjectCleanupTx(ctx, tx, projectID); err != nil {
+		return err
+	}
 	for _, statement := range []string{
-		"DELETE FROM export_files WHERE job_id IN (SELECT id FROM export_jobs WHERE project_id=?)",
-		"DELETE FROM export_jobs WHERE project_id=?",
 		"DELETE FROM import_upload_samples WHERE job_id IN (SELECT id FROM import_uploads WHERE project_id=?)",
 		"DELETE FROM import_upload_files WHERE job_id IN (SELECT id FROM import_uploads WHERE project_id=?)",
 		"DELETE FROM import_uploads WHERE project_id=?",

@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -32,41 +32,37 @@ func scanExport(row exportScanner) (storedExport, error) {
 	return job, nil
 }
 
-func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (storedExport, error) {
+func (s *ExportJobs) loadExport(ctx context.Context, projectID, jobID string) (storedExport, error) {
 	return scanExport(s.db.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 AND id=$2`, projectID, jobID))
 }
 
-func (s *Service) exportActor(ctx context.Context, keyID string) (auth.Principal, error) {
-	return s.loadCredentialActor(ctx, keyID)
-}
-
-func (s *Service) exportJobActor(ctx context.Context, job storedExport) (auth.Principal, error) {
+func (s *ExportJobs) exportJobActor(ctx context.Context, job storedExport) (auth.Principal, error) {
 	if job.ExternalExpiresAtMS == 0 {
-		return s.exportActor(ctx, job.ActorID)
+		return s.loadActor(ctx, job.ActorID)
 	}
-	if !s.externalAuthEnabled() || job.ExternalExpiresAtMS <= s.clock().UnixMilli() {
+	if s.issuer == "" || job.ExternalExpiresAtMS <= s.clock().UnixMilli() {
 		return auth.Principal{}, errExportAuthorizationExpired
 	}
-	if job.ExternalIssuer != s.resources.external.Config().Issuer {
-		return auth.Principal{}, errExportRevoked
+	if job.ExternalIssuer != s.issuer {
+		return auth.Principal{}, ErrExportRevoked
 	}
-	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
+	if err := s.requireActive(ctx, job.ProjectID); err != nil {
 		return auth.Principal{}, err
 	}
 	var tenant string
 	if err := s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return auth.Principal{}, errExportRevoked
+			return auth.Principal{}, ErrExportRevoked
 		}
 		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if tenant != job.ExternalTenantID {
-		return auth.Principal{}, errExportRevoked
+		return auth.Principal{}, ErrExportRevoked
 	}
 	return auth.Principal{ID: job.ActorID, TenantIDs: []string{tenant}, Projects: []string{job.ProjectID}, Permissions: []string{"events:read"}}, nil
 }
 
-func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {
+func (s *ExportJobs) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,upload_id,complete,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=$1 AND attempt_id=$2 ORDER BY file_index`, jobID, attemptID)
 	if err != nil {
 		return nil, err
@@ -83,7 +79,7 @@ func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) 
 	return artifacts, rows.Err()
 }
 
-func (s *Service) storedExportPage(ctx context.Context, project string, limit, offset int) ([]storedExport, error) {
+func (s *ExportJobs) storedExportPage(ctx context.Context, project string, limit, offset int) ([]storedExport, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 ORDER BY rowid DESC LIMIT $2 OFFSET $3`, project, limit, offset)
 	if err != nil {
 		return nil, err

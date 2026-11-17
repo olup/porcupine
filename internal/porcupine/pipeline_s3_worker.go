@@ -36,7 +36,7 @@ func (s *Service) pipelineS3CanContinue(ctx context.Context, w *s3PipelineWork) 
 		return err
 	}
 	if failed > 0 || pending > s.pipelines.config.ExportLimits.QueueThreshold*4 {
-		return errExportPressure
+		return errPipelinePressure
 	}
 	return nil
 }

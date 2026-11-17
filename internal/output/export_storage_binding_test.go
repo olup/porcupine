@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"net/http/httptest"
@@ -13,7 +13,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 	oldS3, otherS3 := &exportTestS3{}, &exportTestS3{}
 	s, job := exportWorkerFixture(t, oldS3)
 	ctx := t.Context()
-	oldStore := s.exports.store
+	oldStore := s.store
 	sink := newExportSink(ctx, s, job)
 	if err := sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "event", Type: "VARCHAR"}}); err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer otherStore.Close()
-	s.exports.store = otherStore
+	s.store = otherStore
 	if err := s.cleanupExport(ctx, job); err == nil {
 		t.Fatal("changed namespace erased an export's last ownership reference")
 	}
@@ -40,7 +40,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.stageProjectExportCleanup(ctx, tx, job.ProjectID); err != nil {
+	if err := StageExportProjectCleanupTx(ctx, tx, job.ProjectID); err != nil {
 		tx.Rollback()
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.purgeProjectExports(ctx, job.ProjectID); err == nil {
+	if err := s.CleanupProject(ctx, job.ProjectID); err == nil {
 		t.Fatal("project cleanup accepted the wrong namespace")
 	}
 	var retained string
@@ -63,11 +63,11 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 		t.Fatal("wrong namespace was touched")
 	}
 	otherS3.mu.Unlock()
-	s.exports.store = oldStore
+	s.store = oldStore
 	if _, err := s.db.Exec(`UPDATE project_deletion_files SET storage_id='' WHERE project_id=$1`, job.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.purgeProjectExports(ctx, job.ProjectID); err == nil {
+	if err := s.CleanupProject(ctx, job.ProjectID); err == nil {
 		t.Fatal("legacy unknown provenance was silently bound to current storage")
 	}
 	if _, err := s.db.Exec(`UPDATE project_deletion_files SET storage_id=$1 WHERE project_id=$2`, storage, job.ProjectID); err != nil {
@@ -76,7 +76,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 	if _, err := s.control.Exec(`CREATE TRIGGER fail_inventory BEFORE INSERT ON managed_artifact_ownership BEGIN SELECT RAISE(ABORT,'fixture unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.purgeProjectExports(ctx, job.ProjectID); err == nil {
+	if err := s.CleanupProject(ctx, job.ProjectID); err == nil {
 		t.Fatal("cleanup discarded its checkpoint without durable inventory")
 	}
 	oldS3.mu.Lock()
@@ -88,7 +88,7 @@ func TestExportCleanupRequiresCreationTimeStorageBinding(t *testing.T) {
 	if _, err := s.control.Exec(`DROP TRIGGER fail_inventory`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.purgeProjectExports(ctx, job.ProjectID); err != nil {
+	if err := s.CleanupProject(ctx, job.ProjectID); err != nil {
 		t.Fatal(err)
 	}
 	var count int

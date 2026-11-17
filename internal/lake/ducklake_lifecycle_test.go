@@ -15,10 +15,13 @@ import (
 func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 2)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := t.Context()
+	const operationTimeout = 10 * time.Second
 	for i, name := range []string{"a", "b"} {
-		if err := s.Apply(ctx, []EventProjection{lakeStorageProjection(t, name, name, int64(i+1))}); err != nil {
+		seed, cancel := context.WithTimeout(ctx, operationTimeout)
+		err := s.Apply(seed, []EventProjection{lakeStorageProjection(t, name, name, int64(i+1))})
+		cancel()
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,11 +33,17 @@ func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 		a.maintenance.Unlock()
 		t.Fatal(err)
 	}
+	maintenance, stopMaintenance := context.WithCancel(ctx)
+	defer stopMaintenance()
 	done := make(chan error, 1)
-	go func() { done <- s.Maintain(ctx) }()
+	go func() { done <- s.Maintain(maintenance) }()
 	var once sync.Once
 	finish := func() {
 		once.Do(func() {
+			// The lock wait is intentional. Give native maintenance its own
+			// bounded execution window after the cold query and deletion.
+			deadline := time.AfterFunc(operationTimeout, stopMaintenance)
+			defer deadline.Stop()
 			a.maintenance.Unlock()
 			b.maintenance.Unlock()
 			if err := <-done; err != nil {
@@ -76,7 +85,10 @@ func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 	if s.Projects[evicted] != nil {
 		evicted = "b"
 	}
-	if err := s.DeleteProject(ctx, evicted); err != nil {
+	deletion, cancel := context.WithTimeout(ctx, operationTimeout)
+	err = s.DeleteProject(deletion, evicted)
+	cancel()
+	if err != nil {
 		t.Fatal(err)
 	}
 	finish()

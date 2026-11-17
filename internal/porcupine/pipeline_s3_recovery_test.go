@@ -15,6 +15,7 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 // Multipart behavior comes from the existing S3 HTTP fixture. This wrapper adds
@@ -88,7 +89,7 @@ func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixt
 	server := httptest.NewServer(f.s3)
 	t.Cleanup(server.Close)
 	f.s.pipelines.s3Origins[server.URL] = true
-	limits, err := normalizeExportConfig(ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
+	limits, err := output.NormalizeExportConfig(output.ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

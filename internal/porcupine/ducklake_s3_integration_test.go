@@ -320,18 +320,27 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
+	limited, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	var paused atomic.Bool
-	entered := make(chan struct{})
+	var blockedReads atomic.Int32
+	var fallbackReleases atomic.Int32
+	entered := make(chan time.Time, 1)
 	resume := make(chan struct{})
 	var once sync.Once
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if paused.Load() && r.Method == "GET" && strings.HasSuffix(r.URL.Path, ".parquet") {
-			once.Do(func() { close(entered) })
+			blockedReads.Add(1)
+			once.Do(func() {
+				entered <- time.Now()
+				cancel()
+			})
 			select {
 			case <-resume:
 			case <-r.Context().Done():
 				return
 			case <-time.After(3 * time.Second):
+				fallbackReleases.Add(1)
 			}
 		}
 		forward.ServeHTTP(w, r)
@@ -355,40 +364,65 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	// Opening validates catalog identity and schema through their own Parquet
 	// files. Finish that work before blocking event reads so this test measures
 	// interruption of an analytical query, not cleanup of a failed cold open.
-	_, release, err := store.LeaseProject(ctx, "a")
+	project, release, err := store.LeaseProject(ctx, "a")
 	s3FixtureError(t, fixture, "open S3 cancellation query engine", err)
+	// Restrict the pool so recovery must reuse the interrupted connection.
+	project.DB.SetMaxOpenConns(1)
+	connection, err := project.DB.Conn(ctx)
+	s3FixtureError(t, fixture, "lease native cancellation connection", err)
+	var nativeConnection any
+	s3FixtureError(t, fixture, "identify native cancellation connection", connection.Raw(func(c any) error {
+		nativeConnection = c
+		return nil
+	}))
+	s3FixtureError(t, fixture, "release native cancellation connection", connection.Close())
+	var requestTimeout, retries int
+	err = project.DB.QueryRowContext(ctx, "SELECT current_setting('http_timeout'), current_setting('http_retries')").Scan(&requestTimeout, &retries)
+	s3FixtureError(t, fixture, "read native cancellation HTTP limits", err)
+	if requestTimeout != storage.RequestTimeoutSeconds || retries != 0 {
+		t.Fatalf("unexpected native HTTP limits: timeout=%d retries=%d", requestTimeout, retries)
+	}
 	release()
 	paused.Store(true)
-	// Cancel when the remote read is in flight, not after a fixed delay, so
-	// CPU contention before the read cannot make the fixture miss it.
-	limited, cancel := context.WithCancel(ctx)
-	var canceledAt atomic.Int64
-	go func() {
-		select {
-		case <-entered:
-		case <-time.After(10 * time.Second):
-		}
-		canceledAt.Store(time.Now().UnixNano())
-		cancel()
-	}()
+	// The proxy cancels directly at the first in-flight remote read. Keep
+	// monotonic timestamps so clock adjustments cannot affect this bound.
 	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
-	cancel()
-	elapsed := time.Since(time.Unix(0, canceledAt.Load()))
+	returnedAt := time.Now()
 	paused.Store(false)
 	close(resume)
+	var canceledAt time.Time
 	select {
-	case <-entered:
+	case canceledAt = <-entered:
 	default:
 		t.Fatal("cancellation fixture did not exercise an actual remote Parquet read")
 	}
-	if err == nil || elapsed > 2*time.Second {
-		t.Fatalf("S3 query cancellation was not bounded: error=%t elapsed=%s", err != nil, elapsed)
+	elapsed := returnedAt.Sub(canceledAt)
+	// Native HTTP timeouts bound socket phases; the driver waits for native
+	// execution and its interrupter to return. Retain two configured timeout
+	// windows, allowing 250ms for test scheduling and return bookkeeping.
+	// This allowance is below the proxy's 3s fallback, which must never fire.
+	const maxBlockedReads = 2
+	const schedulingAllowance = 250 * time.Millisecond
+	bound := maxBlockedReads*time.Duration(requestTimeout)*time.Second + schedulingAllowance
+	status, cancellationError := err.(interface{ GetStatus() int })
+	if !cancellationError || status.GetStatus() != http.StatusTooManyRequests || limited.Err() != context.Canceled || elapsed > bound || blockedReads.Load() > maxBlockedReads || fallbackReleases.Load() != 0 {
+		t.Fatalf("S3 query cancellation was not bounded: error=%v elapsed=%s bound=%s blocked_reads=%d fallback_releases=%d", err, elapsed, bound, blockedReads.Load(), fallbackReleases.Load())
 	}
+	t.Logf("S3 cancellation returned in %s with %d blocked GETs, bound=%s", elapsed, blockedReads.Load(), bound)
 	result, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 	s3FixtureError(t, fixture, "query recovered S3 endpoint", err)
 	if len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"kept"` {
 		t.Fatal("native S3 connection did not recover after cancellation")
 	}
+	connection, err = project.DB.Conn(ctx)
+	s3FixtureError(t, fixture, "lease recovered native connection", err)
+	defer connection.Close()
+	s3FixtureError(t, fixture, "identify recovered native connection", connection.Raw(func(c any) error {
+		if c != nativeConnection {
+			t.Error("S3 cancellation replaced the interrupted native connection")
+		}
+		return nil
+	}))
 }
 
 func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {

@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
-	"github.com/olup/porcupine/internal/exportstore"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 	_ "modernc.org/sqlite"
 )
@@ -42,7 +42,7 @@ type Config struct {
 	Clock              func() time.Time
 	DuckLake           *lakeapi.DuckLakeConfig
 	Pipelines          *PipelineConfig
-	Exports            *ExportConfig
+	Exports            *output.ExportConfig
 	OAuth              *OAuthConfig
 	Auth               *AuthConfig
 	NativeBackup       *lakeapi.NativeBackupConfig
@@ -91,7 +91,7 @@ type Service struct {
 	mutationMu            sync.Mutex
 	pipelines             *pipelineRuntime
 	batchSlot             chan struct{}
-	exports               *exportRuntime
+	exports               *output.ExportJobs
 	oauth                 *oauthRuntime
 	resources             *resourceRuntime
 	projectionGuard       *projectionGuard
@@ -167,20 +167,8 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	var exports *exportRuntime
-	if c.Exports != nil {
-		if c.DuckLake == nil {
-			return nil, errors.New("exports require an analytical store")
-		}
-		ec, err := normalizeExportConfig(*c.Exports)
-		if err != nil {
-			return nil, err
-		}
-		store, err := exportstore.New(context.Background(), ec.S3)
-		if err != nil {
-			return nil, errors.New("invalid S3 export configuration")
-		}
-		exports = &exportRuntime{config: ec, store: store, wake: make(chan struct{}, 1)}
+	if c.Exports != nil && c.DuckLake == nil {
+		return nil, errors.New("exports require an analytical store")
 	}
 	if c.DBPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(c.DBPath), 0700); err != nil {
@@ -220,7 +208,7 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+		pipelines: pipelines, batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.control = control
 	if c.Shared != nil {
 		copyConfig := *c.Shared
@@ -242,8 +230,8 @@ func Open(c Config) (*Service, error) {
 		if s.lake != nil {
 			s.lake.Close()
 		}
-		if exports != nil {
-			exports.store.Close()
+		if s.exports != nil {
+			s.exports.Close()
 		}
 		db.Close()
 		if s.control != nil && s.control != db {
@@ -383,6 +371,9 @@ func Open(c Config) (*Service, error) {
 	if err := s.initializePipelines(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.configureExports(c.Exports); err != nil {
+		return fail(err)
+	}
 	s.startDeletionRecovery()
 	s.startPipelines()
 	if s.lake != nil {
@@ -391,9 +382,7 @@ func Open(c Config) (*Service, error) {
 	if s.lake != nil {
 		s.startLakeMaintenance(c.DuckLake.MaintenanceInterval)
 	}
-	if exports != nil {
-		s.startExports()
-	}
+	s.exports.Start()
 	if err := s.startNativeBackups(); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
@@ -419,10 +408,7 @@ func (s *Service) Close() error {
 	<-s.deletionDone
 	s.stopPipelines()
 	if s.exports != nil {
-		s.stopExports()
-		if s.exports.store != nil {
-			s.exports.store.Close()
-		}
+		s.exports.Close()
 	}
 	if s.deliveryCancel != nil {
 		s.deliveryCancel()
