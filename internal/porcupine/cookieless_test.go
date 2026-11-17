@@ -68,8 +68,9 @@ func cookielessKey(t *testing.T, s *Service) (string, []byte) {
 func TestCookielessDailyIdentityAndRestart(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
-	receipt := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
-	config := Config{DBPath: path, BootstrapToken: adminToken, Clock: func() time.Time { return receipt }}
+	var receipt atomic.Int64
+	receipt.Store(time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC).UnixNano())
+	config := Config{DBPath: path, BootstrapToken: adminToken, Clock: func() time.Time { return time.Unix(0, receipt.Load()).UTC() }}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +115,7 @@ func TestCookielessDailyIdentityAndRestart(t *testing.T) {
 	if storedCookieless(t, s, "mapped").DistinctID != original {
 		t.Fatal("mapped IPv4 did not canonicalize")
 	}
-	receipt = receipt.Add(time.Second)
+	receipt.Add(int64(time.Second))
 	body := []byte(`{"api_key":"` + ingest + `","event":"visit","uuid":"next-day","distinct_id":"$posthog_cookieless","timestamp":"2020-01-01T00:00:00Z"}`)
 	cookielessRawRequest(t, s, body, "192.0.2.73:1234", "browser/1", nil, 200)
 	event := storedCookieless(t, s, "next-day")
