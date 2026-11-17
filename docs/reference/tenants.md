@@ -120,7 +120,7 @@ Shared mode reserves tenant places immediately in PostgreSQL across workers, whi
 
 Effective limits are the lower of the tenant budget and the deployment ceiling. The deployment defaults are two analytical places, 5,000 ms, 1,000 rows, and 1 MiB. Increasing a tenant budget cannot raise a deployment ceiling. Existing background exports and pipelines keep their separate execution budgets and deployment-level admission controls.
 
-A project reader can call `get-event-schema` to see configured `tenant_budgets`, `deployment_limits`, and effective interactive `limits`. The configured monthly allowance is visible; aggregate tenant consumption is not. Use [query discovery](../query-events.md) before building a query, and [exports](../exports.md) for a larger result. Operators configure deployment ceilings in the [hosting guide](hosting-options.md#unreleased-interactive-query-ceilings).
+A project reader can call `get-event-schema` to see configured `tenant_budgets`, `deployment_limits`, and effective interactive `limits`. The configured monthly allowance is visible; aggregate tenant consumption is not. Use [query discovery](../query-events.md) before building a query, and [exports](../exports.md) for a larger result. Operators configure deployment ceilings in the [configuration reference](configuration.md#interactive-query-ceilings).
 
 ## Deployment boundary
 
