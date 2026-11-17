@@ -62,7 +62,12 @@ func commitLiveFixture(t *testing.T, store *DuckLakeStore, session *ProjectWrite
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.CommitLive(t.Context(), session.Fence(batch.Scope.StreamID), batch, reservation, stager)
+	var result LiveCommitResult
+	err = session.RunNative(t.Context(), func(ctx context.Context) error {
+		var err error
+		result, err = store.CommitLive(ctx, session.Fence(batch.Scope.StreamID), batch, reservation, stager)
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

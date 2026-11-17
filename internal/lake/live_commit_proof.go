@@ -100,7 +100,7 @@ func (s *DuckLakeStore) PendingLiveCommitEffects(ctx context.Context, scope Host
 	if scope.Key.SourceID != s.Config.SharedSourceID || scope.StreamID == "" || after < 0 || limit <= 0 || limit > 1000 {
 		return LiveEvidencePage{}, errors.New("invalid native effect recovery scope or page")
 	}
-	p, release, err := s.LeaseProject(ctx, scope.Key.ProjectID)
+	p, release, err := s.leaseHostedProjectExisting(ctx, scope.Key.ProjectID)
 	if err != nil {
 		return LiveEvidencePage{}, err
 	}
@@ -116,6 +116,9 @@ func (s *DuckLakeStore) PendingLiveCommitEffects(ctx context.Context, scope Host
 	}
 	if after > page.NativeHighWater || page.AcknowledgedThrough < 0 || page.AcknowledgedThrough > page.NativeHighWater {
 		return LiveEvidencePage{}, ErrNativeEvidenceGap
+	}
+	if err := validateNativeEffectHistory(ctx, tx, page.NativeHighWater); err != nil {
+		return LiveEvidencePage{}, err
 	}
 	rows, err := tx.QueryContext(ctx, "SELECT "+liveProofColumns+" FROM lake.live_commit_proofs WHERE effect_seq>? ORDER BY effect_seq LIMIT ?", after, limit)
 	if err != nil {
