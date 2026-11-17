@@ -16,7 +16,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | --- | --- |
 | Top level | `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
 | `storage` | `journal`, `control`, `ducklake`: local paths; omit `control` for shared PostgreSQL |
-| `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention is a duration string, default `"720h"`, or `"0"` to stop future pruning |
+| `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `oauth` | `issuer`, `token_lifetime_seconds`, `allow_legacy_keys`, `restore_identity_bootstrap` |
 | `email` | `admin_email`, `host`, `port`, `tls`, `from`, `username`, `password_file` |
@@ -28,6 +28,8 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `backup` | `directory` or separate backup `s3`, plus `interval`, `timeout`, and `retain` |
 
 The default generated local control path is the journal path plus `.control`. Shared mode requires PostgreSQL control, PostgreSQL DuckLake catalogs, analytical S3, and a separate local journal per worker. See [shared deployment](shared-deployment.md).
+
+`init` explicitly writes `queue.receipt_retention: "0"`. Optional pruning makes acceptance depend on DuckLake after a project's first prune. Changing back to zero stops pruning but does not restore missing receipts. See the [receipt contract](receipts.md#bounded-receipts).
 
 When switching a generated local configuration to shared PostgreSQL, remove `storage.control` before setting `shared.control_database_url` or its file variant. A local control file and PostgreSQL control cannot both be configured. This setting does not migrate existing data.
 

@@ -33,7 +33,7 @@ type Config struct {
 	QueueMaxEvents int
 	QueueMaxBytes  int64
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
-	// Zero keeps every receipt.
+	// Zero, the default, keeps every receipt.
 	ReceiptRetention   time.Duration
 	AllowedOrigins     []string
 	TrustedProxies     []string

@@ -1,6 +1,8 @@
 # Event IDs and durable receipts
 
-Porcupine keeps a minimal SQLite receipt for each delivered event. Unreleased: receipts older than `PORCUPINE_RECEIPT_RETENTION` (default `720h`, 30 days) are pruned hourly; DuckLake keeps the identity of every projected event. Set it to `0` to keep every receipt, as v0.14.0 does. Queue payloads and analytical data have separate storage lifecycles.
+Porcupine's SQLite-journal mode keeps a minimal local receipt for each delivered event. Receipt retention defaults to `0`, which keeps every receipt, as the published v0.14.0 release does. New events and retries on a fresh installation therefore do not require DuckLake to be available at acceptance. Queue capacity, ingestion permissions, and SQLite durability still apply.
+
+Unreleased builds also support optional age-based pruning through `queue.receipt_retention` or `PORCUPINE_RECEIPT_RETENTION`. Leave it unset or use `"0"` for local-only receipt checks. A positive duration such as `"720h"` opts into pruning after 30 days and the analytical dependency described below. The duration must be at least `24h`. Queue payloads and receipts have separate storage lifecycles.
 
 For native and Segment inputs, a stable producer message ID identifies one message within its authenticated project and logical source. A retry returns the original server event ID and retains the first accepted payload. Unbound inputs have separate source namespaces. Supported PostHog inputs use their UUID namespace unless the credential binds an explicit logical source. See [producer IDs and source namespaces](native-event-contract.md#ids-and-retry-semantics).
 
@@ -14,9 +16,13 @@ A duplicate cannot change properties, update traits a second time, enqueue anoth
 
 ## Bounded receipts
 
+Pruning is disabled by default. Enabling it trades local receipt growth for an analytical lookup before future acceptance in that project.
+
 The maintenance worker checks each candidate against the project's DuckLake heads before pruning it. Pending queue payloads and mutations keep their receipts. Each project's durable marker and receipt deletion commit in the same SQLite transaction. The worker rechecks candidates after the analytical lookup. Project gates serialize lookups and pruning within one project; remote reads never hold the instance-wide policy/commit lock. Each maintenance batch has a five-second deadline.
 
-Once a project has pruned any receipts, live ingestion and historical import chunks check producer IDs against DuckLake before acceptance. Producer timestamps cannot select this check: a retry may omit or change its timestamp while keeping its message ID. The marker survives restart and setting retention to `0`; that setting stops future pruning but cannot recreate old local receipts. A failed analytical lookup rejects the whole batch or import chunk for retry. Projects that have never pruned receipts retain the SQLite-only acceptance path. Without DuckLake, receipts are never pruned.
+Once a project has pruned any receipts, live ingestion and historical import chunks check producer IDs against DuckLake before acceptance. Producer timestamps cannot select this check: a retry may omit or change its timestamp while keeping its message ID. A failed analytical lookup rejects the whole batch or import chunk for retry. Projects that have never pruned receipts retain the SQLite-only acceptance path. Without DuckLake, receipts are never pruned.
+
+The pruning marker survives restart and setting retention back to `0`. Zero stops future pruning but cannot recreate deleted receipts or remove the existing analytical dependency. The default is a guarantee for fresh installations and projects that have never pruned, not a repair of already-pruned history.
 
 ## Deletion and recovery
 
