@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/olup/porcupine/internal/event"
 	"os"
 	"path/filepath"
 	"sync"
@@ -28,7 +29,7 @@ func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *DuckLakeS
 
 func lakeStorageProjection(t *testing.T, project, uuid string, id int64) EventProjection {
 	t.Helper()
-	e := Event{ID: id, ProjectID: project, UUID: uuid, Event: "page_viewed", DistinctID: "anonymous", Properties: json.RawMessage(`{"page":"/home"}`), Timestamp: "2026-11-13T10:00:00Z", ReceivedAt: "2026-11-13T10:00:01Z"}
+	e := event.Event{ID: id, ProjectID: project, UUID: uuid, Event: "page_viewed", DistinctID: "anonymous", Properties: json.RawMessage(`{"page":"/home"}`), Timestamp: "2026-11-13T10:00:00Z", ReceivedAt: "2026-11-13T10:00:01Z"}
 	snapshot, err := OriginalSnapshot(e)
 	if err != nil {
 		t.Fatal(err)

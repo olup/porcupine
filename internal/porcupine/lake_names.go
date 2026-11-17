@@ -1,6 +1,9 @@
 package porcupine
 
-import "github.com/olup/porcupine/internal/lake"
+import (
+	"github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/lake"
+)
 
 // Names from the analytical store package, kept under their historical
 // identifiers while callers move to the lake API.
@@ -18,7 +21,7 @@ type (
 	DuckLakeCleanupStatus       = lake.DuckLakeCleanupStatus
 	DuckLakeConfig              = lake.DuckLakeConfig
 	DuckLakeS3Config            = lake.DuckLakeS3Config
-	Event                       = lake.Event
+	Event                       = event.Event
 	EventCatalog                = lake.EventCatalog
 	EventCatalogInput           = lake.EventCatalogInput
 	EventProfileActivity        = lake.EventProfileActivity
@@ -70,7 +73,7 @@ var (
 	lakeLiteral                         = lake.LakeLiteral
 	lakePrefixSegmentPattern            = lake.LakePrefixSegmentPattern
 	newDuckLake                         = lake.NewDuckLake
-	newID                               = lake.NewID
+	newID                               = event.NewID
 	newNativeBackupReader               = lake.NewNativeBackupReader
 	newNativeBackupS3                   = lake.NewNativeBackupS3
 	newNativeS3Client                   = lake.NewNativeS3Client

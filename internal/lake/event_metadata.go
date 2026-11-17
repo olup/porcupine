@@ -3,6 +3,7 @@ package lake
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/olup/porcupine/internal/event"
 )
 
 type contextField struct {
@@ -22,7 +23,7 @@ var postHogContextScalars = []contextField{{name: "locale", keys: []string{"$bro
 
 // Missing metadata marks a legacy PostHog input. Explicit source metadata is
 // immutable input provenance and is never inferred again after a correction.
-func EventWithMetadata(event Event) Event {
+func EventWithMetadata(event event.Event) event.Event {
 	if event.SourceID == "" {
 		event.SourceID = "posthog"
 	}

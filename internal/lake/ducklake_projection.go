@@ -10,6 +10,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/event"
 )
 
 const duckLakeSchema = `
@@ -385,7 +386,7 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 		return EventProjection{}, err
 	}
 	if deleted {
-		return EventProjection{Event: Event{ID: id, ProjectID: project, UUID: uuid, ReceivedAt: received}, Revision: revision, IsDeleted: true}, nil
+		return EventProjection{Event: event.Event{ID: id, ProjectID: project, UUID: uuid, ReceivedAt: received}, Revision: revision, IsDeleted: true}, nil
 	}
 	var payload, identity string
 	if err = tx.QueryRowContext(ctx, "SELECT payload,identity_snapshot FROM lake.current_events WHERE uuid=?", uuid).Scan(&payload, &identity); err != nil {

@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/olup/porcupine/internal/event"
 	"strings"
 )
 
 var ErrEventNotFound = errors.New("event not found")
 
 type EventProjection struct {
-	Event
+	event.Event
+
 	Revision         uint64
 	IsDeleted        bool
 	OriginalSnapshot string
@@ -23,7 +25,7 @@ type originalEventSnapshot struct {
 	Timestamp  string          `json:"timestamp"`
 }
 
-func OriginalSnapshot(event Event) (string, error) {
+func OriginalSnapshot(event event.Event) (string, error) {
 	var body bytes.Buffer
 	encoder := json.NewEncoder(&body)
 	encoder.SetEscapeHTML(false)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/event"
 )
 
 type DuckLakeStore struct {
@@ -135,7 +136,7 @@ CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_a
 	if count == 0 {
 		source := config.SharedSourceID
 		if source == "" {
-			source = NewID()
+			source = event.NewID()
 		}
 		if _, err = registry.Exec("INSERT INTO source(id) VALUES(?)", source); err != nil {
 			return fail(err)
@@ -349,7 +350,7 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		err = s.Registry.QueryRowContext(ctx, "SELECT id,ready FROM catalogs WHERE project_id=?", project).Scan(&catalogID, &ready)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		catalogID = NewID()
+		catalogID = event.NewID()
 		if _, err = s.Registry.ExecContext(ctx, "INSERT INTO catalogs(project_id,id) VALUES(?,?)", project, catalogID); err != nil {
 			return nil, err
 		}

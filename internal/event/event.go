@@ -1,4 +1,5 @@
-package lake
+// Package event defines the canonical accepted event shared by ingestion and storage.
+package event
 
 import (
 	"crypto/rand"

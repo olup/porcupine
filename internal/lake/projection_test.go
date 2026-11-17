@@ -2,13 +2,14 @@ package lake
 
 import (
 	"encoding/json"
+	"github.com/olup/porcupine/internal/event"
 	"strings"
 	"testing"
 )
 
 func projectionFixture(t *testing.T) EventProjection {
 	t.Helper()
-	event := Event{ID: 42, ProjectID: "project-a", UUID: "event-a", Event: "purchase", DistinctID: "person-a", Properties: json.RawMessage(`{"html":"<original>","price":5,"large":9007199254740993}`), Timestamp: "2026-01-01T12:00:00.123456789Z", ReceivedAt: "2026-11-07T21:00:00.123Z"}
+	event := event.Event{ID: 42, ProjectID: "project-a", UUID: "event-a", Event: "purchase", DistinctID: "person-a", Properties: json.RawMessage(`{"html":"<original>","price":5,"large":9007199254740993}`), Timestamp: "2026-01-01T12:00:00.123456789Z", ReceivedAt: "2026-11-07T21:00:00.123Z"}
 	snapshot, err := OriginalSnapshot(event)
 	if err != nil {
 		t.Fatal(err)

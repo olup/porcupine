@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/olup/porcupine/internal/event"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,7 @@ import (
 
 func TestSharedNativeConfiguration(t *testing.T) {
 	t.Parallel()
-	source := NewID()
+	source := event.NewID()
 	for _, config := range []DuckLakeConfig{
 		{PostgresURL: "postgres://localhost/lake"},
 		{SharedSourceID: source},
@@ -40,7 +41,7 @@ func sharedNativeStores(t *testing.T) (context.Context, *DuckLakeStore, *DuckLak
 	fixture := nativeS3Fixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
-	config := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "first"), PostgresURL: dsn, SharedSourceID: NewID(), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true}
+	config := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "first"), PostgresURL: dsn, SharedSourceID: event.NewID(), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true}
 	first, err := NewDuckLake(config)
 	if err != nil {
 		t.Fatal(err)
