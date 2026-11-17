@@ -75,6 +75,31 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	_, err = a.service.editEvent(actorContext, mutationEdit(other, uuid, "forbidden", "0"))
 	mutationErrorStatus(t, err, 403)
 	edit := mutationEdit(project, uuid, "first", "0")
+	// Schema 5 uses the same tables but cannot interpret mutation evidence.
+	// Upgrade a catalog with live proofs and retain its original stream.
+	prior, err := fa.native.PendingNativeEffects(ctx, scope, 0, 10)
+	if err != nil || prior.NativeHighWater != 2 {
+		t.Fatal(prior, err)
+	}
+	nativeProject, release, err := fa.native.LeaseProject(ctx, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = nativeProject.DB.ExecContext(ctx, `UPDATE lake.schema_version SET version=5`)
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.service.editEvent(actorContext, edit)
+	mutationErrorStatus(t, err, 503)
+	updatedScope, err := fa.native.InitializeHostedProject(ctx, scope.Key)
+	if err != nil || updatedScope != scope {
+		t.Fatal(updatedScope, err)
+	}
+	upgraded, err := fa.native.PendingNativeEffects(ctx, scope, 0, 10)
+	if err != nil || !reflect.DeepEqual(upgraded, prior) {
+		t.Fatal("catalog upgrade changed existing live proofs", upgraded, prior, err)
+	}
 	first, err := a.service.editEvent(actorContext, edit)
 	if err != nil || first.Body.State != "pending" || first.Body.Revision != "1" {
 		t.Fatal(first, err)
