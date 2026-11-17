@@ -105,6 +105,9 @@ func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sq
 		return false, ErrPipelineConflict
 	}
 	residual := PipelineDemand{b.Demand.References - spent.References, b.Demand.QueuedBytes - spent.QueuedBytes, b.Demand.MetadataRows - spent.MetadataRows, b.Demand.ArtifactBytes - spent.ArtifactBytes, 0}
+	if residual.ArtifactBytes < b.PlanRef.Bytes {
+		return false, ErrPipelineCapacity
+	}
 	if e = p.transferCleanup(ctx, tx, b, residual); e != nil {
 		return false, e
 	}
@@ -141,6 +144,14 @@ func (p *PGPipelineEffects) currentTarget(ctx context.Context, tx *sql.Tx, b Pip
 	return "pending", nil
 }
 func (p *PGPipelineEffects) transferCleanup(ctx context.Context, tx *sql.Tx, b PipelineBinding, d PipelineDemand) error {
+	var checkpointRows int64
+	if e := tx.QueryRowContext(ctx, `SELECT checkpoint_rows FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere, pipelineScopeArgs(b.Scope)...).Scan(&checkpointRows); e != nil {
+		return e
+	}
+	if d.MetadataRows < checkpointRows {
+		return ErrPipelineCapacity
+	}
+	d.MetadataRows -= checkpointRows
 	a := append(pipelineScopeArgs(b.Scope), b.TenantID, b.BatchID, b.AcquisitionID, b.ArtifactPrefix, d.References, d.QueuedBytes, d.MetadataRows, d.ArtifactBytes)
 	_, e := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_cleanup(source_id,project_id,catalog_id,stream_id,tenant_id,owner_id,generation,prefix,refs,bytes,rows,artifacts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, a...)
 	return e

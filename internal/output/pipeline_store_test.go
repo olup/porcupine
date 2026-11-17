@@ -80,13 +80,13 @@ func TestSharedPipelineEffectsReservePublishRollbackReplay(t *testing.T) {
 	db, p := pipelineFixture(t)
 	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	// A second batch on this stream cannot native-commit before publication.
 	tx, _ := db.Begin()
 	other := b
 	other.BatchID = "second"
-	if e := p.ReserveEffectsTx(ctx, tx, other, plan); !errors.Is(e, ErrPipelineConflict) {
+	if e := p.ReserveEffectsTx(ctx, tx, other, plan, v.Outputs); !errors.Is(e, ErrPipelineConflict) {
 		t.Fatal(e)
 	}
 	tx.Rollback()
@@ -122,7 +122,7 @@ func TestSharedPipelineEffectsPauseReplaceAndClaims(t *testing.T) {
 	db, p := pipelineFixture(t)
 	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	db.Exec(`UPDATE pipeline_effect_definitions SET state='paused'`)
 	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
 	tx, _ := db.Begin()
@@ -173,7 +173,7 @@ func TestSharedPipelineEffectsDestinationChangeAndUnknown(t *testing.T) {
 	db, p := pipelineFixture(t)
 	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	tx, _ := db.Begin()
 	if e := p.ReleaseAbsentReservationTx(ctx, tx, b, PipelineSettlement{}); !errors.Is(e, ErrPipelineConflict) {
 		t.Fatal(e)
@@ -210,10 +210,10 @@ func TestPipelineSettlementRequiresSuccessor(t *testing.T) {
 func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T) {
 	t.Parallel()
 	db, p := pipelineFixture(t)
-	b, plan, _ := pipelinePrepare(t, db, p)
+	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ConfigureCapacityTx(ctx, tx, "project", "project", b.Demand) })
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	cold, _ := NewPGPipelineEffects(PipelineNativeCredentialAuthority{})
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		got, e := cold.ReservationTx(ctx, tx, b.Scope)
@@ -235,7 +235,7 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	second.PlanID = secondPlan.ID
 	second.BatchID = "second"
 	tx, _ := db.Begin()
-	if e := p.ReserveEffectsTx(ctx, tx, second, secondPlan); !errors.Is(e, ErrPipelineCapacity) {
+	if e := p.ReserveEffectsTx(ctx, tx, second, secondPlan, v.Outputs); !errors.Is(e, ErrPipelineCapacity) {
 		t.Fatal(e)
 	}
 	tx.Rollback()
@@ -249,7 +249,8 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	other.PlanID = otherPlan.ID
 	other.BatchID = "other"
 	other.Demand.References = 0
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, other, otherPlan) })
+	other.PreparedSHA256 = PipelinePreparedSHA256(nil)
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, other, otherPlan, nil) })
 	// Lease expiry has no refund API. Only successor-fenced absence may settle.
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		return p.ReleaseAbsentReservationTx(ctx, tx, b, PipelineSettlement{SuccessorEpoch: b.Epoch + 1, Outcome: PipelineReleaseReservation})
@@ -260,6 +261,14 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	if pipelineCount(t, db, `SELECT count(*) FROM pipeline_effect_reservations WHERE project_id='project'`) != 0 {
 		t.Fatal("settled reservation retained")
 	}
+	retry := b
+	retry.AcquisitionID = "new-acquisition"
+	retry.ArtifactPrefix = "namespace/retry/"
+	tx, _ = db.Begin()
+	if e := p.ReserveEffectsTx(ctx, tx, retry, plan, v.Outputs); !errors.Is(e, ErrPipelineConflict) {
+		t.Fatal("retry admitted over prior cleanup owner", e)
+	}
+	tx.Rollback()
 	var clean PipelineCleanupClaim
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		var e error
@@ -274,16 +283,30 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	}
 	tx.Rollback()
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteCleanupTx(ctx, tx, clean) })
-	if pipelineCount(t, db, `SELECT used_refs+used_bytes+used_rows+used_artifacts+used_proofs FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`) != 0 {
-		t.Fatal("cleanup leaked capacity")
+	if pipelineCount(t, db, `SELECT used_refs+used_bytes+used_rows+used_artifacts+used_proofs FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`) != 1 {
+		t.Fatal("cleanup must retain one checkpoint metadata row")
 	}
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, retry, plan, v.Outputs) })
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		return p.ReleaseAbsentReservationTx(ctx, tx, retry, PipelineSettlement{SuccessorEpoch: retry.Epoch + 1, Outcome: PipelineReleaseReservation})
+	})
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		var e error
+		clean, e = p.ClaimCleanupTx(ctx, tx, retry.Scope, retry.TenantID, retry.BatchID, "cleanup2")
+		return e
+	})
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteCleanupTx(ctx, tx, clean) })
+	if pipelineCount(t, db, `SELECT used_rows FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`) != 1 {
+		t.Fatal("retry recharged checkpoint metadata")
+	}
+
 }
 func TestSharedPipelineEffectsCreatorRevocationAndScope(t *testing.T) {
 	t.Parallel()
 	db, p := pipelineFixture(t)
 	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	db.Exec(`UPDATE access_keys SET revoked_at='now'`)
 	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
 	var state string
@@ -305,7 +328,7 @@ func TestSharedPipelineEffectsDefinitionReplacementRetiresPending(t *testing.T) 
 	db, p := pipelineFixture(t)
 	b, plan, v := pipelinePrepare(t, db, p)
 	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
 	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
 	old := plan.Targets[0]
 	next := PipelineDefinition{TenantID: b.TenantID, ProjectID: b.Scope.ProjectID, State: "paused", Target: old}
@@ -327,4 +350,21 @@ func TestSharedPipelineEffectsDefinitionReplacementRetiresPending(t *testing.T) 
 		t.Fatal(e)
 	}
 	tx.Rollback()
+}
+
+func TestSharedPipelineEffectsPlanArtifactAndCheckpointRemainCharged(t *testing.T) {
+	t.Parallel()
+	db, p := pipelineFixture(t)
+	b, plan, v := pipelinePrepare(t, db, p)
+	ctx := context.Background()
+	// Plan10 plus body100 cannot fit an artifact reservation of100.
+	b.Demand.ArtifactBytes = 100
+	tx, _ := db.Begin()
+	if e := p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs); !errors.Is(e, ErrPipelineCapacity) {
+		t.Fatal(e)
+	}
+	tx.Rollback()
+	if pipelineCount(t, db, `SELECT count(*) FROM pipeline_effect_reservations`) != 0 {
+		t.Fatal("invalid preparation admitted")
+	}
 }

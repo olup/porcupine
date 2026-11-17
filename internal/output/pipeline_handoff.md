@@ -20,7 +20,9 @@ use that same session. No row-locked transaction waits for a project session.
 
 Freeze a real plan, prepare canonical native-selected output metadata, then
 reserve exact matching references and conservative byte/row/artifact/proof demand
-before uploading any object or committing native. Plan IDs include detached rule
+before uploading any object or committing native. `ReserveEffectsTx` takes the
+prepared outputs and verifies their digest, exact member count, concrete object
+charges and plan object allowance before admitting the reservation. Plan IDs include detached rule
 references and creator/incarnation/destination revisions. The binding also pins
 the immutable plan reference, prepared-output digest, batch, epoch, acquisition
 and attempt artifact prefix. A reservation stores ownership before external I/O.
@@ -48,7 +50,10 @@ moves to cleanup ownership, so uncertain upload history continues to backpressur
 Publication deletes settled reservation and frozen-plan rows. The cumulative
 stream checkpoint remains; there is no eternal per-batch accounting ledger.
 Jobs and cleanup inventory retain charges until verified cleanup CAS removes
-them. Native seal/history/restore barriers must govern eventual stream checkpoint
+them. A permanent stream checkpoint retains one metadata-row charge after batch
+cleanup; later reservations on that stream do not recharge it. Stable batch retry
+is refused while its prior cleanup owner exists, so a new native proof cannot
+collide with unsettled cleanup ownership. Native seal/history/restore barriers must govern eventual stream checkpoint
 removal; this component supplies no unsafe checkpoint-pruning operation.
 
 ## Authority, destination changes and claims

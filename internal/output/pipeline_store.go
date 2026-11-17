@@ -123,20 +123,34 @@ func (p *PGPipelineEffects) FreezeLivePlanTx(ctx context.Context, tx *sql.Tx, te
 	return plan, nil
 }
 func pipelinePlanID(plan PipelinePlan) string { plan.ID = ""; return pipelineDigest(plan) }
-func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b PipelineBinding, plan PipelinePlan) error {
+func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b PipelineBinding, plan PipelinePlan, prepared []PipelineOutput) error {
 	if tx == nil || !b.valid() || plan.ID != pipelinePlanID(plan) || b.PlanID != plan.ID || plan.Scope != b.Scope || plan.TenantID != b.TenantID || len(plan.Targets) > 100 || b.Demand.MetadataRows < int64(3+len(plan.Targets)) {
 		return ErrPipelineConflict
+	}
+	if e := validatePipelinePreparation(b, plan, prepared); e != nil {
+		return e
 	}
 	if e := p.lockCapacity(ctx, tx, b, false); e != nil {
 		return e
 	}
 	a := append(pipelineScopeArgs(b.Scope), b.TenantID)
-	_, e := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_streams(source_id,project_id,catalog_id,stream_id,tenant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, a...)
+	streamInsert, e := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_streams(source_id,project_id,catalog_id,stream_id,tenant_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, a...)
+	if e != nil {
+		return e
+	}
+	checkpointRows, e := streamInsert.RowsAffected()
 	if e != nil {
 		return e
 	}
 	if _, _, e = p.lockStream(ctx, tx, b); e != nil {
 		return e
+	}
+	var oldCleanup bool
+	if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_cleanup WHERE `+pipelineScopeWhere+` AND owner_id=$5)`, append(pipelineScopeArgs(b.Scope), b.BatchID)...).Scan(&oldCleanup); e != nil {
+		return e
+	}
+	if oldCleanup {
+		return ErrPipelineConflict
 	}
 	var digest string
 	e = tx.QueryRowContext(ctx, `SELECT binding_sha FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere, pipelineScopeArgs(b.Scope)...).Scan(&digest)
@@ -164,8 +178,8 @@ func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b 
 			return e
 		}
 	}
-	a = append(a, b.BatchID, b.ArtifactPrefix, pipelineDigest(b), b.Epoch, b.AcquisitionID, b.PlanID, b.PreparedSHA256, b.PlanRef.Key, b.PlanRef.VersionID, b.PlanRef.SHA256, b.PlanRef.Bytes, b.Demand.References, b.Demand.QueuedBytes, b.Demand.MetadataRows, b.Demand.ArtifactBytes, b.Demand.ProofSlots)
-	_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_reservations(source_id,project_id,catalog_id,stream_id,tenant_id,batch_id,artifact_prefix,binding_sha,epoch,acquisition_id,plan_id,prepared_sha,plan_key,plan_version,plan_sha,plan_bytes,refs,bytes,rows,artifacts,proofs) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, a...)
+	a = append(a, b.BatchID, b.ArtifactPrefix, pipelineDigest(b), b.Epoch, b.AcquisitionID, b.PlanID, b.PreparedSHA256, b.PlanRef.Key, b.PlanRef.VersionID, b.PlanRef.SHA256, b.PlanRef.Bytes, b.Demand.References, b.Demand.QueuedBytes, b.Demand.MetadataRows, b.Demand.ArtifactBytes, b.Demand.ProofSlots, checkpointRows)
+	_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_reservations(source_id,project_id,catalog_id,stream_id,tenant_id,batch_id,artifact_prefix,binding_sha,epoch,acquisition_id,plan_id,prepared_sha,plan_key,plan_version,plan_sha,plan_bytes,refs,bytes,rows,artifacts,proofs,checkpoint_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, a...)
 	if e != nil {
 		return e
 	}
