@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -44,6 +45,13 @@ func sharedIngestionTestService(t *testing.T, dsn, worker string) *Service {
 
 func sharedIngestionProject(t *testing.T, s *Service, id string) {
 	t.Helper()
+	if _, err := s.control.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$1,$3,'mixed') ON CONFLICT(id) DO NOTHING`, id, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
+	var tenant string
+	if err := s.control.QueryRow(`SELECT tenant_id FROM projects WHERE id=$1`, id).Scan(&tenant); err != nil || tenant != defaultTenantID {
+		t.Fatal("fixture project ownership differs from its local mirror", tenant, err)
+	}
 	_, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$1,$3,'mixed')`, id, defaultTenantID, now())
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +74,86 @@ func sharedUsageCount(t *testing.T, s *Service) int64 {
 		t.Fatal(err)
 	}
 	return count
+}
+
+// Include complete rows so an overwritten identity or usage watermark is not
+// mistaken for an unchanged state merely because its row count stayed equal.
+func sharedAdmissionSnapshot(t *testing.T, s *Service) string {
+	t.Helper()
+	var snapshot []any
+	for _, table := range []string{"queue_usage", "events", "event_receipts", "identity_profiles", "identity_links", "tenant_usage", "shared_tenant_cache", "cookieless_keys", "webhook_deliveries"} {
+		rows, err := s.db.Query(`SELECT * FROM ` + table + ` ORDER BY 1,2`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			snapshot = append(snapshot, []any{table, values})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func sharedIdentityBatch(t *testing.T, project, prefix string) preparedLiveBatch {
+	t.Helper()
+	batch, err := prepareLiveBatch(project, "", eventBatch{
+		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},
+		{UUID: prefix + "-page", Event: "visited", DistinctID: "visitor", Properties: map[string]any{}},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return batch
+}
+
+func TestSharedIngestionRequiresAuthoritativeActiveProject(t *testing.T) {
+	t.Parallel()
+	s := sharedIngestionTestService(t, sharedPostgresDSN(t), "fenced-writer")
+	if _, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('local-only',$1,'local-only',$2,'mixed')`, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
+	assertRefused := func(project string) {
+		t.Helper()
+		before := sharedAdmissionSnapshot(t, s)
+		_, err := s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, project, "refused"), ingestionPeer{}, true)
+		var managed *managementError
+		if !errors.As(err, &managed) || managed.GetStatus() != 404 {
+			t.Fatal("inactive authoritative project did not return terminal 404", err)
+		}
+		if sharedAdmissionSnapshot(t, s) != before {
+			t.Fatal("refused acceptance changed journal, identity or quota")
+		}
+	}
+	assertRefused("local-only")
+	sharedIngestionProject(t, s, "active")
+	if _, err := s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "active", "before"), ingestionPeer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.beginTenantDeletion(t.Context(), defaultTenantID); err != nil {
+		t.Fatal(err)
+	}
+	// The local journal and fresh policy cache still exist. Neither authorizes
+	// admission after the authoritative deletion intent commits.
+	assertRefused("active")
 }
 
 func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
@@ -137,10 +225,19 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	if err = s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// A ready ID range and fresh policy allow durable local acceptance without
-	// another PostgreSQL call on each event. Publication can recover later.
-	if _, err = s.acceptance.Accept(t.Context(), sharedIngestionBatch("recover", "offline", 2), ingestionPeer{}, true); err != nil {
-		t.Fatal(err)
+	// Cached budgets and reserved IDs cannot prove that no deletion or
+	// revocation happened while authoritative control is unavailable.
+	before := sharedAdmissionSnapshot(t, s)
+	if _, err = s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "recover", "offline"), ingestionPeer{}, true); err == nil {
+		t.Fatal("fresh cached policy admitted work without authoritative control")
+	} else {
+		var failure *acceptanceFailure
+		if !errors.As(err, &failure) || !failure.retry {
+			t.Fatal("unavailable control was not a retryable admission error", err)
+		}
+	}
+	if after := sharedAdmissionSnapshot(t, s); after != before {
+		t.Fatal("refused offline acceptance changed queue, identity or quota", before, after)
 	}
 	if err = s.syncSharedIngestion(t.Context()); err == nil {
 		t.Fatal("publication claimed success while the authority was unavailable")
@@ -148,6 +245,9 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	s.control, err = openSharedControl(t.Context(), SharedConfig{DatabaseURL: dsn})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err = s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "recover", "offline"), ingestionPeer{}, true); err != nil {
+		t.Fatal("retry after control recovery failed", err)
 	}
 	for range 2 {
 		if err = s.syncSharedIngestion(t.Context()); err != nil {

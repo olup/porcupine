@@ -765,6 +765,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		if writeTenantIngestionError(w, r, err, nativeResponse) {
 			return
 		}
+		var managed *managementError
+		if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
+			write(w, managed.GetStatus(), managed)
+			return
+		}
 		var failure *acceptanceFailure
 		if errors.As(err, &failure) && failure.retry {
 			w.Header().Set("Retry-After", "1")

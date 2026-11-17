@@ -79,6 +79,8 @@ Shared workers publish cumulative counters to PostgreSQL and refresh cached budg
 
 Several owners serving one tenant can exceed an allowance during that publication and cache delay. There is no strict cross-worker event-quota bound or hard spending-cap guarantee. An expired policy cache must refresh successfully before accepting new events; unavailable PostgreSQL does not permit unlimited use of stale policy. Already accepted delivery continues. Credential revocation and deletion fences do not use the budget cache.
 
+Every new live batch checks authoritative project and tenant deletion state, even while its budget cache is fresh. Cached budgets and reserved event IDs cannot authorize admission while that control check is unavailable. Admission then returns a retryable 503 before changing the journal, identities, queue capacity or quota. A project that is missing or fenced returns a terminal 404 after credential scope validation. Restoring PostgreSQL permits the producer to retry the same batch. This replaces the earlier shared component behavior that accepted offline work while its budget cache was fresh.
+
 Interactive query places are reserved immediately in PostgreSQL across workers. Local process capacity remains an additional limit. Each reservation expires after 30 seconds and an independent execution keeper renews active reservations every five seconds. Renewal continues after an HTTP timeout or cancellation until the analytical call actually returns. That return releases the reservation and local place before profile summarization, delivery-status lookups, or response encoding. Response processing retains the original deadline through a separate context.
 
 ## Native timeouts and worker supervision
