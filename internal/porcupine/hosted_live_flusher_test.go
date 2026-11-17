@@ -274,6 +274,22 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 3 {
 		t.Fatal("wrong atomic usage", n, err)
 	}
+	// A restored cursor must match the original retained native proof even when
+	// the cursor already equals high-water and there are no pending effects.
+	_, originalHash, er := fa.publisher.checkpoint(t.Context(), scope, defaultTenantID)
+	if er != nil {
+		t.Fatal(er)
+	}
+	if _, er = a.service.control.Exec(`UPDATE pipeline_effect_streams SET proof_sha=$1 WHERE project_id=$2`, strings.Repeat("f", 64), project); er != nil {
+		t.Fatal(er)
+	}
+	if er = fb.RecoverProject(t.Context(), key); !errors.Is(er, lakeapi.ErrNativeEvidenceGap) {
+		t.Fatal("mismatched covered proof was acknowledged", er)
+	}
+	if _, er = a.service.control.Exec(`UPDATE pipeline_effect_streams SET proof_sha=$1 WHERE project_id=$2`, originalHash, project); er != nil {
+		t.Fatal(er)
+	}
+
 	// Add the real immutable batch rule alongside the direct destination.
 	raw, _ = json.Marshal(delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60})
 	batchRef, e := sa.Remote.PutImmutableEffectObject(t.Context(), scope, eventapi.NewID(), raw)

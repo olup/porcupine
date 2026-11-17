@@ -134,7 +134,7 @@ func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.Proj
 	})
 }
 func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
-	seq, _, err := f.publisher.checkpoint(ctx, scope, tenant)
+	seq, checkpointHash, err := f.publisher.checkpoint(ctx, scope, tenant)
 	if err != nil {
 		return err
 	}
@@ -142,6 +142,16 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 	page, err := f.native.PendingLiveCommitEffects(ctx, scope, seq, 2)
 	if err != nil {
 		return err
+	}
+
+	if seq > 0 {
+		covered, e := f.native.PendingLiveCommitEffects(ctx, scope, seq-1, 1)
+		if e != nil {
+			return e
+		}
+		if covered.NativeHighWater != page.NativeHighWater || len(covered.Evidence) != 1 || covered.Evidence[0].Sequence != seq || covered.Evidence[0].ProofFingerprint != checkpointHash {
+			return lakeapi.ErrNativeEvidenceGap
+		}
 	}
 	if len(page.Evidence) > 1 {
 		return output.ErrPipelineConflict
