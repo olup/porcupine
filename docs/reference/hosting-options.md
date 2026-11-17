@@ -8,28 +8,9 @@ The [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0) pr
 
 ## Choose local SQLite or shared PostgreSQL (unreleased)
 
-The development server supports both deployment modes in the same binary. The published v0.14.0 image supports only the standalone mode. Match the CLI and server versions.
+The published v0.14.0 image supports standalone storage. Development builds also support shared PostgreSQL. The canonical [storage mode comparison](../storage.md#unreleased-separate-control-and-journal) describes each database, its paths, and recovery boundary. Use the [recommended profiles](../hosting.md#configure-the-development-build) for a new development installation, and [tenant setup](tenant-access.md) to invite its first administrator.
 
-| Choose | Local SQLite, the default | Shared PostgreSQL |
-| --- | --- | --- |
-| Application workers | One process with its own persistent volume | Several workers, each with its own persistent SQLite volume |
-| Accounts, project ownership, budgets, and coordination | Local SQLite | Shared PostgreSQL |
-| Event acceptance queue and retry receipts | Local SQLite | Project owner's local SQLite |
-| DuckLake catalog metadata | Local project catalogs | PostgreSQL |
-| Analytical event files | Local SSD or S3 | S3 |
-| Tenant and project support | Multiple tenants, each with projects | Multiple tenants, each with projects |
-
-Local mode uses two separate SQLite files. `PORCUPINE_DB` selects the ingestion journal, defaulting to `./data/porcupine.db` for a native process. `PORCUPINE_CONTROL_DB` selects the control database; when omitted it defaults to the journal path plus `.control`. The container defaults are `/data/porcupine.db` and `/data/porcupine.db.control`. Keep both files and their SQLite auxiliary files on persistent local storage.
-
-Control contains accounts, grants, tenants, project metadata, policies, and reported usage. The journal contains accepted events, retry receipts, identity state, durable acceptance counters, imports, and delivery jobs. They are linked by persistent instance identities. Startup rejects a missing or unrelated replacement database; restore both together. Shared mode replaces only the control database with PostgreSQL and rejects `PORCUPINE_CONTROL_DB`.
-
-For one server or one team, keep SQLite. PostgreSQL is not required to use tenants, email accounts, budgets, the API, CLI, or MCP. A fresh tenant-enabled instance creates `default`; you can keep every project there.
-
-Choose [shared PostgreSQL deployment](shared-deployment.md) when workers need common management state and analytical catalogs. PostgreSQL stores metadata, not an intermediate copy of event payloads. Shared mode still needs durable project ownership and the owner's SQLite volume. It does not provide automatic writer failover, transparent project rebalancing, or coordinated whole-instance backup.
-
-After deployment, [connect the instance operator, choose a tenant, and invite its first administrator](tenant-access.md). That administrator creates the team's projects, invites members, and manages team service accounts. Members receive permissions on selected projects or all projects in their tenant. Hard budgets and suspension remain instance-operator settings in both storage modes.
-
-The standalone setup below remains the default. Start a fresh data directory for the unreleased tenant-enabled schema; existing combined control/journal and pre-tenant data directories are not migrated.
+The tagged-release procedure below remains separate. Do not point that image at the unreleased tenant-enabled layout.
 
 ## Laptop with Docker Compose
 
@@ -193,22 +174,7 @@ Live events have no automatic age-based deletion. Historical snapshots default t
 
 ### Unreleased interactive query ceilings
 
-These settings belong to the unreleased [tenant implementation](tenants.md), not the published v0.14.0 image. They set deployment-wide safety ceilings. Tenant budgets can lower them, but cannot raise them.
-
-| Setting | Default | Accepted range |
-| --- | --- | --- |
-| `PORCUPINE_QUERY_MAX_CONCURRENT` | 2 | 2–64 deployment analytical places |
-| `PORCUPINE_QUERY_TIMEOUT_MS` | 5,000 | 1–60,000 ms |
-| `PORCUPINE_QUERY_MAX_ROWS` | 1,000 | 1–100,000 rows |
-| `PORCUPINE_QUERY_MAX_RESULT_BYTES` | 1,048,576 | 256–67,108,864 bytes |
-
-The concurrency pool also retains the existing background export safety slot; tenant interactive budgets do not create additional deployment capacity. These settings do not change DuckDB's per-engine memory budget or provide process isolation. Increase them only within the host's measured resource capacity. An unset value uses the default. Query readers discover their effective limits through `get-event-schema`.
-
-Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance operator can create additional tenants or set hard budgets. A tenant administrator can inspect their own tenant's configuration and aggregate usage, without changing those operator limits. This works in the default single-process SQLite mode and optional [shared mode](shared-deployment.md). In shared mode, query places are reserved across workers, and each process retains its own local resource ceiling.
-
-Shared PostgreSQL analytical metadata also uses `PORCUPINE_DUCKLAKE_METADATA_TIMEOUT_SECONDS`: default 10, range 2–60 seconds. This setting applies to native connection, statement, lock, and TCP waits and is not accepted for local catalogs. `get-event-schema` reports `limits.metadata_request_timeout_seconds`. Some native network calls can outlast cancellation; the setting does not guarantee that every query timeout returns an HTTP error immediately.
-
-Supervise shared workers and restart them with the same SQLite volume and worker identity. If a native interactive execution exceeds its SQL deadline, S3 and PostgreSQL I/O allowances, and a 15-second safety margin, the process exits with status `70`. This happens before its shared reservation's later expiry can admit a replacement. The whole process stops, so clients may need stable-ID retries. Default local mode has no shared watchdog. See [shared execution and status](shared-deployment.md#native-timeouts-and-worker-supervision) for the failure contract and the `shared_control`/`worker_registration` status checks.
+The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Shared execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation expiry, and the process watchdog. These development features are not part of the published v0.14.0 image.
 
 ## Optional destinations
 

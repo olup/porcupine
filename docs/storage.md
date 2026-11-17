@@ -14,9 +14,20 @@ Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix c
 
 ## Unreleased separate control and journal
 
-Local development builds use two SQLite databases. The ingestion journal stays at `PORCUPINE_DB`; control defaults to that path plus `.control`, or the explicit `PORCUPINE_CONTROL_DB` path. The two databases have separate connections and schemas. Accepted-event rows, identity state, receipts, imports, and jobs never enter control storage. Uncredentialed actor/project anchors in the journal provide local foreign keys; authentication reads only control.
+The development server supports local and shared modes in the same binary. Both support tenants and projects. Local mode has one process and a persistent directory; shared mode has several workers with separate durable local volumes.
 
-The files carry matching identities and cannot be replaced independently. Preserve both databases and DuckLake together. Native v2 backup bundles include `acceptance.sqlite` and `control.sqlite`; use the matching offline restore tool. This layout requires a fresh data directory and is not part of v0.14.0. See [deployment choices](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased).
+| State | Local SQLite mode | Shared PostgreSQL mode |
+| --- | --- | --- |
+| Accounts, grants, tenants, project ownership, policies, and reported usage | Control SQLite | Control PostgreSQL |
+| Accepted events, receipts, identities, durable acceptance counters, imports, and jobs | Journal SQLite | Project owner's journal SQLite |
+| DuckLake catalogs | Local project catalogs | PostgreSQL catalog metadata |
+| Analytical event files | Local SSD or S3 | S3 Parquet |
+
+`storage.journal`, or `PORCUPINE_DB`, defaults to `./data/porcupine.db` for a native server. `storage.control`, or `PORCUPINE_CONTROL_DB`, defaults to that path plus `.control`. Container initialization uses `/data/porcupine.db` and `/data/porcupine.db.control`. PostgreSQL replaces control and catalog metadata; it does not receive an intermediate event queue.
+
+The local databases have separate connections and schemas. Accepted-event rows, identity state, receipts, imports, and jobs never enter control storage. Uncredentialed actor/project anchors in the journal provide local foreign keys; authentication reads only control. Shared mode rejects a configured local control path. [Configuration rules](reference/configuration.md#configuration-sections)
+
+The files carry matching identities and cannot be replaced independently. Startup rejects a missing or unrelated replacement database. Preserve both databases, their SQLite auxiliary files, and DuckLake together. Native v2 backup bundles include `acceptance.sqlite` and `control.sqlite`; use the matching offline restore tool. This layout requires a fresh data directory and is not part of v0.14.0. See [deployment choices](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased).
 
 ## Unreleased shared metadata mode
 

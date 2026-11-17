@@ -1,0 +1,6 @@
+{
+	"oauth": {
+		"issuer": "https://analytics.example.com"
+	},
+	"trusted_proxies": ["127.0.0.1/32", "::1/128"]
+}

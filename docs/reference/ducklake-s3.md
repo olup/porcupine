@@ -64,7 +64,7 @@ Native HTTP retries are disabled so an unavailable object service does not exten
 
 An authenticated `get-instance-status` reports `configuration.native_s3_storage=true` when configured. This is a configuration flag, not a bucket-connectivity test. Test a synthetic event, wait for delivery, run a query, then inspect the managed objects with operator credentials. [Instance status](instance-status.md)
 
-The local-only [automatic recovery bundle](native-backups.md) is rejected with analytical S3. It would otherwise omit the remote objects. Preserve local SQLite and catalog state together with their corresponding remote data through an operator-controlled, consistent recovery procedure. A bucket alone does not recover users, grants, receipts or catalog metadata. S3-aware automatic backup and offline restore are follow-up work.
+The local-only [automatic recovery bundle](native-backups.md) is rejected with analytical S3 because it would omit remote objects. Use the [complete S3 backup and offline restore procedure](native-backup-recovery.md), available in v0.14.0. It preserves operational and catalog state with the referenced remote files in an independent destination. A bucket listing alone does not recover users, grants, receipts, or catalog metadata.
 
 ## Test the integration locally
 
