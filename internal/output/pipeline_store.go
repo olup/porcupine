@@ -89,7 +89,9 @@ func (p *PGPipelineEffects) FreezeLivePlanTx(ctx context.Context, tx *sql.Tx, te
 	if projectTenant != tenant {
 		return plan, ErrPipelineAuthority
 	}
-	rows, e := tx.QueryContext(ctx, `SELECT id,incarnation,rule_revision,destination_revision,creator_id,rule_key,rule_version,rule_sha,rule_bytes FROM pipeline_effect_definitions WHERE project_id=$1 AND tenant_id=$2 AND state='active' ORDER BY id FOR UPDATE`, scope.ProjectID, tenant)
+	// Scheduled rules share the authority registry, but only webhook rules
+	// participate in live-event publication.
+	rows, e := tx.QueryContext(ctx, `SELECT id,incarnation,rule_revision,destination_revision,creator_id,rule_key,rule_version,rule_sha,rule_bytes FROM pipeline_effect_definitions WHERE project_id=$1 AND tenant_id=$2 AND state='active' AND rule_key NOT LIKE '`+hostedScheduledRulePrefix+`%' ORDER BY id FOR UPDATE`, scope.ProjectID, tenant)
 	if e != nil {
 		return plan, e
 	}

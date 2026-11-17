@@ -92,14 +92,14 @@ func (s *DuckLakeStore) export(ctx context.Context, project, raw string, paramet
 		return result, err
 	}
 	defer conn.Close()
+	if window != nil && (window.StartMS < 0 || window.EndMS <= window.StartMS) {
+		return result, ErrExportStreamInvalid
+	}
 	if snapshot != nil {
-		if err = createExportSnapshotView(ctx, conn, *snapshot); err != nil {
+		if err = createExportSnapshotView(ctx, conn, *snapshot, window); err != nil {
 			return result, err
 		}
 	} else if window != nil {
-		if window.StartMS < 0 || window.EndMS <= window.StartMS {
-			return result, ErrExportStreamInvalid
-		}
 		var catalog string
 		if err = conn.QueryRowContext(ctx, "SELECT current_database()").Scan(&catalog); err != nil {
 			return result, err

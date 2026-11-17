@@ -185,3 +185,11 @@ Every phase has a focused PR with before/after evidence and remaining limits. Co
 | User architecture note | This record, decisions and owner questions | Preserves the decisions, adds the complete source-table inventory, and separates implementable guarantees from unproven time/lease/restore claims. |
 
 No reference guide is removed. This is a design target, not a release or capacity announcement.
+
+### Scheduled query delivery
+
+A hosted SQL-to-S3 pipeline closes each receipt window at a reconciled analytical cut. The worker pins a DuckLake snapshot under the project write session, then releases the session before streaming the window. The snapshot includes previously committed live events in the half-open receipt interval and excludes historical imports. Buffered events that have yet to reach DuckLake when the cut is pinned can miss that window. Replaying the same run uses the same snapshot.
+
+PostgreSQL leases allow another worker to recover an interrupted run. The creator's scoped authority and the destination revision are checked before the claim, during streaming and before the immutable S3 manifest is published. A durable manifest checkpoint lets a worker reconcile a published marker after a lost commit without rerunning SQL. The winning database transaction advances the cursor and records compressed output usage. Unpublished uploads retain their original encrypted credentials and their capacity charge until cleanup. Rotation leaves a checkpointed window recoverable at the same destination. If the window has yet to reach the checkpoint, rotation retires the attempt and advances the cursor.
+
+Hosted attempts reserve one proof slot and space for up to 128 files in the shared output capacity budget. Each uses the configured execution timeout and the lower of the configured output limit and 64 MiB. At most 100 settled runs are retained per schedule. The production hosted startup gate remains closed.

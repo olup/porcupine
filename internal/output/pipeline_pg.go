@@ -28,18 +28,20 @@ CREATE INDEX hosted_pipeline_configs_tenant ON hosted_pipeline_configs(tenant_id
 type HostedPipelineDependencies struct {
 	PipelineDependencies
 	Effects            *PGPipelineEffects
+	Scheduled          HostedScheduledDependencies
 	ProjectTransaction func(context.Context, string, func(context.Context, *sql.Tx) error) error
 }
 
 type hostedPipelineRuntime struct {
 	effects     *PGPipelineEffects
+	scheduled   HostedScheduledDependencies
 	transaction func(context.Context, string, func(context.Context, *sql.Tx) error) error
 	step        func(context.Context) (bool, error)
 	client      *http.Client
 }
 
 func NewHostedPipelines(d HostedPipelineDependencies, config *PipelineConfig) (*PipelineJobs, error) {
-	if d.Control == nil || d.Effects == nil || d.ProjectTransaction == nil {
+	if d.Control == nil || d.Effects == nil || d.ProjectTransaction == nil || d.Scheduled.ready() && d.Acquire == nil {
 		return nil, ErrPipelineConflict
 	}
 	d.Journal = d.Control
@@ -47,7 +49,7 @@ func NewHostedPipelines(d HostedPipelineDependencies, config *PipelineConfig) (*
 	if err != nil {
 		return nil, err
 	}
-	p.pg = &hostedPipelineRuntime{effects: d.Effects, transaction: d.ProjectTransaction, client: d.WebhookClient}
+	p.pg = &hostedPipelineRuntime{effects: d.Effects, scheduled: d.Scheduled, transaction: d.ProjectTransaction, client: d.WebhookClient}
 	return p, nil
 }
 
@@ -76,7 +78,7 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE metadata.value=exclude
 	return nil
 }
 
-const hostedPipelineColumns = `c.id,c.project_id,d.creator_id,'webhook',c.name,d.state,c.config,c.secret,c.created_at_ms`
+const hostedPipelineColumns = `c.id,c.project_id,d.creator_id,c.kind,c.name,d.state,c.config,c.secret,c.created_at_ms`
 const hostedPipelineJoin = ` FROM hosted_pipeline_configs c JOIN pipeline_effect_definitions d USING(project_id,id,tenant_id)`
 
 func (s *PipelineJobs) hostedPipeline(ctx context.Context, project, id string) (storedPipeline, error) {
@@ -84,7 +86,7 @@ func (s *PipelineJobs) hostedPipeline(ctx context.Context, project, id string) (
 }
 
 func (s *PipelineJobs) hostedPipelinePage(ctx context.Context, project string, limit, offset int) (*sql.Rows, error) {
-	return s.db.QueryContext(ctx, `SELECT c.id,c.project_id,'webhook',c.name,d.state,c.created_at_ms`+hostedPipelineJoin+` WHERE c.project_id=$1 AND d.state<>'retired' ORDER BY c.created_at_ms DESC,c.id LIMIT $2 OFFSET $3`, project, limit, offset)
+	return s.db.QueryContext(ctx, `SELECT c.id,c.project_id,c.kind,c.name,d.state,c.created_at_ms`+hostedPipelineJoin+` WHERE c.project_id=$1 AND d.state<>'retired' ORDER BY c.created_at_ms DESC,c.id LIMIT $2 OFFSET $3`, project, limit, offset)
 }
 
 func hostedRuleRef(id, revision string, raw []byte) PipelineRef {
@@ -114,7 +116,7 @@ func hostedCredentialBinding(tenant, id, incarnation, revision string) string {
 func (s *PipelineJobs) HostedWebhookDestinationTx(ctx context.Context, tx *sql.Tx, tenant, project, id, incarnation, revision string) (WebhookPipelineSecret, error) {
 	var destination WebhookPipelineSecret
 	var sealed []byte
-	err := tx.QueryRowContext(ctx, `SELECT c.secret`+hostedPipelineJoin+` WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.id=$3 AND d.incarnation=$4 AND d.destination_revision=$5 AND d.state='active' FOR UPDATE OF d,c`, tenant, project, id, incarnation, revision).Scan(&sealed)
+	err := tx.QueryRowContext(ctx, `SELECT c.secret`+hostedPipelineJoin+` WHERE c.kind='webhook' AND c.tenant_id=$1 AND c.project_id=$2 AND c.id=$3 AND d.incarnation=$4 AND d.destination_revision=$5 AND d.state='active' FOR UPDATE OF d,c`, tenant, project, id, incarnation, revision).Scan(&sealed)
 	if err != nil {
 		return destination, err
 	}
@@ -148,7 +150,7 @@ func (s *PipelineJobs) defineHostedPipeline(ctx context.Context, project string,
 	if !s.Enabled() {
 		return nil, apiError(503, "pipelines are not configured")
 	}
-	if request.Kind != "webhook" {
+	if request.Kind == "s3" && !s.pg.scheduled.ready() {
 		return nil, apiError(503, "hosted query pipelines are unavailable")
 	}
 	if caller.External != nil {
@@ -157,13 +159,16 @@ func (s *PipelineJobs) defineHostedPipeline(ctx context.Context, project string,
 	if strings.TrimSpace(request.Name) == "" || len(request.Name) > 200 {
 		return nil, apiError(400, "invalid pipeline name")
 	}
-	p := Pipeline{ID: eventapi.NewID(), ProjectID: project, Kind: "webhook", Name: request.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
+	p := Pipeline{ID: eventapi.NewID(), ProjectID: project, Kind: request.Kind, Name: request.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
 	t := PipelineTarget{ID: p.ID, Incarnation: eventapi.NewID(), RuleRevision: eventapi.NewID(), DestinationRevision: eventapi.NewID(), CreatorID: caller.ID}
-	config, private, err := s.encodePipelineDestinationPlain(ctx, project, "webhook", request.Webhook, request.S3, request.Credentials)
+	config, private, err := s.encodePipelineDestinationPlain(ctx, project, p.Kind, request.Webhook, request.S3, request.Credentials)
 	if err != nil {
 		return nil, err
 	}
 	t.Rule = hostedRuleRef(t.ID, t.RuleRevision, config)
+	if p.Kind == "s3" {
+		t.Rule.Key = hostedScheduledRulePrefix + t.Rule.Key
+	}
 	err = s.pg.transaction(ctx, project, func(ctx context.Context, tx *sql.Tx) error {
 		var tenant string
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&tenant); err != nil {
@@ -186,12 +191,16 @@ func (s *PipelineJobs) defineHostedPipeline(ctx context.Context, project string,
 		if err = s.pg.effects.CompareAndSwapDefinitionTx(ctx, tx, nil, PipelineDefinition{TenantID: tenant, ProjectID: project, State: "active", Target: t}); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO hosted_pipeline_configs(project_id,id,tenant_id,name,config,secret,created_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7)`, project, p.ID, tenant, p.Name, string(config), sealed, p.CreatedAtMS)
-		return err
+		_, err = tx.ExecContext(ctx, `INSERT INTO hosted_pipeline_configs(project_id,id,tenant_id,name,config,secret,created_at_ms,kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, project, p.ID, tenant, p.Name, string(config), sealed, p.CreatedAtMS, p.Kind)
+		if err != nil || p.Kind != "s3" {
+			return err
+		}
+		return createHostedScheduledState(ctx, tx, p, config)
 	})
 	if err != nil {
 		return nil, pipelineHostedError(err)
 	}
+	s.Wake()
 	public, err := publicPipeline(storedPipeline{Pipeline: p, Config: config})
 	return &public, err
 }
@@ -200,17 +209,31 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 	if (state == "active" || replacement != nil) && !s.Enabled() {
 		return nil, apiError(503, "pipelines are not configured")
 	}
+	if state == "retired" {
+		p, err := s.hostedPipeline(ctx, project, id)
+		if err != nil {
+			return nil, pipelineHostedError(err)
+		}
+		if p.Kind == "s3" && p.State != "paused" {
+			if _, err = s.changeHostedPipeline(ctx, project, id, "paused", nil); err != nil {
+				return nil, err
+			}
+		}
+	}
 	var p storedPipeline
 	err := s.pg.transaction(ctx, project, func(ctx context.Context, tx *sql.Tx) error {
 		var tenant, config string
 		var t PipelineTarget
 		t.ID = id
-		p.ID, p.ProjectID, p.Kind = id, project, "webhook"
-		err := tx.QueryRowContext(ctx, `SELECT c.tenant_id,c.name,d.state,c.config,c.secret,c.created_at_ms,d.creator_id,d.incarnation,d.rule_revision,d.destination_revision,d.rule_key,d.rule_version,d.rule_sha,d.rule_bytes`+hostedPipelineJoin+` WHERE c.project_id=$1 AND c.id=$2 AND d.state<>'retired'`, project, id).Scan(&tenant, &p.Name, &p.State, &config, &p.Secret, &p.CreatedAtMS, &t.CreatorID, &t.Incarnation, &t.RuleRevision, &t.DestinationRevision, &t.Rule.Key, &t.Rule.VersionID, &t.Rule.SHA256, &t.Rule.Bytes)
+		p.ID, p.ProjectID = id, project
+		err := tx.QueryRowContext(ctx, `SELECT c.tenant_id,c.kind,c.name,d.state,c.config,c.secret,c.created_at_ms,d.creator_id,d.incarnation,d.rule_revision,d.destination_revision,d.rule_key,d.rule_version,d.rule_sha,d.rule_bytes`+hostedPipelineJoin+` WHERE c.project_id=$1 AND c.id=$2 AND d.state<>'retired'`, project, id).Scan(&tenant, &p.Kind, &p.Name, &p.State, &config, &p.Secret, &p.CreatedAtMS, &t.CreatorID, &t.Incarnation, &t.RuleRevision, &t.DestinationRevision, &t.Rule.Key, &t.Rule.VersionID, &t.Rule.SHA256, &t.Rule.Bytes)
 		if err != nil {
 			return err
 		}
 		p.Config = json.RawMessage(config)
+		if state == "retired" && p.Kind == "s3" && p.State != "paused" {
+			return ErrPipelineConflict
+		}
 		next := t
 		if replacement != nil {
 			change := *replacement
@@ -219,19 +242,30 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 				return err
 			}
 			if change.Webhook == nil && change.S3 == nil {
-				var spec WebhookPipelineSpec
-				var old WebhookPipelineSecret
-				if json.Unmarshal(p.Config, &spec) != nil || json.Unmarshal(private, &old) != nil {
-					return ErrPipelineConflict
+				if p.Kind == "s3" {
+					var spec S3PipelineSpec
+					if json.Unmarshal(p.Config, &spec) != nil {
+						return ErrPipelineConflict
+					}
+					change.S3 = &spec
+				} else {
+					var spec WebhookPipelineSpec
+					var old WebhookPipelineSecret
+					if json.Unmarshal(p.Config, &spec) != nil || json.Unmarshal(private, &old) != nil {
+						return ErrPipelineConflict
+					}
+					spec.Endpoint = old.Endpoint
+					change.Webhook = &spec
 				}
-				spec.Endpoint = old.Endpoint
-				change.Webhook = &spec
 			}
 			newConfig, newPrivate, err := s.encodePipelineDestinationPlain(ctx, project, p.Kind, change.Webhook, change.S3, change.Credentials)
 			if err != nil {
 				return err
 			}
 			if !bytes.Equal(p.Config, newConfig) {
+				if p.Kind == "s3" {
+					return apiError(409, "S3 specification cannot change during credential rotation")
+				}
 				return apiError(409, "event filters cannot change during credential rotation")
 			}
 			if bytes.Equal(private, newPrivate) {
@@ -249,11 +283,21 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 		}
 		p.State = state
 		if state == "retired" {
+			if p.Kind == "s3" {
+				if err := s.retireHostedScheduledTx(ctx, tx, tenant, p); err != nil {
+					return err
+				}
+			}
 			_, err = tx.ExecContext(ctx, `DELETE FROM hosted_pipeline_configs WHERE project_id=$1 AND id=$2 AND tenant_id=$3`, project, id, tenant)
 			if err == nil {
 				_, err = tx.ExecContext(ctx, `DELETE FROM pipeline_effect_definitions WHERE project_id=$1 AND id=$2 AND tenant_id=$3`, project, id, tenant)
 			}
 		} else if replacement != nil {
+			if p.Kind == "s3" {
+				if err := s.cancelReplacedHostedScheduleTx(ctx, tx, tenant, p); err != nil {
+					return err
+				}
+			}
 			_, err = tx.ExecContext(ctx, `UPDATE hosted_pipeline_configs SET secret=$4 WHERE project_id=$1 AND id=$2 AND tenant_id=$3`, project, id, tenant, p.Secret)
 		}
 		return err
@@ -304,6 +348,36 @@ func (s *PipelineJobs) cleanupHostedPipelineProject(ctx context.Context, project
 		}
 		if pending {
 			return ErrPipelineConflict
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT c.id,c.tenant_id,c.config FROM hosted_pipeline_configs c WHERE c.project_id=$1 AND c.kind='s3' ORDER BY c.id`, project)
+		if err != nil {
+			return err
+		}
+		type scheduled struct {
+			p      storedPipeline
+			tenant string
+		}
+		var jobs []scheduled
+		for rows.Next() {
+			var job scheduled
+			var config string
+			if err = rows.Scan(&job.p.ID, &job.tenant, &config); err != nil {
+				break
+			}
+			job.p.ProjectID, job.p.Config = project, json.RawMessage(config)
+			jobs = append(jobs, job)
+		}
+		if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			b := PipelineBinding{Scope: PipelineScope{ProjectID: project}, TenantID: job.tenant}
+			if err = s.pg.effects.lockCapacity(ctx, tx, b, false); err != nil {
+				return err
+			}
+			if err = s.retireHostedScheduledTx(ctx, tx, job.tenant, job.p); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM pipeline_effect_definitions WHERE project_id=$1`, project)
 		return err

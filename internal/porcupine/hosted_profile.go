@@ -96,7 +96,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 		return endHostedProjectActivity(ctx, control, project, activity)
 	}
 	if err := s.configureHostedPipelines(c.Pipelines, h.flusher, hostedPipelineExecution{
-		deleteGate: hostedOutputBlocked, beginAttemptTx: registerHostedProjectActivityTx, endAttempt: endActivity,
+		snapshotCut: h.exportSnapshotCut, deleteGate: hostedOutputBlocked, beginAttemptTx: registerHostedProjectActivityTx, endAttempt: endActivity,
 	}); err != nil {
 		return nil, err
 	}
