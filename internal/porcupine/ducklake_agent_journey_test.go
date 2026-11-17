@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -63,8 +64,8 @@ func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
 		t.Fatal("stale identity description")
 	}
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 2 {
-		t.Fatalf("expected two progressive-discovery tools: %v %v", tools, err)
+	if err != nil || len(tools.Tools) != 4 {
+		t.Fatalf("expected discovery, call and two read-only analytics tools: %v %v", tools, err)
 	}
 	for _, id := range []string{"list-projects", "get-event-schema", "get-event-catalog", "query-events"} {
 		docs := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{OperationID: id}, false)
@@ -224,5 +225,78 @@ func TestDuckLakeParameterDependentScalarMetadata(t *testing.T) {
 	result, err := s.Query(context.Background(), "a", `WITH extracted AS (SELECT json_extract_string(properties,$path) AS value FROM events) SELECT count(*) AS total,count_if(value IS NULL) AS missing,count(DISTINCT value) AS distinct_values FROM extracted`, map[string]string{"path": "$.language"}, defaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["total"]) != `"1"` || string(result.Data[0]["missing"]) != `"0"` || string(result.Data[0]["distinct_values"]) != `"1"` {
 		t.Fatalf("resolved scalar metadata lost types or values: %+v %v", result, err)
+	}
+}
+
+func TestMCPReadOnlyAnalyticsTools(t *testing.T) {
+	s, a, b, _, reader := agentAnalyticsFixture(t)
+	host := httptest.NewServer(s.Handler())
+	defer host.Close()
+	ctx, session := mcpTestSession(t, host.URL, reader, "2025-11-25")
+
+	// A single-project credential may omit project_id and gets schema and event names together.
+	overview := mcpTestTool(t, ctx, session, "porcupine_schema", map[string]any{}, false)
+	if overview["status"] != float64(200) || overview["schema"].(map[string]any)["sql"].(map[string]any)["dialect"] != "duckdb" {
+		t.Fatalf("missing schema: %v", overview)
+	}
+	names := []string{}
+	for _, event := range overview["catalog"].(map[string]any)["events"].([]any) {
+		names = append(names, event.(map[string]any)["event"].(string))
+	}
+	slices.Sort(names)
+	if !reflect.DeepEqual(names, []string{"page_viewed", "purchase", "signup"}) {
+		t.Fatalf("unexpected event names: %v", names)
+	}
+
+	first := mcpTestTool(t, ctx, session, "porcupine_schema", mcpSchemaInput{ProjectID: a, Event: "page_viewed", PropertyKind: "custom", PropertyPrefix: "thread", PropertyLimit: 1}, false)
+	properties := first["catalog"].(map[string]any)["properties"].([]any)
+	if len(properties) != 1 || properties[0].(map[string]any)["key"] != "threadId" {
+		t.Fatalf("property discovery failed: %v", first)
+	}
+	cursor := first["catalog"].(map[string]any)["next_property_cursor"].(string)
+	second := mcpTestTool(t, ctx, session, "porcupine_schema", mcpSchemaInput{Event: "page_viewed", PropertyKind: "custom", PropertyPrefix: "thread", PropertyLimit: 1, PropertyCursor: cursor}, false)
+	if second["schema"] != nil || second["catalog"].(map[string]any)["properties"].([]any)[0].(map[string]any)["key"] != "threadTurnId" {
+		t.Fatalf("follow-up page should omit the schema and continue: %v", second)
+	}
+	encoded, _ := json.Marshal([]any{overview, first, second})
+	if strings.Contains(string(encoded), "do-not-return") || strings.Contains(string(encoded), "foreign") {
+		t.Fatal("schema tool leaked values or foreign data")
+	}
+	if failure := mcpTestTool(t, ctx, session, "porcupine_schema", mcpSchemaInput{PropertyKind: "custom"}, true); failure["status"] != float64(400) {
+		t.Fatalf("property filters without event: %v", failure)
+	}
+	if failure := mcpTestTool(t, ctx, session, "porcupine_schema", mcpSchemaInput{ProjectID: b}, true); failure["status"] != float64(403) {
+		t.Fatalf("foreign project schema: %v", failure)
+	}
+
+	counted := mcpTestTool(t, ctx, session, "porcupine_query", mcpQueryInput{SQL: "SELECT count(*) AS total FROM events WHERE event=$event", Parameters: map[string]string{"event": "page_viewed"}}, false)
+	if counted["status"] != float64(200) || counted["body"].(map[string]any)["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "4" {
+		t.Fatalf("query failed: %v", counted)
+	}
+	if denied := mcpTestTool(t, ctx, session, "porcupine_query", mcpQueryInput{ProjectID: b, SQL: "SELECT count(*) FROM events"}, true); denied["status"] != float64(403) {
+		t.Fatalf("foreign project query: %v", denied)
+	}
+	invalid := mcpTestTool(t, ctx, session, "porcupine_query", mcpQueryInput{SQL: "SELECT * FROM read_csv('/etc/passwd')"}, true)
+	if invalid["status"] != float64(400) || invalid["body"].(map[string]any)["code"] == nil {
+		t.Fatalf("policy rejection must keep its code: %v", invalid)
+	}
+	for _, sql := range []string{"DELETE FROM events", "CREATE TABLE x AS SELECT 1", "SELECT 1; DROP TABLE events"} {
+		if rejected := mcpTestTool(t, ctx, session, "porcupine_query", mcpQueryInput{SQL: sql}, true); rejected["status"] != float64(400) {
+			t.Fatalf("read-only tool executed %q: %v", sql, rejected)
+		}
+	}
+
+	// Multi-project and wildcard credentials must name the project.
+	_, admin := mcpTestSession(t, host.URL, adminToken, "2025-11-25")
+	if failure := mcpTestTool(t, ctx, admin, "porcupine_query", mcpQueryInput{SQL: "SELECT 1"}, true); failure["status"] != float64(400) {
+		t.Fatalf("wildcard credential needs project_id: %v", failure)
+	}
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
+	_, writerSession := mcpTestSession(t, host.URL, writer, "2025-11-25")
+	if denied := mcpTestTool(t, ctx, writerSession, "porcupine_query", mcpQueryInput{SQL: "SELECT count(*) FROM events"}, true); denied["status"] != float64(403) {
+		t.Fatalf("write-only credential queried events: %v", denied)
+	}
+	if denied := mcpTestTool(t, ctx, writerSession, "porcupine_schema", mcpSchemaInput{}, true); denied["status"] != float64(403) {
+		t.Fatalf("write-only credential read the schema: %v", denied)
 	}
 }
