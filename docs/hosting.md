@@ -28,7 +28,7 @@ make build
 ./bin/porcupine --config porcupine.json
 ```
 
-`init` creates a private JSON file with random bootstrap and pipeline secrets, and refuses to overwrite an existing file. Inspect and edit it privately. `config check` validates the configuration and masks secrets without opening databases or sending email. It does not prove that remote services are reachable.
+`init` creates a private JSON file with random bootstrap and pipeline secrets, and refuses to overwrite an existing file. Inspect and edit it privately. `config check` validates the configuration and masks secrets without opening databases or sending email. It does not prove that remote services are reachable. A fresh instance needs the generated bootstrap token; an already initialized instance may omit it. If provided, it must meet the server's minimum length.
 
 The server loads `porcupine.json` by default. Select another file with `--config FILE` or `PORCUPINE_CONFIG`. Existing environment variables override matching file settings. Unknown JSON keys and unknown `PORCUPINE_` variables are errors.
 
@@ -84,6 +84,8 @@ Both modes use the same server binary and support tenants.
 | Analytical event files | Local SSD or S3 | S3 Parquet |
 
 Local mode has two database files. `PORCUPINE_DB` selects the journal, default `./data/porcupine.db`. `PORCUPINE_CONTROL_DB` selects control, default the journal path plus `.control`. Preserve both with their auxiliary files and DuckLake state.
+
+When selecting shared PostgreSQL, remove `storage.control` from a generated local config before setting `shared.control_database_url` or its file variant. A local control file and PostgreSQL control cannot both be configured.
 
 PostgreSQL replaces control and catalog metadata. Event payloads still commit to the owner's SQLite queue, then go to S3 Parquet. No PostgreSQL event inbox is introduced. DuckLake catalog statistics may still contain derived event values, so the catalog belongs inside the analytical data's hosting and access boundary. Shared mode has no automatic owner failover; acknowledged work depends on recovering that owner's volume.
 

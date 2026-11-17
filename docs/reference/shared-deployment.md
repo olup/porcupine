@@ -33,7 +33,7 @@ A non-owner query response sets `delivery.pending_unknown: true` because that pr
 
 ## Configure workers
 
-Leave all shared settings unset for the default standalone deployment. Shared mode requires all four control/routing settings together:
+Leave all shared settings unset for the default standalone deployment. If starting from `porcupine init`'s JSON, remove `storage.control` before configuring shared control. It must not select both a local control file and PostgreSQL. JSON fields under `shared` and `ducklake` map to the environment settings below; environment overrides must be set on the actual server/container process. Shared mode requires all four control/routing settings together:
 
 | Setting | Purpose |
 | --- | --- |
