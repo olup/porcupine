@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -18,7 +20,8 @@ import (
 func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
-	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
+	storage := nativeS3Fixture(t)
+	a, b := sharedNativeJourneyPair(t, storage)
 	for _, n := range []*sharedJourneyNode{a, b} {
 		n.service.usage.cancel()
 		<-n.service.usage.done
@@ -116,6 +119,18 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	if _, err := fa.publisher.objects.ReadImmutableMutationObject(ctx, otherScope, i.body); err == nil {
 		t.Fatal("mutation storage accepted the other project's object")
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(storage.storage.Bucket), Key: aws.String(i.body.Key)}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = b.service.getEvent(actorContext, &EventGetInput{ID: project, UUID: laterUUID})
+	mutationErrorStatus(t, err, 503)
+	if restored, err := fa.publisher.objects.PutImmutableMutationObject(ctx, scope, i.id, raw); err != nil || restored != i.body {
+		t.Fatal("restore immutable staging body", restored, err)
 	}
 	var rawProof lakeapi.NativeCommitEvidence
 	var commitFence lakeapi.ProjectWriteFence
