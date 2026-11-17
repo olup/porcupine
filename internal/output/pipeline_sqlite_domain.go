@@ -70,7 +70,6 @@ func newPipelineJobs(d PipelineDependencies, config *PipelineConfig) (*PipelineJ
 
 func (s *PipelineJobs) UsesSharedControl() bool { return s != nil && s.pg != nil }
 func (s *PipelineJobs) Enabled() bool           { return s != nil && s.aead != nil }
-func (s *PipelineJobs) SupportsS3() bool        { return s.Enabled() && s.pg == nil && s.lake != nil }
 func (s *PipelineJobs) Config() PipelineConfig  { return s.config }
 func (s *PipelineJobs) Enqueuer() *WebhookEnqueuer {
 	if !s.Enabled() || s.pg != nil {
