@@ -288,7 +288,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	var losePG atomic.Bool
-	lostDB, err := installLostHostedCommit(a.service.shared.config.DatabaseURL, fa.publisher, &losePG)
+	lostDB, err := installLostHostedCommit(a.controlDSN, fa.publisher, &losePG)
 	if err != nil {
 		t.Fatal(err)
 	}

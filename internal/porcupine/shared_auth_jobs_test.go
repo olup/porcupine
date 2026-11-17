@@ -13,7 +13,6 @@ import (
 
 	"github.com/olup/porcupine/internal/output"
 
-	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
@@ -69,7 +68,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ensureProjectLocal(t.Context(), project, auth.Principal{ID: consent}); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'consent job actor',$2,'[]','[]',$3)`, consent, hash(token()), now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`UPDATE pipelines SET actor_id=$1 WHERE id=$2`, consent, expiredPipeline); err != nil {

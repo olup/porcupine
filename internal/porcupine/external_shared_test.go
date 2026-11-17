@@ -4,23 +4,22 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func (f *externalAuthFixture) sharedWorker(t *testing.T, dsn, id string) *Service {
+func (f *externalAuthFixture) withHostedAuth(config Config) Config {
+	config.BootstrapToken = ""
+	config.Clock = func() time.Time { return time.UnixMilli(f.now.Load()) }
+	config.Auth = &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: f.s.resources.external.Config()}
+	return config
+}
+
+func (f *externalAuthFixture) sharedWorker(t *testing.T, dsn string, fixture duckLakeS3Fixture) *Service {
 	t.Helper()
-	host := httptest.NewUnstartedServer(nil)
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "worker.db"), Clock: func() time.Time { return time.UnixMilli(f.now.Load()) }, Shared: &SharedConfig{DatabaseURL: dsn, WorkerID: id, RouteURL: "http://" + host.Listener.Addr().String(), RoutingSecret: []byte(strings.Repeat("shared-test-secret", 3))}, Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: f.s.resources.external.Config()}})
-	if err != nil {
-		host.Close()
-		t.Fatal(err)
-	}
-	host.Config.Handler = s.Handler()
-	host.Start()
-	t.Cleanup(func() { host.Close(); _ = s.Close() })
+	config := f.withHostedAuth(hostedJourneyConfig(t, dsn, fixture))
+	s, _, _ := hostedCleanupWorker(t, config)
 	return s
 }
 
@@ -28,15 +27,16 @@ func TestSharedExternalAuthAcrossWorkersAndRevocation(t *testing.T) {
 	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	f := newExternalAuthFixture(t)
-	first, second := f.sharedWorker(t, dsn, "first"), f.sharedWorker(t, dsn, "second")
+	fixture := nativeS3Fixture(t)
+	first, second := f.sharedWorker(t, dsn, fixture), f.sharedWorker(t, dsn, fixture)
 	operator := f.operator(t)
 	p := request(t, first, "POST", "/api/v1/projects", operator, `{"name":"Shared external"}`, 201)
 	id := p["project"].(map[string]any)["id"].(string)
 	reader := f.token(t, "reader", defaultTenantID, "events:read", first.resources.apiResource, id)
-	request(t, second, "GET", "/api/v1/projects/"+id+"/events", reader, "", 200)
-	request(t, second, "POST", "/capture/", "", captureBody(p["ingest_token"].(string), "shared-external"), 200)
-	if eventCount(t, first) != 1 || eventCount(t, second) != 0 {
-		t.Fatal("shared metadata became an event queue or routing failed")
+	hostedCleanupWrite(t, first, id, "shared-external")
+	events := request(t, second, "GET", "/api/v1/projects/"+id+"/events", reader, "", 200)
+	if rows, _ := events["events"].([]any); len(rows) != 1 {
+		t.Fatal("second hosted worker did not see the published event", events)
 	}
 	admin := f.token(t, "tenant-admin", defaultTenantID, "tenant:admin management:read", first.resources.apiResource)
 	account := request(t, second, "POST", "/api/v1/tenants/"+defaultTenantID+"/service-accounts", admin, externalBody(t, map[string]any{"name": "team", "permissions": []string{"events:read"}, "projects": []string{id}}), 201)
@@ -57,9 +57,30 @@ func TestSharedExternalAuthorityExpiresWhileWaitingForWriteLock(t *testing.T) {
 	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	f := newExternalAuthFixture(t)
-	s := f.sharedWorker(t, dsn, "external-lock-test")
+	ctx := t.Context()
+	queries, err := normalizeInteractiveQueries(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := newServiceRuntime(f.withHostedAuth(Config{}), queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.control, err = openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.control.Close() })
+	s.shared = &sharedRuntime{}
+	s.hosted = &hostedRuntime{}
+	if err := initializeSharedControl(ctx, s.control, "", queries, true); err != nil {
+		t.Fatal(err)
+	}
+	const project = "lock-target"
+	if _, err := s.control.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at) VALUES($1,$2,'lock target',$3)`, project, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
 	operator := f.operator(t)
-	project := request(t, s, "POST", "/api/v1/projects", operator, `{"name":"lock target"}`, 201)["project"].(map[string]any)["id"].(string)
 	account := request(t, s, "POST", "/api/v1/oauth-clients", operator, externalBody(t, map[string]any{"name": "machine", "permissions": []string{"events:read"}, "projects": []string{project}}), 201)["client_id"].(string)
 	key := request(t, s, "POST", "/api/v1/access-keys", operator, externalBody(t, map[string]any{"name": "revoke target", "permissions": []string{"events:write"}, "projects": []string{project}}), 201)["id"].(string)
 	tenant := request(t, s, "POST", "/api/v1/tenants", operator, `{"name":"delete target"}`, 201)["tenant"].(map[string]any)["id"].(string)

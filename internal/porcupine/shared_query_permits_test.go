@@ -26,7 +26,7 @@ func sharedQueryTestService(t *testing.T, dsn, worker string) *Service {
 	}
 	t.Cleanup(func() { local.Close() })
 	config, _ := normalizeInteractiveQueries(nil)
-	return &Service{db: local, control: db, shared: &sharedRuntime{config: SharedConfig{WorkerID: worker}}, interactiveConfig: config, querySlots: make(chan struct{}, config.MaxConcurrent)}
+	return &Service{db: local, control: db, shared: &sharedRuntime{workerID: worker}, interactiveConfig: config, querySlots: make(chan struct{}, config.MaxConcurrent)}
 }
 
 func sharedQueryTestFixture(t *testing.T) (string, *Service, *Service) {
