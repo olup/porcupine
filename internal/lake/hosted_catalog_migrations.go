@@ -9,7 +9,8 @@ import (
 )
 
 const hostedFenceSchemaVersion = 3
-const hostedLakeSchemaVersion = 6
+const hostedMutationSchemaVersion = 6
+const hostedLakeSchemaVersion = hostedMutationSchemaVersion
 
 // Version 3 is an explicit empty-catalog cutover, never an inferred legacy
 // identity backfill. Published native steps remain unchanged.

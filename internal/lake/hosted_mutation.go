@@ -50,6 +50,9 @@ func (s *DuckLakeStore) LoadHostedEvent(ctx context.Context, scope HostedProject
 		return EventProjection{}, err
 	}
 	defer tx.Rollback()
+	if err := requireHostedMutationCatalog(ctx, tx); err != nil {
+		return EventProjection{}, err
+	}
 	actual, err := readHostedProjectScope(ctx, tx, scope.Key)
 	if err != nil {
 		return EventProjection{}, err
@@ -95,12 +98,8 @@ func (s *DuckLakeStore) CommitHostedMutation(ctx context.Context, fence ProjectW
 			return err
 		}
 		defer tx.Rollback()
-		var version int
-		if err := tx.QueryRowContext(ctx, "SELECT version FROM lake.schema_version").Scan(&version); err != nil {
+		if err := requireHostedMutationCatalog(ctx, tx); err != nil {
 			return err
-		}
-		if version != hostedLakeSchemaVersion {
-			return ErrHostedProjectNotReady
 		}
 		prior, found, err := readNativeCommitProof(ctx, tx, scope, input.MutationID)
 		if err != nil {
@@ -146,6 +145,17 @@ func (s *DuckLakeStore) CommitHostedMutation(ctx context.Context, fence ProjectW
 		return NativeCommitEvidence{}, err
 	}
 	return result, nil
+}
+
+func requireHostedMutationCatalog(ctx context.Context, tx *sql.Tx) error {
+	var version int
+	if err := tx.QueryRowContext(ctx, "SELECT version FROM lake.schema_version").Scan(&version); err != nil {
+		return err
+	}
+	if version < hostedMutationSchemaVersion {
+		return ErrHostedProjectNotReady
+	}
+	return nil
 }
 
 func applyHostedMutationProjection(ctx context.Context, tx *sql.Tx, old EventProjection, edited PreparedLakeProjection) error {
