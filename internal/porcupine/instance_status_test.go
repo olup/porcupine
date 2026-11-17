@@ -151,7 +151,11 @@ func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
 	}
 	// An uninitialized export store and destination client would fail if probed.
 	s.oauth.config.Email = nil
-	s.oauth.oidc = &interactiveOIDC{}
+	provider := newOIDCMock(t)
+	s.oauth.browser, err = auth.NewLogin(t.Context(), auth.LoginConfig{Issuer: "http://127.0.0.1", OIDC: &auth.OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err = s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 	if err != nil || result.Body.Configuration.EmailSignIn || !result.Body.Configuration.OIDCSignIn {
 		t.Fatal("OIDC and email configuration were conflated")

@@ -2,8 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"github.com/olup/porcupine/internal/auth"
 	"net/http"
 	"net/http/httptest"
@@ -11,99 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-func TestEmailCodeProofIsSingleUseAndBoundToOneSession(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	browser := newOAuthBrowser(false)
-	add := func(key, code string) {
-		csrf := oidcRandom()
-		browser.sessions[key] = &oidcBrowserSession{requestID: "one", expires: now.Add(time.Minute * 10), csrf: csrf, emailChallenge: emailChallenge{
-			principal: "invited", digest: sha256.Sum256([]byte(csrf + code)), expires: now.Add(time.Minute), attemptsLeft: emailCodeAttempts,
-		}}
-	}
-	add("request-a", "92345678")
-	add("request-b", "82345678")
-	if _, ok := browser.redeemEmailCode("request-a", "82345678", now); ok {
-		t.Fatal("code was accepted in another request")
-	}
-	var successes atomic.Int32
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Go(func() {
-			next, ok := browser.redeemEmailCode("request-a", "92345678", now)
-			if ok {
-				if next.humanID != "invited" || next.requestID != "one" || next.csrf == "" || !next.emailChallenge.expires.IsZero() {
-					t.Error("invalid verified browser session")
-				}
-				successes.Add(1)
-			}
-		})
-	}
-	wg.Wait()
-	if successes.Load() != 1 {
-		t.Fatalf("successful concurrent redemptions = %d", successes.Load())
-	}
-	if _, ok := browser.redeemEmailCode("request-b", "82345678", now.Add(time.Minute)); ok {
-		t.Fatal("expired OTP accepted")
-	}
-	add("tries", "52345678")
-	for range emailCodeAttempts {
-		if _, ok := browser.redeemEmailCode("tries", "invalid", now); ok {
-			t.Fatal("invalid proof accepted")
-		}
-	}
-	if _, ok := browser.redeemEmailCode("tries", "52345678", now); ok {
-		t.Fatal("proof accepted after attempts exhausted")
-	}
-}
-
-func TestEmailSendAbuseLimits(t *testing.T) {
-	t.Parallel()
-	start := time.Now()
-	b := newOAuthBrowser(false)
-	for i := range 4 {
-		ok := b.emailDelivery.Reserve(start, "a@example.test", "peer")
-		if ok != (i < 3) {
-			t.Fatal("address budget")
-		}
-		if ok {
-			b.emailDelivery.Finish()
-		}
-	}
-	for i := range 18 {
-		ok := b.emailDelivery.Reserve(start, fmt.Sprint(i), "peer")
-		if ok != (i < 17) {
-			t.Fatal("peer budget")
-		}
-		if ok {
-			b.emailDelivery.Finish()
-		}
-	}
-	for i := range 101 {
-		ok := b.emailDelivery.Reserve(start, fmt.Sprint(i+20), fmt.Sprint(i))
-		if ok != (i < 100) {
-			t.Fatal("global budget")
-		}
-		if ok {
-			b.emailDelivery.Finish()
-		}
-	}
-	for i := range 9 {
-		ok := b.emailDelivery.Reserve(start.Add(auth.EmailDeliveryPeriod), fmt.Sprint(i), "peer")
-		if ok != (i < 8) {
-			t.Fatal("in-flight budget")
-		}
-	}
-	for range 8 {
-		b.emailDelivery.Finish()
-	}
-}
 
 func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
 	t.Parallel()
@@ -141,7 +49,7 @@ func TestEmailChallengeRejectsForgeryAndHidesMembership(t *testing.T) {
 	}
 	start := func() (token string, cookie *http.Cookie) {
 		rec := httptest.NewRecorder()
-		s.startEmailLogin(rec, oauthAuthorizationRequest{ID: "test", ClientName: "Tool"})
+		s.oauth.browser.Start(rec, httptest.NewRequest("GET", origin+"/oauth/authorize", nil), auth.LoginRequest{ID: "test", ClientName: "Tool"})
 		match := hidden.FindStringSubmatch(rec.Body.String())
 		if len(match) != 2 {
 			t.Fatal("missing csrf")

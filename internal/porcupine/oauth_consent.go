@@ -14,19 +14,19 @@ import (
 var oidcConsentPage = template.Must(template.New("consent").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Porcupine access</title><style>body{max-width:38rem;margin:3rem auto;padding:0 1rem;font:17px/1.5 system-ui;color:#161616;background:white}fieldset{margin:1rem 0}label{display:block;padding:.4rem}button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0}code{overflow-wrap:anywhere}</style><main><h1>Authorize access</h1><p><strong>{{.ClientName}}</strong> requests access to Porcupine.</p><p>Client: <code>{{.ClientID}}</code></p><p>Return address: <code>{{.RedirectURI}}</code></p><p>Resource: <code>{{.Resource}}</code></p><p>Permissions: <code>{{.Scope}}</code></p>{{if .Admin}}<p><strong>Grant full instance administration, including management of all people, clients and projects.</strong></p>{{end}}<form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><fieldset><legend>Select projects to share</legend>{{range .Projects}}<label><input type="checkbox" name="project" value="{{.}}"> {{if eq . "*"}}All projects (instance-wide administrator){{else}}{{.}}{{end}}</label>{{end}}</fieldset><button type="submit" name="decision" value="approve">Approve access</button><button type="submit" name="decision" value="deny">Deny</button></form></main></html>`))
 
 func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
-	oidcPageHeaders(w)
+	auth.LoginPageHeaders(w)
 	o := s.oauth.browser
-	key, session := o.session(r)
-	if session == nil || session.humanID == "" {
+	key, session := o.Session(r)
+	if session == nil || session.HumanID == "" {
 		http.Error(w, "Login session expired", 401)
 		return
 	}
-	request, err := s.loadOAuthAuthorizationRequest(r.Context(), session.requestID)
+	request, err := s.loadOAuthAuthorizationRequest(r.Context(), session.RequestID)
 	if err != nil {
 		http.Error(w, "Authorization request expired", 400)
 		return
 	}
-	human, err := s.loadOAuthHuman(r.Context(), s.control, session.humanID)
+	human, err := s.loadOAuthHuman(r.Context(), s.control, session.HumanID)
 	if err != nil {
 		http.Error(w, "Project access revoked", 403)
 		return
@@ -91,11 +91,11 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 			ClientName, ClientID, RedirectURI, Resource, Scope, CSRF string
 			Admin                                                    bool
 			Projects                                                 []string
-		}{request.ClientName, request.ClientID, request.RedirectURI, request.Resource, strings.Join(permissions, " "), session.csrf, admin, projectsOffered})
+		}{request.ClientName, request.ClientID, request.RedirectURI, request.Resource, strings.Join(permissions, " "), session.CSRF, admin, projectsOffered})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	if r.Header.Get("Origin") != s.oauth.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil || len(r.PostForm["csrf"]) != 1 || subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(session.csrf)) != 1 || len(r.PostForm["decision"]) != 1 {
+	if r.Header.Get("Origin") != s.oauth.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil || len(r.PostForm["csrf"]) != 1 || subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(session.CSRF)) != 1 || len(r.PostForm["decision"]) != 1 {
 		http.Error(w, "Invalid consent submission", 400)
 		return
 	}
@@ -120,11 +120,11 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Select at most 64 projects", 400)
 		return
 	}
-	if !o.consume(key) {
+	if !o.Consume(key) {
 		http.Error(w, "Consent already used", 400)
 		return
 	}
-	o.cookie(w, "", -1)
+	o.Cookie(w, "", -1)
 	if decision == "deny" {
 		if _, err := s.control.ExecContext(r.Context(), `UPDATE oauth_authorization_requests SET consumed=1 WHERE request_hash=$1 AND consumed=0`, hash(request.ID)); err != nil {
 			http.Error(w, "Authorization could not be completed", 503)
@@ -140,7 +140,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approved := auth.Principal{ID: human.ID, Permissions: permissions, Projects: projects}
-	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.proof, approved)
+	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.Proof, approved)
 	if err != nil {
 		http.Error(w, "Authorization could not be completed", 403)
 		return

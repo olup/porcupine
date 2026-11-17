@@ -93,7 +93,7 @@ func TestNativeRestoreDoesNotCreateOIDCAccountsOrLinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			if _, err := s.oidcHuman(t.Context(), "operator-subject", "operator@example.test"); err == nil {
+			if _, err := s.loginAccounts().LinkOIDCIdentity(t.Context(), "operator-subject", "operator@example.test"); err == nil {
 				t.Fatal("provider configuration created an uninvited human")
 			}
 			for _, table := range []string{"email_humans", "oidc_identities"} {

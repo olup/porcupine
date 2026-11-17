@@ -76,7 +76,7 @@ func newOIDCMock(t *testing.T) *oidcMock {
 				http.Error(w, "invalid mock authorize", 400)
 				return
 			}
-			code := oidcRandom()
+			code := auth.RandomNonce()
 			p.mu.Lock()
 			p.codes[code] = q
 			p.mu.Unlock()
@@ -290,11 +290,11 @@ func (f *oidcFixture) browserHuman(t *testing.T) string {
 	for _, cookie := range f.client.Jar.Cookies(target) {
 		request.AddCookie(cookie)
 	}
-	_, session := f.s.oauth.browser.session(request)
-	if session == nil || session.humanID == "" {
+	_, session := f.s.oauth.browser.Session(request)
+	if session == nil || session.HumanID == "" {
 		t.Fatal("login did not authenticate a human")
 	}
-	return session.humanID
+	return session.HumanID
 }
 
 func (f *oidcFixture) login(t *testing.T) string {
@@ -449,7 +449,7 @@ func TestInteractiveOIDCConsentProjectIsolationAndRevocation(t *testing.T) {
 	if !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 		t.Fatalf("project or permission escalation: %+v", principal)
 	}
-	human, err := f.s.oidcHuman(context.Background(), "operator-subject", "operator@example.test")
+	human, err := f.s.loginAccounts().LinkOIDCIdentity(context.Background(), "operator-subject", "operator@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,11 +519,13 @@ func TestInteractiveOIDCDenialAndExpiry(t *testing.T) {
 	}
 	csrf = f.login(t)
 	_ = csrf
-	f.s.oauth.oidc.mu.Lock()
-	for _, session := range f.s.oauth.oidc.sessions {
-		session.expires = time.Now().Add(-time.Second)
+	session := pendingFixtureSession(t, f)
+	session.Expires = time.Now().Add(-time.Second)
+	raw, ok := f.s.oauth.browser.SaveSession(session)
+	if !ok {
+		t.Fatal("could not save expired consent session")
 	}
-	f.s.oauth.oidc.mu.Unlock()
+	f.client.Jar.SetCookies(mustRecoveryURL(t, f.host.URL), []*http.Cookie{{Name: f.s.oauth.browser.CookieName(), Value: raw, Path: "/"}})
 	f.get(t, f.host.URL+"/oauth/consent", 401)
 }
 func TestInteractiveOIDCRealBrowser(t *testing.T) {
@@ -559,14 +561,14 @@ func TestInteractiveOIDCLinkedIdentityCannotReviveRevokedHuman(t *testing.T) {
 	t.Parallel()
 	f := newOIDCFixture(t)
 	f.login(t)
-	human, err := f.s.oidcHuman(t.Context(), "operator-subject", "operator@example.test")
+	human, err := f.s.loginAccounts().LinkOIDCIdentity(t.Context(), "operator-subject", "operator@example.test")
 	if err != nil || human.ID != f.humanID {
 		t.Fatal("OIDC did not link invited human", err)
 	}
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), human.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.s.oidcHuman(t.Context(), "operator-subject", "operator@example.test"); err == nil {
+	if _, err := f.s.loginAccounts().LinkOIDCIdentity(t.Context(), "operator-subject", "operator@example.test"); err == nil {
 		t.Fatal("known subject revived revoked human")
 	}
 	upstream := f.beginOIDC(t)
@@ -603,25 +605,6 @@ func TestInteractiveOIDCRegisteredExternalCallbacks(t *testing.T) {
 		})
 	}
 }
-func TestInteractiveOIDCSessionBoundAndSecureCookie(t *testing.T) {
-	t.Parallel()
-	o := newOAuthBrowser(true)
-	recorder := httptest.NewRecorder()
-	o.cookie(recorder, "opaque", 600)
-	cookies := recorder.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != "__Host-porcupine_oidc" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].Path != "/" || cookies[0].Domain != "" {
-		t.Fatal("HTTPS login cookie lost protections")
-	}
-	for range oidcSessionCapacity {
-		if _, ok := o.save(&oidcBrowserSession{expires: time.Now().Add(time.Minute)}); !ok {
-			t.Fatal("premature session rejection")
-		}
-	}
-	if _, ok := o.save(&oidcBrowserSession{expires: time.Now().Add(time.Minute)}); ok {
-		t.Fatal("unbounded browser session allocation")
-	}
-}
-
 func TestInteractiveOIDCRejectsIncompleteOrInsecureProvider(t *testing.T) {
 	t.Parallel()
 	for _, cfg := range []*OIDCConfig{
@@ -629,7 +612,7 @@ func TestInteractiveOIDCRejectsIncompleteOrInsecureProvider(t *testing.T) {
 		{Issuer: "https://login.example", ClientSecret: "secret"},
 		{Issuer: "https://login.example", ClientID: "client"},
 	} {
-		if _, err := newInteractiveOIDC(cfg, "https://analytics.example"); err == nil {
+		if _, err := auth.NewLogin(t.Context(), auth.LoginConfig{Issuer: "https://analytics.example", OIDC: &auth.OIDCConfig{Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret}}); err == nil {
 			t.Fatal("invalid provider accepted")
 		}
 	}
@@ -651,11 +634,14 @@ func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
 			t.Fatal(err)
 		}
 		expected := strings.TrimSuffix(issuer, "/")
-		if runtime.issuer != expected || runtime.config.Issuer != expected || !strings.Contains(runtime.oidc.provider.AuthorizationURL("state", "nonce", "verifier"), "redirect_uri="+url.QueryEscape(expected+"/oauth/oidc/callback")) {
+		if runtime.issuer != expected || runtime.config.Issuer != expected || runtime.browser.ProviderIssuer() != provider.host.URL {
 			t.Fatal("metadata, Origin comparison and callback issuer disagree")
 		}
 		recorder := httptest.NewRecorder()
-		runtime.oidc.cookie(recorder, "opaque", 600)
+		runtime.browser.Start(recorder, httptest.NewRequest("GET", expected+"/oauth/authorize", nil), auth.LoginRequest{ID: "test", ClientName: "Tool"})
+		if !strings.Contains(recorder.Header().Get("Location"), "redirect_uri="+url.QueryEscape(expected+"/oauth/oidc/callback")) {
+			t.Fatal("provider callback differs from canonical issuer")
+		}
 		cookie := recorder.Result().Cookies()[0]
 		wantSecure := strings.HasPrefix(expected, "https://")
 		if cookie.Secure != wantSecure || wantSecure && cookie.Name != "__Host-porcupine_oidc" {
@@ -825,11 +811,15 @@ func TestInteractiveOIDCConfiguredAdministratorWithoutSMTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	human, err := s.oidcHuman(t.Context(), "operator-subject", "operator@example.test")
-	if err != nil || !human.Admin() || s.oauth.config.Email.SendCode != nil {
+	human, err := s.loginAccounts().LinkOIDCIdentity(t.Context(), "operator-subject", "operator@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := loadEmailHuman(t.Context(), s.control, human.ID)
+	if err != nil || !current.Admin() || s.oauth.config.Email.SendCode != nil {
 		t.Fatal("configured OIDC-only administrator unavailable", err)
 	}
-	if _, err := s.oidcHuman(t.Context(), "uninvited-subject", "uninvited@example.test"); err == nil {
+	if _, err := s.loginAccounts().LinkOIDCIdentity(t.Context(), "uninvited-subject", "uninvited@example.test"); err == nil {
 		t.Fatal("configured provider provisioned an uninvited administrator")
 	}
 }

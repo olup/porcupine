@@ -25,7 +25,10 @@ func (s *Service) initializeOAuth(ctx context.Context) error {
 	if err := s.initializeLocalEmailClients(ctx); err != nil {
 		return err
 	}
-	return s.initializeSharedBrowser(ctx)
+	if s.shared != nil && s.oauth != nil && s.oauth.browser != nil {
+		s.oauth.browser.ShareSessions(s.control)
+	}
+	return nil
 }
 
 func oauthTokenError(w http.ResponseWriter, status int, code string) {

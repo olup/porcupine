@@ -1,10 +1,11 @@
-package porcupine
+package auth
 
 import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -12,8 +13,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/olup/porcupine/internal/auth"
 )
 
 const (
@@ -27,7 +26,7 @@ type emailChallenge struct {
 	digest       [32]byte
 	principal    string
 	attemptsLeft int
-	expires      time.Time
+	Expires      time.Time
 }
 
 var emailLoginPage = template.Must(template.New("email-login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Porcupine</title><main>
@@ -42,60 +41,55 @@ var emailVerificationPage = template.Must(template.New("email-verification").Par
 </main></html>`))
 
 func emailPageHeaders(w http.ResponseWriter) {
-	oidcPageHeaders(w)
+	LoginPageHeaders(w)
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 }
 
-func (s *Service) registerEmailLogin(m *http.ServeMux) {
-	m.HandleFunc("POST /oauth/email/request", s.requestEmailCode)
-	m.HandleFunc("POST /oauth/email/verify", s.verifyEmailCode)
-}
-
-func (s *Service) startEmailLogin(w http.ResponseWriter, request oauthAuthorizationRequest) {
+func (o *Login) startEmailLogin(w http.ResponseWriter, request LoginRequest) {
 	emailPageHeaders(w)
-	browser := s.oauth.browser
-	session := &oidcBrowserSession{requestID: request.ID, csrf: oidcRandom(), expires: time.Now().Add(oidcSessionLifetime)}
+	browser := o
+	session := &browserSession{RequestID: request.ID, CSRF: RandomNonce(), Expires: time.Now().Add(LoginLifetime)}
 	raw, ok := browser.save(session)
 	if !ok {
 		http.Error(w, "Login capacity reached", 503)
 		return
 	}
-	browser.cookie(w, raw, int(oidcSessionLifetime.Seconds()))
+	browser.Cookie(w, raw, int(LoginLifetime.Seconds()))
 	provider := ""
-	if s.oauth.oidc != nil {
+	if o.provider != nil {
 		provider = "identity provider"
-		if s.oauth.oidc.provider.Issuer() == "https://accounts.google.com" {
+		if o.provider.Issuer() == "https://accounts.google.com" {
 			provider = "Google"
 		}
 	}
 	_ = emailLoginPage.Execute(w, struct {
 		Client, CSRF, Provider string
-	}{request.ClientName, session.csrf, provider})
+	}{request.ClientName, session.CSRF, provider})
 }
 
 // All login forms carry a session-bound token as well as an exact browser origin.
-func (s *Service) emailSubmission(w http.ResponseWriter, r *http.Request, field string) (string, *oidcBrowserSession, bool) {
+func (o *Login) emailSubmission(w http.ResponseWriter, r *http.Request, field string) (string, *browserSession, bool) {
 	emailPageHeaders(w)
-	key, session := s.oauth.browser.session(r)
+	key, session := o.browserSession(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if session == nil || session.humanID != "" || len(session.csrf) == 0 ||
-		r.Header.Get("Origin") != s.oauth.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil ||
+	if session == nil || session.HumanID != "" || len(session.CSRF) == 0 ||
+		r.Header.Get("Origin") != o.issuer || r.URL.RawQuery != "" || r.ParseForm() != nil ||
 		len(r.PostForm["csrf"]) != 1 || len(r.PostForm[field]) != 1 ||
-		subtle.ConstantTimeCompare([]byte(session.csrf), []byte(r.PostForm.Get("csrf"))) != 1 {
+		subtle.ConstantTimeCompare([]byte(session.CSRF), []byte(r.PostForm.Get("csrf"))) != 1 {
 		http.Error(w, "Invalid login session", 400)
 		return "", nil, false
 	}
 	return key, session, true
 }
 
-func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
-	key, session, ok := s.emailSubmission(w, r, "email")
+func (o *Login) RequestEmailCode(w http.ResponseWriter, r *http.Request, peer string, accounts LoginAccounts) {
+	key, session, ok := o.emailSubmission(w, r, "email")
 	if !ok {
 		return
 	}
-	browser := s.oauth.browser
-	if !session.emailChallenge.expires.IsZero() || !browser.consume(key) {
+	browser := o
+	if !session.emailChallenge.Expires.IsZero() || !browser.Consume(key) {
 		http.Error(w, "Login already used", 400)
 		return
 	}
@@ -106,29 +100,25 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 	}
 	code := fmt.Sprintf("%08d", n.Int64())
 	now := time.Now()
-	session.csrf = oidcRandom()
+	session.CSRF = RandomNonce()
 	expiry := now.Add(emailCodeLifetime)
-	if session.expires.Before(expiry) {
-		expiry = session.expires
+	if session.Expires.Before(expiry) {
+		expiry = session.Expires
 	}
-	challenge := emailChallenge{attemptsLeft: emailCodeAttempts, expires: expiry, digest: sha256.Sum256([]byte(session.csrf + code))}
-	email, err := auth.NormalizeEmail(r.PostForm.Get("email"))
-	ip, ipErr := s.clientIP(r)
+	challenge := emailChallenge{attemptsLeft: emailCodeAttempts, Expires: expiry, digest: sha256.Sum256([]byte(session.CSRF + code))}
+	email, err := NormalizeEmail(r.PostForm.Get("email"))
 	send := false
 	var finishDelivery func()
-	if err == nil && ipErr == nil {
-		finishDelivery, _ = browser.reserveEmailAttempt(now, email, hash(ip.String()))
+	if err == nil && peer != "" {
+		finishDelivery, _ = browser.reserveEmailAttempt(now, email, peer)
 	}
 	if finishDelivery != nil {
 		// Unknown accounts, throttled requests and SMTP failures produce the same browser response.
-		id, lookupErr := s.lookupActiveEmailID(r.Context(), email)
-		if lookupErr == nil && id != "" {
-			challenge.principal = id
-			lookupErr = s.control.QueryRowContext(r.Context(), `SELECT login_version FROM email_humans WHERE principal_id=$1`, id).Scan(&challenge.loginVersion)
-			send = lookupErr == nil
-			if !send {
-				finishDelivery()
-			}
+		identity, lookupErr := accounts.LookupEmail(r.Context(), email)
+		if lookupErr == nil && identity.ID != "" {
+			challenge.principal = identity.ID
+			challenge.loginVersion = identity.Proof.Version
+			send = true
 		} else {
 			finishDelivery()
 		}
@@ -147,35 +137,35 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 			defer finishDelivery()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			if s.oauth.config.Email.SendCode(ctx, email, code) != nil {
+			if o.sendCode(ctx, email, code) != nil {
 				slog.Warn("Porcupine could not deliver a sign-in email")
 			}
 		}()
 	}
-	browser.cookie(w, raw, int(time.Until(session.expires).Seconds()))
+	browser.Cookie(w, raw, int(time.Until(session.Expires).Seconds()))
 	_ = emailVerificationPage.Execute(w, struct {
 		CSRF     string
 		Rejected bool
-	}{session.csrf, false})
+	}{session.CSRF, false})
 }
 
 // Check and decrement the live session atomically, including when browsers race or replay a form.
-func (o *oauthBrowser) redeemEmailCode(key, code string, now time.Time) (*oidcBrowserSession, bool) {
+func (o *Login) redeemEmailCode(key, code string, now time.Time) (*browserSession, bool) {
 	if o.sharedDB != nil {
 		return o.redeemSharedEmailCode(key, code, now)
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	session := o.sessions[key]
-	if session == nil || session.emailChallenge.expires.IsZero() {
+	if session == nil || session.emailChallenge.Expires.IsZero() {
 		return nil, false
 	}
 	challenge := &session.emailChallenge
-	if !now.Before(challenge.expires) || !now.Before(session.expires) {
+	if !now.Before(challenge.Expires) || !now.Before(session.Expires) {
 		delete(o.sessions, key)
 		return nil, false
 	}
-	sum := sha256.Sum256([]byte(session.csrf + code))
+	sum := sha256.Sum256([]byte(session.CSRF + code))
 	if subtle.ConstantTimeCompare(sum[:], challenge.digest[:]) != 1 || challenge.principal == "" {
 		challenge.attemptsLeft--
 		if challenge.attemptsLeft <= 0 {
@@ -184,30 +174,30 @@ func (o *oauthBrowser) redeemEmailCode(key, code string, now time.Time) (*oidcBr
 		return nil, false
 	}
 	delete(o.sessions, key)
-	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, proof: humanLoginProof{Version: challenge.loginVersion, Verified: true}, csrf: oidcRandom()}, true
+	return &browserSession{RequestID: session.RequestID, Expires: session.Expires, HumanID: challenge.principal, Proof: LoginProof{Version: challenge.loginVersion, Verified: true}, CSRF: RandomNonce()}, true
 }
 
-func (s *Service) verifyEmailCode(w http.ResponseWriter, r *http.Request) {
-	key, session, ok := s.emailSubmission(w, r, "code")
+func (o *Login) VerifyEmailCode(w http.ResponseWriter, r *http.Request, accounts LoginAccounts) {
+	key, session, ok := o.emailSubmission(w, r, "code")
 	if !ok {
 		return
 	}
-	browser := s.oauth.browser
+	browser := o
 	verified, ok := browser.redeemEmailCode(key, strings.TrimSpace(r.PostForm.Get("code")), time.Now())
 	if !ok {
 		w.WriteHeader(http.StatusForbidden)
 		_ = emailVerificationPage.Execute(w, struct {
 			CSRF     string
 			Rejected bool
-		}{session.csrf, true})
+		}{session.CSRF, true})
 		return
 	}
-	if _, err := s.loadOAuthHuman(r.Context(), s.control, verified.humanID); err != nil {
-		http.Error(w, "Access revoked", 403)
-		return
-	}
-	if err := checkHumanLoginProof(r.Context(), s.control, verified.humanID, verified.proof); err != nil {
-		http.Error(w, "Sign-in invalidated; restart sign-in", 403)
+	if err := accounts.ValidateLogin(r.Context(), LoginIdentity{ID: verified.HumanID, Proof: verified.Proof}); err != nil {
+		message := "Sign-in invalidated; restart sign-in"
+		if errors.Is(err, ErrLoginRevoked) {
+			message = "Access revoked"
+		}
+		http.Error(w, message, 403)
 		return
 	}
 	raw, ok := browser.save(verified)
@@ -215,6 +205,6 @@ func (s *Service) verifyEmailCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Login capacity reached", 503)
 		return
 	}
-	browser.cookie(w, raw, int(time.Until(verified.expires).Seconds()))
+	browser.Cookie(w, raw, int(time.Until(verified.Expires).Seconds()))
 	http.Redirect(w, r, "/oauth/consent", http.StatusSeeOther)
 }

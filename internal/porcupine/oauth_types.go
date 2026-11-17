@@ -3,7 +3,6 @@ package porcupine
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/time/rate"
@@ -15,6 +14,9 @@ type EmailConfig struct {
 	SendInvitation func(ctx context.Context, email string, instanceAdmin bool) error
 	AdminEmail     string
 }
+
+// OIDCConfig selects the trusted upstream provider; clients cannot override it.
+type OIDCConfig struct{ Issuer, ClientID, ClientSecret string }
 
 // OAuthConfig is operator-controlled authorization configuration.
 // A nil configuration retains legacy key authentication for migration/offline use.
@@ -33,8 +35,7 @@ type oauthRuntime struct {
 	apiResource       string
 	mcpResource       string
 	limiter           *rate.Limiter
-	oidc              *interactiveOIDC
-	browser           *oauthBrowser
+	browser           *auth.Login
 	authorizationGate auth.AuthorizationGate
 }
 
@@ -75,15 +76,19 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	interactive, err := newInteractiveOIDC(c.OIDC, c.Issuer)
-	if err != nil {
-		return nil, err
+	var browser *auth.Login
+	if c.OIDC != nil || c.Email != nil {
+		loginConfig := auth.LoginConfig{Issuer: c.Issuer}
+		if c.Email != nil {
+			loginConfig.SendCode = c.Email.SendCode
+		}
+		if c.OIDC != nil {
+			loginConfig.OIDC = &auth.OIDCConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, ClientSecret: c.OIDC.ClientSecret}
+		}
+		browser, err = auth.NewLogin(context.Background(), loginConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
-	var browser *oauthBrowser
-	if interactive != nil {
-		browser = interactive.oauthBrowser
-	} else if c.Email != nil {
-		browser = newOAuthBrowser(strings.HasPrefix(c.Issuer, "https://"))
-	}
-	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
+	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10)}, nil
 }

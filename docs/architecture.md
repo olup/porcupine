@@ -33,7 +33,7 @@ Each project has a durable owner. Public workers forward owner-bound requests; d
 | `internal/porcupine` | Service composition, HTTP/MCP handlers, durable transactions, jobs, and cross-module coordination |
 | `internal/lake` | Project engines, analytical projection/query, maintenance, and native backup state |
 | `internal/nativequery` | SQL AST policy, allowed functions, and bindings |
-| `internal/auth` | Principals, grant/consent policy, OAuth input validation, upstream OIDC verification, and login/email admission limits |
+| `internal/auth` | Principals, grant/consent policy, OAuth validation, provider verification, browser OTP/OIDC sign-in, temporary sessions, and login/email admission |
 | `internal/event` | Canonical event model and IDs, independent of storage and adapters |
 | `internal/ingest` | Native/Segment live input decoding, normalization, traits, and privacy filtering |
 | `internal/importer` | Historical native/PostHog/Segment decoding, manifests, and bounded JSONL parsing |

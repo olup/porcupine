@@ -65,21 +65,6 @@ func (s *Service) loadOAuthRequest(ctx context.Context, query oauthQueryer, rawI
 	return request, err
 }
 
-func oauthSingleQuery(r *http.Request) (url.Values, error) {
-	if len(r.URL.RawQuery) > 16384 {
-		return nil, errors.New("invalid authorization request")
-	}
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return nil, err
-	}
-	for _, v := range values {
-		if len(v) != 1 {
-			return nil, errors.New("duplicate authorization parameter")
-		}
-	}
-	return values, nil
-}
 func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -87,7 +72,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
-	q, err := oauthSingleQuery(r)
+	q, err := auth.ReadOAuthQuery(r)
 	if err != nil {
 		oauthTokenError(w, 400, "invalid_request")
 		return
@@ -192,7 +177,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
-	s.oauthHumanAuthorize(w, r, request)
+	s.oauth.browser.Start(w, r, auth.LoginRequest{ID: request.ID, ClientName: request.ClientName})
 }
 func clientName(ctx context.Context, query oauthQueryer, id string) string {
 	var name string
@@ -200,7 +185,7 @@ func clientName(ctx context.Context, query oauthQueryer, id string) string {
 	return name
 }
 
-func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof humanLoginProof, approved auth.Principal) (string, error) {
+func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof auth.LoginProof, approved auth.Principal) (string, error) {
 	if !s.interactiveOAuthEnabled() {
 		return "", errors.New("interactive OAuth unavailable")
 	}

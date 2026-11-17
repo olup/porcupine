@@ -117,7 +117,7 @@ func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
 		if err != nil || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 			t.Fatalf("cross-worker OIDC grant escaped scope: %+v %v", principal, err)
 		}
-		linked, err := worker.oidcHuman(ctx, "operator-subject", human.Email)
+		linked, err := worker.loginAccounts().LinkOIDCIdentity(ctx, "operator-subject", human.Email)
 		if err != nil || linked.ID != human.ID {
 			t.Fatalf("cross-worker identity mapping diverged: %+v %v", linked, err)
 		}
@@ -136,7 +136,7 @@ func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
 		if _, err := worker.authenticateResource(ctx, access, issuer+"/mcp"); err == nil {
 			t.Fatal("revoked human retained cross-worker token")
 		}
-		if _, err := worker.oidcHuman(ctx, "operator-subject", human.Email); err == nil {
+		if _, err := worker.loginAccounts().LinkOIDCIdentity(ctx, "operator-subject", human.Email); err == nil {
 			t.Fatal("provider identity revived revoked shared human")
 		}
 	}

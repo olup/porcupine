@@ -36,15 +36,15 @@ func unlinkFixtureIdentity(t *testing.T, f *oidcFixture, s *Service) string {
 	return id
 }
 
-func pendingFixtureSession(t *testing.T, f *oidcFixture) *oidcBrowserSession {
+func pendingFixtureSession(t *testing.T, f *oidcFixture) *auth.LoginSession {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, f.host.URL+"/oauth/consent", nil)
 	target, _ := url.Parse(f.host.URL)
 	for _, cookie := range f.client.Jar.Cookies(target) {
 		request.AddCookie(cookie)
 	}
-	_, session := f.s.oauth.browser.session(request)
-	if session == nil || session.humanID == "" || !session.proof.Verified {
+	_, session := f.s.oauth.browser.Session(request)
+	if session == nil || session.HumanID == "" || !session.Proof.Verified {
 		t.Fatal("missing authenticated proof")
 	}
 	return session
@@ -54,24 +54,24 @@ func assertLateSavedProofCannotIssue(t *testing.T, f *oidcFixture, unlinkWorker,
 	t.Helper()
 	csrf := f.login(t)
 	old := *pendingFixtureSession(t, f)
-	request, err := f.s.loadOAuthRequest(t.Context(), f.s.control, old.requestID)
+	request, err := f.s.loadOAuthRequest(t.Context(), f.s.control, old.RequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	unlinkFixtureIdentity(t, f, unlinkWorker)
 	// Simulate the callback having verified/bound before unlink, but saving its
 	// authenticated browser session only after the operator's transaction commits.
-	raw, ok := issueWorker.oauth.browser.save(&old)
+	raw, ok := issueWorker.oauth.browser.SaveSession(&old)
 	if !ok {
 		t.Fatal("could not persist delayed authenticated session")
 	}
-	f.client.Jar.SetCookies(mustRecoveryURL(t, f.host.URL), []*http.Cookie{{Name: issueWorker.oauth.browser.cookieName(), Value: raw, Path: "/"}})
+	f.client.Jar.SetCookies(mustRecoveryURL(t, f.host.URL), []*http.Cookie{{Name: issueWorker.oauth.browser.CookieName(), Value: raw, Path: "/"}})
 	f.submit(t, url.Values{"csrf": {csrf}, "decision": {"approve"}, "project": {"project-a"}}, f.host.URL, http.StatusForbidden)
 	approved := auth.Principal{ID: f.humanID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}}
-	if _, err := issueWorker.issueOAuthAuthorizationCode(t.Context(), request, f.humanID, old.proof, approved); err == nil {
+	if _, err := issueWorker.issueOAuthAuthorizationCode(t.Context(), request, f.humanID, old.Proof, approved); err == nil {
 		t.Fatal("stale proof minted authorization code")
 	}
-	if _, err := issueWorker.issueOAuthAuthorizationCode(t.Context(), request, f.humanID, humanLoginProof{Version: 1}, approved); err == nil {
+	if _, err := issueWorker.issueOAuthAuthorizationCode(t.Context(), request, f.humanID, auth.LoginProof{Version: 1}, approved); err == nil {
 		t.Fatal("missing proof accepted at version1")
 	}
 }
