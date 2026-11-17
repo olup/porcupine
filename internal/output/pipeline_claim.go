@@ -47,10 +47,6 @@ func (p *PGPipelineEffects) ClaimJobTx(ctx context.Context, tx *sql.Tx, scope Pi
 		return c, e
 	}
 	if s == "retired" {
-		_, e = tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET state='retired',version=version+1,attempt='' WHERE `+pipelineScopeWhere+` AND id=$5`, append(pipelineScopeArgs(scope), id)...)
-		if e != nil {
-			return c, e
-		}
 		return c, ErrPipelineAuthority
 	}
 	if currentState != "active" {

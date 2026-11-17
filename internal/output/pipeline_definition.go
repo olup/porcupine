@@ -55,8 +55,11 @@ func (p *PGPipelineEffects) CompareAndSwapDefinitionTx(ctx context.Context, tx *
 	if expected != nil && t.RuleRevision == old.RuleRevision && t.Rule != old.Rule {
 		return ErrPipelineConflict
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_definitions(tenant_id,project_id,id,incarnation,rule_revision,destination_revision,creator_id,state,rule_key,rule_version,rule_sha,rule_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(project_id,id) DO UPDATE SET incarnation=$4,rule_revision=$5,destination_revision=$6,creator_id=$7,state=$8,rule_key=$9,rule_version=$10,rule_sha=$11,rule_bytes=$12 WHERE pipeline_effect_definitions.tenant_id=$1`, next.TenantID, next.ProjectID, t.ID, t.Incarnation, t.RuleRevision, t.DestinationRevision, t.CreatorID, next.State, t.Rule.Key, t.Rule.VersionID, t.Rule.SHA256, t.Rule.Bytes)
+	result, e := tx.ExecContext(ctx, `INSERT INTO pipeline_effect_definitions(tenant_id,project_id,id,incarnation,rule_revision,destination_revision,creator_id,state,rule_key,rule_version,rule_sha,rule_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(project_id,id) DO UPDATE SET incarnation=$4,rule_revision=$5,destination_revision=$6,creator_id=$7,state=$8,rule_key=$9,rule_version=$10,rule_sha=$11,rule_bytes=$12 WHERE pipeline_effect_definitions.tenant_id=$1`, next.TenantID, next.ProjectID, t.ID, t.Incarnation, t.RuleRevision, t.DestinationRevision, t.CreatorID, next.State, t.Rule.Key, t.Rule.VersionID, t.Rule.SHA256, t.Rule.Bytes)
 	if e != nil {
+		return e
+	}
+	if e = pipelineOne(result); e != nil {
 		return e
 	}
 	if expected != nil && (next.State == "retired" || t.Incarnation != old.Incarnation || t.DestinationRevision != old.DestinationRevision || t.CreatorID != old.CreatorID) {
