@@ -163,7 +163,11 @@ func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b 
 	if !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	if e = p.lockCapacity(ctx, tx, b, true); e != nil {
+	reservationCharge := b.Demand
+	reservationCharge.MetadataRows -= 1 - checkpointRows
+	admission := b
+	admission.Demand = reservationCharge
+	if e = p.lockCapacity(ctx, tx, admission, true); e != nil {
 		return e
 	}
 	if _, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_plans(id,tenant_id,source_id,project_id,catalog_id,stream_id) VALUES($1,$2,$3,$4,$5,$6)`, plan.ID, b.TenantID, b.Scope.SourceID, b.Scope.ProjectID, b.Scope.CatalogID, b.Scope.StreamID); e != nil {
@@ -178,12 +182,12 @@ func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b 
 			return e
 		}
 	}
-	a = append(a, b.BatchID, b.ArtifactPrefix, pipelineDigest(b), b.Epoch, b.AcquisitionID, b.PlanID, b.PreparedSHA256, b.PlanRef.Key, b.PlanRef.VersionID, b.PlanRef.SHA256, b.PlanRef.Bytes, b.Demand.References, b.Demand.QueuedBytes, b.Demand.MetadataRows, b.Demand.ArtifactBytes, b.Demand.ProofSlots, checkpointRows)
+	a = append(a, b.BatchID, b.ArtifactPrefix, pipelineDigest(b), b.Epoch, b.AcquisitionID, b.PlanID, b.PreparedSHA256, b.PlanRef.Key, b.PlanRef.VersionID, b.PlanRef.SHA256, b.PlanRef.Bytes, b.Demand.References, b.Demand.QueuedBytes, b.Demand.MetadataRows, b.Demand.ArtifactBytes, b.Demand.ProofSlots, int64(1))
 	_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_reservations(source_id,project_id,catalog_id,stream_id,tenant_id,batch_id,artifact_prefix,binding_sha,epoch,acquisition_id,plan_id,prepared_sha,plan_key,plan_version,plan_sha,plan_bytes,refs,bytes,rows,artifacts,proofs,checkpoint_rows) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, a...)
 	if e != nil {
 		return e
 	}
-	return p.charge(ctx, tx, b, b.Demand, 1)
+	return p.charge(ctx, tx, b, reservationCharge, 1)
 }
 func (p *PGPipelineEffects) matchReservation(ctx context.Context, tx *sql.Tx, b PipelineBinding) error {
 	var digest string
