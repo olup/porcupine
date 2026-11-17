@@ -137,13 +137,13 @@ WHERE scope_kind='instance' OR (scope_kind='tenant' AND scope_id=$1) OR (scope_k
 	if err := s.beginControlProjectDeletion(ctx, project); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.hosted.flusher.sealProject(ctx, project); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.cleanHostedProject(ctx, project); !errors.Is(err, errHostedProjectBusy) {
-		t.Fatalf("cleanup crossed the active attempt: %v", err)
+	if err := s.hosted.flusher.sealProject(ctx, project); !errors.Is(err, errHostedProjectBusy) {
+		t.Fatalf("seal crossed the active attempt: %v", err)
 	}
 	if err := endHostedProjectActivity(ctx, s.control, project, "scheduled-worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.hosted.flusher.sealProject(ctx, project); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.cleanHostedProject(ctx, project); err == nil {
