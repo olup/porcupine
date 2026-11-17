@@ -43,7 +43,7 @@ Audit management coverage at the same time. No step should require SSH or databa
 - [ ] Evaluate tenant-wide rate limiting across workers, separately from monthly allowances.
 - [ ] Measure sustained ingestion, freshness, memory, disk growth, maintenance, and recovery with many quiet tenants and one noisy tenant.
 - [ ] Validate safe receipt pruning and retries after edits/deletes, storage failure, and restart. Never use a storage lookup failure as evidence that an event is new.
-- [ ] Measure DuckLake schema savings and query behavior on representative payloads and larger data sets. A small fixture is not a capacity benchmark.
+- [ ] Measure DuckLake schema savings and query behavior on representative payloads and larger data sets. Profile JSON extraction before promoting common properties to typed columns. Source timestamp text remains for precision; a small fixture is not a capacity benchmark.
 
 ## Hosted architecture to evaluate
 
