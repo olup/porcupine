@@ -1,0 +1,37 @@
+name: Hosted activation recovery evidence
+on:
+  push:
+    branches: [ci/hosted-buffered-visibility-activation]
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Exercise the public hosted server binary
+        shell: bash
+        run: |
+          set -o pipefail
+          git rev-parse HEAD^
+          bash scripts/aws-emulator-test.sh '^TestDuckLakeS3SharedPostgresHostedProfileProcesses$' 2>&1 | tee public-profile.log
+      - name: Exercise recovery and loss after an S3 write fault
+        if: always()
+        env:
+          PORCUPINE_TEST_HOSTED_BUFFERED_VISIBILITY: "1"
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/aws-emulator-test.sh '^TestDuckLakeS3SharedPostgresHostedBufferedVisibility$/^default-2s$' 2>&1 | tee outage-recovery.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: hosted-activation-recovery
+          path: |
+            public-profile.log
+            outage-recovery.log
