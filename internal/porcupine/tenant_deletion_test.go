@@ -308,7 +308,7 @@ func TestTenantDeletionStartRollsBackEveryFenceAndRevocation(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(ka, "after-rollback"), 200)
 }
 
-func TestHostedTenantDeletionFencesAndReportsCleanupPending(t *testing.T) {
+func TestSharedHostedTenantDeletionFencesAndReportsCleanupPending(t *testing.T) {
 	t.Parallel()
 	s := sharedDeletionFixture(t)
 	s.eventRules = &eventRules{clock: time.Now}

@@ -275,7 +275,6 @@ AND NOT EXISTS(SELECT 1 FROM pipelines j WHERE j.actor_id=access_keys.id)`); err
 		return err
 	}
 	for _, statement := range []string{
-		`DELETE FROM shared_tenant_cache WHERE tenant_id=$1`,
 		`DELETE FROM tenant_usage WHERE tenant_id=$1`,
 		`DELETE FROM tenants WHERE id=$1`,
 	} {

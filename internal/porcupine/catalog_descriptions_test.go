@@ -154,7 +154,7 @@ func TestCatalogDescriptionReadOnlyMCPJourney(t *testing.T) {
 func TestSharedCatalogDescriptionsVisibleFromAnotherWorker(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
-	a, b := sharedJourneyPair(t, nil)
+	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
 	project, _ := project(t, a.service)
 	editorID, editor := key(t, a.service, []string{"management:write"}, []string{project})
 	path := "/api/v1/projects/" + project + "/catalog/description"

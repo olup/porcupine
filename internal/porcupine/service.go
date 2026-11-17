@@ -263,10 +263,10 @@ func Open(c Config) (*Service, error) {
 		s.projectionGuard.close()
 		return nil, err
 	}
-	if err := initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled()); err != nil {
+	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
 		return fail(err)
 	}
-	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
+	if err := initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled()); err != nil {
 		return fail(err)
 	}
 	s.projectionGuard, err = openProjectionGuard(c.DBPath)
@@ -294,12 +294,9 @@ func Open(c Config) (*Service, error) {
 		tx.Rollback()
 		return fail(err)
 	}
-	var lakeBound, sharedBound bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('shared_worker_id','shared_control_source_id','shared_worker_volume_id'))`).Scan(&lakeBound, &sharedBound); err != nil {
+	var lakeBound bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id')`).Scan(&lakeBound); err != nil {
 		return txFail(err)
-	}
-	if sharedBound {
-		return txFail(errors.New("this SQLite journal belongs to an unsupported owner-routed deployment"))
 	}
 	if lakeBound && c.DuckLake == nil {
 		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))

@@ -106,7 +106,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if pending >= int64(rules.queueMax) || queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
-	event.ID, err = rules.insertAcceptedEvent(ctx, tx, event)
+	event.ID, err = insertAcceptedEvent(ctx, tx, event)
 	if err != nil {
 		return result, err
 	}
@@ -149,7 +149,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
-	if err := rules.consumeAcceptedEvents(ctx, tx, project, acceptedAt, 1); err != nil {
+	if err := consumeTenantEventsTx(ctx, tx, project, acceptedAt, 1); err != nil {
 		return result, err
 	}
 	result.Accepted = 1
