@@ -17,6 +17,30 @@ func sharedStatusRead(t *testing.T, s *Service) InstanceStatus {
 	return result.Body
 }
 
+func TestSharedInstanceStatusAnalyticalMetadataFailure(t *testing.T) {
+	t.Parallel()
+	dsn := sharedPostgresDSN(t)
+	s := service(t, 20)
+	native := instanceStatusNativeStore(t, s)
+	metadata, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The native SourceID probe checks the local registry. Its separate metadata
+	// connection must also participate in health, independently of control storage.
+	native.SharedCatalog = metadata
+	if result := sharedStatusRead(t, s); result.Status != "ok" || result.Checks.DuckLake != dependencyOK {
+		t.Fatalf("healthy analytical metadata looked unavailable: %+v", result)
+	}
+	if err := metadata.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := sharedStatusRead(t, s)
+	if result.Status != "degraded" || result.Checks.DuckLake != dependencyUnavailable || result.Checks.SQLite != dependencyOK {
+		t.Fatalf("analytical metadata failure disappeared behind local registry health: %+v", result)
+	}
+}
+
 func TestSharedInstanceStatusControlRegistrationAndPrivacy(t *testing.T) {
 	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
@@ -86,29 +110,5 @@ func TestSharedInstanceStatusControlProbeIsBounded(t *testing.T) {
 	}
 	if result.Status != "degraded" || result.Checks.SharedControl != dependencyUnavailable || result.Checks.SQLite != dependencyOK {
 		t.Fatalf("blocked control probe looked healthy: %+v", result)
-	}
-}
-
-func TestSharedInstanceStatusAnalyticalMetadataFailure(t *testing.T) {
-	t.Parallel()
-	dsn := sharedPostgresDSN(t)
-	s := service(t, 20)
-	native := instanceStatusNativeStore(t, s)
-	metadata, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The native SourceID probe checks the local registry. Its separate metadata
-	// connection must also participate in health, independently of control storage.
-	native.sharedCatalog = metadata
-	if result := sharedStatusRead(t, s); result.Status != "ok" || result.Checks.DuckLake != dependencyOK {
-		t.Fatalf("healthy analytical metadata looked unavailable: %+v", result)
-	}
-	if err := metadata.Close(); err != nil {
-		t.Fatal(err)
-	}
-	result := sharedStatusRead(t, s)
-	if result.Status != "degraded" || result.Checks.DuckLake != dependencyUnavailable || result.Checks.SQLite != dependencyOK {
-		t.Fatalf("analytical metadata failure disappeared behind local registry health: %+v", result)
 	}
 }

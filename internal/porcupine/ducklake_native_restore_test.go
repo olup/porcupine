@@ -153,7 +153,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	}
 	lake := restored.lake.(*duckLakeStore)
 	for i := 0; i < 2; i++ {
-		if err = lake.cleanupDue(context.Background(), time.Now().Add(2*time.Hour)); err != nil {
+		if err = lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)); err != nil {
 			t.Fatal("target-only cleanup failed", err)
 		}
 	}
@@ -358,7 +358,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	// Restarts, native cleanup and project deletion must use only target objects.
 	reader, err := newNativeBackupS3(context.Background(), backup, source)
 	s3FixtureError(t, fixture, "open fixture archive cleanup", err)
-	s3FixtureError(t, fixture, "remove fixture archive after completed restore", reader.remove(context.Background(), id))
+	s3FixtureError(t, fixture, "remove fixture archive after completed restore", reader.Remove(context.Background(), id))
 	reader.Close()
 	outside := fixture.storage.Prefix + "/outside-recovery-sentinel"
 	fixture.put(t, outside, "source output must stay untouched")
@@ -391,7 +391,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	s3FixtureError(t, fixture, "maintain isolated restored target", restored.lake.Maintain(context.Background()))
 	lake := restored.lake.(*duckLakeStore)
 	for i := 0; i < 2; i++ {
-		s3FixtureError(t, fixture, "cleanup isolated restored target", lake.cleanupDue(context.Background(), time.Now().Add(2*time.Hour)))
+		s3FixtureError(t, fixture, "cleanup isolated restored target", lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)))
 	}
 	request(t, restored, "DELETE", "/api/v1/projects/"+a, r.BootstrapToken, "", 204)
 	remaining := duckLakeJourneyQuery(t, restored, b, r.BootstrapToken, "SELECT count(*) AS total FROM events", nil)
@@ -400,37 +400,6 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	}
 	if len(fixture.keys(t, outside)) != 1 {
 		t.Fatal("restored target cleanup deleted source output")
-	}
-}
-
-func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
-	t.Parallel()
-	backup := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "archive", Region: "us-east-1", Endpoint: "http://127.0.0.1:1/", UsePathStyle: true}
-	target := backup
-	target.Endpoint = "http://127.0.0.1:1"
-	target.Prefix = "archive/native-backups/source/pc_backup_test/restored"
-	err := validateNativeRestoreS3Target(context.Background(), &target, &backup)
-	if err == nil || !strings.Contains(err.Error(), "overlap") {
-		t.Fatal("normalized backup endpoint overlap was not rejected before network access", err)
-	}
-}
-
-func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.T) {
-	t.Parallel()
-	target := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
-	if err := validateNativeRestoreSourceStorage(&target, nativeBackupStorageIdentity{}, false); err == nil {
-		t.Fatal("remote target without original storage identity accepted")
-	}
-	if err := validateNativeRestoreSourceStorage(nil, nativeBackupStorageIdentity{}, true); err == nil {
-		t.Fatal("remote archive without original storage identity accepted")
-	}
-	source := nativeBackupStorageIdentity{Mode: "s3", Bucket: target.Bucket, Prefix: "original-source", Region: target.Region, Endpoint: "http://127.0.0.1:2"}
-	if err := validateNativeRestoreSourceStorage(&target, source, true); err == nil {
-		t.Fatal("original source namespace overlap through an endpoint alias accepted")
-	}
-	source.Prefix = "other-source"
-	if err := validateNativeRestoreSourceStorage(&target, source, true); err != nil {
-		t.Fatal("independent target refused", err)
 	}
 }
 
@@ -444,12 +413,12 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 		t.Fatal(err)
 	}
 	lake := s.lake.(*duckLakeStore)
-	p, release, err := lake.leaseProject(context.Background(), projectID)
+	p, release, err := lake.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var original string
-	err = p.db.QueryRow(`SELECT data_file FROM ducklake_list_files('lake','current_events') LIMIT 1`).Scan(&original)
+	err = p.DB.QueryRow(`SELECT data_file FROM ducklake_list_files('lake','current_events') LIMIT 1`).Scan(&original)
 	release()
 	if err != nil {
 		t.Fatal(err)
@@ -502,5 +471,36 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 	}
 	if _, err = os.Stat(r.TargetDBPath + ".native-restore-incomplete"); err != nil {
 		t.Fatal("failed restore did not preserve incomplete marker", err)
+	}
+}
+
+func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
+	t.Parallel()
+	backup := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "archive", Region: "us-east-1", Endpoint: "http://127.0.0.1:1/", UsePathStyle: true}
+	target := backup
+	target.Endpoint = "http://127.0.0.1:1"
+	target.Prefix = "archive/native-backups/source/pc_backup_test/restored"
+	err := validateNativeRestoreS3Target(context.Background(), &target, &backup)
+	if err == nil || !strings.Contains(err.Error(), "overlap") {
+		t.Fatal("normalized backup endpoint overlap was not rejected before network access", err)
+	}
+}
+
+func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.T) {
+	t.Parallel()
+	target := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
+	if err := validateNativeRestoreSourceStorage(&target, nativeBackupStorageIdentity{}, false); err == nil {
+		t.Fatal("remote target without original storage identity accepted")
+	}
+	if err := validateNativeRestoreSourceStorage(nil, nativeBackupStorageIdentity{}, true); err == nil {
+		t.Fatal("remote archive without original storage identity accepted")
+	}
+	source := nativeBackupStorageIdentity{Mode: "s3", Bucket: target.Bucket, Prefix: "original-source", Region: target.Region, Endpoint: "http://127.0.0.1:2"}
+	if err := validateNativeRestoreSourceStorage(&target, source, true); err == nil {
+		t.Fatal("original source namespace overlap through an endpoint alias accepted")
+	}
+	source.Prefix = "other-source"
+	if err := validateNativeRestoreSourceStorage(&target, source, true); err != nil {
+		t.Fatal("independent target refused", err)
 	}
 }

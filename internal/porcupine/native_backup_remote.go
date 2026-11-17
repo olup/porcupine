@@ -33,10 +33,10 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		return err
 	}
 	defer destination.Close()
-	if err := destination.claimOwner(ctx, checkpoint.SourceID, writerID); err != nil {
+	if err := destination.ClaimOwner(ctx, checkpoint.SourceID, writerID); err != nil {
 		return err
 	}
-	if err := destination.cleanupIncomplete(ctx); err != nil {
+	if err := destination.CleanupIncomplete(ctx); err != nil {
 		return err
 	}
 	id := "pc_backup_" + newID()
@@ -45,7 +45,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		if !published {
 			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			result = errors.Join(result, destination.remove(cleanup, id))
+			result = errors.Join(result, destination.Remove(cleanup, id))
 		}
 	}()
 	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: checkpoint.SourceID, CreatedAt: now(), CapturedAt: checkpoint.CapturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
@@ -85,7 +85,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		if err != nil {
 			return err
 		}
-		file, err := destination.transfer(ctx, id, relative, body, info.Size())
+		file, err := destination.Transfer(ctx, id, relative, body, info.Size())
 		if err != nil {
 			return err
 		}
@@ -109,7 +109,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		if err != nil {
 			return err
 		}
-		file, copyErr := destination.transfer(ctx, id, path, body, object.Bytes)
+		file, copyErr := destination.Transfer(ctx, id, path, body, object.Bytes)
 		closeErr := body.Close()
 		if err := errors.Join(copyErr, closeErr); err != nil {
 			return err
@@ -117,15 +117,15 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		paths[path] = true
 		manifest.Files = append(manifest.Files, file)
 	}
-	if err := destination.publish(ctx, manifest); err != nil {
+	if err := destination.Publish(ctx, manifest); err != nil {
 		return err
 	}
 	published = true
 	if err := s.recordNativeBackupStatus(ctx, "ok", id, checkpoint.CapturedAt); err != nil {
 		return err
 	}
-	if err := destination.claimOwner(ctx, checkpoint.SourceID, writerID); err != nil {
+	if err := destination.ClaimOwner(ctx, checkpoint.SourceID, writerID); err != nil {
 		return err
 	}
-	return destination.prune(ctx, runtime.config.Retain, id)
+	return destination.Prune(ctx, runtime.config.Retain, id)
 }

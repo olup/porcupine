@@ -106,20 +106,6 @@ type EventList struct {
 	Events []Event `json:"events"`
 }
 type EventListOutput struct{ Body EventList }
-type managementError struct {
-	Message string `json:"error"`
-	Code    string `json:"code,omitempty"`
-	Hint    string `json:"hint,omitempty"`
-	Field   string `json:"field,omitempty"`
-	status  int
-}
-
-func (e *managementError) Error() string  { return e.Message }
-func (e *managementError) GetStatus() int { return e.status }
-func apiError(status int, message string) error {
-	return &managementError{Message: message, status: status}
-}
-
 type actorContextKey struct{}
 
 func principal(ctx context.Context) actor { return ctx.Value(actorContextKey{}).(actor) }

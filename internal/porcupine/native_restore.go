@@ -136,8 +136,8 @@ func nativeRestorePathsOverlap(a, b string) bool {
 // SQLite metadata. Analytical S3 data stays in the archive until queried.
 func verifyRestoreInventory(ctx context.Context, r nativeBackupReader, m nativeBackupManifest, stage string) error {
 	if remote, ok := r.(*nativeBackupS3); ok {
-		prefix := remote.namespace + m.ID + "/"
-		keys, err := remote.list(ctx, prefix)
+		prefix := remote.Namespace + m.ID + "/"
+		keys, err := remote.List(ctx, prefix)
 		if err != nil {
 			return err
 		}

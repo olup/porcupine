@@ -52,6 +52,18 @@ Project isolation applies to HTTP, CLI, MCP, interactive queries, exports, and d
 
 Webhooks and S3 destinations keep their own retry and publication state. Destination delivery does not change analytical storage retention. [Pipeline contract](pipelines.md)
 
+## Code layout
+
+| Package | Owns |
+| --- | --- |
+| `internal/porcupine` | HTTP, MCP and management handlers, authorization, acceptance, imports, delivery workers, pipelines and exports. |
+| `internal/lake` | The DuckLake engine: per-project catalogs, projection, SQL execution, catalog and profile reads, maintenance, checkpoints and the native backup format. It has no HTTP or `Service` dependency. |
+| `internal/nativequery` | SQL policy: AST validation, function inventory and parameter binding. |
+| `internal/apierr`, `internal/syncx` | The shared API error shape and small locking primitives. |
+| `internal/exportstore` | S3 object storage for export files. |
+
+Tests follow the same split: engine tests live in `internal/lake` and run without a server.
+
 ## Storage and recovery
 
 The default backend uses local SSD storage. Fresh deployments can keep analytical data files on [S3](ducklake-s3.md), with local SQLite and DuckLake catalogs. Storage identity is pinned to prevent accidental bucket or prefix changes. There is no automatic migration from an existing SSD archive or age-based native S3 tiering. Local archives support [scheduled coordinated backups](native-backups.md); that local-only backup mode is rejected for analytical S3. No physical-erasure deadline is guaranteed. Query-result exports are separate from backups.

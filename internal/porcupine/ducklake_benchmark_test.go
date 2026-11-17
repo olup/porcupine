@@ -106,13 +106,13 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 func BenchmarkDuckLakeWarmAggregation10000(b *testing.B) {
 	s, projectID, _ := duckLakeBenchmarkService(b)
 	store := s.lake.(*duckLakeStore)
-	p, release, err := store.leaseProject(context.Background(), projectID)
+	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		b.Fatal(err)
 	}
 	// Seed only the analytical fixture using trusted bulk SQL. This setup does
 	// not benchmark acceptance, receipt creation, or per-event projection.
-	_, err = p.db.ExecContext(context.Background(), `INSERT INTO lake.current_events
+	_, err = p.DB.ExecContext(context.Background(), `INSERT INTO lake.current_events
 WITH fixture AS (SELECT i, TIMESTAMPTZ '2026-11-01 00:00:00+00' + i * INTERVAL '1 second' AS ts FROM range(10000) AS r(i))
 SELECT i+1, ?, 'fixture-' || CAST(i AS VARCHAR),
  CASE i%3 WHEN 0 THEN 'visit' WHEN 1 THEN 'signup' ELSE 'purchase' END,

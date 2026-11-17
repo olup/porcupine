@@ -120,74 +120,6 @@ func TestDuckLakeEventProfileSharesQueryBudget(t *testing.T) {
 	request(t, s, http.MethodGet, profileRequestPath(a, event), reader, "", http.StatusTooManyRequests)
 }
 
-func TestDuckLakeEventProfileOccurrenceWindowsAndSample(t *testing.T) {
-	t.Parallel()
-	s, a, _, _, reader, event, now := profileJourneyFixture(t)
-	profile := readProfileHTTP(t, s, a, event, reader, "")
-	activity := profile.Activity
-	asOf, err := time.Parse(time.RFC3339Nano, profile.AsOf)
-	if err != nil || !asOf.Equal(now) || profile.Event != event || activity.Total != "7" || activity.Last24Hours != "2" || activity.Last7Days != "3" || activity.FutureEvents != "2" {
-		t.Fatalf("incorrect occurrence windows: %+v", profile)
-	}
-	for _, tc := range []struct {
-		label string
-		got   *string
-		want  time.Time
-	}{
-		{"first occurrence", activity.FirstOccurredAt, now.Add(-365 * 24 * time.Hour)},
-		{"last occurrence", activity.LastOccurredAt, now.Add(time.Hour)},
-		{"first receipt", activity.FirstReceivedAt, now.Add(-2 * time.Hour)},
-		{"last receipt", activity.LastReceivedAt, now.Add(-2*time.Hour + 6*time.Minute)},
-	} {
-		if tc.got == nil {
-			t.Fatalf("missing %s", tc.label)
-		}
-		actual, err := time.Parse(time.RFC3339Nano, *tc.got)
-		if err != nil || !actual.Equal(tc.want) {
-			t.Fatalf("wrong %s: %v want=%v error=%v", tc.label, *tc.got, tc.want, err)
-		}
-	}
-	if profile.Sampling.RequestedLimit != 1000 || profile.Sampling.SampledEvents != 7 || profile.Sampling.ProfiledEvents != 7 || profile.Sampling.HistoricalPropertiesComplete {
-		t.Fatalf("incorrect sample metadata: %+v", profile.Sampling)
-	}
-	if len(profile.Examples) != 3 || profile.Examples[0].UUID != "profile-future" || profile.Examples[1].UUID != "profile-window-end" || profile.Examples[2].UUID != "profile-recent" {
-		t.Fatalf("examples followed receipt order instead of occurrence order: %+v", profile.Examples)
-	}
-
-	small := readProfileHTTP(t, s, a, event, reader, "&sample_limit=3&example_limit=0&property_kind=custom")
-	if len(small.Examples) != 0 || small.Sampling.RequestedLimit != 3 || small.Sampling.ProfiledEvents != 3 || small.Activity.Total != "7" {
-		t.Fatalf("sample size changed activity or explicit example omission: %+v", small)
-	}
-	kind := profileProperty(t, small, "kind")
-	if kind.Present != 2 || kind.Missing != 1 || kind.Null != 0 || kind.DistinctValues != 2 || !reflect.DeepEqual(kind.Types, []string{"Int64", "String"}) || len(kind.TopValues) != 0 {
-		t.Fatalf("type drift or presence counts are wrong: %+v", kind)
-	}
-	nullish := profileProperty(t, small, "nullish")
-	if nullish.Present != 2 || nullish.Missing != 1 || nullish.Null != 1 || nullish.DistinctValues != 1 || !reflect.DeepEqual(nullish.Types, []string{"Null", "String"}) {
-		t.Fatalf("missing and null were conflated: %+v", nullish)
-	}
-	for _, property := range small.Properties {
-		if strings.HasPrefix(property.Key, "$") || len(property.TopValues) != 0 {
-			t.Fatalf("custom-only profile returned reserved keys or unsolicited values: %+v", property)
-		}
-	}
-	values := readProfileHTTP(t, s, a, event, reader, "&sample_limit=3&example_limit=0&include_values=true&property_prefix=app")
-	app := profileProperty(t, values, "app")
-	if len(values.Properties) != 1 || app.Present != 3 || app.Missing != 0 || app.DistinctValues != 2 || len(app.TopValues) != 2 || string(app.TopValues[0].Value) != `"live"` || app.TopValues[0].Count != 2 {
-		t.Fatalf("incorrect frequent values: %+v", values)
-	}
-	capped := readProfileHTTP(t, s, a, event, reader, "&property_kind=custom&property_limit=1&example_limit=0")
-	if len(capped.Properties) != 1 || !capped.Sampling.PropertiesTruncated {
-		t.Fatalf("property cap did not report truncation: %+v", capped)
-	}
-	for _, name := range []string{"missing-event", event + "' OR 1=1 --"} {
-		empty := readProfileHTTP(t, s, a, name, reader, "")
-		if empty.Activity.Total != "0" || empty.Activity.Last24Hours != "0" || empty.Activity.Last7Days != "0" || empty.Activity.FirstOccurredAt != nil || empty.Activity.LastOccurredAt != nil || empty.Activity.FirstReceivedAt != nil || empty.Activity.LastReceivedAt != nil || len(empty.Examples) != 0 || len(empty.Properties) != 0 {
-			t.Fatalf("empty or literal event filter fabricated data: %+v", empty)
-		}
-	}
-}
-
 func TestDuckLakeEventProfileCurrentEditsDeletionAndTieOrder(t *testing.T) {
 	t.Parallel()
 	s := duckLakeJourneyService(t)
@@ -322,5 +254,73 @@ func TestDuckLakeEventProfileUsesOneSnapshotDuringConcurrentProjection(t *testin
 	}
 	if !overlapped {
 		t.Fatal("test did not overlap a profile read with a committed projection")
+	}
+}
+
+func TestDuckLakeEventProfileOccurrenceWindowsAndSample(t *testing.T) {
+	t.Parallel()
+	s, a, _, _, reader, event, now := profileJourneyFixture(t)
+	profile := readProfileHTTP(t, s, a, event, reader, "")
+	activity := profile.Activity
+	asOf, err := time.Parse(time.RFC3339Nano, profile.AsOf)
+	if err != nil || !asOf.Equal(now) || profile.Event != event || activity.Total != "7" || activity.Last24Hours != "2" || activity.Last7Days != "3" || activity.FutureEvents != "2" {
+		t.Fatalf("incorrect occurrence windows: %+v", profile)
+	}
+	for _, tc := range []struct {
+		label string
+		got   *string
+		want  time.Time
+	}{
+		{"first occurrence", activity.FirstOccurredAt, now.Add(-365 * 24 * time.Hour)},
+		{"last occurrence", activity.LastOccurredAt, now.Add(time.Hour)},
+		{"first receipt", activity.FirstReceivedAt, now.Add(-2 * time.Hour)},
+		{"last receipt", activity.LastReceivedAt, now.Add(-2*time.Hour + 6*time.Minute)},
+	} {
+		if tc.got == nil {
+			t.Fatalf("missing %s", tc.label)
+		}
+		actual, err := time.Parse(time.RFC3339Nano, *tc.got)
+		if err != nil || !actual.Equal(tc.want) {
+			t.Fatalf("wrong %s: %v want=%v error=%v", tc.label, *tc.got, tc.want, err)
+		}
+	}
+	if profile.Sampling.RequestedLimit != 1000 || profile.Sampling.SampledEvents != 7 || profile.Sampling.ProfiledEvents != 7 || profile.Sampling.HistoricalPropertiesComplete {
+		t.Fatalf("incorrect sample metadata: %+v", profile.Sampling)
+	}
+	if len(profile.Examples) != 3 || profile.Examples[0].UUID != "profile-future" || profile.Examples[1].UUID != "profile-window-end" || profile.Examples[2].UUID != "profile-recent" {
+		t.Fatalf("examples followed receipt order instead of occurrence order: %+v", profile.Examples)
+	}
+
+	small := readProfileHTTP(t, s, a, event, reader, "&sample_limit=3&example_limit=0&property_kind=custom")
+	if len(small.Examples) != 0 || small.Sampling.RequestedLimit != 3 || small.Sampling.ProfiledEvents != 3 || small.Activity.Total != "7" {
+		t.Fatalf("sample size changed activity or explicit example omission: %+v", small)
+	}
+	kind := profileProperty(t, small, "kind")
+	if kind.Present != 2 || kind.Missing != 1 || kind.Null != 0 || kind.DistinctValues != 2 || !reflect.DeepEqual(kind.Types, []string{"Int64", "String"}) || len(kind.TopValues) != 0 {
+		t.Fatalf("type drift or presence counts are wrong: %+v", kind)
+	}
+	nullish := profileProperty(t, small, "nullish")
+	if nullish.Present != 2 || nullish.Missing != 1 || nullish.Null != 1 || nullish.DistinctValues != 1 || !reflect.DeepEqual(nullish.Types, []string{"Null", "String"}) {
+		t.Fatalf("missing and null were conflated: %+v", nullish)
+	}
+	for _, property := range small.Properties {
+		if strings.HasPrefix(property.Key, "$") || len(property.TopValues) != 0 {
+			t.Fatalf("custom-only profile returned reserved keys or unsolicited values: %+v", property)
+		}
+	}
+	values := readProfileHTTP(t, s, a, event, reader, "&sample_limit=3&example_limit=0&include_values=true&property_prefix=app")
+	app := profileProperty(t, values, "app")
+	if len(values.Properties) != 1 || app.Present != 3 || app.Missing != 0 || app.DistinctValues != 2 || len(app.TopValues) != 2 || string(app.TopValues[0].Value) != `"live"` || app.TopValues[0].Count != 2 {
+		t.Fatalf("incorrect frequent values: %+v", values)
+	}
+	capped := readProfileHTTP(t, s, a, event, reader, "&property_kind=custom&property_limit=1&example_limit=0")
+	if len(capped.Properties) != 1 || !capped.Sampling.PropertiesTruncated {
+		t.Fatalf("property cap did not report truncation: %+v", capped)
+	}
+	for _, name := range []string{"missing-event", event + "' OR 1=1 --"} {
+		empty := readProfileHTTP(t, s, a, name, reader, "")
+		if empty.Activity.Total != "0" || empty.Activity.Last24Hours != "0" || empty.Activity.Last7Days != "0" || empty.Activity.FirstOccurredAt != nil || empty.Activity.LastOccurredAt != nil || empty.Activity.FirstReceivedAt != nil || empty.Activity.LastReceivedAt != nil || len(empty.Examples) != 0 || len(empty.Properties) != 0 {
+			t.Fatalf("empty or literal event filter fabricated data: %+v", empty)
+		}
 	}
 }

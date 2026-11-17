@@ -64,8 +64,8 @@ func tenantIngestionProblem(err error) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	return &managementError{status: http.StatusTooManyRequests, Code: failure.code, Message: failure.message,
-		Hint: "The upload checkpoint is unchanged. " + failure.retryHint()}
+	return analyticsError(http.StatusTooManyRequests, failure.code, failure.message,
+		"The upload checkpoint is unchanged. "+failure.retryHint(), "")
 }
 
 func writeTenantIngestionError(w http.ResponseWriter, _ *http.Request, err error, nativeResponse bool) bool {

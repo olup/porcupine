@@ -170,7 +170,7 @@ func run(ctx context.Context, useTLS bool, pattern string, race bool, timeout ti
 	if err := os.WriteFile(awsConfigFile, nil, 0600); err != nil {
 		return err
 	}
-	arguments = []string{"test", "./internal/porcupine", "-run", pattern, "-count=1", "-timeout=" + timeout.String(), "-v"}
+	arguments = []string{"test", "./internal/porcupine", "./internal/lake", "-run", pattern, "-count=1", "-timeout=" + timeout.String(), "-v"}
 	if race {
 		arguments = append(arguments, "-race")
 	}

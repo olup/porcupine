@@ -139,7 +139,7 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 		t.Fatal("old completed backup not pruned", err)
 	}
 	bundle := filepath.Join(config.NativeBackup.Directory, second)
-	_, release, err := s.lake.(*duckLakeStore).leaseProject(ctx, a)
+	_, release, err := s.lake.(*duckLakeStore).LeaseProject(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,53 +174,14 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 	}
 }
 
-func TestDuckLakeBackupAutomaticScheduleAndShutdown(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 128, Threads: 1}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
-	s, err := Open(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		status := s.nativeBackupStatus()
-		if status.State == "ok" {
-			if _, err := verifyNativeBackup(context.Background(), filepath.Join(config.NativeBackup.Directory, status.LatestBundle)); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-		if status.State == "failed" || time.Now().After(deadline) {
-			t.Fatalf("scheduled backup did not succeed: %+v", status)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	s.stopNativeBackups()
-	stages, err := filepath.Glob(filepath.Join(config.DuckLake.Directory, ".checkpoint-*"))
-	if err != nil || len(stages) != 0 {
-		t.Fatal("completed automatic backup retained its stage", stages, err)
-	}
-	entries, err := os.ReadDir(config.NativeBackup.Directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".") {
-			t.Fatal("automatic backup left incomplete directory", entry.Name())
-		}
-	}
-}
-
 type pausedCheckpointStore struct {
 	lakeStore
 	captured chan struct{}
 	resume   chan struct{}
 }
 
-func (s *pausedCheckpointStore) stageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*nativeCheckpoint, error) {
-	return s.lakeStore.stageCheckpoint(ctx, func(ctx context.Context, path string) error {
+func (s *pausedCheckpointStore) StageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*nativeCheckpoint, error) {
+	return s.lakeStore.StageCheckpoint(ctx, func(ctx context.Context, path string) error {
 		if err := acceptance(ctx, path); err != nil {
 			return err
 		}
@@ -352,5 +313,44 @@ func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
 	}
 	if _, err := verifyNativeBackup(ctx, filepath.Join(config.NativeBackup.Directory, second)); err != nil {
 		t.Fatal("retention removed reused data", err)
+	}
+}
+
+func TestDuckLakeBackupAutomaticScheduleAndShutdown(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 128, Threads: 1}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
+	s, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		status := s.nativeBackupStatus()
+		if status.State == "ok" {
+			if _, err := verifyNativeBackup(context.Background(), filepath.Join(config.NativeBackup.Directory, status.LatestBundle)); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if status.State == "failed" || time.Now().After(deadline) {
+			t.Fatalf("scheduled backup did not succeed: %+v", status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.stopNativeBackups()
+	stages, err := filepath.Glob(filepath.Join(config.DuckLake.Directory, ".checkpoint-*"))
+	if err != nil || len(stages) != 0 {
+		t.Fatal("completed automatic backup retained its stage", stages, err)
+	}
+	entries, err := os.ReadDir(config.NativeBackup.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".") {
+			t.Fatal("automatic backup left incomplete directory", entry.Name())
+		}
 	}
 }

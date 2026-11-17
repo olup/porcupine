@@ -14,14 +14,6 @@ import (
 	"time"
 )
 
-type NativeBackupConfig struct {
-	Directory string
-	S3        *DuckLakeS3Config
-	Interval  time.Duration
-	Timeout   time.Duration
-	Retain    int
-}
-
 type NativeBackupStatus struct {
 	Enabled          bool   `json:"enabled"`
 	SourceID         string `json:"source_id,omitempty" doc:"Analytical backup source identity for offline restore; distinct from event source_id."`

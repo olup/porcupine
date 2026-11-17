@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -96,16 +95,6 @@ type exportRuntime struct {
 	activeMu     sync.Mutex
 	activeJob    string
 	activeCancel context.CancelFunc
-}
-
-type exportStreamResult struct {
-	Columns []AnalyticsResultColumn
-	Rows    int64
-}
-
-type exportStreamCallbacks struct {
-	Columns func([]AnalyticsResultColumn) error
-	Row     func([]json.RawMessage) error
 }
 
 const exportLinkTTL = 5 * time.Minute
