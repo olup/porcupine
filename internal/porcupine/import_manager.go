@@ -5,13 +5,14 @@ import (
 	"database/sql"
 )
 
-// importManager owns upload manifests, checkpoints and terminal states. A chunk
-// and its accepted historical rows always commit in the same transaction.
+// importManager owns upload manifests, checkpoints and terminal states. The
+// journal and hosted backends share the same HTTP contract.
 type importManager struct {
 	db              *sql.DB
 	control         oauthQueryer
 	rules           *eventRules
 	deliveryEnabled bool
+	hosted          *hostedLiveFlusher
 }
 
 func (m *importManager) authorityQuery(tx *sql.Tx) oauthQueryer {

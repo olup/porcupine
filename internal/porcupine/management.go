@@ -219,7 +219,11 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 				return
 			}
 		}
-		if s.shared != nil && access.ProjectParameter != "" && s.projectOperationNeedsOwner(ctx.Operation().OperationID) {
+		needsOwner := s.projectOperationNeedsOwner(ctx.Operation().OperationID)
+		if access.Permission == "imports:write" && s.imports.hosted != nil {
+			needsOwner = false
+		}
+		if s.shared != nil && access.ProjectParameter != "" && needsOwner {
 			project := ctx.Param(access.ProjectParameter)
 			if ctx.Operation().OperationID == "delete-project" {
 				var completed bool
@@ -242,7 +246,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if s.projectOperationNeedsOwner(ctx.Operation().OperationID) {
+			if needsOwner {
 				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
 					writeSharedRouteProblem(w, err)
 					return

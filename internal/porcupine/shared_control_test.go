@@ -3,7 +3,9 @@ package porcupine
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -130,12 +132,28 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 			}
 		})
 	}
-	for _, table := range []string{"events", "delivery_ready", "identity_profiles", "identity_links", "event_heads", "mutation_outbox", "import_uploads", "export_jobs", "pipelines", "webhook_deliveries", "pipeline_s3_runs"} {
+	for _, table := range []string{"events", "delivery_ready", "identity_profiles", "identity_links", "event_heads", "mutation_outbox", "export_jobs", "pipelines", "webhook_deliveries", "pipeline_s3_runs"} {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=$1)`, table).Scan(&exists); err != nil || exists {
 			t.Fatalf("payload table leaked into shared control: %s %v", table, err)
 		}
 	}
+	if err := checkSharedImportMetadata(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("rejects payload column", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE import_upload_files ADD COLUMN hash_state bytea`); err != nil {
+			t.Fatal(err)
+		}
+		if err := checkSharedImportMetadata(ctx, tx); err == nil || !strings.Contains(err.Error(), "import_upload_files.hash_state bytea") {
+			t.Fatalf("serialized hash column escaped metadata validation: %v", err)
+		}
+	})
 	for _, value := range []bool{false, true} {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -152,6 +170,60 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 			t.Fatalf("integer flag roundtrip failed: %t %v", flag, err)
 		}
 	}
+}
+
+// Keep the allowlist independent of the migration. Both names and types must
+// match so an added payload field fails even if it uses an ordinary text type.
+func checkSharedImportMetadata(ctx context.Context, db oauthQueryer) error {
+	allowed := map[string]map[string]string{}
+	for table, typedColumns := range map[string]map[string]string{
+		"import_uploads": {
+			"text":   "id project_id actor_id source_id format idempotency_hash request_hash state created_at updated_at completed_at error",
+			"bigint": "delivery_cursor",
+		},
+		"import_upload_files": {
+			"text":    "id job_id path kind sha256 state parser_key parser_version parser_sha256 last_sha256 error",
+			"integer": "ordinal",
+			"bigint":  "size_bytes offset_bytes line_number generation parser_bytes last_offset last_size rows accepted duplicates ignored unresolved invalid",
+		},
+		"import_upload_samples": {
+			"text":   "job_id file_id reason",
+			"bigint": "row_number",
+		},
+	} {
+		allowed[table] = map[string]string{}
+		for typ, names := range typedColumns {
+			for _, name := range strings.Fields(names) {
+				allowed[table][name] = typ
+			}
+		}
+	}
+	columns, err := db.QueryContext(ctx, `SELECT table_name,column_name,data_type FROM information_schema.columns
+WHERE table_schema=current_schema() AND table_name IN ('import_uploads','import_upload_files','import_upload_samples')
+ORDER BY table_name,column_name`)
+	if err != nil {
+		return err
+	}
+	defer columns.Close()
+	for columns.Next() {
+		var table, name, typ string
+		if err := columns.Scan(&table, &name, &typ); err != nil {
+			return err
+		}
+		if allowed[table][name] != typ {
+			return fmt.Errorf("unexpected hosted import column %s.%s %s", table, name, typ)
+		}
+		delete(allowed[table], name)
+	}
+	if err := columns.Err(); err != nil {
+		return err
+	}
+	for table, remaining := range allowed {
+		if len(remaining) != 0 {
+			return fmt.Errorf("missing hosted import metadata columns in %s: %v", table, remaining)
+		}
+	}
+	return nil
 }
 
 func TestSharedControlRevokesDependentCredentials(t *testing.T) {

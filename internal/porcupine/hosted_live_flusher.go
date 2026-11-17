@@ -131,42 +131,45 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		prior, found, err := f.native.FindImportChunk(ctx, fence, input)
-		if err != nil {
+		if err := f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
 			return err
 		}
-		if err = f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
-			return err
-		}
-		if found {
-			result = prior
-			return nil
-		}
-		if err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			return f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(scope), input.TenantID)
-		}); err != nil {
-			return err
-		}
-		var ids lakeapi.EventIDReservation
-		if len(input.Candidates) > 0 {
-			ids, err = session.ReserveEventIDs(ctx, scope.StreamID, input.Key.ID(), len(input.Candidates))
-			if err != nil {
-				return err
-			}
-		}
-		result, err = f.native.CommitImportChunk(ctx, fence, input, ids)
-		if err != nil {
-			return err
-		}
-		if err = f.publisher.publish(ctx, output.PipelineBinding{}, result); err != nil {
-			return err
-		}
-		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, result.Sequence)
-		return nil
+		result, err = f.commitImportHeld(ctx, session, fence, input, nil)
+		return err
 	})
+	return result, err
+}
+
+func (f *hostedLiveFlusher) commitImportHeld(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, input lakeapi.ImportChunkInput, authorize func(context.Context) error) (lakeapi.NativeCommitEvidence, error) {
+	prior, found, err := f.native.FindImportChunk(ctx, fence, input)
+	if err != nil || found {
+		return prior, err
+	}
+	if err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+		return f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(input.Key.Scope), input.TenantID)
+	}); err != nil {
+		return lakeapi.NativeCommitEvidence{}, err
+	}
+	var ids lakeapi.EventIDReservation
+	if len(input.Candidates) > 0 {
+		ids, err = session.ReserveEventIDs(ctx, input.Key.Scope.StreamID, input.Key.ID(), len(input.Candidates))
+		if err != nil {
+			return lakeapi.NativeCommitEvidence{}, err
+		}
+	}
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return lakeapi.NativeCommitEvidence{}, err
+		}
+	}
+	result, err := f.native.CommitImportChunk(ctx, fence, input, ids)
 	if err != nil {
 		return lakeapi.NativeCommitEvidence{}, err
 	}
+	if err = f.publisher.publish(ctx, output.PipelineBinding{}, result); err != nil {
+		return lakeapi.NativeCommitEvidence{}, err
+	}
+	_ = f.native.AcknowledgeNativeEffects(ctx, fence, input.Key.Scope, result.Sequence)
 	return result, nil
 }
 
