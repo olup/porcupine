@@ -84,6 +84,7 @@ type Service struct {
 	interactiveConfig     InteractiveQueryConfig
 	tenantQueries         tenantQueryAdmission
 	sharedQueries         sharedQueryExecutions
+	hostedQueries         *hostedQueryRuntime
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
 	tokenSlots            chan struct{}

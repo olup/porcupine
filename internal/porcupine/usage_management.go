@@ -33,7 +33,7 @@ func (s *Service) managementUsage(ctx context.Context, input *UsageListInput) (*
 	}
 	if input.Cursor == "" {
 		bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = s.usage.synchronize(bounded)
+		_ = s.synchronizeUsage(bounded)
 		cancel()
 	}
 	page, err := s.usage.store.ReadSnapshot(ctx, usage.Query{Start: input.Start, End: input.End, TenantID: input.TenantID, Granularity: input.Granularity, GroupBy: input.GroupBy, Limit: input.Limit, Cursor: input.Cursor})

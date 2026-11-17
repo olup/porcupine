@@ -41,9 +41,13 @@ SELECT id,uuid,timestamp,timestamp_ms,received_at,
  ORDER BY timestamp_ms DESC,sort_id DESC`
 
 func (s *DuckLakeStore) Profile(ctx context.Context, project string, options EventProfileOptions, asOf time.Time) (EventProfileRead, error) {
-	p, release, err := s.LeaseProject(ctx, project)
+	return profileProject(ctx, s.LeaseProject, project, options, asOf)
+}
+
+func profileProject(ctx context.Context, lease analyticalProjectLease, project string, options EventProfileOptions, asOf time.Time) (EventProfileRead, error) {
+	p, release, err := lease(ctx, project)
 	if err != nil {
-		return EventProfileRead{}, DuckLakeQueryError(ctx, err)
+		return EventProfileRead{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
 	tx, err := p.DB.BeginTx(ctx, nil)

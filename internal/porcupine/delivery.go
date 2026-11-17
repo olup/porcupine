@@ -188,6 +188,12 @@ func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 
 func (s *Service) deliveryStatus(ctx context.Context, projectID string) (lakeapi.DeliveryStatus, error) {
 	status := lakeapi.DeliveryStatus{Enabled: s.lake != nil}
+	if s.hostedQueries != nil {
+		// Buffered work is distributed and volatile. This worker cannot report
+		// a complete count of events waiting for analytical visibility.
+		status.PendingUnknown = true
+		return status, nil
+	}
 	if s.shared != nil {
 		owner, _, err := s.sharedProjectOwner(ctx, projectID)
 		if err != nil {
