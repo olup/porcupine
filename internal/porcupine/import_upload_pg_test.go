@@ -206,10 +206,10 @@ CREATE TRIGGER reject_eof BEFORE UPDATE ON import_upload_files FOR EACH ROW WHEN
 	}
 	rowCount := func(origin, p, credential string) any {
 		t.Helper()
-		result := sharedJourneyQuery(t, origin, p, credential, "SELECT count(*) AS n FROM events", 200)
+		result := sharedJourneyQuery(t, origin, p, credential, "SELECT count(*) AS n FROM events WHERE is_imported=1", 200)
 		return result["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["n"]
 	}
-	if got := rowCount(b.host.URL, project, token); got != "7" {
+	if got := rowCount(b.host.URL, project, token); got != "3" {
 		t.Fatalf("queryable history count = %v", got)
 	}
 	if got := rowCount(a.host.URL, other, foreign); got != "0" {
