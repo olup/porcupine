@@ -150,7 +150,7 @@ func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
 		t.Fatalf("missing export recovery: %v", limited)
 	}
 
-	doc, err := os.ReadFile("../../docs/duckdb-recipes.md")
+	doc, err := os.ReadFile("../../docs/reference/duckdb-recipes.md")
 	if err != nil {
 		t.Fatal(err)
 	}
