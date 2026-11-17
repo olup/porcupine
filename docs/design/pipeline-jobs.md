@@ -12,6 +12,7 @@
 | `internal/delivery/webhook_{enqueue,batch,queue,queue_types}.go` | `pipeline_sqlite_webhook_*`: queue capacity, members, freeze, cancellation, claims, attempts, cooldown, retry and history |
 | `project_pipeline_cleanup.go` and pipeline SQL in `project_purge_sqlite.go` | `pipeline_sqlite_cleanup.go` and `pipeline_sqlite_artifacts.go`: project cleanup and guarded final metadata removal |
 | Pipeline artifact SQL in `native_restore_artifacts.go` and `native_restore.go` | `PipelineRestoreArtifacts` and `ResetRestoredPipelinesTx`: original ownership holds and paused, credential-free restored state |
+| `managed_artifact_ownership.go` | The shared helper in `internal/output/export_artifacts.go` retains export and pipeline artifact ownership without a Service receiver |
 | Service worker construction and lifecycle | `pipeline_dependencies.go` supplies narrow dependencies. `PipelineJobs` starts, cancels and drains its workers |
 
 `internal/delivery` retains pure payload and row encoders, bounded HTTP responses and SSRF-safe transport. `internal/exportstore` retains S3 protocol operations. Export and pipeline cleanup share the existing artifact ownership helper. Existing PG participants remain separate and unchanged. This extraction does not activate hosted output workers.
