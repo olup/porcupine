@@ -68,6 +68,7 @@ type Service struct {
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
 	deletionWake                chan struct{}
+	sealHostedProject           func(context.Context, string) error
 	db                          *sql.DB
 	*eventRules
 	acceptance            liveAcceptor

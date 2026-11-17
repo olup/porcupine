@@ -219,4 +219,46 @@ CREATE TRIGGER reject_eof BEFORE UPDATE ON import_upload_files FOR EACH ROW WHEN
 	if err := db.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs`).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatalf("historical import created output work: %d %v", jobs, err)
 	}
+
+	// Leave the real upload cursor unpublished, fence the project, then let a
+	// cold worker settle both the native proof and the same upload checkpoint.
+	data := historicalJourney(t, "native")
+	spec, err := json.Marshal(map[string]any{
+		"format": "native", "idempotency_key": "recover-on-deletion",
+		"files": []importer.ImportUploadFileSpec{
+			{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/projects/" + project + "/imports"
+	job := sharedJourneyHTTP(t, a.host.URL, "POST", base, token, spec, nil, 201)
+	file := job["files"].([]any)[0].(map[string]any)["id"].(string)
+	if _, err := db.Exec(`CREATE FUNCTION reject_deletion_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'checkpoint interrupted'; END $$;
+CREATE TRIGGER reject_deletion_checkpoint BEFORE UPDATE ON import_upload_files FOR EACH ROW EXECUTE FUNCTION reject_deletion_checkpoint()`); err != nil {
+		t.Fatal(err)
+	}
+	sharedJourneyHTTP(t, a.host.URL, "PUT", base+"/"+job["id"].(string)+"/files/"+file, token, data,
+		map[string]string{"Content-Type": "application/octet-stream", "Upload-Offset": "0", "X-Chunk-SHA256": importTestSHA(data)}, 503)
+	if _, err := db.Exec(`DROP TRIGGER reject_deletion_checkpoint ON import_upload_files; DROP FUNCTION reject_deletion_checkpoint()`); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := native.PendingNativeEffects(t.Context(), scope, sequence, 1)
+	if err != nil || len(pending.Evidence) != 1 || pending.Evidence[0].Kind != lakeapi.NativeCommitImport {
+		t.Fatalf("expected an unpublished import proof: %+v, %v", pending, err)
+	}
+	if err := a.service.beginControlProjectDeletion(t.Context(), project); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.service.imports.hosted.sealDeletedProject(t.Context(), key); err != nil {
+		t.Fatal("deletion seal failed to recover the upload checkpoint", err)
+	}
+	var offset, final int64
+	err = db.QueryRow(`SELECT f.offset_bytes,s.final_sequence FROM import_upload_files f
+JOIN hosted_project_seals s ON s.project_id=$1 WHERE f.id=$2`, project, file).Scan(&offset, &final)
+	if err != nil || offset != int64(len(data)) || final != pending.Evidence[0].Sequence {
+		t.Fatalf("seal and import checkpoint differ from committed proof: %d, %d, %v", offset, final, err)
+	}
+
 }

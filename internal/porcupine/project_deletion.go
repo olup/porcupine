@@ -122,6 +122,9 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 }
 
 func (s *Service) deleteProject(ctx context.Context, id string) error {
+	if s.sealHostedProject != nil {
+		return s.deleteHostedProject(ctx, id)
+	}
 	if err := s.deletionMu.Lock(ctx); err != nil {
 		return apiError(503, "project deletion interrupted; retry DELETE")
 	}
@@ -222,6 +225,10 @@ func (s *Service) startDeletionRecovery() {
 }
 
 func (s *Service) resumeProjectDeletions(ctx context.Context) {
+	if s.sealHostedProject != nil {
+		s.resumeHostedProjectSeals(ctx)
+		return
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM project_deletions WHERE completed=0 ORDER BY rowid`)
 	if err != nil {
 		return
