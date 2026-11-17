@@ -220,7 +220,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 		}
 		needsOwner := s.projectOperationNeedsOwner(ctx.Operation().OperationID)
-		if access.Permission == "imports:write" && s.imports.hosted != nil {
+		if access.Permission == "imports:write" && s.imports != nil && s.imports.hosted != nil {
 			needsOwner = false
 		}
 		if s.shared != nil && access.ProjectParameter != "" && needsOwner {

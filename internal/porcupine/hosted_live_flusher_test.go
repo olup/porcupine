@@ -505,8 +505,6 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='active'`, project).Scan(&n); err != nil || n != 2 {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
-	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
-
 	blocked := batch("blocked")
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
 		t.Fatal("full queue admitted", err)
@@ -543,6 +541,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
 		t.Fatal("paused targets received new jobs", n, err)
 	}
+
+	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
 
 	if err = fb.FlushLive(t.Context(), body); err != nil {
 		t.Fatal("duplicate at full quota", err)

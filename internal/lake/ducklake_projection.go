@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS lake.identity_links (
 );
 `
 
-const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect
+const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;`
 
 const duckLakeEventsSelect = `SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,
