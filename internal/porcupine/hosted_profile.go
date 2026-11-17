@@ -26,8 +26,7 @@ type hostedRuntime struct {
 	recoveryFloor HostedRecoveryFloor
 }
 
-// openHostedProfile is the composition tested before public enablement. All
-// storage and background workers use the same providers as the HTTP API.
+// openHostedProfile binds the shared providers before starting background work.
 func openHostedProfile(c Config) (_ *Service, err error) {
 	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()

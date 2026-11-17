@@ -12,9 +12,6 @@ import (
 	"github.com/olup/porcupine/internal/usage"
 )
 
-// hostedLiveFlusher is deliberately absent from Service construction. Enabling
-// buffered acceptance also needs the full shared API, consent, assembly and send
-// providers. This constructor requires real PG, native and object storage.
 type hostedLiveFlusher struct {
 	native             *lakeapi.DuckLakeStore
 	coordinator        *lakeapi.PostgresProjectCoordinator

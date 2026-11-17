@@ -16,8 +16,7 @@ import (
 	"github.com/olup/porcupine/internal/usage"
 )
 
-// This adapter has no production caller. Its only authority is the explicit
-// native credential persisted on the real PG definition, never a producer JWT.
+// Publication uses persisted pipeline authority and the native commit proof.
 type hostedEffectPublisher struct {
 	control               *sql.DB
 	effects               *output.PGPipelineEffects

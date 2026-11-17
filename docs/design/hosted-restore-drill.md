@@ -1,6 +1,6 @@
 # Hosted PostgreSQL and S3 restore drill
 
-This opt-in test uses two disposable PostgreSQL data directories, a filesystem WAL archive, and the loopback-only S3 integration fixture. It exercises the unreleased hosted storage and publication components. Hosted service activation is a separate gate.
+This opt-in test uses two disposable PostgreSQL data directories, a filesystem WAL archive, and the loopback-only S3 integration fixture. It exercises hosted storage and publication with isolated recovery inputs.
 
 Run from the repository root as a non-root user with Docker, Go with CGO support, and a PostgreSQL 17 binary directory containing *initdb*, *pg_ctl*, and *pg_basebackup*.
 

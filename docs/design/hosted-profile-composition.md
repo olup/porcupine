@@ -1,17 +1,15 @@
 # Hosted profile composition
 
-The hosted runtime is available to PostgreSQL and S3 integration fixtures.
-Public startup remains gated during combined verification of deletion, output
-recovery and maintenance. Standalone startup and the existing owner-routed
-shared deployment use durable SQLite acknowledgment.
+The opt-in hosted profile uses PostgreSQL and S3 for durable state. Standalone
+startup and the existing owner-routed shared deployment use durable SQLite
+acknowledgment.
 
-## Candidate configuration
+## Configure workers
 
-This profile uses the same server, API, CLI and MCP. To check a candidate
-configuration, generate a private file with `porcupine init --hosted`, then
-add the shared database and analytical bucket settings. Use
-`porcupine config check` or `porcupine config install` to validate the file.
-For example, these fields can be merged into the generated file.
+This profile uses the same server, API, CLI and MCP. Generate a private file
+with `porcupine init --hosted`, then add the shared database and analytical
+bucket settings. Merge these fields into the generated file and keep its
+bootstrap and pipeline secrets.
 
 ```json
 {
@@ -37,18 +35,23 @@ reflect the earliest PostgreSQL point the deployment can restore, including
 secondary backups. Missing or invalid evidence keeps physical deletion
 pending. See the [restore drill](hosted-restore-drill.md).
 
+Run `porcupine config check --config porcupine.json`, then start each worker
+with `porcupine --config porcupine.json`. Configure the listener and HTTPS
+ingress for your deployment. Each worker needs its own writable scratch
+directory. It can be discarded between starts.
+
 Use a fresh PostgreSQL control database. The server records the deployment
 profile and generates a new analytical source identity. Existing owner
 registries and development catalogs require a separate migration plan. The
 worker creates disposable analytical scratch space by default. `storage.ducklake` can point to a private disposable directory.
 Keep one consistent configuration and pipeline encryption key across
-replicas. The candidate rejects local journal and control paths, receipt
+replicas. The hosted profile rejects local journal and control paths, receipt
 retention, owner routing settings and local native backups.
 
-## Verified and pending
+## Runtime behavior and verification
 
-- The fixture starts independent processes through the service startup used
-  by the server, then serves the standard HTTP and MCP handlers. It checks
+- The integration fixture launches independent copies of the compiled server
+  from configuration files and uses the standard HTTP and MCP handlers. It checks
   cross-worker native deduplication, cookieless identity and usage. A fresh
   process reads the committed results after both earlier scratch directories
   are removed.
@@ -61,9 +64,9 @@ retention, owner routing settings and local native backups.
   batches. Shutdown reports an incomplete drain if the 30-second flush
   deadline expires. Work still in memory can then be lost. The HTTP shutdown
   has a separate 10-second deadline before the buffer drain.
-- The candidate composes PostgreSQL-backed import uploads, mutation intents,
+- The hosted profile connects PostgreSQL-backed import uploads, mutation intents,
   queries, output jobs and usage with the shared native coordinator.
-  The candidate schedules guarded compaction and runs scheduled S3 pipelines.
+  The worker schedules guarded compaction and runs scheduled S3 pipelines.
   Project and tenant deletion fence access and can reclaim inventoried objects
   after the configured grace and recovery floor permit it. An unresolved
   scheduled S3 attempt keeps physical deletion pending until its destination
@@ -75,5 +78,5 @@ retention, owner routing settings and local native backups.
   records receipt-to-query time, worker kills, and S3 write interruption.
   Production capacity still needs separate measurements.
 
-The [architecture and phase gates](hosted-architecture.md) apply before public
-enablement.
+See the [hosted architecture](hosted-architecture.md) for the storage and
+recovery protocols.

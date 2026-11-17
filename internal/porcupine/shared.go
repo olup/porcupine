@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// SharedConfig enables a PostgreSQL metadata/control store. Event payloads and
-// project-local jobs remain in the owner's SQLite database before DuckLake.
+// SharedConfig selects PostgreSQL control. Worker routing fields apply to the
+// owner-routed deployment only.
 type SharedConfig struct {
 	DatabaseURL   string
 	WorkerID      string

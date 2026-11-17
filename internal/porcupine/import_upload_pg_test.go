@@ -32,7 +32,7 @@ func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 		}
 		s, err := Open(Config{
 			Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
-			Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake, allowUnreleasedHostedFixture: true,
+			Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake,
 		})
 		if err != nil {
 			t.Fatal(err)

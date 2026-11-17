@@ -1,6 +1,6 @@
 # Server configuration
 
-**Unreleased.** These settings belong to the server executable, not the standalone API client. The published v0.14.0 image uses the older environment/Compose setup.
+These settings belong to the server executable. The standalone API client has its own connection settings.
 
 `porcupine init` creates `porcupine.json` with mode 0600 and random bootstrap and pipeline secrets. It refuses to overwrite an existing file. The server reads that file by default. `--config FILE` takes precedence over `PORCUPINE_CONFIG`. A missing explicitly selected file is an error. Environment settings on the server process override matching JSON values. A host shell's environment is not automatically passed into a container.
 
@@ -14,8 +14,8 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 | Section | Common keys and purpose |
 | --- | --- |
-| Top level | `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
-| `acceptance` | `mode`: omitted or `"durable"` preserves journal-backed acceptance; `"buffered"` is reserved and rejected until the hosted writer and shared state providers exist |
+| Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
+| `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
 | `storage` | `journal`, `control`, `ducklake`: local paths; omit `control` for shared PostgreSQL |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
@@ -30,9 +30,12 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `export` | Separate export-result `s3` settings and job/output limits |
 | `backup` | `directory` or separate backup `s3`, plus `interval`, `timeout`, and `retain` |
 
-`PORCUPINE_ACCEPTANCE_MODE` overrides `acceptance.mode`. Selecting shared PostgreSQL does not select buffered acceptance. No available configuration acknowledges live input without the SQLite commit.
+`PORCUPINE_PROFILE` and `PORCUPINE_ACCEPTANCE_MODE` override `profile` and
+`acceptance.mode`. Buffered acknowledgment requires both `profile: "hosted"`
+and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-profile-composition.md)
+for PostgreSQL, object storage, and recovery-floor settings.
 
-The default generated local control path is the journal path plus `.control`. Shared mode requires PostgreSQL control, PostgreSQL DuckLake catalogs, analytical S3, and a separate local journal per worker. See [shared deployment](shared-deployment.md).
+The default generated local control path is the journal path plus `.control`. Owner-routed shared mode requires PostgreSQL control, PostgreSQL DuckLake catalogs, analytical S3, and a separate local journal per worker. See [shared deployment](shared-deployment.md).
 
 `init` explicitly writes `queue.receipt_retention: "0"`. Optional pruning makes acceptance depend on DuckLake after a project's first prune. Changing back to zero stops pruning but does not restore missing receipts. See the [receipt contract](receipts.md#bounded-receipts).
 

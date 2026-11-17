@@ -24,7 +24,7 @@ func TestDuckLakeS3SharedPostgresHostedProjectCleanup(t *testing.T) {
 		MaintenanceInterval: time.Hour, CleanupGrace: 3 * time.Second,
 		RestoreWindow: time.Second, RestoreMaxReaderTime: time.Second, RestoreSafetyMargin: time.Second}
 	base := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
-		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake, allowUnreleasedHostedFixture: true}
+		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake}
 	a, host, closeA := hostedCleanupWorker(t, base)
 	project, _ := sharedJourneyProject(t, host.URL, defaultTenantID, "delete this project")
 	tenant := sharedJourneyHTTP(t, host.URL, http.MethodPost, "/api/v1/tenants", adminToken, []byte(`{"name":"Independent tenant"}`), nil, 201)

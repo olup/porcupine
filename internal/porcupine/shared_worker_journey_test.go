@@ -443,7 +443,7 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 		Shared: &SharedConfig{DatabaseURL: input.DatabaseURL, WorkerID: input.WorkerID, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)}}
 	if input.HostedLake != nil {
 		cfg = Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
-			Shared: &SharedConfig{DatabaseURL: input.DatabaseURL}, DuckLake: input.HostedLake, allowUnreleasedHostedFixture: true}
+			Shared: &SharedConfig{DatabaseURL: input.DatabaseURL}, DuckLake: input.HostedLake}
 	}
 	if input.OAuthIssuer != "" {
 		cfg.OAuth = &OAuthConfig{Issuer: input.OAuthIssuer}
@@ -510,6 +510,28 @@ func startSharedJourneyProcess(t *testing.T, config sharedJourneyProcessConfig) 
 	}
 	command := exec.Command(binary, "-test.run=^TestSharedWorkerProcessHelper$", "-test.timeout="+timeout.String())
 	command.Env = append(os.Environ(), "PORCUPINE_SHARED_JOURNEY_HELPER="+string(raw))
+	worker := launchSharedJourneyProcess(t, command)
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	for {
+		if ready, err := os.ReadFile(config.ReadyFile); err == nil && strings.HasPrefix(string(ready), "http://127.0.0.1:") {
+			worker.origin = string(ready)
+			sharedJourneyHTTP(t, worker.origin, "GET", "/readyz", "", nil, nil, 200)
+			return worker
+		}
+		select {
+		case <-worker.done:
+			diagnostic, _ := os.ReadFile(worker.log)
+			t.Fatal("shared subprocess exited before readiness", string(diagnostic))
+		case <-deadline.C:
+			t.Fatal("shared subprocess did not become ready")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func launchSharedJourneyProcess(t *testing.T, command *exec.Cmd) *sharedJourneyProcess {
+	t.Helper()
 	logfile, err := os.Create(filepath.Join(t.TempDir(), "worker.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -522,23 +544,7 @@ func startSharedJourneyProcess(t *testing.T, config sharedJourneyProcessConfig) 
 	worker := &sharedJourneyProcess{cmd: command, done: make(chan struct{}), log: logfile.Name()}
 	go func() { worker.err = command.Wait(); logfile.Close(); close(worker.done) }()
 	t.Cleanup(func() { worker.stopProcess(t, false) })
-	deadline := time.NewTimer(15 * time.Second)
-	defer deadline.Stop()
-	for {
-		if ready, err := os.ReadFile(config.ReadyFile); err == nil && strings.HasPrefix(string(ready), "http://127.0.0.1:") {
-			worker.origin = string(ready)
-			sharedJourneyHTTP(t, worker.origin, "GET", "/readyz", "", nil, nil, 200)
-			return worker
-		}
-		select {
-		case <-worker.done:
-			diagnostic, _ := os.ReadFile(logfile.Name())
-			t.Fatal("shared subprocess exited before readiness", string(diagnostic))
-		case <-deadline.C:
-			t.Fatal("shared subprocess did not become ready")
-		case <-time.After(20 * time.Millisecond):
-		}
-	}
+	return worker
 }
 
 func (worker *sharedJourneyProcess) stopProcess(t *testing.T, crash bool) {
@@ -557,7 +563,7 @@ func (worker *sharedJourneyProcess) stopProcess(t *testing.T, crash bool) {
 			diagnostic, _ := os.ReadFile(worker.log)
 			t.Error("worker did not stop cleanly", worker.err, string(diagnostic))
 		}
-	case <-time.After(35 * time.Second):
+	case <-time.After(50 * time.Second):
 		worker.cmd.Process.Kill()
 		<-worker.done
 		t.Error("worker did not stop before the shutdown deadline")

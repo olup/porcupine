@@ -48,7 +48,7 @@ func TestDuckLakeS3SharedPostgresHostedScheduledCleanup(t *testing.T) {
 		customerEndpoint = host.URL
 	}
 	base := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
-		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake, allowUnreleasedHostedFixture: true,
+		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake,
 		Pipelines: &output.PipelineConfig{Key: bytes.Repeat([]byte{2}, 32), AllowedS3Endpoints: []string{customerEndpoint}},
 	}
 	s, host, _ := hostedCleanupWorker(t, base)

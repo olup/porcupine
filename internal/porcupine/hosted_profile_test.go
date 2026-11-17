@@ -3,16 +3,18 @@ package porcupine
 import (
 	"database/sql"
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
@@ -20,21 +22,17 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 	skipInShort(t)
 	fixture := nativeS3Fixture(t)
 	dsn := sharedPostgresDSN(t)
-	lake := lakeapi.DuckLakeConfig{
-		PostgresURL: dsn, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1,
-		MaxOpenProjects: 2, CleanupGrace: 10 * 24 * time.Hour,
-		RestoreWindow: 24 * time.Hour, RestoreMaxReaderTime: time.Hour, RestoreSafetyMargin: time.Hour,
-	}
-	base := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
-		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake}
-	if _, err := Open(base); err == nil || !strings.Contains(err.Error(), "startup is unavailable") {
-		t.Fatalf("public startup must stay gated, got %v", err)
+	serverBinary := filepath.Join(t.TempDir(), "porcupine-server")
+	buildServer := exec.CommandContext(t.Context(), "go", "build", "-o", serverBinary, "./cmd/porcupine")
+	buildServer.Dir = "../.."
+	buildServer.Env = append(os.Environ(), "CGO_ENABLED=1")
+	if result, err := buildServer.CombinedOutput(); err != nil {
+		t.Fatal("build server", err, string(result))
 	}
 	launch := func() (*sharedJourneyProcess, string) {
+		t.Helper()
 		scratch := t.TempDir()
-		local := lake
-		local.Directory = scratch
-		return startSharedJourneyProcess(t, sharedJourneyProcessConfig{DatabaseURL: dsn, HostedLake: &local}), scratch
+		return startHostedProfileBinary(t, serverBinary, dsn, scratch, fixture), scratch
 	}
 	a, scratchA := launch()
 	b, scratchB := launch()
@@ -141,5 +139,69 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 	err = control.QueryRow("SELECT (SELECT count(*) FROM shared_project_owners),(SELECT count(*) FROM shared_workers),(SELECT coalesce(sum(live_events),0) FROM usage_rollups WHERE project_id=$1)", project).Scan(&owners, &workers, &live)
 	if err != nil || owners != 0 || workers != 0 || live != 4 {
 		t.Fatalf("shared control state owners=%d registrations=%d live=%d: %v", owners, workers, live, err)
+	}
+}
+
+func startHostedProfileBinary(t *testing.T, binary, dsn, scratch string, fixture duckLakeS3Fixture) *sharedJourneyProcess {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]any{
+		"profile": "hosted", "listen": addr, "bootstrap_token": adminToken,
+		"acceptance": map[string]string{"mode": "buffered"},
+		"shared":     map[string]string{"control_database_url": dsn},
+		"storage":    map[string]string{"ducklake": scratch},
+		"ducklake": map[string]any{
+			"memory_mb": 128, "threads": 1, "max_open_projects": 2,
+			"cleanup_grace": "240h", "restore_window": "24h",
+			"restore_max_reader_time": "1h", "restore_safety_margin": "1h",
+			"s3": map[string]any{
+				"bucket": fixture.storage.Bucket, "prefix": fixture.storage.Prefix, "region": fixture.storage.Region,
+				"endpoint": fixture.storage.Endpoint, "access_key_id": fixture.storage.AccessKeyID,
+				"secret_access_key": fixture.storage.SecretAccessKey, "path_style": true, "ca_cert_file": fixture.storage.CACertFile,
+			},
+		},
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configFile := filepath.Join(t.TempDir(), "porcupine.json")
+	if err := os.WriteFile(configFile, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "--config", configFile)
+	command.Env = slices.DeleteFunc(os.Environ(), func(item string) bool {
+		return strings.HasPrefix(item, "PORCUPINE_")
+	})
+	worker := launchSharedJourneyProcess(t, command)
+	worker.origin = "http://" + addr
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if response, err := client.Get(worker.origin + "/readyz"); err == nil {
+			response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return worker
+			}
+		}
+		select {
+		case <-worker.done:
+			diagnostic, _ := os.ReadFile(worker.log)
+			t.Fatal("hosted binary exited before readiness", worker.err, string(diagnostic))
+		case <-deadline.C:
+			diagnostic, _ := os.ReadFile(worker.log)
+			t.Fatal("hosted binary did not become ready", string(diagnostic))
+		case <-ticker.C:
+		}
 	}
 }

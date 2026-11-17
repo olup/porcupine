@@ -28,14 +28,13 @@ import (
 )
 
 type Config struct {
-	allowUnreleasedHostedFixture bool
-	Profile                      DeploymentProfile
-	DBPath                       string
-	ControlDBPath                string
-	BootstrapToken               string
-	QueueMaxEvents               int
-	QueueMaxBytes                int64
-	AcceptanceMode               AcceptanceMode
+	Profile        DeploymentProfile
+	DBPath         string
+	ControlDBPath  string
+	BootstrapToken string
+	QueueMaxEvents int
+	QueueMaxBytes  int64
+	AcceptanceMode AcceptanceMode
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
 	ReceiptRetention    time.Duration
@@ -177,9 +176,6 @@ func Open(c Config) (*Service, error) {
 		return nil, err
 	}
 	if c.Profile == ProfileHosted {
-		if !c.allowUnreleasedHostedFixture {
-			return nil, errors.New("hosted profile startup is unavailable pending physical deletion and recovery verification")
-		}
 		return openHostedProfile(c)
 	}
 	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)

@@ -31,7 +31,7 @@ func TestAcceptanceConfigurationContract(t *testing.T) {
 	}
 }
 
-func TestHostedConfigurationRefusesUnsafeInputsAndStaysGated(t *testing.T) {
+func TestHostedConfigurationRefusesUnsafeInputs(t *testing.T) {
 	t.Parallel()
 	const candidate = `{"profile":"hosted","acceptance":{"mode":"buffered"},"shared":{"control_database_url":"postgres://fixture@127.0.0.1/porcupine?sslmode=disable"},"ducklake":{"s3":{"bucket":"profile-fixture","prefix":"scratch","region":"us-east-1"},"cleanup_grace":"240h","restore_window":"168h","restore_max_reader_time":"20m","restore_safety_margin":"1h"}}`
 	parse := func(raw string) porcupine.Config {
@@ -52,9 +52,6 @@ func TestHostedConfigurationRefusesUnsafeInputsAndStaysGated(t *testing.T) {
 	}
 	if err := porcupine.ValidateConfig(c); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := porcupine.Open(c); err == nil || !strings.Contains(err.Error(), "startup is unavailable") {
-		t.Fatalf("unexpected public hosted startup: %v", err)
 	}
 	for _, fragment := range []string{
 		`,"storage":{"journal":"local.sqlite"}`,
