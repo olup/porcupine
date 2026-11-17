@@ -47,7 +47,9 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 	}
 	ctx := context.Background()
 	clock := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
-	s, err := Open(Config{DBPath: filepath.Join(b.TempDir(), "capture.db"), BootstrapToken: adminToken, QueueMaxEvents: 110000, Clock: func() time.Time { return clock }})
+	var receipt atomic.Int64
+	receipt.Store(clock.UnixNano())
+	s, err := Open(Config{DBPath: filepath.Join(b.TempDir(), "capture.db"), BootstrapToken: adminToken, QueueMaxEvents: 110000, Clock: func() time.Time { return time.Unix(0, receipt.Load()).UTC() }})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -108,7 +110,7 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 	capture := func(payload []byte) {
 		// Advance receipt time without sleeping; keep the bounded run in one window
 		// while avoiding artificial created_at ties for every queued chunk.
-		clock = clock.Add(10 * time.Millisecond)
+		receipt.Add(int64(10 * time.Millisecond))
 		r := httptest.NewRequest(http.MethodPost, "/batch/", bytes.NewReader(payload))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
