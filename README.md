@@ -80,6 +80,20 @@ make compat-install
 make compat             # pinned PostHog SDKs
 ```
 
+Run `./scripts/aws-emulator-test.sh` for an optional check against the official
+AWS Emulator. It runs the versioned import publication and recovery test and the
+native S3 restart and project deletion test. It requires Docker, the AWS CLI,
+and the native Go build prerequisites above. The script starts a disposable
+HTTPS emulator on `127.0.0.1:19297`, uses its generated credentials and
+certificate, and starts the existing local PostgreSQL fixture. Set
+`PORCUPINE_AWS_EMULATOR_PORT` to a free port if needed. Pass a Go test regex as
+the first argument to select other tests in `internal/porcupine`.
+
+The runner builds the emulator image on first use and prints the emulator version
+on every run. The emulator keeps state in memory and has limited IAM policy
+evaluation. [AWS Emulator
+documentation](https://docs.aws.amazon.com/emulator/latest/userguide/)
+
 For the local documentation preview, run `make docs-preview`. Go downloads and verifies the pinned Hugo binary on the first build, then reuses it from your user cache. No other runtime is needed. The preview is available at `http://127.0.0.1:8787/porcupine/docs/`.
 
 [Architecture](docs/architecture.md) · [MIT license](LICENSE)
