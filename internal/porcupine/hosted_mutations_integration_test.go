@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 )
@@ -195,6 +196,20 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	_, err = b.service.getEventMutation(actorContext, &EventMutationInput{ID: other, MutationID: first.Body.MutationID})
 	mutationErrorStatus(t, err, 404)
+	parser, err := fb.publisher.objects.PutImmutableImportCheckpoint(ctx, scope, "history", "events", []byte(`{"generation":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "imported", DistinctID: "history", SourceID: "archive", Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: "2026-11-17T01:00:00Z"}
+	historical, err := fb.CommitImport(ctx, lakeapi.ImportChunkInput{
+		Key:      lakeapi.ImportChunkKey{Scope: scope, JobID: "history", FileID: "events", ExpectedEnd: 1, Phase: "bytes"},
+		TenantID: defaultTenantID, ManifestSHA256: hash("manifest"), SourceID: "archive", Format: "native", InputSHA256: hash("archive byte"),
+		Parser: parser, LineNumber: 1, Parsed: importer.ImportCounts{Rows: 1},
+		Candidates: []lakeapi.ImportCandidate{{Position: 1, Row: importer.Row{Kind: "events", Event: imported}}},
+	})
+	if err != nil || historical.Sequence != 4 || historical.AcceptedImport != 1 {
+		t.Fatal(historical, err)
+	}
 	assertDeleteGate := func(project string, want bool) {
 		t.Helper()
 		err := fb.withHostedMutationProject(ctx, project, func(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string) error {
@@ -279,7 +294,9 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := fb.native.PendingNativeEffects(ctx, scope, 2, 5)
-	if err != nil || len(page.Evidence) != 2 || page.NativeHighWater != 4 || page.AcknowledgedThrough != 4 || page.Evidence[1].Totals[0].Live != 2 {
+	if err != nil || len(page.Evidence) != 3 || page.NativeHighWater != 5 || page.AcknowledgedThrough != 5 ||
+		page.Evidence[0].Kind != lakeapi.NativeCommitMutation || page.Evidence[1].Kind != lakeapi.NativeCommitImport || page.Evidence[2].Kind != lakeapi.NativeCommitMutation ||
+		page.Evidence[2].Totals[0].Live != 2 || page.Evidence[2].Totals[0].Import != 1 {
 		t.Fatal(page, err)
 	}
 	revokeActor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:edit"})
