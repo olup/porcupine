@@ -89,7 +89,7 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 	if limit < 1 || limit > 200 || len(input.Cursor) > 128 {
 		return nil, apiError(400, "invalid tenant pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>? ORDER BY id LIMIT ?`, input.Cursor, limit+1)
+	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1 ORDER BY id LIMIT $2`, input.Cursor, limit+1)
 	if err != nil {
 		return nil, apiError(503, "tenant storage unavailable")
 	}
@@ -162,7 +162,7 @@ func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdat
 	if input.Body.IngestionAllowed != nil {
 		allowed = *input.Body.IngestionAllowed
 	}
-	t, err := scanTenant(s.db.QueryRowContext(ctx, `UPDATE tenants SET name=coalesce(?,name),ingestion_allowed=coalesce(?,ingestion_allowed) WHERE id=? RETURNING `+tenantColumns, name, allowed, input.TenantID))
+	t, err := scanTenant(s.control.QueryRowContext(ctx, `UPDATE tenants SET name=coalesce($1,name),ingestion_allowed=coalesce($2,ingestion_allowed) WHERE id=$3 RETURNING `+tenantColumns, name, allowed, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "tenant not found")
 	}
@@ -182,7 +182,7 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 	if err := validateTenantBudgets(b); err != nil {
 		return nil, err
 	}
-	t, err := scanTenant(s.db.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=?,hot_query_max_concurrent=?,hot_query_timeout_ms=?,hot_query_max_rows=?,hot_query_max_result_bytes=? WHERE id=? RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
+	t, err := scanTenant(s.control.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5 WHERE id=$6 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "tenant not found")
 	}
@@ -211,7 +211,7 @@ func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageI
 	var allowed bool
 	var limit sql.NullInt64
 	var used int64
-	err := s.db.QueryRowContext(ctx, `SELECT t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=? WHERE t.id=?`, start.Format(time.RFC3339), input.TenantID).Scan(&allowed, &limit, &used)
+	err := s.control.QueryRowContext(ctx, `SELECT t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE t.id=$2`, start.Format(time.RFC3339), input.TenantID).Scan(&allowed, &limit, &used)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "tenant not found")
 	}

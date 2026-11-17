@@ -23,7 +23,10 @@ type ServiceKeyCreateInput struct {
 }
 
 func (s *Service) initializeServiceKeys(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS service_api_keys(
+	if s.shared != nil {
+		return nil
+	}
+	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS service_api_keys(
 		principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),
 		client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
 		audience TEXT NOT NULL CHECK(audience IN ('api','mcp'))
@@ -60,7 +63,7 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 		return nil, err
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
@@ -92,11 +95,11 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	id := newID()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES(?,?,?,?,?,?,?)`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
 		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES(?,?,?)`, id, parent.ID, body.Audience); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES($1,$2,$3)`, id, parent.ID, body.Audience); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
 	if err := tx.Commit(); err != nil {
@@ -120,9 +123,9 @@ func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource stri
 	}
 	a := actor{serviceKey: true}
 	var permissions, projects string
-	err := s.db.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id FROM service_api_keys b
+	err := s.control.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id FROM service_api_keys b
 		JOIN access_keys k ON k.id=b.principal_id JOIN access_keys parent ON parent.id=b.client_id
-		WHERE k.token_hash=? AND b.audience=? AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
+		WHERE k.token_hash=$1 AND b.audience=$2 AND k.revoked_at IS NULL AND parent.revoked_at IS NULL`, hash(raw), audience).Scan(&a.ID, &permissions, &projects, &a.SourceID)
 	if err != nil {
 		return actor{}, err
 	}

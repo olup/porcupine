@@ -177,7 +177,22 @@ func (s *duckLakeStore) SourceID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer s.mu.Unlock()
-	return s.sourceIDLocked(ctx)
+	id, err := s.sourceIDLocked(ctx)
+	if err != nil {
+		return "", err
+	}
+	if s.sharedCatalog != nil {
+		seconds := s.config.MetadataTimeoutSeconds
+		if seconds == 0 {
+			seconds = defaultDuckLakeMetadataTimeoutSeconds
+		}
+		probe, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+		defer cancel()
+		if err := s.sharedCatalog.PingContext(probe); err != nil {
+			return "", errors.New("shared analytical metadata unavailable")
+		}
+	}
+	return id, nil
 }
 
 func (s *duckLakeStore) sourceIDLocked(ctx context.Context) (string, error) {

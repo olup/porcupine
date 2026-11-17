@@ -145,7 +145,7 @@ func (s *Service) claimExport(ctx context.Context, job storedExport) (storedExpo
 	if started == "" {
 		started = s.clock().UTC().Format(time.RFC3339Nano)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE export_jobs SET state='running',attempt_id=?,attempts=attempts+1,started_at=?,rows=0,bytes=0,decoded_bytes=0,file_count=0,error='' WHERE id=? AND state='queued' AND cancel_requested=0 AND cleanup_pending=0`, attempt, started, job.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE export_jobs SET state='running',attempt_id=$1,attempts=attempts+1,started_at=$2,rows=0,bytes=0,decoded_bytes=0,file_count=0,error='' WHERE id=$3 AND state='queued' AND cancel_requested=0 AND cleanup_pending=0`, attempt, started, job.ID)
 	if err != nil {
 		return storedExport{}, err
 	}
@@ -158,7 +158,7 @@ func (s *Service) claimExport(ctx context.Context, job storedExport) (storedExpo
 
 func (s *Service) exportAdmission(ctx context.Context, job storedExport) (bool, error) {
 	var barrier, pending int64
-	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=? AND id<=?)+(SELECT count(*) FROM mutation_outbox WHERE project_id=? AND seq<=?),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox)`, job.ProjectID, job.EventWatermark, job.ProjectID, job.MutationWatermark).Scan(&barrier, &pending)
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=$1 AND id<=$2)+(SELECT count(*) FROM mutation_outbox WHERE project_id=$3 AND seq<=$4),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox)`, job.ProjectID, job.EventWatermark, job.ProjectID, job.MutationWatermark).Scan(&barrier, &pending)
 	if err != nil {
 		return false, err
 	}
@@ -230,6 +230,9 @@ func (s *Service) monitorExport(ctx context.Context, job storedExport, cancel co
 }
 
 func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error {
+	if err := s.requireSharedProjectOwner(ctx, job.ProjectID); err != nil {
+		return err
+	}
 	current, err := s.loadExport(ctx, job.ProjectID, job.ID)
 	if err != nil {
 		return errExportPressure
@@ -297,7 +300,7 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result ex
 	}
 	completed := s.clock().UTC()
 	expires := completed.Add(time.Duration(s.exports.config.RetentionHours) * time.Hour)
-	updated, err := tx.ExecContext(ctx, `UPDATE export_jobs SET state='succeeded',sql='',parameters='{}',rows=?,bytes=?,decoded_bytes=?,file_count=?,columns_json=?,completed_at=?,expires_at=?,expires_at_ms=?,error='',cleanup_pending=0 WHERE id=? AND project_id=? AND attempt_id=? AND state='running' AND cancel_requested=0`, sink.rows, sink.compressed, sink.decoded, sink.files, string(columns), completed.Format(time.RFC3339Nano), expires.Format(time.RFC3339Nano), expires.UnixMilli(), job.ID, job.ProjectID, job.AttemptID)
+	updated, err := tx.ExecContext(ctx, `UPDATE export_jobs SET state='succeeded',sql='',parameters='{}',rows=$1,bytes=$2,decoded_bytes=$3,file_count=$4,columns_json=$5,completed_at=$6,expires_at=$7,expires_at_ms=$8,error='',cleanup_pending=0 WHERE id=$9 AND project_id=$10 AND attempt_id=$11 AND state='running' AND cancel_requested=0`, sink.rows, sink.compressed, sink.decoded, sink.files, string(columns), completed.Format(time.RFC3339Nano), expires.Format(time.RFC3339Nano), expires.UnixMilli(), job.ID, job.ProjectID, job.AttemptID)
 	if err != nil {
 		return errExportSink
 	}
@@ -351,7 +354,7 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 		sqlKeep = ""
 		parameters = []byte("{}")
 	}
-	s.db.ExecContext(ctx, `UPDATE export_jobs SET state=?,error=?,cleanup_pending=1,completed_at=?,sql=?,parameters=? WHERE id=? AND attempt_id=? AND state='running'`, state, code, completed, sqlKeep, string(parameters), job.ID, job.AttemptID)
+	s.db.ExecContext(ctx, `UPDATE export_jobs SET state=$1,error=$2,cleanup_pending=1,completed_at=$3,sql=$4,parameters=$5 WHERE id=$6 AND attempt_id=$7 AND state='running'`, state, code, completed, sqlKeep, string(parameters), job.ID, job.AttemptID)
 	cleanup, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cleanupCancel()
 	if latest, err := s.loadExport(cleanup, job.ProjectID, job.ID); err == nil {
@@ -362,11 +365,11 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 func (s *Service) terminalExport(job storedExport, state ExportState, code string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s.db.ExecContext(ctx, `UPDATE export_jobs SET state=?,error=?,cleanup_pending=1,completed_at=?,sql='',parameters='{}' WHERE id=? AND state='queued'`, state, code, s.clock().UTC().Format(time.RFC3339Nano), job.ID)
+	s.db.ExecContext(ctx, `UPDATE export_jobs SET state=$1,error=$2,cleanup_pending=1,completed_at=$3,sql='',parameters='{}' WHERE id=$4 AND state='queued'`, state, code, s.clock().UTC().Format(time.RFC3339Nano), job.ID)
 }
 
 func (s *Service) expireExports(ctx context.Context) {
-	s.db.ExecContext(ctx, `UPDATE export_jobs SET state='expired',cleanup_pending=1,sql='',parameters='{}' WHERE state='succeeded' AND expires_at_ms>0 AND expires_at_ms<=?`, s.clock().UnixMilli())
+	s.db.ExecContext(ctx, `UPDATE export_jobs SET state='expired',cleanup_pending=1,sql='',parameters='{}' WHERE state='succeeded' AND expires_at_ms>0 AND expires_at_ms<=$1`, s.clock().UnixMilli())
 }
 
 func (s *Service) nextCleanupExport(ctx context.Context) (storedExport, bool) {
@@ -378,7 +381,7 @@ func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 	if s.exports == nil || s.exports.store == nil {
 		return errExportSink
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT attempt_id,file_index,object_key,upload_id FROM export_files WHERE job_id=? ORDER BY attempt_id,file_index`, job.ID)
+	rows, err := s.db.QueryContext(ctx, `SELECT attempt_id,file_index,object_key,upload_id FROM export_files WHERE job_id=$1 ORDER BY attempt_id,file_index`, job.ID)
 	if err != nil {
 		return err
 	}
@@ -405,10 +408,10 @@ func (s *Service) cleanupExport(ctx context.Context, job storedExport) error {
 		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {
 			return err
 		}
-		if _, err = s.db.ExecContext(ctx, `DELETE FROM export_files WHERE job_id=? AND attempt_id=? AND file_index=?`, job.ID, file.attempt, file.index); err != nil {
+		if _, err = s.db.ExecContext(ctx, `DELETE FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND file_index=$3`, job.ID, file.attempt, file.index); err != nil {
 			return err
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE export_jobs SET cleanup_pending=0 WHERE id=? AND state!='running'`, job.ID)
+	_, err = s.db.ExecContext(ctx, `UPDATE export_jobs SET cleanup_pending=0 WHERE id=$1 AND state!='running'`, job.ID)
 	return err
 }

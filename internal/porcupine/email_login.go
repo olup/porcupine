@@ -138,28 +138,32 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 	email, err := normalizeEmail(r.PostForm.Get("email"))
 	ip, ipErr := s.clientIP(r)
 	send := false
-	if err == nil && ipErr == nil && browser.reserveEmailDelivery(now, email, hash(ip.String())) {
+	var finishDelivery func()
+	if err == nil && ipErr == nil {
+		finishDelivery, _ = browser.reserveEmailAttempt(now, email, hash(ip.String()))
+	}
+	if finishDelivery != nil {
 		// Unknown accounts, throttled requests and SMTP failures produce the same browser response.
 		id, lookupErr := s.lookupActiveEmailID(r.Context(), email)
 		if lookupErr == nil && id != "" {
 			challenge.principal = id
 			send = true
 		} else {
-			browser.finishEmailDelivery()
+			finishDelivery()
 		}
 	}
 	session.emailChallenge = challenge
 	raw, saved := browser.save(session)
 	if !saved {
 		if send {
-			browser.finishEmailDelivery()
+			finishDelivery()
 		}
 		http.Error(w, "Login capacity reached", 503)
 		return
 	}
 	if send {
 		go func() {
-			defer browser.finishEmailDelivery()
+			defer finishDelivery()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			if s.oauth.config.Email.SendCode(ctx, email, code) != nil {
@@ -176,6 +180,9 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 
 // Check and decrement the live session atomically, including when browsers race or replay a form.
 func (o *oauthBrowser) redeemEmailCode(key, code string, now time.Time) (*oidcBrowserSession, bool) {
+	if o.sharedDB != nil {
+		return o.redeemSharedEmailCode(key, code, now)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	session := o.sessions[key]
@@ -214,7 +221,7 @@ func (s *Service) verifyEmailCode(w http.ResponseWriter, r *http.Request) {
 		}{session.csrf, true})
 		return
 	}
-	if _, err := s.loadOAuthHuman(r.Context(), s.db, verified.humanID); err != nil {
+	if _, err := s.loadOAuthHuman(r.Context(), s.control, verified.humanID); err != nil {
 		http.Error(w, "Access revoked", 403)
 		return
 	}

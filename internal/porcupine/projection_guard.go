@@ -122,7 +122,7 @@ func (s *Service) initializeBackupGuard(ctx context.Context) error {
 	if s.projectionGuard == nil {
 		return nil
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('online_backup_guard','flock-v1'),('online_backup_lock_path',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, s.projectionGuard.path)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('online_backup_guard','flock-v1'),('online_backup_lock_path',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, s.projectionGuard.path)
 	return err
 }
 

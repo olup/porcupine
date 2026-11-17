@@ -192,6 +192,21 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			problem(w, http.StatusForbidden, "required permission and project access missing")
 			return
 		}
+		if s.shared != nil && access.ProjectParameter != "" && projectOperationNeedsOwner(ctx.Operation().OperationID) {
+			project := ctx.Param(access.ProjectParameter)
+			if ctx.Operation().OperationID == "delete-project" {
+				var completed bool
+				if err := s.control.QueryRowContext(ctx.Context(), `SELECT completed FROM project_deletions WHERE project_id=$1`, project).Scan(&completed); err == nil && completed {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				ctx = huma.WithContext(ctx, allowSharedDeletedProject(ctx.Context()))
+				req = req.WithContext(ctx.Context())
+			}
+			if s.forwardSharedProject(w, req, project) {
+				return
+			}
+		}
 		if access.ProjectParameter != "" && ctx.Operation().OperationID != "delete-project" {
 			child, finish, active := s.activity.begin(ctx.Context(), ctx.Param(access.ProjectParameter))
 			if !active {
@@ -200,6 +215,12 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
+			if s.shared != nil && projectOperationNeedsOwner(ctx.Operation().OperationID) {
+				if err := s.ensureSharedProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
+					writeSharedRouteProblem(w, err)
+					return
+				}
+			}
 		}
 		if encoding := strings.ToLower(strings.TrimSpace(ctx.Header("Content-Encoding"))); encoding != "" && encoding != "identity" {
 			_, w := humago.Unwrap(ctx)
@@ -275,7 +296,7 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 
 func (s *Service) managementListProjects(ctx context.Context, input *ProjectListInput) (*ProjectListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE (?='' OR tenant_id=?) ORDER BY created_at,id`, input.TenantID, input.TenantID)
+	rows, err := s.control.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE ($1='' OR tenant_id=$2) ORDER BY created_at,id`, input.TenantID, input.TenantID)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -311,7 +332,7 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 	}
 	out := &ProjectRenameOutput{}
 	p := &out.Body.Project
-	err = s.db.QueryRowContext(ctx, `UPDATE projects SET name=? WHERE id=? RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
+	err = s.control.QueryRowContext(ctx, `UPDATE projects SET name=$1 WHERE id=$2 RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "project not found")
 	}
@@ -355,25 +376,33 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if mode == ingestionMixed {
 		raw = token()
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES(?,?,?,?,?)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
+	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$3,$4,$5)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
 	if err == nil && mode == ingestionMixed {
 		projects, _ := json.Marshal([]string{p.ID})
-		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,?,?,?,?,?)`, newID(), p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
+		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, newID(), p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
 	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(500, "storage error")
+	}
+	if s.shared != nil {
+		if err := s.assignSharedProjectOwner(ctx, p.ID); err != nil {
+			return nil, apiError(503, "project ownership registration unavailable")
+		}
+		if err := s.ensureSharedProjectLocal(ctx, p.ID, principal(ctx)); err != nil {
+			return nil, err
+		}
 	}
 	return &ProjectCreateOutput{Body: ProjectCreated{Project: p, IngestToken: raw}}, nil
 }
 
 func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessKeyListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
+	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
 		coalesce(b.client_id,''),coalesce(b.audience,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
@@ -417,7 +446,7 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a actor, name str
 	for _, project := range projects {
 		if project != "*" {
 			var n int
-			if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=?`, project).Scan(&n); err != nil {
+			if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1`, project).Scan(&n); err != nil {
 				return apiError(500, "storage error")
 			}
 			if n == 0 {
@@ -450,7 +479,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	id, raw := newID(), token()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,?,?,?,?)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
+	_, err = s.control.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -458,7 +487,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 }
 
 func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDeleteInput) (*struct{}, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -468,7 +497,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 		return nil, apiError(500, "storage error")
 	}
 	var permissions string
-	err = tx.QueryRowContext(ctx, `SELECT permissions FROM access_keys WHERE id=? AND revoked_at IS NULL`, input.ID).Scan(&permissions)
+	err = tx.QueryRowContext(ctx, `SELECT permissions FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, input.ID).Scan(&permissions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "active key not found")
 	}
@@ -482,19 +511,9 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if slices.Contains(granted, "instance:admin") {
 		// Human grants, interactive-only client registrations, and service keys are
 		// dependent credentials. Keep an independent recovery administrator.
-		var replacement bool
 		static := s.oauth == nil || s.oauth.config.AllowLegacyKeys
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(
- SELECT 1 FROM access_keys k WHERE k.id<>? AND k.revoked_at IS NULL
- AND EXISTS(SELECT 1 FROM json_each(k.permissions) WHERE value='instance:admin')
- AND (k.id=(SELECT value FROM metadata WHERE key='oauth_bootstrap_id')
- OR (? AND EXISTS(SELECT 1 FROM oauth_clients c, json_each(c.grant_types) g
- WHERE c.client_id=k.id AND g.value='client_credentials'))
- OR (? AND k.id NOT IN (
- SELECT client_id FROM oauth_clients UNION ALL SELECT principal_id FROM email_humans
- UNION ALL SELECT principal_id FROM oidc_humans
- UNION ALL SELECT principal_id FROM service_api_keys UNION ALL SELECT principal_id FROM oauth_interactive_grants))))`,
-			input.ID, s.oauth != nil, static).Scan(&replacement)
+		replacement, replacementErr := independentAdminAvailable(ctx, tx, input.ID, s.oauth != nil, static)
+		err = replacementErr
 		if err != nil {
 			return nil, apiError(500, "storage error")
 		}
@@ -502,7 +521,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 			return nil, apiError(409, "cannot revoke the last independent administrator")
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), input.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=$1 WHERE id=$2`, now(), input.ID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {
@@ -511,8 +530,43 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	return nil, nil
 }
 
+func independentAdminAvailable(ctx context.Context, tx *sql.Tx, excluded string, oauth, static bool) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,coalesce(c.grant_types,''),
+k.id=coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),''),
+EXISTS(SELECT 1 FROM oauth_clients WHERE client_id=k.id)
+OR EXISTS(SELECT 1 FROM email_humans WHERE principal_id=k.id)
+OR EXISTS(SELECT 1 FROM oidc_humans WHERE principal_id=k.id)
+OR EXISTS(SELECT 1 FROM service_api_keys WHERE principal_id=k.id)
+OR EXISTS(SELECT 1 FROM oauth_interactive_grants WHERE principal_id=k.id)
+FROM access_keys k LEFT JOIN oauth_clients c ON c.client_id=k.id WHERE k.id<>$1 AND k.revoked_at IS NULL`, excluded)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, permissions, grants string
+		var bootstrap, dependent bool
+		if err := rows.Scan(&id, &permissions, &grants, &bootstrap, &dependent); err != nil {
+			return false, err
+		}
+		var parsedPermissions, parsedGrants []string
+		if err := json.Unmarshal([]byte(permissions), &parsedPermissions); err != nil {
+			return false, err
+		}
+		if grants != "" {
+			if err := json.Unmarshal([]byte(grants), &parsedGrants); err != nil {
+				return false, err
+			}
+		}
+		if slices.Contains(parsedPermissions, "instance:admin") && (bootstrap || oauth && slices.Contains(parsedGrants, "client_credentials") || static && !dependent) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata,is_imported FROM events WHERE project_id=? AND identity_snapshot='' ORDER BY id DESC LIMIT ?`, input.ID, input.Limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata,is_imported FROM events WHERE project_id=$1 AND identity_snapshot='' ORDER BY id DESC LIMIT $2`, input.ID, input.Limit)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}

@@ -177,7 +177,7 @@ func TestProjectPurgeOIDCBindingsAfterRestart(t *testing.T) {
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)
-	seeder := &Service{db: s.db, oauth: &oauthRuntime{oidc: &interactiveOIDC{issuer: "https://identity.example", bindings: map[string]actor{"member": {Permissions: []string{"events:read"}, Projects: []string{removed, keep}}}}}}
+	seeder := &Service{db: s.db, control: s.db, oauth: &oauthRuntime{oidc: &interactiveOIDC{issuer: "https://identity.example", bindings: map[string]actor{"member": {Permissions: []string{"events:read"}, Projects: []string{removed, keep}}}}}}
 	if err := seeder.initializeOIDCHumans(t.Context()); err != nil {
 		t.Fatal(err)
 	}

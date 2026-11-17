@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -47,6 +46,9 @@ func (o *oauthBrowser) cookie(w http.ResponseWriter, value string, age int) {
 	http.SetCookie(w, &http.Cookie{Name: o.cookieName(), Value: value, Path: "/", HttpOnly: true, Secure: o.secure, SameSite: http.SameSiteLaxMode, MaxAge: age})
 }
 func (o *oauthBrowser) save(session *oidcBrowserSession) (string, bool) {
+	if o.sharedDB != nil {
+		return o.saveSharedSession(session)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for key, value := range o.sessions {
@@ -67,6 +69,9 @@ func (o *oauthBrowser) session(r *http.Request) (string, *oidcBrowserSession) {
 		return "", nil
 	}
 	key := hash(cookie.Value)
+	if o.sharedDB != nil {
+		return key, o.loadSharedSession(r.Context(), key)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	session := o.sessions[key]
@@ -78,6 +83,9 @@ func (o *oauthBrowser) session(r *http.Request) (string, *oidcBrowserSession) {
 	return key, &copy
 }
 func (o *oauthBrowser) consume(key string) bool {
+	if o.sharedDB != nil {
+		return o.consumeSharedSession(key)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.sessions[key] == nil {
@@ -194,12 +202,12 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Authorization request expired", 400)
 		return
 	}
-	human, err := s.loadOAuthHuman(r.Context(), s.db, session.humanID)
+	human, err := s.loadOAuthHuman(r.Context(), s.control, session.humanID)
 	if err != nil {
 		http.Error(w, "Project access revoked", 403)
 		return
 	}
-	client, err := loadOAuthClient(r.Context(), s.db, request.ClientID)
+	client, err := loadOAuthClient(r.Context(), s.control, request.ClientID)
 	if err != nil {
 		http.Error(w, "Client access revoked", 403)
 		return
@@ -216,12 +224,28 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	admin := slices.Contains(permissions, "instance:admin")
 	if slices.Contains(projectsOffered, "*") && !admin {
 		// A wildcard in both upstream grants still requires choosing concrete projects here.
-		var encoded string
-		err = s.db.QueryRowContext(r.Context(), `SELECT json_group_array(id) FROM (SELECT id FROM projects ORDER BY id LIMIT 1000)`).Scan(&encoded)
-		if err != nil || json.Unmarshal([]byte(encoded), &projectsOffered) != nil {
+		rows, queryErr := s.control.QueryContext(r.Context(), `SELECT id FROM projects ORDER BY id LIMIT 1000`)
+		if queryErr != nil {
 			http.Error(w, "Project access unavailable", 503)
 			return
 		}
+		projectsOffered = []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				http.Error(w, "Project access unavailable", 503)
+				return
+			}
+			projectsOffered = append(projectsOffered, id)
+		}
+		queryErr = rows.Err()
+		rows.Close()
+		if queryErr != nil {
+			http.Error(w, "Project access unavailable", 503)
+			return
+		}
+
 	}
 	projectsOffered = slices.DeleteFunc(projectsOffered, func(project string) bool {
 		return !interactiveProjectsAllowed(human, client.actor, permissions, []string{project})
@@ -274,7 +298,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	o.cookie(w, "", -1)
 	if decision == "deny" {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE oauth_authorization_requests SET consumed=1 WHERE request_hash=? AND consumed=0`, hash(request.ID)); err != nil {
+		if _, err := s.control.ExecContext(r.Context(), `UPDATE oauth_authorization_requests SET consumed=1 WHERE request_hash=$1 AND consumed=0`, hash(request.ID)); err != nil {
 			http.Error(w, "Authorization could not be completed", 503)
 			return
 		}

@@ -89,19 +89,19 @@ func dailyCookielessKey(tx *sql.Tx, day string) ([]byte, error) {
 		return nil, errors.New("cookieless clock moved before the active identity day")
 	}
 	var secret []byte
-	err := tx.QueryRow(`SELECT secret FROM cookieless_keys WHERE day=?`, day).Scan(&secret)
+	err := tx.QueryRow(`SELECT secret FROM cookieless_keys WHERE day=$1`, day).Scan(&secret)
 	if errors.Is(err, sql.ErrNoRows) {
 		secret = make([]byte, 32)
 		if _, err = rand.Read(secret); err != nil {
 			return nil, err
 		}
-		if _, err = tx.Exec(`INSERT INTO cookieless_keys(day,secret) VALUES(?,?)`, day, secret); err != nil {
+		if _, err = tx.Exec(`INSERT INTO cookieless_keys(day,secret) VALUES($1,$2)`, day, secret); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(`DELETE FROM cookieless_keys WHERE day<?`, day); err != nil {
+	if _, err = tx.Exec(`DELETE FROM cookieless_keys WHERE day<$1`, day); err != nil {
 		return nil, err
 	}
 	return secret, nil

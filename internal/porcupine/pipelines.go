@@ -192,7 +192,7 @@ func (s *Service) verifyPipelineConfig(ctx context.Context) error {
 	if exists && previous != s.pipelines.fingerprint {
 		return errors.New("pipeline encryption key does not match existing destinations")
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('pipeline_key_fingerprint',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", s.pipelines.fingerprint); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('pipeline_key_fingerprint',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", s.pipelines.fingerprint); err != nil {
 		return err
 	}
 	return tx.Commit()

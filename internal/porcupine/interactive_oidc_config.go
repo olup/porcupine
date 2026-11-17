@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,7 @@ func newOAuthBrowser(secure bool) *oauthBrowser {
 }
 
 type oauthBrowser struct {
+	sharedDB      *sql.DB
 	emailDelivery emailDeliveryWindow
 	mu            sync.Mutex
 	sessions      map[string]*oidcBrowserSession

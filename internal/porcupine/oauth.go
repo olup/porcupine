@@ -15,13 +15,16 @@ import (
 )
 
 func (s *Service) initializeOAuth(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_tokens (
+	var err error
+	if s.shared == nil {
+		_, err = s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_tokens (
 token_hash TEXT PRIMARY KEY,client_id TEXT NOT NULL REFERENCES access_keys(id),resource TEXT NOT NULL,scope TEXT NOT NULL,projects_json TEXT NOT NULL,
 issued_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS oauth_tokens_client ON oauth_tokens(client_id);
 CREATE INDEX IF NOT EXISTS oauth_tokens_expiry ON oauth_tokens(expires_at_ms);`)
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	if err = s.initializeInteractiveOAuth(ctx); err != nil {
 		return err
@@ -32,7 +35,10 @@ CREATE INDEX IF NOT EXISTS oauth_tokens_expiry ON oauth_tokens(expires_at_ms);`)
 	if err = s.initializeEmailAccounts(ctx); err != nil {
 		return err
 	}
-	return s.initializeLocalEmailClients(ctx)
+	if err := s.initializeLocalEmailClients(ctx); err != nil {
+		return err
+	}
+	return s.initializeSharedBrowser(ctx)
 }
 
 func oauthTokenError(w http.ResponseWriter, status int, code string) {

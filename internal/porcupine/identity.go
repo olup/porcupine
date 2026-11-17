@@ -82,7 +82,7 @@ func identityTraits(raw any) (map[string]any, bool) {
 func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[string]any, bool, error) {
 	var raw string
 	var identified bool
-	err := tx.QueryRowContext(ctx, `SELECT traits,is_identified FROM identity_profiles WHERE project_id=? AND identified_id=?`, project, id).Scan(&raw, &identified)
+	err := tx.QueryRowContext(ctx, `SELECT traits,is_identified FROM identity_profiles WHERE project_id=$1 AND identified_id=$2`, project, id).Scan(&raw, &identified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return map[string]any{}, false, nil
 	}
@@ -99,7 +99,7 @@ func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[s
 func identityLink(ctx context.Context, tx *sql.Tx, project, id string) (string, int64, error) {
 	var target string
 	var version int64
-	err := tx.QueryRowContext(ctx, `SELECT identified_id,version FROM identity_links WHERE project_id=? AND anonymous_id=?`, project, id).Scan(&target, &version)
+	err := tx.QueryRowContext(ctx, `SELECT identified_id,version FROM identity_links WHERE project_id=$1 AND anonymous_id=$2`, project, id).Scan(&target, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}
@@ -124,7 +124,7 @@ func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, 
 	}
 	event.IdentitySnapshot = string(encoded)
 	event.DistinctID, event.Properties = "", json.RawMessage(`{}`)
-	_, err = tx.ExecContext(ctx, `UPDATE events SET identity_snapshot=?,distinct_id='',properties='{}' WHERE id=? AND project_id=?`, event.IdentitySnapshot, event.ID, event.ProjectID)
+	_, err = tx.ExecContext(ctx, `UPDATE events SET identity_snapshot=$1,distinct_id='',properties='{}' WHERE id=$2 AND project_id=$3`, event.IdentitySnapshot, event.ID, event.ProjectID)
 	return ignored, err
 }
 
@@ -207,13 +207,13 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES(?,?,?,?,?) ON CONFLICT(project_id,identified_id) DO UPDATE SET is_identified=excluded.is_identified,traits=excluded.traits,version=excluded.version`, event.ProjectID, target, identified, string(encoded), event.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,identified_id) DO UPDATE SET is_identified=excluded.is_identified,traits=excluded.traits,version=excluded.version`, event.ProjectID, target, identified, string(encoded), event.ID); err != nil {
 		return false, err
 	}
 	if anonymous != "" && anonymous != target {
 		if linkVersion == 0 {
 			linkVersion = event.ID
-			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_links(project_id,anonymous_id,identified_id,version) VALUES(?,?,?,?)`, event.ProjectID, anonymous, target, linkVersion); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_links(project_id,anonymous_id,identified_id,version) VALUES($1,$2,$3,$4)`, event.ProjectID, anonymous, target, linkVersion); err != nil {
 				return false, err
 			}
 		}

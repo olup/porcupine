@@ -167,13 +167,13 @@ func (s *Service) getEvent(ctx context.Context, input *EventGetInput) (*EventGet
 func (s *Service) currentEvent(ctx context.Context, project, uuid string) (eventProjection, bool, error) {
 	var revision int64
 	var deleted, pending bool
-	err := s.db.QueryRowContext(ctx, `SELECT revision,is_deleted,pending FROM event_heads WHERE project_id=? AND uuid=?`, project, uuid).Scan(&revision, &deleted, &pending)
+	err := s.db.QueryRowContext(ctx, `SELECT revision,is_deleted,pending FROM event_heads WHERE project_id=$1 AND uuid=$2`, project, uuid).Scan(&revision, &deleted, &pending)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return eventProjection{}, false, apiError(503, "mutation storage unavailable")
 	}
 	if err == nil && pending {
 		var payload string
-		if err := s.db.QueryRowContext(ctx, `SELECT payload FROM mutation_outbox WHERE seq=? AND project_id=? AND uuid=?`, revision, project, uuid).Scan(&payload); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT payload FROM mutation_outbox WHERE seq=$1 AND project_id=$2 AND uuid=$3`, revision, project, uuid).Scan(&payload); err != nil {
 			return eventProjection{}, false, apiError(503, "mutation storage unavailable")
 		}
 		var projection eventProjection
@@ -188,7 +188,7 @@ func (s *Service) currentEvent(ctx context.Context, project, uuid string) (event
 	if revision == 0 {
 		var event Event
 		var properties, ingestion string
-		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata,is_imported FROM events WHERE project_id=? AND uuid=?`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion, &event.Imported)
+		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata,is_imported FROM events WHERE project_id=$1 AND uuid=$2`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion, &event.Imported)
 		if err == nil {
 			if err := decodeIngestionMetadata(&event, ingestion); err != nil {
 				return eventProjection{}, false, apiError(503, "event storage unavailable")
@@ -344,7 +344,7 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	// A second service sharing this SQLite file must also respect CAS and the one-pending limit.
 	var headRevision int64
 	var pending bool
-	err = tx.QueryRowContext(ctx, `SELECT revision,pending FROM event_heads WHERE project_id=? AND uuid=?`, projection.ProjectID, projection.UUID).Scan(&headRevision, &pending)
+	err = tx.QueryRowContext(ctx, `SELECT revision,pending FROM event_heads WHERE project_id=$1 AND uuid=$2`, projection.ProjectID, projection.UUID).Scan(&headRevision, &pending)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(503, "mutation storage unavailable")
 	}
@@ -361,19 +361,19 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	// A restored SQLite backup may lag behind an already applied native
 	// revision. Advance from the revision we loaded and checked, never from an
 	// unchecked client claim, so the next accepted mutation still wins.
-	advanced, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='mutation_audit'`, int64(expected))
+	advanced, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=max(seq,$1) WHERE name='mutation_audit'`, int64(expected))
 	if err != nil {
 		return nil, apiError(503, "mutation revision unavailable")
 	}
 	if changed, err := advanced.RowsAffected(); err != nil {
 		return nil, apiError(503, "mutation revision unavailable")
 	} else if changed == 0 {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name,seq) VALUES('mutation_audit',?)`, int64(expected)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name,seq) VALUES('mutation_audit',$1)`, int64(expected)); err != nil {
 			return nil, apiError(503, "mutation revision unavailable")
 		}
 	}
 	response := MutationResponse{MutationID: newID(), ProjectID: projection.ProjectID, UUID: projection.UUID, Operation: operation, State: "pending", CreatedAt: now()}
-	result, err := tx.ExecContext(ctx, `INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, response.MutationID, response.ProjectID, response.UUID, actorID, operation, keyHash, requestHash, int64(expected), response.State, response.CreatedAt)
+	result, err := tx.ExecContext(ctx, `INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, response.MutationID, response.ProjectID, response.UUID, actorID, operation, keyHash, requestHash, int64(expected), response.State, response.CreatedAt)
 	if err != nil {
 		return nil, apiError(409, "mutation request conflicts with an existing request")
 	}
@@ -392,9 +392,9 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 	if bytes+int64(len(payload)) > mutationMaxBytes {
 		return nil, apiError(503, "mutation queue is full")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO event_heads(project_id,uuid,revision,is_deleted,pending,event_id) VALUES(?,?,?,?,1,?) ON CONFLICT(project_id,uuid) DO UPDATE SET revision=excluded.revision,is_deleted=excluded.is_deleted,pending=1,event_id=CASE WHEN event_heads.event_id=0 THEN excluded.event_id ELSE event_heads.event_id END`, projection.ProjectID, projection.UUID, seq, projection.IsDeleted, projection.ID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO event_heads(project_id,uuid,revision,is_deleted,pending,event_id) VALUES($1,$2,$3,$4,1,$5) ON CONFLICT(project_id,uuid) DO UPDATE SET revision=excluded.revision,is_deleted=excluded.is_deleted,pending=1,event_id=CASE WHEN event_heads.event_id=0 THEN excluded.event_id ELSE event_heads.event_id END`, projection.ProjectID, projection.UUID, seq, projection.IsDeleted, projection.ID)
 	if err == nil {
-		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES(?,?,?,?)`, seq, projection.ProjectID, projection.UUID, string(payload))
+		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES($1,$2,$3,$4)`, seq, projection.ProjectID, projection.UUID, string(payload))
 	}
 	if err == nil && operation == "delete" {
 		err = s.cancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID)
@@ -402,7 +402,7 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
 		}
 		if err == nil {
-			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=? AND uuid=?`, projection.ProjectID, projection.UUID)
+			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=$1 AND uuid=$2`, projection.ProjectID, projection.UUID)
 		}
 	}
 	if err != nil || tx.Commit() != nil {
@@ -417,7 +417,7 @@ func (s *Service) findMutation(ctx context.Context, project, field, value string
 	var revision int64
 	var requestHash string
 	// field is selected only by private callers, never from request input.
-	err := s.db.QueryRowContext(ctx, `SELECT mutation_id,project_id,uuid,seq,operation,state,created_at,applied_at,request_hash FROM mutation_audit WHERE project_id=? AND `+field+`=?`, project, value).Scan(&response.MutationID, &response.ProjectID, &response.UUID, &revision, &response.Operation, &response.State, &response.CreatedAt, &response.AppliedAt, &requestHash)
+	err := s.db.QueryRowContext(ctx, `SELECT mutation_id,project_id,uuid,seq,operation,state,created_at,applied_at,request_hash FROM mutation_audit WHERE project_id=$1 AND `+field+`=$2`, project, value).Scan(&response.MutationID, &response.ProjectID, &response.UUID, &revision, &response.Operation, &response.State, &response.CreatedAt, &response.AppliedAt, &requestHash)
 	response.Revision = strconv.FormatInt(revision, 10)
 	return response, requestHash, err
 }

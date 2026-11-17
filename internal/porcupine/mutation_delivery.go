@@ -68,13 +68,13 @@ func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 	projects := map[string]bool{}
 	for i, seq := range revisions {
 		projection := projections[i]
-		if _, err := tx.ExecContext(ctx, `DELETE FROM mutation_outbox WHERE seq=?`, seq); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM mutation_outbox WHERE seq=$1`, seq); err != nil {
 			return false, errors.New("cannot remove delivered mutation payload")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mutation_audit SET state='applied',applied_at=? WHERE seq=?`, applied, seq); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE mutation_audit SET state='applied',applied_at=$1 WHERE seq=$2`, applied, seq); err != nil {
 			return false, errors.New("cannot acknowledge delivered mutation")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE event_heads SET pending=0 WHERE project_id=? AND uuid=? AND revision=?`, projection.ProjectID, projection.UUID, seq); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE event_heads SET pending=0 WHERE project_id=$1 AND uuid=$2 AND revision=$3`, projection.ProjectID, projection.UUID, seq); err != nil {
 			return false, errors.New("cannot acknowledge current event revision")
 		}
 		if err := s.acknowledgeSupersededQuarantine(ctx, tx, projection); err != nil {
@@ -83,7 +83,7 @@ func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 		projects[projection.ProjectID] = true
 	}
 	for projectID := range projects {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "last_delivery_success:"+projectID, applied); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "last_delivery_success:"+projectID, applied); err != nil {
 			return false, errors.New("cannot record project mutation delivery")
 		}
 	}

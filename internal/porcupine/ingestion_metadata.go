@@ -40,7 +40,7 @@ func (s *Service) initializeIngestionMetadata(ctx context.Context) error {
 		{"event_heads", "event_id", `INTEGER NOT NULL DEFAULT 0`},
 	} {
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name=?)`, column.table, column.name).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info($1) WHERE name=$2)`, column.table, column.name).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {

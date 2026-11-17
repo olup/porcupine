@@ -81,12 +81,12 @@ PRIMARY KEY(tenant_id,period_start)) WITHOUT ROWID;`)
 		return err
 	}
 	b := s.defaultTenantBudgets()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES(?,?,?,1,?,?,?,?) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,$2,$3,1,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
 	return err
 }
 
 func (s *Service) loadTenant(ctx context.Context, id string) (Tenant, error) {
-	t, err := scanTenant(s.db.QueryRowContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id=?`, id))
+	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Tenant{}, apiError(404, "tenant not found")
 	}
@@ -101,7 +101,7 @@ func (s *Service) projectTenant(ctx context.Context, project string) (Tenant, er
 	for i := range columns {
 		columns[i] = "t." + columns[i]
 	}
-	t, err := scanTenant(s.db.QueryRowContext(ctx, `SELECT `+strings.Join(columns, ",")+` FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=?`, project))
+	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+strings.Join(columns, ",")+` FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=$1`, project))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Tenant{}, apiError(404, "project not found")
 	}
@@ -145,7 +145,7 @@ func (s *Service) insertTenant(ctx context.Context, name string, budgets TenantB
 		return Tenant{}, err
 	}
 	t := Tenant{ID: newID(), Name: name, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), IngestionAllowed: true, Budgets: budgets}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES(?,?,?,?,?,?,?,?,?)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes)
+	_, err = s.control.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes)
 	if err != nil {
 		return Tenant{}, apiError(503, "tenant creation unavailable")
 	}

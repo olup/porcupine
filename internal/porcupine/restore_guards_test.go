@@ -86,7 +86,7 @@ func TestNativeRestoreDoesNotReseedOIDCBindingsWithoutReview(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			seeder := &Service{db: s.db, oauth: &oauthRuntime{
+			seeder := &Service{db: s.db, control: s.db, oauth: &oauthRuntime{
 				config: OAuthConfig{AllowRestoredIdentityBootstrap: reviewed},
 				oidc: &interactiveOIDC{issuer: "https://identity.example.test", bindings: map[string]actor{
 					"configured-subject": {Permissions: []string{"events:read"}, Projects: []string{"project-a"}},

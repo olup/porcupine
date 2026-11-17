@@ -20,13 +20,13 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	}
 	var principalID, humanID, clientID, resource string
 	var expires int64
-	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,resource,expires_at_ms FROM oauth_interactive_grants WHERE id=?`, grantID).Scan(&principalID, &humanID, &clientID, &resource, &expires)
+	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,resource,expires_at_ms FROM oauth_interactive_grants WHERE id=$1`, grantID).Scan(&principalID, &humanID, &clientID, &resource, &expires)
 	if err != nil || expires <= s.clock().UnixMilli() {
 		return actor{}, errInteractiveGrant
 	}
 	var a actor
 	var permissions, projects string
-	err = query.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=? AND revoked_at IS NULL`, principalID).Scan(&a.ID, &permissions, &projects)
+	err = query.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, principalID).Scan(&a.ID, &permissions, &projects)
 	if err != nil || json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return actor{}, errInteractiveGrant
 	}
@@ -54,7 +54,7 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 }
 
 func revokeInteractiveGrant(ctx context.Context, tx *sql.Tx, grantID string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,datetime('now')) WHERE id=(SELECT principal_id FROM oauth_interactive_grants WHERE id=?)`, grantID)
+	_, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$2) WHERE id=(SELECT principal_id FROM oauth_interactive_grants WHERE id=$1)`, grantID, now())
 	return err
 }
 
@@ -76,7 +76,7 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 		return nil, err
 	}
 	var perGrant, total, refreshCount, refreshTotal int
-	if err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM oauth_tokens WHERE interactive_grant_id=?),(SELECT count(*) FROM oauth_tokens),(SELECT count(*) FROM oauth_refresh_tokens WHERE grant_id=?),(SELECT count(*) FROM oauth_refresh_tokens)`, grantID, grantID).Scan(&perGrant, &total, &refreshCount, &refreshTotal); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM oauth_tokens WHERE interactive_grant_id=$1),(SELECT count(*) FROM oauth_tokens),(SELECT count(*) FROM oauth_refresh_tokens WHERE grant_id=$2),(SELECT count(*) FROM oauth_refresh_tokens)`, grantID, grantID).Scan(&perGrant, &total, &refreshCount, &refreshTotal); err != nil {
 		return nil, err
 	}
 	if perGrant >= oauthMaxTokensPerClient || total >= oauthMaxTokens || refreshCount >= 1000 || refreshTotal >= 100000 {
@@ -100,15 +100,15 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 		return nil, errInteractiveGrant
 	}
 	expiry := now + lifetime*1000
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms,interactive_grant_id) VALUES(?,?,?,?,?,?,?,?)`, hash(access), client.ID, resource, scope, string(encodedProjects), now, expiry, grantID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms,interactive_grant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, hash(access), client.ID, resource, scope, string(encodedProjects), now, expiry, grantID)
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_access(token_hash,grant_id,family_id) VALUES(?,?,?)`, hash(access), grantID, familyID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_access(token_hash,grant_id,family_id) VALUES($1,$2,$3)`, hash(access), grantID, familyID)
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,projects_json,expires_at_ms) VALUES(?,?,?,?,?,?,?)`, hash(refresh), grantID, familyID, client.ID, scope, string(encodedProjects), refreshExpiry)
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,projects_json,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7)`, hash(refresh), grantID, familyID, client.ID, scope, string(encodedProjects), refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 	if form.Get("code") == "" || len(form.Get("code")) > 256 || form.Get("redirect_uri") == "" || !slices.Contains(client.RedirectURIs, form.Get("redirect_uri")) {
 		return nil, errInteractiveGrant
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 	}
 	var grantID, clientID, redirect, challenge, resource string
 	var expires, used int64
-	err = tx.QueryRowContext(ctx, `SELECT c.grant_id,c.client_id,c.redirect_uri,c.challenge,c.expires_at_ms,c.used_at_ms,g.resource FROM oauth_authorization_codes c JOIN oauth_interactive_grants g ON g.id=c.grant_id WHERE c.code_hash=?`, hash(form.Get("code"))).Scan(&grantID, &clientID, &redirect, &challenge, &expires, &used, &resource)
+	err = tx.QueryRowContext(ctx, `SELECT c.grant_id,c.client_id,c.redirect_uri,c.challenge,c.expires_at_ms,c.used_at_ms,g.resource FROM oauth_authorization_codes c JOIN oauth_interactive_grants g ON g.id=c.grant_id WHERE c.code_hash=$1`, hash(form.Get("code"))).Scan(&grantID, &clientID, &redirect, &challenge, &expires, &used, &resource)
 	if err != nil || clientID != client.ID || redirect != form.Get("redirect_uri") || !oauthPKCE(form.Get("code_verifier"), challenge) {
 		return nil, errInteractiveGrant
 	}
@@ -159,14 +159,14 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 		return nil, errInteractiveGrant
 	}
 	var refreshExpiry int64
-	if err = tx.QueryRowContext(ctx, `SELECT expires_at_ms FROM oauth_interactive_grants WHERE id=?`, grantID).Scan(&refreshExpiry); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT expires_at_ms FROM oauth_interactive_grants WHERE id=$1`, grantID).Scan(&refreshExpiry); err != nil {
 		return nil, err
 	}
 	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, resource, strings.Join(a.Permissions, " "), a.Projects, refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE oauth_authorization_codes SET used_at_ms=? WHERE code_hash=? AND used_at_ms=0`, max(int64(1), s.clock().UnixMilli()), hash(form.Get("code"))); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE oauth_authorization_codes SET used_at_ms=$1 WHERE code_hash=$2 AND used_at_ms=0`, max(int64(1), s.clock().UnixMilli()), hash(form.Get("code"))); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -186,7 +186,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	if !strings.HasPrefix(raw, "pc_rt_") || len(raw) != 49 {
 		return nil, errInteractiveGrant
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	}
 	var grantID, familyID, clientID, scope, projectsJSON, resource string
 	var expires, used int64
-	err = tx.QueryRowContext(ctx, `SELECT r.grant_id,r.family_id,r.client_id,r.scope,r.projects_json,r.expires_at_ms,r.used_at_ms,g.resource FROM oauth_refresh_tokens r JOIN oauth_interactive_grants g ON g.id=r.grant_id WHERE r.token_hash=?`, hash(raw)).Scan(&grantID, &familyID, &clientID, &scope, &projectsJSON, &expires, &used, &resource)
+	err = tx.QueryRowContext(ctx, `SELECT r.grant_id,r.family_id,r.client_id,r.scope,r.projects_json,r.expires_at_ms,r.used_at_ms,g.resource FROM oauth_refresh_tokens r JOIN oauth_interactive_grants g ON g.id=r.grant_id WHERE r.token_hash=$1`, hash(raw)).Scan(&grantID, &familyID, &clientID, &scope, &projectsJSON, &expires, &used, &resource)
 	if err != nil || clientID != client.ID || expires <= s.clock().UnixMilli() {
 		return nil, errInteractiveGrant
 	}
@@ -249,7 +249,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE oauth_refresh_tokens SET used_at_ms=? WHERE token_hash=? AND used_at_ms=0`, max(int64(1), s.clock().UnixMilli()), hash(raw)); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE oauth_refresh_tokens SET used_at_ms=$1 WHERE token_hash=$2 AND used_at_ms=0`, max(int64(1), s.clock().UnixMilli()), hash(raw)); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -276,20 +276,20 @@ func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 400, "invalid_request")
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	tx, err := s.control.BeginTx(r.Context(), nil)
 	if err != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
 	}
 	defer tx.Rollback()
 	var grantID string
-	err = tx.QueryRowContext(r.Context(), `SELECT grant_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=? UNION ALL SELECT t.interactive_grant_id FROM oauth_tokens t WHERE t.token_hash=? AND t.client_id=? AND t.interactive_grant_id<>''  LIMIT 1`, hash(raw), client.ID, hash(raw), client.ID).Scan(&grantID)
+	err = tx.QueryRowContext(r.Context(), `SELECT grant_id FROM oauth_refresh_tokens WHERE token_hash=$1 AND client_id=$2 UNION ALL SELECT t.interactive_grant_id FROM oauth_tokens t WHERE t.token_hash=$3 AND t.client_id=$4 AND t.interactive_grant_id<>''  LIMIT 1`, hash(raw), client.ID, hash(raw), client.ID).Scan(&grantID)
 	if err == nil {
 		err = revokeInteractiveGrant(r.Context(), tx, grantID)
 	} else if errors.Is(err, sql.ErrNoRows) && client.AuthMethod == "none" {
 		err = nil
 	} else if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_tokens WHERE token_hash=? AND client_id=?`, hash(raw), client.ID)
+		_, err = tx.ExecContext(r.Context(), `DELETE FROM oauth_tokens WHERE token_hash=$1 AND client_id=$2`, hash(raw), client.ID)
 	}
 	if err != nil || tx.Commit() != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
@@ -299,8 +299,11 @@ func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQueryer, principal actor) (actor, error) {
+	if s.shared != nil {
+		query = s.control
+	}
 	var grantID string
-	err := query.QueryRowContext(ctx, `SELECT id FROM oauth_interactive_grants WHERE principal_id=?`, principal.ID).Scan(&grantID)
+	err := query.QueryRowContext(ctx, `SELECT id FROM oauth_interactive_grants WHERE principal_id=$1`, principal.ID).Scan(&grantID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return principal, nil
 	}
@@ -311,9 +314,9 @@ func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQ
 }
 
 func (s *Service) pruneInteractiveOAuth(ctx context.Context, tx *sql.Tx) error {
-	now := s.clock().UnixMilli()
-	_, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,datetime('now')) WHERE revoked_at IS NULL AND id IN(
- SELECT principal_id FROM oauth_interactive_grants WHERE expires_at_ms<=? OR id IN(SELECT grant_id FROM oauth_authorization_codes WHERE used_at_ms=0 AND expires_at_ms<=?))`, now, now)
+	cutoff := s.clock().UnixMilli()
+	_, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$3) WHERE revoked_at IS NULL AND id IN(
+ SELECT principal_id FROM oauth_interactive_grants WHERE expires_at_ms<=$1 OR id IN(SELECT grant_id FROM oauth_authorization_codes WHERE used_at_ms=0 AND expires_at_ms<=$2))`, cutoff, cutoff, now())
 	if err != nil {
 		return err
 	}
@@ -325,6 +328,6 @@ func (s *Service) pruneInteractiveOAuth(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM oauth_tokens WHERE expires_at_ms<=?`, now)
+	_, err = tx.ExecContext(ctx, `DELETE FROM oauth_tokens WHERE expires_at_ms<=$1`, cutoff)
 	return err
 }

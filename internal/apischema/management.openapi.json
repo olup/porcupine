@@ -243,6 +243,11 @@
             "description": "Memory is configured per resident project engine, shared by its work; it is not an instance-wide or per-query bound.",
             "type": "string"
           },
+          "metadata_request_timeout_seconds": {
+            "description": "Configured native PostgreSQL metadata I/O allowance. Shared workers enforce a fail-stop watchdog before an abandoned query permit can be reused.",
+            "format": "int64",
+            "type": "integer"
+          },
           "object_storage_request_timeout_seconds": {
             "description": "Native object-storage I/O timeout. Cancellation cannot immediately interrupt an in-flight HTTP request; it may extend the SQL execution deadline by this interval. Automatic HTTP retries are disabled.",
             "format": "int64",
@@ -429,7 +434,7 @@
           },
           "deployment_limits": {
             "$ref": "#/components/schemas/InteractiveQueryConfig",
-            "description": "Deployment safety ceilings, including global query concurrency shared with background work."
+            "description": "Worker safety ceilings, including analytical capacity shared with background work. Shared deployments additionally enforce tenant concurrency through PostgreSQL permits."
           },
           "enabled": {
             "type": "boolean"
@@ -516,6 +521,9 @@
             "description": "Receipt time of the earliest queued original by acceptance order, including quarantined events, in this project",
             "type": "string"
           },
+          "owner_worker_id": {
+            "type": "string"
+          },
           "pending": {
             "format": "int64",
             "type": "integer"
@@ -523,6 +531,10 @@
           "pending_mutations": {
             "format": "int64",
             "type": "integer"
+          },
+          "pending_unknown": {
+            "description": "True on a shared query worker which does not own this project's SQLite queue. Do not interpret pending=0 as a drained queue; get-event-schema is routed to its owner for authoritative status.",
+            "type": "boolean"
           },
           "quarantined": {
             "description": "Accepted originals retained in SQLite after confirmed row-specific rejection. Included in pending and queue capacity.",
@@ -1976,7 +1988,7 @@
         "additionalProperties": false,
         "properties": {
           "ducklake": {
-            "description": "Local DuckLake registry identity check, bounded to one second.",
+            "description": "DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second.",
             "enum": [
               "ok",
               "unavailable",
@@ -1984,8 +1996,24 @@
             ],
             "type": "string"
           },
+          "shared_control": {
+            "description": "Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation.",
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "type": "string"
+          },
           "sqlite": {
             "description": "Live SQLite connection check, bounded to one second.",
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "worker_registration": {
+            "description": "Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation.",
             "enum": [
               "ok",
               "unavailable"
@@ -2018,12 +2046,20 @@
             "description": "Upstream OIDC sign-in is configured. No identity-provider request is performed.",
             "type": "boolean"
           },
+          "owner_routing": {
+            "description": "Durable project-owner routing is configured. Its worker registration check is reported separately.",
+            "type": "boolean"
+          },
           "query_exports": {
             "description": "Private query export storage is configured. No remote storage request is performed.",
             "type": "boolean"
           },
           "s3_query_pipelines": {
             "description": "The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants.",
+            "type": "boolean"
+          },
+          "shared_control": {
+            "description": "Shared PostgreSQL metadata and authentication storage is configured. No connection details are disclosed.",
             "type": "boolean"
           },
           "webhook_pipelines": {
@@ -2038,7 +2074,9 @@
           "webhook_pipelines",
           "s3_query_pipelines",
           "email_sign_in",
-          "oidc_sign_in"
+          "oidc_sign_in",
+          "shared_control",
+          "owner_routing"
         ],
         "type": "object"
       },
@@ -2090,7 +2128,7 @@
         "additionalProperties": false,
         "properties": {
           "max_concurrent": {
-            "description": "Deployment-wide analytical slots, including the existing background export safety slot.",
+            "description": "Worker analytical slots, including the background export safety slot; also bounds the effective tenant concurrency policy. Shared mode additionally enforces tenant permits across workers.",
             "format": "int64",
             "type": "integer"
           },

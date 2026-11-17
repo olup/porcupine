@@ -11,18 +11,19 @@ const defaultDuckLakeMemoryMB = 512
 // DuckLakeConfig selects native resource limits, a local working directory and
 // optional shared PostgreSQL metadata with S3 analytical data.
 type DuckLakeConfig struct {
-	Directory           string
-	MemoryLimitMB       int
-	Threads             int
-	MaxOpenProjects     int
-	MaintenanceInterval time.Duration
-	SnapshotRetention   time.Duration
-	CleanupGrace        time.Duration
-	CleanupInterval     time.Duration
-	DisableCleanup      bool
-	S3                  *DuckLakeS3Config
-	PostgresURL         string
-	SharedSourceID      string
+	Directory              string
+	MemoryLimitMB          int
+	Threads                int
+	MaxOpenProjects        int
+	MaintenanceInterval    time.Duration
+	SnapshotRetention      time.Duration
+	CleanupGrace           time.Duration
+	CleanupInterval        time.Duration
+	DisableCleanup         bool
+	S3                     *DuckLakeS3Config
+	PostgresURL            string
+	SharedSourceID         string
+	MetadataTimeoutSeconds int
 }
 
 type lakeStore interface {

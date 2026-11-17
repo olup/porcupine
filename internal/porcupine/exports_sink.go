@@ -168,7 +168,7 @@ func (w *exportSink) beginFile() error {
 	}
 	w.files++
 	artifact := exportArtifact{Index: w.files, Key: fmt.Sprintf("%s/%s/part-%06d.%s.gz", w.job.ID, w.job.AttemptID, w.files, w.job.Format)}
-	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key) VALUES(?,?,?,?)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO export_files(job_id,attempt_id,file_index,object_key) VALUES($1,$2,$3,$4)`, w.job.ID, w.job.AttemptID, artifact.Index, artifact.Key); err != nil {
 		return errExportSink
 	}
 	upload, err := w.s.exports.store.Begin(w.ctx, artifact.Key)
@@ -176,7 +176,7 @@ func (w *exportSink) beginFile() error {
 		return err
 	}
 	artifact.UploadID = upload.ID()
-	if _, err = w.s.db.ExecContext(w.ctx, `UPDATE export_files SET upload_id=? WHERE job_id=? AND attempt_id=? AND file_index=?`, artifact.UploadID, w.job.ID, w.job.AttemptID, artifact.Index); err != nil {
+	if _, err = w.s.db.ExecContext(w.ctx, `UPDATE export_files SET upload_id=$1 WHERE job_id=$2 AND attempt_id=$3 AND file_index=$4`, artifact.UploadID, w.job.ID, w.job.AttemptID, artifact.Index); err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		upload.Abort(cleanup)
@@ -250,13 +250,13 @@ func (w *exportSink) completeFile() error {
 		return err
 	}
 	file.artifact.SHA256 = hex.EncodeToString(file.digest.Sum(nil))
-	if _, err := w.s.db.ExecContext(w.ctx, `UPDATE export_files SET rows=?,bytes=?,decoded_bytes=?,sha256=? WHERE job_id=? AND attempt_id=? AND file_index=?`, file.artifact.Rows, file.artifact.Bytes, file.artifact.DecodedBytes, file.artifact.SHA256, w.job.ID, w.job.AttemptID, file.artifact.Index); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `UPDATE export_files SET rows=$1,bytes=$2,decoded_bytes=$3,sha256=$4 WHERE job_id=$5 AND attempt_id=$6 AND file_index=$7`, file.artifact.Rows, file.artifact.Bytes, file.artifact.DecodedBytes, file.artifact.SHA256, w.job.ID, w.job.AttemptID, file.artifact.Index); err != nil {
 		return errExportSink
 	}
 	if err := file.upload.Complete(w.ctx); err != nil {
 		return err
 	}
-	if _, err := w.s.db.ExecContext(w.ctx, `UPDATE export_files SET complete=1 WHERE job_id=? AND attempt_id=? AND file_index=?`, w.job.ID, w.job.AttemptID, file.artifact.Index); err != nil {
+	if _, err := w.s.db.ExecContext(w.ctx, `UPDATE export_files SET complete=1 WHERE job_id=$1 AND attempt_id=$2 AND file_index=$3`, w.job.ID, w.job.AttemptID, file.artifact.Index); err != nil {
 		return errExportSink
 	}
 	w.current = nil
@@ -274,7 +274,7 @@ func (w *exportSink) finish() error {
 }
 
 func (w *exportSink) progress() error {
-	_, err := w.s.db.ExecContext(w.ctx, `UPDATE export_jobs SET rows=?,bytes=?,decoded_bytes=?,file_count=? WHERE id=? AND attempt_id=? AND state='running'`, w.rows, w.compressed, w.decoded, w.files, w.job.ID, w.job.AttemptID)
+	_, err := w.s.db.ExecContext(w.ctx, `UPDATE export_jobs SET rows=$1,bytes=$2,decoded_bytes=$3,file_count=$4 WHERE id=$5 AND attempt_id=$6 AND state='running'`, w.rows, w.compressed, w.decoded, w.files, w.job.ID, w.job.AttemptID)
 	w.lastProgress = time.Now()
 	if err != nil {
 		return errExportSink

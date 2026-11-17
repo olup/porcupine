@@ -15,43 +15,71 @@ import (
 // initializeOAuthClients preserves principal IDs shared by grants and async jobs.
 // The bootstrap alias is pinned once and never rotates to a newer administrator.
 func (s *Service) initializeOAuthClients(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var sourceColumn bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('access_keys') WHERE name='source_id')`).Scan(&sourceColumn); err != nil {
-		return err
-	}
-	if !sourceColumn {
-		if _, err = tx.ExecContext(ctx, `ALTER TABLE access_keys ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`); err != nil {
+	if s.shared == nil {
+		var sourceColumn bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('access_keys') WHERE name='source_id')`).Scan(&sourceColumn); err != nil {
 			return err
 		}
-	}
-	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_clients (
-client_id TEXT PRIMARY KEY REFERENCES access_keys(id),
-secret_hash TEXT NOT NULL
-)`); err != nil {
-		return err
-	}
-	for name, definition := range map[string]string{"grant_types": `TEXT NOT NULL DEFAULT '["client_credentials"]'`, "redirect_uris": "TEXT NOT NULL DEFAULT '[]'", "token_endpoint_auth_method": "TEXT NOT NULL DEFAULT 'client_secret_basic'"} {
-		var exists bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('oauth_clients') WHERE name=?)`, name).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			if _, err = tx.ExecContext(ctx, `ALTER TABLE oauth_clients ADD COLUMN `+name+` `+definition); err != nil {
+		if !sourceColumn {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE access_keys ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`); err != nil {
 				return err
 			}
 		}
+		if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_clients (
+client_id TEXT PRIMARY KEY REFERENCES access_keys(id),
+secret_hash TEXT NOT NULL
+)`); err != nil {
+			return err
+		}
+		for name, definition := range map[string]string{"grant_types": `TEXT NOT NULL DEFAULT '["client_credentials"]'`, "redirect_uris": "TEXT NOT NULL DEFAULT '[]'", "token_endpoint_auth_method": "TEXT NOT NULL DEFAULT 'client_secret_basic'"} {
+			var exists bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('oauth_clients') WHERE name=$1)`, name).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				if _, err = tx.ExecContext(ctx, `ALTER TABLE oauth_clients ADD COLUMN `+name+` `+definition); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO metadata(key,value)
-SELECT 'oauth_bootstrap_id',id FROM access_keys
-WHERE name='bootstrap admin'
-AND EXISTS (SELECT 1 FROM json_each(access_keys.permissions) WHERE value='instance:admin')
-ORDER BY created_at,id LIMIT 1`); err != nil {
+	rows, err := tx.QueryContext(ctx, `SELECT id,permissions FROM access_keys WHERE name='bootstrap admin' ORDER BY created_at,id`)
+	if err != nil {
 		return err
+	}
+	var bootstrap string
+	for rows.Next() {
+		var id, encoded string
+		if err := rows.Scan(&id, &encoded); err != nil {
+			rows.Close()
+			return err
+		}
+		var permissions []string
+		if json.Unmarshal([]byte(encoded), &permissions) != nil {
+			rows.Close()
+			return errors.New("invalid bootstrap permissions")
+		}
+		if slices.Contains(permissions, "instance:admin") {
+			bootstrap = id
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if bootstrap != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('oauth_bootstrap_id',$1) ON CONFLICT(key) DO NOTHING`, bootstrap); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -163,17 +191,17 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	id, created := newID(), now()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,?,?,?,?)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	grantJSON, _ := json.Marshal(grants)
 	redirectJSON, _ := json.Marshal(redirects)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash,grant_types,redirect_uris,token_endpoint_auth_method) VALUES(?,?,?,?,?)`, id, hash(secret), string(grantJSON), string(redirectJSON), authMethod); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash,grant_types,redirect_uris,token_endpoint_auth_method) VALUES($1,$2,$3,$4,$5)`, id, hash(secret), string(grantJSON), string(redirectJSON), authMethod); err != nil {
 		return nil, apiError(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {
@@ -184,7 +212,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 
 func (s *Service) managementListOAuthClients(ctx context.Context, _ *struct{}) (*OAuthClientListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.db.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method
+	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method
 FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
@@ -215,7 +243,7 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id ORDER BY k.created_a
 
 func (s *Service) managementRevokeOAuthClient(ctx context.Context, input *OAuthClientDeleteInput) (*struct{}, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT client_id FROM oauth_clients WHERE client_id=?`, input.ID).Scan(&id)
+	err := s.control.QueryRowContext(ctx, `SELECT client_id FROM oauth_clients WHERE client_id=$1`, input.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "OAuth client not found")
 	}

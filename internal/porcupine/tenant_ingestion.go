@@ -41,7 +41,7 @@ func consumeTenantEventsTx(ctx context.Context, tx *sql.Tx, project string, acce
 	var used int64
 	err := tx.QueryRowContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0)
 FROM projects p JOIN tenants t ON t.id=p.tenant_id
-LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=? WHERE p.id=?`, period, project).Scan(&tenant, &allowed, &allowance, &used)
+LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE p.id=$2`, period, project).Scan(&tenant, &allowed, &allowance, &used)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=? WHERE p.id=?`,
 	if count > math.MaxInt64-used {
 		return errors.New("tenant event counter exhausted")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES(?,?,?)
+	_, err = tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
 ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`, tenant, period, count)
 	return err
 }

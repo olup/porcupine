@@ -16,8 +16,10 @@ const (
 )
 
 type InstanceChecks struct {
-	SQLite   DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
-	DuckLake DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"Local DuckLake registry identity check, bounded to one second."`
+	SQLite             DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
+	DuckLake           DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second."`
+	SharedControl      DependencyStatus `json:"shared_control,omitempty" enum:"ok,unavailable" doc:"Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation."`
+	WorkerRegistration DependencyStatus `json:"worker_registration,omitempty" enum:"ok,unavailable" doc:"Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation."`
 }
 
 type InstanceConfiguration struct {
@@ -28,6 +30,8 @@ type InstanceConfiguration struct {
 	S3QueryPipelines bool `json:"s3_query_pipelines" doc:"The pipeline runtime and an analytical store are configured. Each pipeline still needs destination credentials and project grants."`
 	EmailSignIn      bool `json:"email_sign_in" doc:"Email sign-in is configured. No verification email is sent."`
 	OIDCSignIn       bool `json:"oidc_sign_in" doc:"Upstream OIDC sign-in is configured. No identity-provider request is performed."`
+	SharedControl    bool `json:"shared_control" doc:"Shared PostgreSQL metadata and authentication storage is configured. No connection details are disclosed."`
+	OwnerRouting     bool `json:"owner_routing" doc:"Durable project-owner routing is configured. Its worker registration check is reported separately."`
 }
 
 type InstanceStatus struct {
@@ -58,6 +62,8 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			S3QueryPipelines: s.pipelines != nil && s.lake != nil,
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,
+			SharedControl:    s.shared != nil,
+			OwnerRouting:     s.shared != nil,
 		},
 	}
 	probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
@@ -66,6 +72,34 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 	if err != nil {
 		result.Checks.SQLite = dependencyUnavailable
 		result.Status = "degraded"
+	}
+	if s.shared != nil {
+		result.Checks.SharedControl = dependencyUnavailable
+		result.Checks.WorkerRegistration = dependencyUnavailable
+		if s.control != nil {
+			probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+			err := s.control.PingContext(probe)
+			cancel()
+			if err == nil {
+				result.Checks.SharedControl = dependencyOK
+				state := s.shared.routing
+				if state != nil && state.ctx != nil && state.ctx.Err() == nil && state.backendPID > 0 {
+					probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+					var registered bool
+					// Inspect through the pool, rather than queuing behind a heartbeat on
+					// the dedicated connection. That session holds only the worker lock.
+					err := s.control.QueryRowContext(probe, `SELECT EXISTS(SELECT 1 FROM shared_workers WHERE worker_id=$1 AND registration_token=$2)
+AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND granted)`, s.shared.config.WorkerID, state.token, state.backendPID).Scan(&registered)
+					cancel()
+					if err == nil && registered {
+						result.Checks.WorkerRegistration = dependencyOK
+					}
+				}
+			}
+		}
+		if result.Checks.SharedControl != dependencyOK || result.Checks.WorkerRegistration != dependencyOK {
+			result.Status = "degraded"
+		}
 	}
 	if s.lake != nil {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)

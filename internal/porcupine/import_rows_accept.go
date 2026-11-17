@@ -39,7 +39,7 @@ type importedPersonState struct {
 func loadImportedPerson(ctx context.Context, tx *sql.Tx, project, distinct string) (importedPersonState, error) {
 	var state importedPersonState
 	var pv, mv string
-	err := tx.QueryRowContext(ctx, `SELECT person_id,person_version,mapping_version,profile_version,deleted,source_id FROM posthog_import_person_state WHERE project_id=? AND distinct_id=?`, project, distinct).Scan(&state.personID, &pv, &mv, &state.profileVersion, &state.deleted, &state.sourceID)
+	err := tx.QueryRowContext(ctx, `SELECT person_id,person_version,mapping_version,profile_version,deleted,source_id FROM posthog_import_person_state WHERE project_id=$1 AND distinct_id=$2`, project, distinct).Scan(&state.personID, &pv, &mv, &state.profileVersion, &state.deleted, &state.sourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return state, nil
 	}
@@ -57,7 +57,7 @@ func loadImportedPerson(ctx context.Context, tx *sql.Tx, project, distinct strin
 func importProfileOwned(ctx context.Context, tx *sql.Tx, project, distinct, source string) (bool, error) {
 	var version int64
 	var identified bool
-	err := tx.QueryRowContext(ctx, `SELECT version,is_identified FROM identity_profiles WHERE project_id=? AND identified_id=?`, project, distinct).Scan(&version, &identified)
+	err := tx.QueryRowContext(ctx, `SELECT version,is_identified FROM identity_profiles WHERE project_id=$1 AND identified_id=$2`, project, distinct).Scan(&version, &identified)
 	if errors.Is(err, sql.ErrNoRows) {
 		state, e := loadImportedPerson(ctx, tx, project, distinct)
 		return !state.found || state.sourceID == source, e
@@ -81,7 +81,7 @@ func importIdentityEvidenceOwned(ctx context.Context, tx *sql.Tx, project, disti
 }
 
 func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p ImportPerson, profileVersion int64, source string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO posthog_import_person_state(project_id,distinct_id,person_id,person_version,mapping_version,profile_version,deleted,source_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id,distinct_id) DO UPDATE SET person_id=excluded.person_id,person_version=excluded.person_version,mapping_version=excluded.mapping_version,profile_version=excluded.profile_version,deleted=excluded.deleted,source_id=excluded.source_id`, project, p.IdentifiedID, p.InternalID, strconv.FormatUint(p.PersonVersion, 10), strconv.FormatUint(p.MappingVersion, 10), profileVersion, p.Deleted, source)
+	_, err := tx.ExecContext(ctx, `INSERT INTO posthog_import_person_state(project_id,distinct_id,person_id,person_version,mapping_version,profile_version,deleted,source_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,distinct_id) DO UPDATE SET person_id=excluded.person_id,person_version=excluded.person_version,mapping_version=excluded.mapping_version,profile_version=excluded.profile_version,deleted=excluded.deleted,source_id=excluded.source_id`, project, p.IdentifiedID, p.InternalID, strconv.FormatUint(p.PersonVersion, 10), strconv.FormatUint(p.MappingVersion, 10), profileVersion, p.Deleted, source)
 	return err
 }
 
@@ -133,7 +133,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 		}
 		if p.Deleted {
 			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_profiles WHERE project_id=? AND identified_id=?)`, project, p.IdentifiedID).Scan(&exists); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_profiles WHERE project_id=$1 AND identified_id=$2)`, project, p.IdentifiedID).Scan(&exists); err != nil {
 				return result, err
 			}
 			if !exists {
@@ -170,11 +170,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if pending >= int64(rules.queueMax) || queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
-	inserted, err := tx.ExecContext(ctx, `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported) VALUES(?,?,?,?,?,?,?,?,1)`, project, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event))
-	if err != nil {
-		return result, err
-	}
-	event.ID, err = inserted.LastInsertId()
+	event.ID, err = rules.insertAcceptedEvent(ctx, tx, event)
 	if err != nil {
 		return result, err
 	}
@@ -189,7 +185,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 			if decodeIngestionJSON(properties, &traits) != nil {
 				return result, errImportRow
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES(?,?,0,?,?) ON CONFLICT(project_id,identified_id) DO UPDATE SET traits=excluded.traits,version=excluded.version`, project, row.Person.IdentifiedID, string(properties), event.ID)
+			_, err = tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,0,$3,$4) ON CONFLICT(project_id,identified_id) DO UPDATE SET traits=excluded.traits,version=excluded.version`, project, row.Person.IdentifiedID, string(properties), event.ID)
 			if err != nil {
 				return result, err
 			}
@@ -257,14 +253,14 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 			return result, err
 		}
 		event.IdentitySnapshot = string(encoded)
-		if _, err = tx.ExecContext(ctx, `UPDATE events SET identity_snapshot=? WHERE id=? AND project_id=?`, event.IdentitySnapshot, event.ID, project); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE events SET identity_snapshot=$1 WHERE id=$2 AND project_id=$3`, event.IdentitySnapshot, event.ID, project); err != nil {
 			return result, err
 		}
 	}
 	if queueEventBytes(event) > rules.queueMaxBytes-pendingBytes {
 		return result, errors.New("import ingestion queue is full")
 	}
-	if err := consumeTenantEventsTx(ctx, tx, project, acceptedAt, 1); err != nil {
+	if err := rules.consumeAcceptedEvents(ctx, tx, project, acceptedAt, 1); err != nil {
 		return result, err
 	}
 	result.Accepted = 1

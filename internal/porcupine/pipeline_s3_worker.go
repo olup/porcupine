@@ -16,15 +16,15 @@ func pipelineManifestKey(w *s3PipelineWork) string {
 }
 func (s *Service) pipelineS3Admission(ctx context.Context, w *s3PipelineWork) (bool, error) {
 	var barrier, pending, failed int64
-	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=? AND id<=? AND is_imported=0)+(SELECT count(*) FROM mutation_outbox WHERE project_id=? AND seq<=?),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox),(SELECT count(*) FROM metadata WHERE key='last_delivery_error')`, w.pipeline.ProjectID, w.eventWatermark, w.pipeline.ProjectID, w.mutationWatermark).Scan(&barrier, &pending, &failed)
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=$1 AND id<=$2 AND is_imported=0)+(SELECT count(*) FROM mutation_outbox WHERE project_id=$3 AND seq<=$4),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox),(SELECT count(*) FROM metadata WHERE key='last_delivery_error')`, w.pipeline.ProjectID, w.eventWatermark, w.pipeline.ProjectID, w.mutationWatermark).Scan(&barrier, &pending, &failed)
 	return barrier == 0 && pending <= s.pipelines.config.ExportLimits.QueueThreshold && failed == 0, err
 }
 func (s *Service) pipelineS3CanContinue(ctx context.Context, w *s3PipelineWork) error {
 	var state string
-	if err := s.db.QueryRowContext(ctx, `SELECT state FROM pipelines WHERE id=? AND project_id=?`, w.pipeline.ID, w.pipeline.ProjectID).Scan(&state); err != nil || state != "active" {
+	if err := s.db.QueryRowContext(ctx, `SELECT state FROM pipelines WHERE id=$1 AND project_id=$2`, w.pipeline.ID, w.pipeline.ProjectID).Scan(&state); err != nil || state != "active" {
 		return errors.New("pipeline_paused")
 	}
-	allowed, err := pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
 	if err != nil || !allowed {
 		return errors.New("creator_unauthorized")
 	}
@@ -58,19 +58,19 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	defer finish()
-	allowed, err := pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
+	allowed, err := s.pipelineCreatorAuthorized(ctx, s.db, w.pipeline.ActorID, w.pipeline.ProjectID)
 	if err != nil {
 		return false, err
 	}
 	if !allowed {
-		_, err = s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='failed',error_code='creator_unauthorized',completed_at_ms=? WHERE id=?`, s.clock().UnixMilli(), w.id)
+		_, err = s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='failed',error_code='creator_unauthorized',completed_at_ms=$1 WHERE id=$2`, s.clock().UnixMilli(), w.id)
 		return true, err
 	}
 	ready, err := s.pipelineS3Admission(ctx, w)
 	if err != nil || !ready {
 		return false, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='running',attempts=attempts+1,attempt_id=CASE WHEN manifest='' THEN ? ELSE attempt_id END,error_code='' WHERE id=? AND state='queued' AND EXISTS(SELECT 1 FROM pipelines WHERE id=? AND state='active')`, newID(), w.id, w.pipeline.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='running',attempts=attempts+1,attempt_id=CASE WHEN manifest='' THEN $1 ELSE attempt_id END,error_code='' WHERE id=$2 AND state='queued' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND state='active')`, newID(), w.id, w.pipeline.ID)
 	if err != nil {
 		return false, err
 	}
@@ -78,7 +78,7 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 	if n != 1 {
 		return false, nil
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT attempt_id,attempts FROM pipeline_s3_runs WHERE id=?`, w.id).Scan(&w.attemptID, &w.attempts); err != nil {
+	if err = s.db.QueryRowContext(ctx, `SELECT attempt_id,attempts FROM pipeline_s3_runs WHERE id=$1`, w.id).Scan(&w.attemptID, &w.attempts); err != nil {
 		return false, err
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(s.pipelines.config.ExportLimits.MaxExecutionSeconds)*time.Second)
@@ -98,7 +98,7 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			code = "interrupted"
 		}
-		_, recordErr := s.db.ExecContext(recordCtx, `UPDATE pipeline_s3_runs SET state=?,error_code=?,next_attempt_ms=?,completed_at_ms=CASE WHEN ?='failed' THEN ? ELSE 0 END WHERE id=? AND state='running'`, state, code, s.clock().Add(time.Duration(1<<min(w.attempts, 6))*time.Second).UnixMilli(), state, s.clock().UnixMilli(), w.id)
+		_, recordErr := s.db.ExecContext(recordCtx, `UPDATE pipeline_s3_runs SET state=$1,error_code=$2,next_attempt_ms=$3,completed_at_ms=CASE WHEN $4='failed' THEN $5 ELSE 0 END WHERE id=$6 AND state='running'`, state, code, s.clock().Add(time.Duration(1<<min(w.attempts, 6))*time.Second).UnixMilli(), state, s.clock().UnixMilli(), w.id)
 		if recordErr != nil {
 			return true, recordErr
 		}
@@ -181,7 +181,7 @@ func (s *Service) executePipelineS3(ctx context.Context, w *s3PipelineWork) (res
 	if err != nil || len(encoded) > exportstore.MaxManifestBytes {
 		return errors.New("manifest_limit")
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET manifest=? WHERE id=? AND state='running'`, string(encoded), w.id); err != nil {
+	if _, err = s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET manifest=$1 WHERE id=$2 AND state='running'`, string(encoded), w.id); err != nil {
 		return err
 	}
 	w.manifest = string(encoded)
@@ -214,7 +214,7 @@ func (s *Service) publishPipelineS3(ctx context.Context, w *s3PipelineWork, stor
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE pipeline_s3_state SET cursor_ms=? WHERE pipeline_id=? AND cursor_ms=?`, w.end, w.pipeline.ID, w.start)
+	result, err := tx.ExecContext(ctx, `UPDATE pipeline_s3_state SET cursor_ms=$1 WHERE pipeline_id=$2 AND cursor_ms=$3`, w.end, w.pipeline.ID, w.start)
 	if err != nil {
 		return err
 	}
@@ -222,15 +222,15 @@ func (s *Service) publishPipelineS3(ctx context.Context, w *s3PipelineWork, stor
 	if n != 1 {
 		return errors.New("cursor_conflict")
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='succeeded',error_code='',completed_at_ms=?,manifest='',row_count=?,byte_count=? WHERE id=?`, s.clock().UnixMilli(), manifest.Rows, pipelineManifestBytes(manifest), w.id)
+	_, err = tx.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='succeeded',error_code='',completed_at_ms=$1,manifest='',row_count=$2,byte_count=$3 WHERE id=$4`, s.clock().UnixMilli(), manifest.Rows, pipelineManifestBytes(manifest), w.id)
 	if err != nil {
 		return err
 	}
 	// A committed manifest owns its data; cleanup checkpoints are no longer needed.
-	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=?`, w.id); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=$1`, w.id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_runs WHERE pipeline_id=? AND state='succeeded' AND id NOT IN (SELECT id FROM pipeline_s3_runs WHERE pipeline_id=? AND state='succeeded' ORDER BY window_start_ms DESC LIMIT 1000)`, w.pipeline.ID, w.pipeline.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_runs WHERE pipeline_id=$1 AND state='succeeded' AND id NOT IN (SELECT id FROM pipeline_s3_runs WHERE pipeline_id=$2 AND state='succeeded' ORDER BY window_start_ms DESC LIMIT 1000)`, w.pipeline.ID, w.pipeline.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

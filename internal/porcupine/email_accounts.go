@@ -92,7 +92,9 @@ func normalizeEmail(raw string) (string, error) {
 }
 
 func (s *Service) initializeEmailAccounts(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS email_humans (
+	var err error
+	if s.shared == nil {
+		_, err = s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS email_humans (
  principal_id TEXT PRIMARY KEY REFERENCES access_keys(id), email TEXT NOT NULL UNIQUE,
  project_grants TEXT NOT NULL, deployment_admin INTEGER NOT NULL DEFAULT 0 CHECK(deployment_admin IN (0,1)),
  notice_sent INTEGER NOT NULL DEFAULT 0, notice_attempt TEXT NOT NULL DEFAULT '', notice_retry_after_ms INTEGER NOT NULL DEFAULT 0);
@@ -102,6 +104,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
  UPDATE access_keys SET revoked_at=datetime('now') WHERE revoked_at IS NULL AND
  id IN (SELECT principal_id FROM oauth_interactive_grants WHERE human_id=NEW.principal_id);
  END;`)
+	}
 	if err != nil || s.oauth == nil || s.oauth.config.Email == nil || s.oauth.config.Email.AdminEmail == "" {
 		return err
 	}
@@ -112,7 +115,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -133,7 +136,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 		return err
 	}
 	var exists bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE email=?)`, address).Scan(&exists); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE email=$1)`, address).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
@@ -153,19 +156,19 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 func insertEmailHuman(ctx context.Context, tx *sql.Tx, human EmailHuman) error {
 	permissionsJSON, _ := json.Marshal(human.Permissions)
 	projectsJSON, _ := json.Marshal(human.Projects)
-	_, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'Email human',?,?,?,?)`,
+	_, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'Email human',$2,$3,$4,$5)`,
 		human.ID, hash(token()), string(permissionsJSON), string(projectsJSON), human.CreatedAt)
 	if err != nil {
 		return err
 	}
 	grants, _ := json.Marshal(human.Grants)
-	_, err = tx.ExecContext(ctx, `INSERT INTO email_humans(principal_id,email,deployment_admin,project_grants) VALUES(?,?,?,?)`, human.ID, human.Email, human.DeploymentAdmin, string(grants))
+	_, err = tx.ExecContext(ctx, `INSERT INTO email_humans(principal_id,email,deployment_admin,project_grants) VALUES($1,$2,$3,$4)`, human.ID, human.Email, human.DeploymentAdmin, string(grants))
 	return err
 }
 
 func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (actor, error) {
 	var permissionsJSON, projectsJSON, grantsJSON string
-	err := query.QueryRowContext(ctx, `SELECT k.permissions,k.projects,h.project_grants FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE k.id=? AND k.revoked_at IS NULL`, id).Scan(&permissionsJSON, &projectsJSON, &grantsJSON)
+	err := query.QueryRowContext(ctx, `SELECT k.permissions,k.projects,h.project_grants FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE k.id=$1 AND k.revoked_at IS NULL`, id).Scan(&permissionsJSON, &projectsJSON, &grantsJSON)
 	if err != nil {
 		return actor{}, err
 	}
@@ -190,7 +193,7 @@ func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string
 	if err != nil {
 		return "", err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT k.id FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE h.email=? AND k.revoked_at IS NULL`, address).Scan(&id)
+	err = s.control.QueryRowContext(ctx, `SELECT k.id FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE h.email=$1 AND k.revoked_at IS NULL`, address).Scan(&id)
 	return id, err
 }
 
@@ -279,7 +282,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 		return nil, err
 	}
 	h.ID, h.Email, h.CreatedAt = newID(), email, now()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -287,7 +290,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
-	existing, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE h.email=?`, email))
+	existing, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE h.email=$1`, email))
 	if err == nil {
 		if existing.RevokedAt != nil || !slices.EqualFunc(existing.Grants, h.Grants, func(a, b HumanProjectGrant) bool {
 			return a.ProjectID == b.ProjectID && slices.Equal(a.Permissions, b.Permissions)
@@ -304,7 +307,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	if send != nil {
 		var sent bool
 		var retryAfter int64
-		if err := tx.QueryRowContext(ctx, `SELECT notice_sent, notice_retry_after_ms FROM email_humans WHERE principal_id=?`, h.ID).Scan(&sent, &retryAfter); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT notice_sent, notice_retry_after_ms FROM email_humans WHERE principal_id=$1`, h.ID).Scan(&sent, &retryAfter); err != nil {
 			return nil, apiError(503, "invitation status unavailable")
 		}
 		if !sent {
@@ -312,7 +315,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 				return nil, apiError(429, "invitation delivery in progress or cooling down; retry the same request")
 			}
 			attempt = newID()
-			if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET notice_attempt=?, notice_retry_after_ms=? WHERE principal_id=?`, attempt, s.clock().Add(time.Minute).UnixMilli(), h.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET notice_attempt=$1, notice_retry_after_ms=$2 WHERE principal_id=$3`, attempt, s.clock().Add(time.Minute).UnixMilli(), h.ID); err != nil {
 				return nil, apiError(503, "invitation status unavailable")
 			}
 		}
@@ -327,7 +330,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 		// If the request disconnected during delivery, still save the result.
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		result, err := s.db.ExecContext(writeCtx, `UPDATE email_humans SET notice_sent=?, notice_attempt='',notice_retry_after_ms=? WHERE principal_id=? AND notice_attempt=?`, sendErr == nil, s.clock().Add(5*time.Second).UnixMilli(), h.ID, attempt)
+		result, err := s.control.ExecContext(writeCtx, `UPDATE email_humans SET notice_sent=$1, notice_attempt='',notice_retry_after_ms=$2 WHERE principal_id=$3 AND notice_attempt=$4`, sendErr == nil, s.clock().Add(5*time.Second).UnixMilli(), h.ID, attempt)
 		if err != nil {
 			return nil, apiError(503, "invitation status unavailable; retry the same request")
 		}
@@ -350,12 +353,12 @@ func (s *Service) updateHuman(ctx context.Context, input *UpdateHumanInput) (*Em
 	permissionsJSON, _ := json.Marshal(spec.Permissions)
 	projectsJSON, _ := json.Marshal(spec.Projects)
 	grantsJSON, _ := json.Marshal(spec.Grants)
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
 	defer tx.Rollback()
-	r, err := tx.ExecContext(ctx, `UPDATE access_keys SET permissions=?,projects=? WHERE revoked_at IS NULL AND id=? AND id IN (SELECT principal_id FROM email_humans WHERE deployment_admin=0)`, string(permissionsJSON), string(projectsJSON), input.ID)
+	r, err := tx.ExecContext(ctx, `UPDATE access_keys SET permissions=$1,projects=$2 WHERE revoked_at IS NULL AND id=$3 AND id IN (SELECT principal_id FROM email_humans WHERE deployment_admin=0)`, string(permissionsJSON), string(projectsJSON), input.ID)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -367,10 +370,10 @@ func (s *Service) updateHuman(ctx context.Context, input *UpdateHumanInput) (*Em
 		return nil, apiError(404, "active invited human not found")
 	}
 	// The database invalidates connections on changed project grants even when both unions stay equal.
-	if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET project_grants=? WHERE principal_id=?`, string(grantsJSON), input.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET project_grants=$1 WHERE principal_id=$2`, string(grantsJSON), input.ID); err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
-	h, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE k.id=?`, input.ID))
+	h, err := scanEmailHuman(tx.QueryRowContext(ctx, selectEmailHumans+` WHERE k.id=$1`, input.ID))
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -381,7 +384,7 @@ func (s *Service) listHumans(ctx context.Context, input *ListHumansInput) (*List
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
 		return nil, apiError(400, "invalid pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, selectEmailHumans+` ORDER BY h.email LIMIT ? OFFSET ?`, input.Limit+1, input.Offset)
+	rows, err := s.control.QueryContext(ctx, selectEmailHumans+` ORDER BY h.email LIMIT $1 OFFSET $2`, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
 	}
@@ -408,7 +411,7 @@ func (s *Service) listHumans(ctx context.Context, input *ListHumansInput) (*List
 
 func (s *Service) revokeHuman(ctx context.Context, input *HumanIDInput) (*struct{}, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT principal_id FROM email_humans WHERE principal_id=?`, input.ID).Scan(&id)
+	err := s.control.QueryRowContext(ctx, `SELECT principal_id FROM email_humans WHERE principal_id=$1`, input.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "human account not found")
 	}

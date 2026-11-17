@@ -23,11 +23,20 @@ var errSharedNativeDeleted = errors.New("DuckLake project is deleted")
 
 func validateSharedNativeConfig(c *DuckLakeConfig) error {
 	if c.PostgresURL == "" && c.SharedSourceID == "" {
+		if c.MetadataTimeoutSeconds != 0 {
+			return errors.New("DuckLake metadata timeout requires shared PostgreSQL metadata")
+		}
 		return nil
 	}
 	u, err := url.Parse(c.PostgresURL)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" || c.S3 == nil || len(c.SharedSourceID) != 36 || !lakePrefixSegmentPattern.MatchString(c.SharedSourceID) {
 		return errors.New("shared DuckLake requires a PostgreSQL URL, stable source ID and analytical S3 storage")
+	}
+	if c.MetadataTimeoutSeconds == 0 {
+		c.MetadataTimeoutSeconds = defaultDuckLakeMetadataTimeoutSeconds
+	}
+	if _, err := nativePostgresMetadataURL(c.PostgresURL, c.MetadataTimeoutSeconds); err != nil {
+		return err
 	}
 	return nil
 }
@@ -42,7 +51,11 @@ func sharedNativeCatalogID(source, project string) string {
 func (s *duckLakeStore) configureSharedPostgres(ctx context.Context, db *sql.DB) error {
 	// Explicit temporary secrets avoid the connector's default lookup in the
 	// disabled local_file secret store and keep credentials out of ATTACH text.
-	if _, err := db.ExecContext(ctx, "CREATE SECRET pc_analytics_postgres (TYPE postgres, URI "+lakeLiteral(s.config.PostgresURL)+")"); err != nil {
+	uri, err := nativePostgresMetadataURL(s.config.PostgresURL, s.config.MetadataTimeoutSeconds)
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "CREATE SECRET pc_analytics_postgres (TYPE postgres, URI "+lakeLiteral(uri)+")"); err != nil {
 		return errors.New("shared analytical PostgreSQL credentials unavailable")
 	}
 	return nil

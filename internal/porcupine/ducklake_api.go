@@ -47,6 +47,8 @@ func (s *Service) lakeAnalyticsSchema(ctx context.Context, project string) (*Ana
 	limits.MaxRows, limits.MaxResultBytes = effective.MaxRows, effective.MaxResultBytes
 	limits.MaxReadRows, limits.MaxReadBytes = 0, 0
 	limits.ObjectStorageRequestTimeoutSeconds = s.lakeS3RequestTimeoutSeconds
+	limits.MetadataRequestTimeoutSeconds = s.lakeMetadataTimeoutSeconds
+	limits.RequestTimeoutSeconds += s.lakeMetadataTimeoutSeconds
 	if s.lakeS3RequestTimeoutSeconds > 0 {
 		limits.RequestTimeoutSeconds += s.lakeS3RequestTimeoutSeconds
 	}
