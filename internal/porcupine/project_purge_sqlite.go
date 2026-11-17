@@ -31,6 +31,7 @@ func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string)
 		// Ready and quarantine entries cascade. Queue triggers return capacity to other projects.
 		"DELETE FROM events WHERE project_id=?",
 		"DELETE FROM metadata WHERE key='last_delivery_success:' || ?",
+		"DELETE FROM metadata WHERE key='receipts_pruned:' || ?",
 		"DELETE FROM projects WHERE id=?",
 	} {
 		if _, err := tx.ExecContext(ctx, statement, projectID); err != nil {

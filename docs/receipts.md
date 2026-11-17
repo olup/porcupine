@@ -14,9 +14,9 @@ A duplicate cannot change properties, update traits a second time, enqueue anoth
 
 ## Bounded receipts
 
-Retries normally arrive within minutes. Once a receipt is pruned, an incoming event whose occurrence time is older than the retention window minus seven days is checked against the project's DuckLake event heads before acceptance. A match is a duplicate and returns the original event ID. Historical imports use the same check for each chunk. The seven-day margin covers clients whose clocks run ahead.
+The maintenance worker checks each candidate against the project's DuckLake heads before pruning it. Pending queue payloads and mutations keep their receipts. The batch's durable project marker and receipt deletion commit in the same SQLite transaction, serialized with ingestion.
 
-A retry whose occurrence time is recent but whose original was received more than the retention window earlier would not be recognized. That requires a client clock ahead by more than seven days; keep `0` if your producers cannot rule it out. Without DuckLake, receipts are never pruned.
+Once a project has pruned any receipts, live ingestion and historical import chunks check producer IDs against DuckLake before acceptance. Producer timestamps cannot select this check: a retry may omit or change its timestamp while keeping its message ID. The marker survives restart and setting retention to `0`; that setting stops future pruning but cannot recreate old local receipts. A failed analytical lookup rejects the whole batch or import chunk for retry. Projects that have never pruned receipts retain the SQLite-only acceptance path. Without DuckLake, receipts are never pruned.
 
 ## Deletion and recovery
 

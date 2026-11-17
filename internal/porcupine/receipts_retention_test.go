@@ -2,6 +2,9 @@ package porcupine
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,7 +74,7 @@ func TestReceiptRetentionZeroKeepsReceiptsAndSkipsLookups(t *testing.T) {
 	}
 }
 
-func TestColdKnownLooksUpOnlyEventsOlderThanTheWindow(t *testing.T) {
+func TestColdKnownDoesNotTrustProducerTimestamps(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 11, 30, 0, 0, 0, 0, time.UTC)
 	var asked []string
@@ -90,8 +93,145 @@ func TestColdKnownLooksUpOnlyEventsOlderThanTheWindow(t *testing.T) {
 	if _, err := rules.coldKnown(context.Background(), "project", events); err != nil {
 		t.Fatal(err)
 	}
-	// The 7-day margin checks events older than retention minus the margin.
-	if len(asked) != 3 || asked[0] != "within-margin" || asked[1] != "old" || asked[2] != "unparsed" {
+	if len(asked) != len(events) {
 		t.Fatalf("looked up %v", asked)
+	}
+}
+
+func TestPrunedReceiptsKeepIDsAndIdentityAcrossRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var clock atomic.Int64
+	clock.Store(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixMilli())
+	directory := t.TempDir()
+	config := Config{DBPath: filepath.Join(directory, "journal.sqlite"), BootstrapToken: adminToken,
+		Clock: func() time.Time { return time.UnixMilli(clock.Load()).UTC() }, ReceiptRetention: 48 * time.Hour,
+		DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
+	s, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { s.Close() }()
+	stopCoreDelivery(s)
+	projectID, writer := project(t, s)
+	ids, uuids := map[string]any{}, map[string]string{}
+	for _, name := range []string{"original", "edited", "deleted"} {
+		body := fmt.Sprintf(`{"type":"track","message_id":%q,"actor_id":"browser","name":%q,"timestamp":"2026-11-01T10:00:00.123456789Z","properties":{"value":1}}`, name, name)
+		r := receiptFrom(t, nativeRequest(t, s, writer, body, 200), 0)
+		ids[name], uuids[name] = r["event_id"], r["uuid"].(string)
+	}
+	identify := `{"type":"identify","message_id":"identity","anonymous_id":"browser","user_id":"person","set":{"plan":"team"}}`
+	r := receiptFrom(t, nativeRequest(t, s, writer, identify, 200), 0)
+	ids["identity"] = r["event_id"]
+	duckLakeJourneyDrain(t, s)
+	_, manager := key(t, s, []string{"events:read", "events:edit", "events:delete"}, []string{projectID})
+	path := "/api/v1/projects/" + projectID + "/events/"
+	request(t, s, "PATCH", path+uuids["edited"], manager, `{"expected_revision":"0","idempotency_key":"edit","snapshot":{"event":"corrected","distinct_id":"browser","timestamp":"2026-11-01T11:00:00Z","properties":{"value":2}}}`, 202)
+	request(t, s, "DELETE", path+uuids["deleted"], manager, `{"expected_revision":"0","idempotency_key":"delete"}`, 202)
+	duckLakeJourneyDrain(t, s)
+	clock.Add((72 * time.Hour).Milliseconds())
+	if err := s.pruneReceipts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var receipts int
+	if err := s.db.QueryRow("SELECT count(*) FROM event_receipts").Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatal("receipts not pruned", receipts, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Disabling future pruning cannot restore deleted local receipt history.
+	config.ReceiptRetention = 0
+	s, err = Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopCoreDelivery(s)
+	for _, name := range []string{"original", "edited", "deleted"} {
+		// Producers often omit timestamps on retries. Even the current date and a
+		// changed payload must not turn an existing message into a new event.
+		body := fmt.Sprintf(`{"type":"track","message_id":%q,"actor_id":"browser","name":"unwanted","properties":{"value":999}}`, name)
+		replay := nativeRequest(t, s, writer, body, 200)
+		if replay["duplicates"] != float64(1) || receiptFrom(t, replay, 0)["event_id"] != ids[name] {
+			t.Fatalf("retry changed %s: %v", name, replay)
+		}
+	}
+	replay := nativeRequest(t, s, writer, `{"type":"identify","message_id":"identity","anonymous_id":"browser","user_id":"attacker","set":{"plan":"changed"}}`, 200)
+	if replay["duplicates"] != float64(1) || receiptFrom(t, replay, 0)["event_id"] != ids["identity"] {
+		t.Fatalf("identity replay was accepted: %v", replay)
+	}
+	duckLakeJourneyDrain(t, s)
+	original, err := s.lake.Load(ctx, projectID, uuids["original"])
+	if err != nil || original.Event.Event != "original" || original.Timestamp != "2026-11-01T10:00:00.123456789Z" {
+		t.Fatal("original changed", original, err)
+	}
+	edited, err := s.lake.Load(ctx, projectID, uuids["edited"])
+	if err != nil || edited.Event.Event != "corrected" || edited.Revision != 1 {
+		t.Fatal("correction lost", edited, err)
+	}
+	deleted, err := s.lake.Load(ctx, projectID, uuids["deleted"])
+	if err != nil || !deleted.IsDeleted {
+		t.Fatal("deleted event resurrected", deleted, err)
+	}
+	rows := duckLakeJourneyQuery(t, s, projectID, manager, "SELECT DISTINCT person_id,person_properties FROM events", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["person_id"] != "person" {
+		t.Fatal("identity changed on replay", rows)
+	}
+}
+
+func TestReceiptPruningRequiresConfirmedAnalyticalHeads(t *testing.T) {
+	t.Parallel()
+	s := duckLakeJourneyService(t)
+	projectID, writer := project(t, s)
+	r := receiptFrom(t, nativeRequest(t, s, writer, `{"type":"track","message_id":"pending","name":"pending"}`, 200), 0)
+	// A receipt alone is insufficient evidence: a queued original may still
+	// have an outstanding delete or an interrupted delivery.
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := tx.QueryRow("SELECT id FROM events WHERE uuid=?", r["uuid"]).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.recordReceipt(context.Background(), tx, projectID, r["uuid"].(string), id); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	s.receiptRetention = time.Nanosecond
+	if err := s.pruneReceipts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount(t, s) != 1 {
+		t.Fatal("pending event receipt pruned")
+	}
+	duckLakeJourneyDrain(t, s)
+	if err := s.lake.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pruneReceipts(context.Background()); err == nil {
+		t.Fatal("pruning accepted unavailable analytical history")
+	}
+	if receiptCount(t, s) != 1 {
+		t.Fatal("unconfirmed receipt pruned")
+	}
+}
+
+func TestPrunedReceiptLookupFailureRollsBackWholeBatch(t *testing.T) {
+	t.Parallel()
+	s := duckLakeJourneyService(t)
+	projectID, writer := project(t, s)
+	if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES('receipts_pruned:' || ?,'1')", projectID); err != nil {
+		t.Fatal(err)
+	}
+	s.eventRules.knownEvents = func(context.Context, string, []string) (map[string]int64, error) {
+		return nil, errors.New("unavailable")
+	}
+	nativeRequest(t, s, writer, `[{"type":"track","message_id":"a","name":"a"},{"type":"track","message_id":"b","name":"b"}]`, 503)
+	var n int
+	if err := s.db.QueryRow("SELECT count(*) FROM events").Scan(&n); err != nil || n != 0 {
+		t.Fatal("unverified batch accepted", n, err)
 	}
 }

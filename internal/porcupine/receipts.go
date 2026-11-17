@@ -30,45 +30,51 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid s
 	return err
 }
 
-// receiptColdMargin widens the occurrence-time window checked against DuckLake,
-// so client clocks running ahead cannot outlive a pruned receipt.
-const receiptColdMargin = 7 * 24 * time.Hour
-
-// coldKnown returns projected event IDs for events old enough that their local
-// receipt may have been pruned. It runs before the SQLite acceptance
-// transaction; an event projected meanwhile already has a fresh receipt.
+// coldKnown checks UUIDs without trusting producer timestamps. A retry may omit
+// its timestamp or change any payload field while keeping the same message ID.
 func (rules *eventRules) coldKnown(ctx context.Context, project string, events []Event) (map[string]int64, error) {
-	if rules.receiptRetention <= 0 || rules.knownEvents == nil {
+	if rules.knownEvents == nil || len(events) == 0 {
 		return nil, nil
 	}
-	cutoff := rules.clock().Add(-rules.receiptRetention + receiptColdMargin)
-	var uuids []string
-	for _, e := range events {
-		at, err := time.Parse(time.RFC3339Nano, e.Timestamp)
-		if err != nil || at.Before(cutoff) {
-			uuids = append(uuids, e.UUID)
+	uuids := make([]string, 0, len(events))
+	seen := make(map[string]bool, len(events))
+	for _, event := range events {
+		if !seen[event.UUID] {
+			uuids = append(uuids, event.UUID)
+			seen[event.UUID] = true
 		}
-	}
-	if len(uuids) == 0 {
-		return nil, nil
 	}
 	return rules.knownEvents(ctx, project, uuids)
 }
 
-// pruneReceipts removes receipts older than the retention window in small
-// batches. Their events are already in DuckLake, where coldKnown finds them.
+// knownEventsForAcceptance keeps ingestion SQLite-only until this project has
+// pruned a receipt. The marker survives restarts and disabling retention: once
+// local history is incomplete, DuckLake must arbitrate every producer ID.
+func (s *Service) knownEventsForAcceptance(ctx context.Context, project string, uuids []string) (map[string]int64, error) {
+	var pruned bool
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='receipts_pruned:' || ?)", project).Scan(&pruned); err != nil {
+		return nil, err
+	}
+	if !pruned {
+		return nil, nil
+	}
+	if s.lake == nil {
+		return nil, errors.New("analytical receipt history unavailable")
+	}
+	return s.lake.KnownEvents(ctx, project, uuids)
+}
+
+// pruneReceipts verifies each batch against analytical heads before deleting
+// receipts. Its durable marker and deletion commit together under the same
+// admission lock as ingestion, including when control metadata is PostgreSQL.
 func (s *Service) pruneReceipts(ctx context.Context) error {
 	if s.receiptRetention <= 0 || s.lake == nil {
 		return nil
 	}
-	cutoff := s.clock().Add(-s.receiptRetention).UnixMilli()
 	for {
-		result, err := s.db.ExecContext(ctx, `DELETE FROM event_receipts WHERE (project_id,uuid) IN (SELECT project_id,uuid FROM event_receipts WHERE recorded_at_ms<$1 LIMIT 2000)`, cutoff)
-		if err != nil {
+		count, err := s.pruneReceiptBatch(ctx)
+		if err != nil || count < 2000 {
 			return err
-		}
-		if n, _ := result.RowsAffected(); n < 2000 {
-			return nil
 		}
 		select {
 		case <-ctx.Done():
@@ -76,4 +82,67 @@ func (s *Service) pruneReceipts(ctx context.Context) error {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+func (s *Service) pruneReceiptBatch(ctx context.Context) (int, error) {
+	if err := s.eventRules.admission.Lock(ctx); err != nil {
+		return 0, err
+	}
+	defer s.eventRules.admission.Unlock()
+	rows, err := s.db.QueryContext(ctx, `SELECT r.project_id,r.uuid,r.event_id FROM event_receipts r
+ WHERE r.recorded_at_ms<? AND NOT EXISTS(SELECT 1 FROM events e WHERE e.project_id=r.project_id AND e.uuid=r.uuid)
+ AND NOT EXISTS(SELECT 1 FROM mutation_outbox m WHERE m.project_id=r.project_id AND m.uuid=r.uuid)
+ ORDER BY r.recorded_at_ms,r.project_id,r.uuid LIMIT 2000`, s.clock().Add(-s.receiptRetention).UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	type receipt struct {
+		project, uuid string
+		id            int64
+	}
+	var candidates []receipt
+	projects := map[string][]string{}
+	for rows.Next() {
+		var r receipt
+		if err := rows.Scan(&r.project, &r.uuid, &r.id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, r)
+		projects[r.project] = append(projects[r.project], r.uuid)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, err
+	}
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+	known := make(map[string]map[string]int64, len(projects))
+	for project, uuids := range projects {
+		known[project], err = s.lake.KnownEvents(ctx, project, uuids)
+		if err != nil {
+			return 0, err
+		}
+	}
+	for _, r := range candidates {
+		if known[r.project][r.uuid] != r.id || r.id <= 0 {
+			return 0, errors.New("receipt does not match its analytical event")
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	for project := range projects {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('receipts_pruned:' || ?,'1') ON CONFLICT(key) DO NOTHING", project); err != nil {
+			return 0, err
+		}
+	}
+	for _, r := range candidates {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM event_receipts WHERE project_id=? AND uuid=? AND event_id=?", r.project, r.uuid, r.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(candidates), tx.Commit()
 }

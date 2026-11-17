@@ -213,12 +213,8 @@ func Open(c Config) (*Service, error) {
 		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
 		s.shared = &sharedRuntime{config: copyConfig}
 	}
-	s.eventRules.knownEvents = func(ctx context.Context, project string, uuids []string) (map[string]int64, error) {
-		if s.lake == nil {
-			return nil, nil
-		}
-		return s.lake.KnownEvents(ctx, project, uuids)
-	}
+	s.eventRules.admission = &s.localAdmission
+	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
 	if pipelines != nil {
 		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
@@ -313,7 +309,6 @@ func Open(c Config) (*Service, error) {
 		if err := s.bindLocalControl(context.Background()); err != nil {
 			return fail(err)
 		}
-		s.eventRules.admission = &s.localAdmission
 		s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
 	}
 	if s.shared != nil {
