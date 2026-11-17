@@ -71,7 +71,7 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	scope.Begin()
-	result, err := s.lake.Query(native, input.ID, input.Body.SQL, input.Body.Parameters, limits.executionLimits())
+	result, err := s.interactiveReader().Query(native, input.ID, input.Body.SQL, input.Body.Parameters, limits.executionLimits())
 	err = interactiveQueryResultError(native, scope.Finish(), err)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func (s *Service) lakeEventCatalog(ctx context.Context, input lakeapi.EventCatal
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	scope.Begin()
-	result, err := s.lake.Catalog(native, input)
+	result, err := s.interactiveReader().Catalog(native, input)
 	err = interactiveQueryResultError(native, scope.Finish(), err)
 	if err != nil {
 		return nil, err

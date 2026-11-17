@@ -60,7 +60,7 @@ var (
 
 // These statements depend only on the metric dictionary, not on a request.
 func postingSQL(scoped, finish bool) string {
-	set := []string{"revision=usage_rollups.revision+1", "unresolved_queries=usage_rollups.unresolved_queries+excluded.unresolved_queries", "last_observed_at=CASE WHEN excluded.last_observed_at<>'' THEN excluded.last_observed_at ELSE usage_rollups.last_observed_at END"}
+	set := []string{"revision=usage_rollups.revision+1", "unresolved_queries=usage_rollups.unresolved_queries+excluded.unresolved_queries", "last_observed_at=CASE WHEN excluded.last_observed_at>usage_rollups.last_observed_at THEN excluded.last_observed_at ELSE usage_rollups.last_observed_at END"}
 	guards := []string{"usage_rollups.revision<9223372036854775807", "usage_rollups.unresolved_queries<=9223372036854775807-excluded.unresolved_queries"}
 	for _, c := range columns {
 		set = append(set, c+"=usage_rollups."+c+"+excluded."+c)
@@ -70,7 +70,7 @@ func postingSQL(scoped, finish bool) string {
 	// already authorized scope because reads can run on a non-owner worker.
 	selector := `SELECT $1,tenant_id,id,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11 FROM projects WHERE id=$12`
 	if scoped {
-		selector = `SELECT $1,$13,$12,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11 WHERE TRUE`
+		selector = `VALUES($1,$13,$12,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
 	}
 	// The INSERT path must satisfy its nonnegative CHECK even for a finishing
 	// execution. Apply its gauge separately while preserving the same transaction.

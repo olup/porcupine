@@ -15,12 +15,16 @@ import (
 )
 
 func (s *DuckLakeStore) Query(ctx context.Context, project, rawSQL string, parameters map[string]string, limits QueryExecutionLimits) (AnalyticsResult, error) {
+	return queryProject(ctx, s.LeaseProject, project, rawSQL, parameters, limits)
+}
+
+func queryProject(ctx context.Context, lease analyticalProjectLease, project, rawSQL string, parameters map[string]string, limits QueryExecutionLimits) (AnalyticsResult, error) {
 	if limits.Timeout <= 0 || limits.MaxRows < 1 || limits.MaxRows > 100000 || limits.MaxResultBytes < 256 || limits.MaxResultBytes > 64<<20 {
 		return AnalyticsResult{}, apiError(500, "invalid interactive execution limits")
 	}
 	ctx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()
-	p, release, err := s.LeaseProject(ctx, project)
+	p, release, err := lease(ctx, project)
 	if err != nil {
 		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
@@ -182,12 +186,16 @@ func DuckLakeQueryError(ctx context.Context, err error) error {
 }
 
 func (s *DuckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (EventCatalog, error) {
+	return catalogProject(ctx, s.LeaseProject, input)
+}
+
+func catalogProject(ctx context.Context, lease analyticalProjectLease, input EventCatalogInput) (EventCatalog, error) {
 	input, err := NormalizeCatalogInput(input)
 	if err != nil {
 		return EventCatalog{}, err
 	}
 	project, event, limit, offset := input.ID, input.Event, input.Limit, input.Offset
-	p, release, err := s.LeaseProject(ctx, project)
+	p, release, err := lease(ctx, project)
 	if err != nil {
 		return EventCatalog{}, duckLakeProjectError(ctx, err)
 	}

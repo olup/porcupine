@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS lake.identity_profiles (
 CREATE TABLE IF NOT EXISTS lake.identity_links (
  anonymous_id VARCHAR, identified_id VARCHAR, version UBIGINT
 );
+`
+
+const duckLakeEventsView = `
 CREATE OR REPLACE VIEW events AS
  SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,
