@@ -151,7 +151,7 @@ WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state IN ('open'
 		if err := validateNativeEffectHistory(ctx, tx, high); err != nil {
 			return err
 		}
-		if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
+		if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -200,7 +200,7 @@ func (s *DuckLakeStore) AcknowledgeNativeEffects(ctx context.Context, fence Proj
 		if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET generation=generation+1,ack_effect_seq=greatest(ack_effect_seq,?) WHERE id=1 AND fence_epoch=? AND fence_nonce=?`, through, fence.Epoch, fence.AcquisitionID); err != nil {
 			return err
 		}
-		if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
+		if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
 			return err
 		}
 		return tx.Commit()

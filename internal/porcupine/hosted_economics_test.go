@@ -16,6 +16,7 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,7 @@ import (
 type economicsS3Traffic struct {
 	mu               sync.Mutex
 	calls            map[string]int
+	parquetCalls     map[string]map[string]int
 	upload, download atomic.Int64
 }
 
@@ -51,7 +53,7 @@ func economicsS3Proxy(t *testing.T, fixture *duckLakeS3Fixture) *economicsS3Traf
 	if err != nil {
 		t.Fatal(err)
 	}
-	traffic := &economicsS3Traffic{calls: make(map[string]int)}
+	traffic := &economicsS3Traffic{calls: make(map[string]int), parquetCalls: make(map[string]map[string]int)}
 	record := func(r *http.Request, status int) {
 		op := r.Method
 		switch {
@@ -65,7 +67,19 @@ func economicsS3Proxy(t *testing.T, fixture *duckLakeS3Fixture) *economicsS3Traf
 			op = "UPLOAD_PART"
 		}
 		traffic.mu.Lock()
-		traffic.calls[fmt.Sprintf("%s/%d", op, status)]++
+		request := fmt.Sprintf("%s/%d", op, status)
+		traffic.calls[request]++
+		if path.Ext(r.URL.Path) == ".parquet" {
+			dir := path.Dir(r.URL.Path)
+			for strings.Contains(path.Base(dir), "=") {
+				dir = path.Dir(dir)
+			}
+			directory := path.Base(dir)
+			if traffic.parquetCalls[directory] == nil {
+				traffic.parquetCalls[directory] = make(map[string]int)
+			}
+			traffic.parquetCalls[directory][request]++
+		}
 		traffic.mu.Unlock()
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -127,10 +141,12 @@ func reportHostedEconomics(t *testing.T, fixture duckLakeS3Fixture, traffic *eco
 	traffic.mu.Lock()
 	calls := traffic.calls
 	traffic.calls = make(map[string]int)
+	parquetCalls := traffic.parquetCalls
+	traffic.parquetCalls = make(map[string]map[string]int)
 	traffic.mu.Unlock()
 	row, err := json.Marshal(map[string]any{
 		"phase": phase, "projects": projects, "events": events, "flushes": flushes,
-		"elapsed_seconds": elapsed, "requests": calls, "upload_body_bytes": traffic.upload.Swap(0),
+		"elapsed_seconds": elapsed, "requests": calls, "parquet_requests_by_directory": parquetCalls, "upload_body_bytes": traffic.upload.Swap(0),
 		"download_body_bytes": traffic.download.Swap(0), "inventory": economicsList(t, fixture),
 		"details": details,
 	})
