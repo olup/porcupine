@@ -84,6 +84,14 @@ func TestSQLitePipelineReplacementRetiresInFlightWebhookAtSameURL(t *testing.T) 
 		t.Fatal(err)
 	}
 	enqueuePipelineEvent(t, p, "old")
+	if _, err = p.Replace(t.Context(), "project", created.ID, PipelineChange{Credentials: PipelineCredentials{BearerToken: "old-account"}}); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err = p.db.QueryRow(`SELECT count(*) FROM webhook_deliveries WHERE event_uuid='old' AND state='queued'`).Scan(&queued); err != nil || queued != 1 {
+		t.Fatal("unchanged destination retired backlog", queued, err)
+	}
+
 	done := make(chan error, 1)
 	go func() { _, err := p.RunWebhook(t.Context()); done <- err }()
 	select {

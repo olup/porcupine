@@ -551,7 +551,7 @@ var operations = []operation{
 	},
 	{
 		ID: "replace-pipeline-credentials", Method: "PUT", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}/credentials",
-		Summary: "Replace encrypted credentials and destination; pending deliveries use the new destination",
+		Summary: "Replace encrypted credentials and destination; pending deliveries to the old destination are retired",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "pipeline_id", In: "path", Type: "string", Description: "", Required: true},
