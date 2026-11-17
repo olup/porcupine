@@ -1,7 +1,6 @@
 # Shared interactive execution lifecycle
 
-Unreleased. The renewable permit and quarantine mechanism applies only to shared
-deployments. Local execution keeps its existing cancellation and limit policies.
+> Design record for renewable permits and quarantine. See the [hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision) for the released behavior.
 
 ## Decision
 

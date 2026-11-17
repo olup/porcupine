@@ -1,6 +1,6 @@
 # Replaceable built-ins and the commercial control plane
 
-**Design record.** External authentication and standalone tenant deletion have unreleased implementations. Expanded usage and the complete hosted architecture remain targets. This complements the [hosted architecture](hosted-architecture.md). The same open-source data service serves standalone deployments and the future commercial platform. The commercial application lives outside this repository and talks to authenticated APIs, never directly to Porcupine's database.
+**Design record.** See the [v0.15.0 changelog](../../CHANGELOG.md) and [hosting guide](../hosting.md) for released behavior. This complements the [hosted architecture](hosted-architecture.md). The same open-source data service serves standalone deployments and the future commercial platform. The commercial application lives outside this repository and talks to authenticated APIs, never directly to Porcupine's database.
 
 Porcupine owns ingestion, analytical storage, queries and enforcement of project/tenant permissions. It also provides integrated identity, management and operational measurements for self-hosting. A documented external replacement can disable an integrated component without weakening self-hosting or requiring a private fork. This is a boundary for complete responsibilities, not an interface for every function or a reserved billing hook.
 

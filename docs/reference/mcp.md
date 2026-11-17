@@ -2,7 +2,7 @@
 
 To connect a client, follow [Connect your tools](../connect-tools.md). This reference describes the four MCP tools, their request shapes, and their responses.
 
-Porcupine exposes stateless Streamable HTTP at `/mcp`. The published v0.14.0 release provides `porcupine_docs` and `porcupine_call`. Unreleased development builds add read-only `porcupine_schema` and `porcupine_query`. The
+Porcupine exposes stateless Streamable HTTP at `/mcp`. It provides `porcupine_docs`, `porcupine_call`, and the read-only tools `porcupine_schema` and `porcupine_query`. The
 implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 v1.8.0 in the existing Go process. It requires no additional service.
 
@@ -25,7 +25,7 @@ embedded images from `site/assets/favicon.svg`, install `rsvg-convert` and run
 
 For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
-Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human account alongside email OTP. The account's current memberships and the client's allowed scopes determine its access, including authorized administration. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
+Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human account alongside email OTP. The account's current memberships and the client's allowed scopes determine its access, including authorized administration. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
 
 Access tokens expire after 15 minutes by default. Machine clients repeat the token exchange. Interactive clients rotate refresh tokens during the seven-day consent grant. When the grant expires, the person connects again. Each request checks expiry, resource, parent revocation and effective grants. Exports also check creator authority while running and before publication.
 
@@ -34,8 +34,6 @@ Unauthorized requests include the discovery URL `ISSUER/.well-known/oauth-protec
 The endpoint rejects cross-origin browser requests. When a reverse proxy forwards to a loopback listener, set its upstream Host header to the loopback host. Clients connect to the public HTTPS URL.
 
 ## Read-only analytics with `porcupine_schema` and `porcupine_query`
-
-Not yet in a release: these tools are on `main` after v0.14.0.
 
 Most analysis needs two calls. Both tools are annotated as read-only, idempotent and non-destructive, so a client can approve them without approving `porcupine_call`. They dispatch through the same routes as `get-event-schema`, `get-event-catalog` and `query-events`, and the same token, permission and project checks apply. A credential without `events:read` on the project receives status `403`.
 
@@ -136,7 +134,7 @@ An agent can discover `rename-project` or `delete-project` with `porcupine_docs`
 {"operation_id":"rename-project","path":{"id":"PROJECT_ID"},"body":{"name":"Research"}}
 ```
 
-Renaming requires `management:write` on that project. Permanent deletion requires `instance:admin` in v0.14.0. **Unreleased:** administrators of the project's tenant can also delete it through `tenant:admin` consent. Call `{"operation_id":"delete-project","path":{"id":"PROJECT_ID"}}` and check for HTTP `204`. See [project cleanup scope](management-api.md#operations).
+Renaming requires `management:write` on that project. Permanent deletion requires instance administration or `tenant:admin` consent for the project's tenant. Call `{"operation_id":"delete-project","path":{"id":"PROJECT_ID"}}` and check for HTTP `204`. See [project cleanup scope](management-api.md#operations).
 
 Mutating operations are available to suitably scoped access tokens. Project and key
 creation return one-time secrets, just as their HTTP counterparts do. Event

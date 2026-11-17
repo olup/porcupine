@@ -271,7 +271,7 @@ func TestSharedControlRevokesDependentCredentials(t *testing.T) {
 	}
 }
 
-func TestHostedControlRejectsLegacyOwnerRoutedDatabaseWithoutMigrating(t *testing.T) {
+func TestSharedHostedControlRejectsLegacyOwnerRoutedDatabaseWithoutMigrating(t *testing.T) {
 	t.Parallel()
 	db, _ := sharedControlFixture(t)
 	ctx := t.Context()

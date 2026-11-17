@@ -552,9 +552,6 @@
             "description": "Receipt time of the earliest queued original by acceptance order, including quarantined events, in this project",
             "type": "string"
           },
-          "owner_worker_id": {
-            "type": "string"
-          },
           "pending": {
             "format": "int64",
             "type": "integer"
@@ -2103,14 +2100,6 @@
               "not_configured"
             ],
             "type": "string"
-          },
-          "worker_registration": {
-            "description": "Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation.",
-            "enum": [
-              "ok",
-              "unavailable"
-            ],
-            "type": "string"
           }
         },
         "required": [
@@ -2142,10 +2131,6 @@
             "description": "Upstream OIDC sign-in is configured. No identity-provider request is performed.",
             "type": "boolean"
           },
-          "owner_routing": {
-            "description": "Durable project-owner routing is configured. Its worker registration check is reported separately.",
-            "type": "boolean"
-          },
           "query_exports": {
             "description": "Private query export storage is configured. No remote storage request is performed.",
             "type": "boolean"
@@ -2172,8 +2157,7 @@
           "s3_query_pipelines",
           "email_sign_in",
           "oidc_sign_in",
-          "shared_control",
-          "owner_routing"
+          "shared_control"
         ],
         "type": "object"
       },
@@ -45066,7 +45050,7 @@
     },
     "/api/v1/tenants/{tenant_id}": {
       "delete": {
-        "description": "The durable fence blocks ingestion and resource access before cleanup. Retry the same tenant ID. Shared owner-local deployments remain pending until shared operational-state cleanup is available. Customer-owned published pipeline outputs are excluded. logically_deleted never claims that S3 object versions or backups have been purged.",
+        "description": "The durable fence blocks ingestion and resource access before cleanup. Retry the same tenant ID. Customer-owned published pipeline outputs are excluded. logically_deleted never claims that S3 object versions or backups have been purged.",
         "operationId": "delete-tenant",
         "parameters": [
           {

@@ -291,7 +291,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	var loseCommit atomic.Bool
-	wrapped, er := installLostHostedCommit(a.service.shared.config.DatabaseURL, fa.publisher, &loseCommit)
+	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit)
 	if er != nil {
 		t.Fatal(er)
 	}

@@ -1,15 +1,15 @@
 # Scope and roadmap
 
-> Hosted direction superseded on 17 November 2026: use the [stateless hosted architecture](hosted-architecture.md) for new work. The owner-local queue proposal below records the previous design and the current unreleased implementation; it is not the hosted target. Published v0.14.0 capabilities remain identified separately.
+> Historical record of the proposal and implementation before hosted startup. Use the [current hosted setup](hosted-profile-composition.md) for v0.15.0. Owner-local shared queues described here were a development design.
 
-## Unreleased
+## Pre-release design work
 
 - Tenant ownership for projects, with one default tenant on fresh installations. Tenant administrators manage their team's projects, memberships, and independent service credentials. Members can receive read-only or finer grants on selected projects, or tenant-local access including future projects. Instance operators retain hard budgets and deployment controls. [Team access](../reference/tenant-access.md), [tenant guide](../reference/tenants.md)
 - Email OTP and optional trusted Google/OIDC sign-in authenticate the same invited humans. Operator-only identity recovery lists and unlinks provider bindings while revoking prior interactive connections and browser proofs. [Identity recovery](../reference/identity-recovery.md)
 - Monthly ingestion allowances shared by a tenant's projects. Counts commit atomically with newly accepted canonical rows, including imports and identity controls. Duplicate, invalid, ignored, and rolled-back rows consume nothing; deletion does not refund usage. Periods are UTC calendar months, with preserved history and no manual reset endpoint.
 - Shared tenant limits for interactive query concurrency, execution time, result rows, and result bytes. Effective limits cannot exceed deployment ceilings and are discoverable through the project schema. [Query limits](../reference/analytics.md#query-limits)
 - Operator ingestion suspension and resumable import checkpoints when an allowance is exhausted. These technical controls contain no pricing or billing logic.
-- Optional [shared PostgreSQL deployment](../reference/shared-deployment.md): shared control metadata and DuckLake catalogs, one persistent SQLite volume per worker, and S3 Parquet. Public entry points forward owner-bound requests internally; delivered SQL can run on any worker. Event payloads do not enter operational PostgreSQL, and PostgreSQL DuckLake data inlining is disabled.
+- Optional [owner-local deployment design](shared-deployment-design.md): shared control metadata and DuckLake catalogs, one persistent SQLite volume per worker, and S3 Parquet. Public entry points forward owner-bound requests internally; delivered SQL can run on any worker. Event payloads do not enter operational PostgreSQL, and PostgreSQL DuckLake data inlining is disabled.
 - Cumulative usage publication and cached shared ingestion policies on a ten-second cycle, with fail-closed stale policies and soft quota overshoot across owners. Tenant interactive query places are reserved immediately in PostgreSQL, with per-process protection and renewable execution-scoped expiry.
 - Bounded native PostgreSQL metadata settings and schema-visible I/O allowances. Shared interactive queries retain their places until calls return. Failed renewal or unresponsive native work quarantines the affected project's interactive engine. Worker status reports uncertain permits and quarantine without probing native engines. Automatic expiry can permit physical concurrency overshoot during a partition. See [shared execution](../reference/shared-deployment.md#native-timeouts-and-worker-supervision).
 - Stable project-owner/volume identity, owner-down `503` responses, and explicit `delivery.pending_unknown` on non-owner query responses. Shared cleanup preserves at least eight days of snapshots and obsolete-file grace. Automatic owner failover and native whole-instance backup/restore are not supported in shared mode.
@@ -97,7 +97,7 @@ database writes. Payment integration follows that contract validation.
 
 The commercial service remains a design candidate, not an implementation
 commitment. Its shared-storage foundation is being implemented in the unreleased
-open-source [shared deployment](../reference/shared-deployment.md). Keep default standalone
+open-source [owner-local deployment design](shared-deployment-design.md). Keep default standalone
 deployment simple; no billing service or hosted availability promise follows from
 that implementation.
 

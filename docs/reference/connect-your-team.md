@@ -4,7 +4,7 @@ This guide is for the instance operator. If you have already been invited and wa
 
 A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. For email verification codes, enable [SMTP delivery](email-transport.md). The server sends a notice when an administrator grants access and issues a verification code only when the person starts a login. In an OIDC-only development setup without SMTP, share the instance URL and connection instructions yourself.
 
-For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). **Unreleased:** configured Google or OIDC sign-in can use the same invited human accounts as email verification. Both methods lead to the same tool consent and current permissions. See [sign-in configuration](mcp-interactive-oauth.md).
+For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). Configured Google or OIDC sign-in can use the same invited human accounts as email verification. Both methods lead to the same tool consent and current permissions. See [sign-in configuration](mcp-interactive-oauth.md).
 
 ## Connect the first administrator
 
@@ -29,9 +29,7 @@ callback_port = 43179
 
 Run `codex mcp login porcupine_admin --scopes instance:admin`. Authenticate with your authorized administrator address on the Porcupine page and approve instance administration. Email sign-in requests a fresh inbox code; a configured Google or OIDC provider authenticates the same invited identity. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
 
-## Choose a tenant for your projects (unreleased)
-
-This workflow requires a matching development server and CLI. The published v0.14.0 release does not include tenant memberships.
+## Choose a tenant for your projects {#choose-a-tenant-for-your-projects-unreleased}
 
 Set up the team in this order:
 
@@ -53,7 +51,7 @@ A member can receive reader, contributor, or manager permissions on selected pro
 
 ## Invite someone once
 
-For the unreleased tenant workflow, use [tenant membership invitations](tenant-access.md#create-a-project-and-invite-a-reader). The `invite-human` workflow below is the operator-wide API available in v0.14.0.
+For team access, use [tenant membership invitations](tenant-access.md#create-a-project-and-invite-a-reader). The `invite-human` workflow below is the operator-wide API.
 
 Ask the connected admin agent to create a project if necessary, then invite the person's address with the required permissions for each project. For example:
 

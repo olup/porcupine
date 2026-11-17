@@ -2,9 +2,7 @@
 
 Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. Each key has one audience, project IDs, and permissions. Set `PORCUPINE_OAUTH_ISSUER` to enable service accounts.
 
-## Create a team service account (unreleased)
-
-This workflow requires matching development server and CLI builds. The published v0.14.0 release does not include tenant-scoped service-account operations.
+## Create a team service account {#create-a-team-service-account-unreleased}
 
 Connect as the [tenant administrator](tenant-access.md#connect-as-the-tenant-administrator), then create a machine account with fixed project permissions:
 
@@ -49,7 +47,7 @@ Use `revoke-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID` to revo
 
 The operation IDs are also the CLI commands. MCP uses `porcupine_docs` to inspect their contracts and `porcupine_call` to call them. HTTP clients use `/api/v1/tenants/{tenant_id}/service-accounts`, with `/{id}/api-keys` for keys. Account updates use `PUT`; revocations use `DELETE`. The running `/openapi.json` describes every field and permission check.
 
-## Use the operator API in v0.14.0
+## Use the operator API {#use-the-operator-api-in-v0140}
 
 The released operator API provides `create-oauth-client`, `create-service-api-key`, `list-access-keys`, and `revoke-access-key`. An instance administrator creates a machine client through `POST /api/v1/oauth-clients`, then issues keys through `POST /api/v1/oauth-clients/{id}/api-keys`. Use the same key body as above. The corresponding CLI key command is `porcupine create-service-api-key --id CLIENT_ID --body @key.json`.
 
@@ -59,4 +57,4 @@ A key belongs to a machine OAuth client with the `client_credentials` grant. Par
 
 A private API key with `events:write` can authenticate a server-only capture using its bearer header. Public browser ingestion uses a separate single-project write credential. Keep service keys out of public SDKs and event payloads. Historical uploads require both `imports:write` and `events:write` on the target project.
 
-Ordinary human analysis connections cannot mint independent machine credentials through `management:write` alone. Use a tenant-administrator connection for the unreleased team operations, or an instance administrator for the global operator API. Tenant administration itself uses a human OAuth grant; tenant service accounts receive project capabilities only.
+Ordinary human analysis connections cannot mint independent machine credentials through `management:write` alone. Use a tenant-administrator connection for the team operations, or an instance administrator for the global operator API. Tenant administration itself uses a human OAuth grant; tenant service accounts receive project capabilities only.

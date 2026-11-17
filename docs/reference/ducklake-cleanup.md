@@ -45,7 +45,7 @@ The report does not list filesystem paths, payloads, project IDs, or native erro
 
 This cleanup removes obsolete native snapshots and managed Parquet files. It does not promise physical erasure within 30 days. Backlogs, long readers, repeated failures and disabled cleanup can delay reclamation.
 
-Corrections preserve the original accepted snapshot privately for retry verification. In v0.14.0 it is stored with the current event; unreleased schema v2 retains it separately only after correction. That original remains live data until the event is deleted; expiring historical snapshots does not remove it. The minimal deleted-event tombstone contains no event payload.
+Corrections preserve the original accepted snapshot privately for retry verification. In schema v2, it is stored separately only after correction. That original remains live data until the event is deleted; expiring historical snapshots does not remove it. The minimal deleted-event tombstone contains no event payload.
 
 SQLite free pages and WAL, DuckLake catalog free blocks, stopped-volume backups, filesystem snapshots, S3 object versions, and data already sent to external destinations have separate retention and deletion requirements. This feature does not perform forensic erasure of those copies. It also does not scan the entire analytical directory for orphan files.
 

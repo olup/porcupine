@@ -1,6 +1,8 @@
 # Durability and recovery
 
-The Porcupine server durably accepts events into SQLite, then projects them into DuckLake transactions over local or configured S3 data files. The storage device must honor sync operations. A single local disk provides no replication or automatic host-loss recovery.
+This guide covers SQLite-journal deployments. The opt-in [hosted profile](../design/hosted-profile-composition.md) acknowledges admission to bounded memory.
+
+In a SQLite-journal deployment, the server durably accepts events into SQLite, then projects them into DuckLake transactions over local or configured S3 data files. The storage device must honor sync operations. A single local disk provides no replication or automatic host-loss recovery.
 
 ## Acceptance and queue limits
 
@@ -8,7 +10,7 @@ SQLite uses WAL mode and `synchronous=FULL`. The server acknowledges capture onl
 
 Retries need a stable PostHog UUID or native/Segment producer message ID in the same project and source. A repeat returns the original event ID and preserves the original accepted payload. Without a stable producer ID, separate submissions can create separate events. [Receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources)
 
-**Unreleased:** a control-storage failure while validating a credential returns retryable `503` with `Retry-After`, before acceptance writes. API, MCP, native ingestion, PostHog, and Segment preserve that distinction. A genuinely invalid, expired, or revoked credential returns `401`. Retry the same stable-ID batch after service recovery; do not replace its IDs.
+A control-storage failure while validating a credential returns retryable `503` with `Retry-After`, before acceptance writes. API, MCP, native ingestion, PostHog, and Segment preserve that distinction. A genuinely invalid, expired, or revoked credential returns `401`. Retry the same stable-ID batch after service recovery; do not replace its IDs.
 
 ## Analytical delivery
 
@@ -16,7 +18,7 @@ The worker projects bounded batches into DuckLake. A transaction maintains curre
 
 A process can stop after the analytical commit and before SQLite acknowledgment. The queued batch retries after restart with the same IDs and revisions. Projection rejects stale revisions and preserves one logical current event. This is at-least-once processing with idempotent projection, not a distributed exactly-once transaction.
 
-The published v0.14.0 release and current development defaults keep project-and-UUID receipts indefinitely. A fresh SQLite-journal deployment can therefore accept new events and deduplicate retries during an analytical outage. Unreleased builds offer optional receipt pruning; its analytical dependency and persistent pruning marker are documented once in [receipt retention](receipts.md#bounded-receipts). Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have separate storage costs.
+SQLite-journal deployments keep project-and-UUID receipts indefinitely. A fresh SQLite-journal deployment can therefore accept new events and deduplicate retries during an analytical outage. Optional receipt pruning introduces an analytical dependency. See the persistent pruning marker in [receipt retention](receipts.md#bounded-receipts). Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have separate storage costs.
 
 The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](../design/ducklake-maintenance.md)
 

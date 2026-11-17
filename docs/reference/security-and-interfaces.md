@@ -4,7 +4,7 @@ The HTTP API, CLI and MCP use the same project grants. The [management API refer
 
 ## Technical access
 
-An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md). **Unreleased:** configured Google or OIDC sign-in authenticates the same invited human accounts and memberships, alongside email verification. See [sign-in configuration](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
+An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md). Configured Google or OIDC sign-in authenticates the same invited human accounts and memberships, alongside email verification. See [sign-in configuration](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
 
 [OAuth client credentials](oauth.md) authorize machine API and MCP access when
 the operator configures an issuer. Clients exchange an ID and secret through
@@ -24,13 +24,13 @@ remains available for offline use. Public single-project PostHog ingestion keys
 stay separate, write-only browser credentials and are not OAuth clients.
 
 Huma provides typed management requests, validation, and generated OpenAPI.
-The control database stores client credentials, token hashes, memberships, and project grants. It uses local SQLite by default or PostgreSQL in shared mode. Explicit permission checks run inside the Go process; there is no external policy server.
+The control database stores client credentials, token hashes, memberships, and project grants. It uses local SQLite by default or PostgreSQL in hosted. Explicit permission checks run inside the Go process; there is no external policy server.
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
 
-## Tenant roles and project permissions (unreleased)
+## Tenant roles and project permissions {#tenant-roles-and-project-permissions-unreleased}
 
-The published v0.14.0 release does not include tenant memberships. In the development model, instance and tenant administration have distinct authority:
+Instance and tenant administrators have distinct authority.
 
 | Assignment | Authority |
 | --- | --- |
@@ -61,7 +61,7 @@ The accepted permission names are:
 | Permission | Intended authority |
 | --- | --- |
 | `instance:admin` | All instance and project operations, including access revocation. Requires `*` project scope. |
-| `tenant:admin` | Unreleased human-only consent scope for administration of one verified tenant. It is never a deployment-wide grant. |
+| `tenant:admin` | Human-only consent scope for administration of one verified tenant. It is never a deployment-wide grant. |
 | `events:read` | Read events and analytics within scope. |
 | `imports:write` | Create and resume historical uploads within a project, together with `events:write`. |
 | `events:write` | Ingest events within scope. |
@@ -133,19 +133,13 @@ Local data paths and engine resource settings belong to deployment configuration
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
-### Unreleased shared deployment boundary
+### Hosted deployment boundary {#unreleased-shared-deployment-boundary}
 
-Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. DuckLake catalog statistics can contain derived property, context, or trait values, so catalog access and retention belong within the analytical data security boundary. This mode is not included in v0.14.0.
+[Hosted workers](shared-deployment.md) authenticate against the same control database and accept public traffic through a configured ingress. They derive scope from credentials and check current project and tenant authority. Protect the shared PostgreSQL credentials, deployment secrets, and analytical S3 permissions.
 
-Any public worker authenticates against shared control. Owner-dependent work is forwarded to the trusted registered worker URL with a signed, bounded internal request. The receiving worker validates routing identity, project ownership, request integrity, and replay protection, then revalidates the original client credential. Public routing headers cannot select an owner or bypass project authorization. Internal transport requires HTTPS outside loopback; network access and routing secrets belong to the operator.
+Hosted live input resides in bounded memory before flush. DuckLake writes analytical payloads to S3 and uses PostgreSQL for catalog metadata. Column statistics can include derived event values, so apply analytical access and retention rules to the catalog too.
 
-Tenant policies and usage refresh on a ten-second cycle. Cached limits may temporarily lag, but expired policy cannot authorize unlimited new ingestion. Credential revocation and project-deletion fences are checked against shared control independently of that cache. Shared query reservations coordinate tenant capacity immediately, with additional per-process limits.
-
-Native metadata I/O has configurable connection, statement, lock, and TCP bounds. These do not guarantee instant cancellation of every PostgreSQL/libpq or object-store call. Shared interactive executions retain local capacity and renew their reservations until the actual call returns, including after HTTP cancellation. Failed renewal or unresponsive native work quarantines that project's interactive engine without terminating the process. Automatic expiry can reassign a place while a partitioned worker still runs native work, so physical concurrency can temporarily exceed the tenant limit. See [shared execution lifecycle](shared-deployment.md#native-timeouts-and-worker-supervision) for timing, shutdown, and deletion semantics. Default local mode does not use the shared keeper.
-
-Worker registration binds one stable worker ID to its durable local volume and prevents two active processes from claiming it. This does not replicate accepted events or authorize a replacement owner without its volume. Owner-bound requests return `503` when that owner is unavailable. Non-owner SQL responses set `delivery.pending_unknown: true`; do not infer a drained queue from their zero local counts.
-
-Shared catalog cleanup preserves at least eight days of snapshots and obsolete-file grace for remote readers. Native whole-instance backup and restore are unsupported in this mode; coordinated PostgreSQL, S3, and worker-volume recovery remains an operator responsibility. These are storage and failure boundaries, not a promise of automatic failover or immediate physical erasure.
+Native I/O can outlast an HTTP deadline. Hosted workers hold execution-scoped query reservations until calls return and quarantine affected interactive engines when execution is uncertain. Automatic expiry can temporarily permit physical concurrency above the configured limit during a partition. [Hosted execution lifecycle](shared-deployment.md#native-timeouts-and-worker-supervision)
 
 ## Pipeline boundaries
 

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -22,17 +23,13 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 	control := a.service.control
 	ctx := t.Context()
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Hosted query")
-	uninitialized, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Uninitialized query")
+	uninitialized := eventapi.NewID()
+	if _, err := control.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at) VALUES($1,$2,'Uninitialized query',$3)`, uninitialized, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
 	_, reader := sharedJourneyKey(t, a.host.URL, project, []string{"events:read"})
 	_, other := sharedJourneyKey(t, a.host.URL, uninitialized, []string{"events:read"})
-	sa := a.service.lake.(*lakeapi.DuckLakeStore)
 	sb := b.service.lake.(*lakeapi.DuckLakeStore)
-	if _, err := sa.InitializeHostedProject(ctx, lakeapi.ProjectWriteKey{SourceID: sa.Config.SharedSourceID, ProjectID: project}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := control.ExecContext(ctx, `DELETE FROM shared_project_owners WHERE project_id IN ($1,$2)`, project, uninitialized); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := control.ExecContext(ctx, `CREATE TABLE hosted_query_test_activity (project TEXT NOT NULL, id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +56,7 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 	for _, route := range []string{"/schema", "/catalog", "/event-profile?event=sample"} {
 		response := sharedJourneyHTTP(t, b.host.URL, http.MethodGet, base+route, reader, nil, nil, http.StatusOK)
 		delivery := response["delivery"].(map[string]any)
-		if delivery["pending_unknown"] != true || delivery["owner_worker_id"] != nil {
+		if delivery["pending_unknown"] != true {
 			t.Fatal("unexpected hosted delivery status", delivery)
 		}
 	}
@@ -72,11 +69,8 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 	if err := control.QueryRowContext(ctx, `SELECT query_count,unresolved_queries FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, hostedQueryUsageSource, project).Scan(&admitted, &unresolved); err != nil || admitted != 3 || unresolved != 3 {
 		t.Fatal("admission must be visible in PostgreSQL before observation", admitted, unresolved, err)
 	}
-	for _, node := range []*sharedJourneyNode{a, b} {
-		var count int
-		if err := node.service.db.QueryRowContext(ctx, `SELECT count(*) FROM usage_executions WHERE project_id=$1`, project).Scan(&count); err != nil || count != 0 {
-			t.Fatal("hosted query used worker-local metering", count, err)
-		}
+	if a.service.db != nil || b.service.db != nil {
+		t.Fatal("hosted query workers opened a local journal")
 	}
 	var permits, activities int
 	if err := control.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM shared_query_permits WHERE project_id=$1), (SELECT count(*) FROM hosted_query_test_activity WHERE project=$1)`, project).Scan(&permits, &activities); err != nil || permits != 0 || activities != 3 {

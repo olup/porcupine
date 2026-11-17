@@ -1,8 +1,6 @@
 # Hosted profile composition
 
-The opt-in hosted profile uses PostgreSQL and S3 for durable state. Standalone
-startup and the existing owner-routed shared deployment use durable SQLite
-acknowledgment.
+The opt-in hosted profile uses PostgreSQL and S3 for durable state. Standalone uses durable SQLite acknowledgment.
 
 ## Configure workers
 

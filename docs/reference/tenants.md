@@ -1,7 +1,5 @@
 # Tenants and usage budgets
 
-**Unreleased.** This guide describes the tenant implementation in development. The published v0.14.0 release does not include these operations or settings.
-
 A tenant groups projects that share an ingestion allowance and interactive query limits. On a fresh installation, Porcupine creates the tenant `default`, named `Default`. You can keep every project there for a single-team deployment. No additional database or service is required.
 
 ## Ownership and access
@@ -39,7 +37,7 @@ porcupine get-tenant --tenant-id default
 porcupine get-tenant-usage --tenant-id default
 ```
 
-These commands are generated from the same API operations. The released v0.14.0 CLI does not contain them.
+These commands are generated from the same API operations.
 
 For example, create a tenant with this body for `create-tenant`:
 
@@ -79,7 +77,7 @@ These are technical limits, not a subscription or price. Replacing budgets does 
 
 Use `null` for unlimited ingestion and `0` to disallow new events. Zero still permits retries of events already accepted. Porcupine records usage in the same SQLite transaction as durable acceptance; it does not wait for analytical delivery. A quota refusal does not leave a partially charged acceptance transaction. In default standalone mode, this transaction also enforces the tenant's complete allowance exactly.
 
-In optional [shared mode](shared-deployment.md#shared-budgets), each project owner publishes cumulative usage to PostgreSQL and refreshes cached policy on a ten-second cycle. Its own unpublished usage counts immediately. Other owners' usage and policy changes can lag, allowing soft quota overshoot. Publication is idempotent; duplicate reports do not charge twice. An expired cache must refresh before new acceptance continues. Authentication revocation does not use this policy cache.
+In [hosted mode](shared-deployment.md#shared-budgets), workers admit live events against cached policy and published usage. Counts can lag while a worker has buffered events or unpublished durable effects, so concurrent workers can exceed an allowance. Authentication revocation uses current authority.
 
 Periods are UTC calendar months, from midnight on the first day until midnight on the next month's first day. Historical imports consume the allowance of the month when they are accepted, even if their occurrence dates are years earlier. A new month opens a new counter; previous counters remain available. There is no reset command. An operator can raise the allowance when more ingestion is needed.
 
@@ -98,7 +96,7 @@ Call `get-tenant-usage` without `period` for the current month, or pass `period=
 
 Counts are decimal strings. `remaining_events` is `null` for an unlimited allowance. Reducing a budget below existing consumption leaves zero remaining; it does not rewrite the counter. The usage response's `ingestion_allowed` combines the operator switch with the selected period's remaining allowance, using the current budget configuration. It is not a historical record of past budget settings.
 
-On a shared deployment, aggregate usage reflects the counters published so far. It can lag events already durably accepted on owner volumes. These APIs do not promise a hard cross-worker quota or spending cap.
+Hosted aggregate usage reflects published durable counters. It can lag memory admission and the DuckLake commit. The report is not a hard cross-worker quota or spending cap.
 
 ## Suspend or resume ingestion
 
@@ -127,15 +125,15 @@ New resource admission stops when the fence commits. Cleanup cancels and drains 
 
 Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
 
-`state=deleting` means cleanup remains pending and recovery retries it after restart and periodically. Current owner-local shared deployments remain in this state with `error_code=shared_local_cleanup_pending`; full shared cleanup requires the planned shared operational-state backend. A missing journal owner cannot be replaced by an empty journal.
+`state=deleting` means cleanup remains pending. Recovery retries it after restart and periodically. Hosted cleanup also waits for recovery retention and reconciliation of scheduled output and managed objects.
 
-`state=logically_deleted` means standalone managed current data and active tenant control records were removed. `physical_purge=pending_verification` explicitly means that noncurrent S3 versions, retained copies, or backup history have not been proven absent. This implementation never reports `purged`. Tenant deletion does not override point-in-time recovery retention or erase published objects in a customer's pipeline destination.
+`state=logically_deleted` means managed current data and active tenant control records were removed. `physical_purge=pending_verification` explicitly means that noncurrent S3 versions, retained copies, or backup history have not been proven absent. This implementation never reports `purged`. Tenant deletion does not override point-in-time recovery retention or erase published objects in a customer's pipeline destination.
 
 An internal ownership inventory retains opaque managed object and multipart-upload keys plus a hashed storage namespace before their cleanup checkpoints disappear. Published customer pipeline outputs are excluded. The inventory contains no payload, access credentials, or identifying destination labels and remains until physical removal can be verified. Export cleanup requires the storage fingerprint recorded before the first upload. A changed destination or an upgraded checkpoint with no fingerprint stays pending rather than deleting from the wrong namespace. Objects whose ownership was already discarded by an older build remain unverified and require operator reconciliation.
 
 A small permanent operator-only status tombstone retains the tenant ID, state, timestamps, project progress, and constant recovery categories. Minimal cumulative usage totals retain opaque IDs and UTC periods, without names, email addresses, secrets, SQL, or event payloads. Deletion never refunds usage. No audit retention period or pricing policy is selected by this operation.
 
-The current offline credential-reset restore preserves opaque cleanup holds before neutralizing source export and pipeline jobs. Deleting a restored tenant stays `deleting` with `error_code=restored_artifacts_pending` until source ownership and outstanding current artifacts are reconciled. Reset and deletion do not contact or delete the source bucket. Reconciliation must verify the original namespace, published customer ownership, current objects, and multipart uploads. This version provides no ignore-hold endpoint or automatic reconciliation. The planned hosted recovery keeps operational keys and resumable cleanup instead of this access reset.
+The current offline credential-reset restore preserves opaque cleanup holds before neutralizing source export and pipeline jobs. Deleting a restored tenant stays `deleting` with `error_code=restored_artifacts_pending` until source ownership and outstanding current artifacts are reconciled. Reset and deletion do not contact or delete the source bucket. Reconciliation must verify the original namespace, published customer ownership, current objects, and multipart uploads. This version provides no ignore-hold endpoint or automatic reconciliation. Hosted recovery keeps operational keys and resumable cleanup instead of this access reset.
 
 The `default` tenant can be deleted. Startup honors its tombstone and never recreates it. Create an explicit replacement tenant and provide its ID when creating projects; omitting the ID then returns `404`.
 
@@ -143,7 +141,7 @@ The `default` tenant can be deleted. Startup honors its tombstone and never recr
 
 All projects in a tenant share `hot_query_max_concurrent`. SQL queries, catalog discovery, and event profiles reserve a place before execution and release it when they finish or fail. A full tenant or deployment pool returns `429`; creating another project or credential does not create more places.
 
-Shared mode reserves tenant places immediately in PostgreSQL across workers, while enforcing local process capacity separately. Active executions renew 30-second reservations every five seconds, independently of HTTP cancellation. Unresponsive or uncertain executions quarantine the affected project's interactive engine without terminating the worker. Automatic expiry can permit physical concurrency above the tenant limit during a network partition. These controls are independent of the ten-second ingestion budget cache. See [native timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision) for renewal, shutdown, and failure semantics.
+Hosted reserves tenant places immediately in PostgreSQL across workers, while enforcing local process capacity separately. Active executions renew 30-second reservations every five seconds, independently of HTTP cancellation. Unresponsive or uncertain executions quarantine the affected project's interactive engine without terminating the worker. Automatic expiry can permit physical concurrency above the tenant limit during a network partition. These controls are independent of the ingestion budget cache. See [native timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision) for renewal, shutdown, and failure semantics.
 
 `hot_query_timeout_ms`, `hot_query_max_rows`, and `hot_query_max_result_bytes` bound each interactive SQL execution. Row or byte overflow fails rather than silently truncating the result. A SQL `LIMIT` can reduce a result, but does not replace the execution deadline.
 
@@ -153,8 +151,8 @@ A project reader can call `get-event-schema` to see configured `tenant_budgets`,
 
 ## Deployment boundary
 
-The default uses separate control and journal SQLite files in one Porcupine process. The journal performs exact transactional ingestion accounting; control stores policy and replayable aggregate usage. Each batch refreshes policy under a local admission lock, which also serializes operator budget changes. Tenant usage reads reconcile journal high-water counters into control without double-counting. Query admission remains local. The optional unreleased [shared deployment](shared-deployment.md) uses PostgreSQL metadata, shared query reservations, ten-second usage publication and policy refresh, owner-local SQLite queues, and S3 Parquet. No canonical event rows are staged in PostgreSQL. DuckLake catalog metadata can still include derived column statistics containing event values; see the shared deployment storage contract.
+The default uses separate control and journal SQLite files in one Porcupine process. The journal performs exact transactional ingestion accounting; control stores policy and replayable aggregate usage. Each batch refreshes policy under a local admission lock, which also serializes operator budget changes. Tenant usage reads reconcile journal high-water counters into control without double-counting. Query admission remains local. The [hosted profile](shared-deployment.md) stores operational metadata and shared query reservations in PostgreSQL. Unique committed events are counted by replayable publication of DuckLake effects. Hosted live acknowledgment can precede that accounting.
 
-Hosted billing, rate limits across workers, replicated acceptance, automatic owner failover, and separately provisioned query compute remain [future architecture work](../roadmap.md#hosted-architecture-to-evaluate).
+See the [roadmap](../roadmap.md#hosted-reliability) for planned hosted reliability work.
 
-The unreleased tenant schema requires a fresh data directory. A pre-tenant or combined control/journal SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.
+Moving from v0.14.0 requires a fresh data directory. A pre-tenant or combined control/journal SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.

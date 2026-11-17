@@ -6,17 +6,17 @@ The running server publishes its OpenAPI contract at `GET /openapi.json`. The CL
 
 Version v0.14.0 adds `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native live and historical producer fields and server-managed values. [Native event contract](native-event-contract.md)
 
-**Unreleased:** [tenant management and usage budgets](tenants.md), [team administration](tenant-access.md), and [identity recovery](identity-recovery.md) add tenant-scoped administration alongside the instance operator. The tenant schema requires a fresh data directory. These operations are not available in v0.14.0.
+[Tenant management and usage budgets](tenants.md), [team administration](tenant-access.md), and [identity recovery](identity-recovery.md) add tenant-scoped administration alongside the instance operator.
 
 Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
 
 ## Authentication and scope
 
-**Unreleased:** [`list-usage`](usage.md) at `GET /api/v1/usage` exposes replayable numerical consumption by tenant/project and UTC day/month. It requires the instance operator; tenant administrators retain their separate `get-tenant-usage` allowance view.
+[`list-usage`](usage.md) at `GET /api/v1/usage` exposes replayable numerical consumption by tenant/project and UTC day/month. It requires the instance operator; tenant administrators retain their separate `get-tenant-usage` allowance view.
 
 Send a Bearer credential for the instance's `/api/v1` resource. In builtin mode, a person authorizes the [CLI](../../cli/README.md) with email sign-in. A machine uses an [API-audience service key](service-keys.md) or exchanges its client credentials for a short-lived [OAuth access token](oauth.md).
 
-**Unreleased external mode:** [externally issued access JWTs](external-auth.md) use the configured API audience. Native service keys remain available. Local token exchange, human invitations, memberships, and consent management are absent. Machine-account operations remain available, but return no local OAuth secret in this mode.
+[Externally issued access JWTs](external-auth.md) use the configured API audience. Native service keys remain available. Local token exchange, human invitations, memberships, and consent management are absent. Machine-account operations remain available, but return no local OAuth secret in this mode.
 
 On first builtin startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
 principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
@@ -26,7 +26,7 @@ does not reset credentials. The alias stays pinned to that first administrator.
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
 issued scope and project snapshot intersect current parent grants on every
-request. Operators can configure [email accounts](email-accounts.md) for interactive API and MCP access. **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate those same invited accounts, with email OTP available alongside it when SMTP is configured. Both login methods use the same current permissions. Authentication
+request. Operators can configure [email accounts](email-accounts.md) for interactive API and MCP access. [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate those same invited accounts, with email OTP available alongside it when SMTP is configured. Both login methods use the same current permissions. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
 and project checks, with separate API and MCP token resources. The CLI generates its commands from the same OpenAPI operations.
 
@@ -37,17 +37,15 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
 
-The following table describes v0.14.0. The [unreleased tenant operations](#unreleased-tenant-operations) below include the change to project creation authority.
-
 `query-events` executes fresh DuckDB SQL against delivered state. See [query consistency](analytics.md#fresh-queries).
 
 | Operation | Required authority | Success |
 | --- | --- | --- |
 | `GET /api/v1/status` | `management:read`; no project data or secrets in the [instance report](instance-status.md) | `200`, including a degraded report |
 | `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |
-| `POST /api/v1/projects` | `management:write` and `events:write`, both with `*` scope | `201` |
+| `POST /api/v1/projects` | Instance operator or administrator of the selected tenant | `201` |
 | `PATCH /api/v1/projects/{id}` | `management:write` for this project | `200` with the updated project |
-| `DELETE /api/v1/projects/{id}` | `instance:admin` | `204` after cleanup |
+| `DELETE /api/v1/projects/{id}` | Instance operator or administrator of the owning tenant | `204` |
 | `GET /api/v1/access-keys` | `management:read`; results restricted to keys whose entire project scope the caller holds | `200` |
 | `POST /api/v1/access-keys` | `management:write`; every requested permission and project must be held by the caller | `201` |
 | `DELETE /api/v1/access-keys/{id}` | `instance:admin` | `204` |
@@ -74,7 +72,7 @@ The following table describes v0.14.0. The [unreleased tenant operations](#unrel
 
 For managed SQL exports, see the [export job operations](../exports.md). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
 
-### Unreleased tenant operations
+### Tenant operations {#unreleased-tenant-operations}
 
 Tenant administrators manage their own tenant through `tenant:admin` consent. Instance operators retain deployment-wide authority. HTTP, CLI, and MCP use the same operation registry and permission checks. Project readers can inspect configured `tenant_budgets`, `deployment_limits`, and effective `limits` through `get-event-schema`, including the configured ingestion allowance but no tenant-wide consumption.
 
@@ -101,7 +99,7 @@ Tenant administrators manage their own tenant through `tenant:admin` consent. In
 
 Query limits are further bounded by the deployment's configured ceilings. Creating a tenant without `budgets` selects unlimited ingestion and deployment-default interactive limits.
 
-`get-tenant-usage` accepts an optional `period=YYYY-MM`, defaulting to the current UTC calendar month. It returns `tenant_id`, `period_start`, `period_end`, decimal-string `accepted_events`, nullable decimal-string `remaining_events`, and effective `ingestion_allowed`. Usage counts new unique canonical rows at durable acceptance, including imports and identity controls. Rejected, ignored, duplicate, and rolled-back rows consume nothing. Deletes do not refund usage. Reading an earlier month applies the current budget to that month's recorded counter; it does not recover historical budget settings. No manual reset or tenant deletion operation is provided.
+`get-tenant-usage` accepts an optional `period=YYYY-MM`, defaulting to the current UTC calendar month. It returns `tenant_id`, `period_start`, `period_end`, decimal-string `accepted_events`, nullable decimal-string `remaining_events`, and effective `ingestion_allowed`. Usage counts new unique canonical rows at durable acceptance, including imports and identity controls. Rejected, ignored, duplicate, and rolled-back rows consume nothing. Deletes do not refund usage. Reading an earlier month applies the current budget to that month's recorded counter; it does not recover historical budget settings. Deletes do not reset retained usage.
 
 `create-project` accepts optional `tenant_id`, defaulting to `default`, and requires administration of that tenant or instance administration. The same tenant authority permits project deletion and deletion retries. Project responses include immutable `tenant_id`. `list-projects` accepts an optional tenant filter but still returns only authorized projects. Explicit project grants may span tenants; `*` remains deployment-wide.
 
@@ -109,11 +107,11 @@ Tenant membership operations invite, list, update, and revoke people under `/api
 
 Operators can list upstream identity bindings with `list-human-identities` and unlink one with `unlink-human-identity`. See [identity recovery](identity-recovery.md) for revocation effects and the HTTP, CLI, and MCP workflow.
 
-The [tenant guide](tenants.md) explains shared allowances, resumable imports, quota response codes, and the SQLite and shared PostgreSQL deployment boundaries.
+The [tenant guide](tenants.md) explains shared allowances, resumable imports, quota response codes, and the standalone and hosted deployment boundaries.
 
 ### Project and credential details
 
-In v0.14.0, project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
+Project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
 a one-time public `ingest_token` with `events:write` for that project. With OAuth
 enabled, send `{"name":"Trusted service","ingestion_mode":"server_only"}` to
 require authenticated backend writes. The response omits the public key. The
@@ -122,7 +120,7 @@ creation operation requires the same permissions for both modes. See the
 
 `rename-project` accepts `{"name":"Research"}`. Names must contain 1–200 UTF-8 bytes after trimming whitespace. The response contains the updated `project`. Existing SDKs, dashboards and pipelines continue to address the project by ID.
 
-`delete-project` accepts the project ID in the path and takes no request body. An instance administrator can use it to permanently remove a project's queued and analytical events, metadata, pipeline definitions and Porcupine-managed exports. Copies already delivered to customers' webhook or S3 destinations and existing backups are outside the deletion scope. Bucket lifecycle rules control retention of noncurrent object versions. See [export cleanup](export-api.md#bucket-permissions-lifecycle-and-cleanup). If a storage dependency is unavailable and the request returns `503`, retry the same ID. The server also retries pending cleanup every minute and on restart. A repeat request for a completed deletion returns `204`. An unknown ID returns `404`.
+`delete-project` accepts the project ID in the path and takes no request body. An authorized administrator can use it to remove a project's queued and analytical events, metadata, pipeline definitions and Porcupine-managed exports. Copies already delivered to customers' webhook or S3 destinations and existing backups are outside the deletion scope. Bucket lifecycle rules control retention of noncurrent object versions. See [export cleanup](export-api.md#bucket-permissions-lifecycle-and-cleanup). If a storage dependency is unavailable and the request returns `503`, retry the same ID. The server also retries pending cleanup every minute and on restart. A repeat request for a completed deletion returns `204`. An unknown ID returns `404`.
 
 Deleting a project removes it from access grants. Changing a parent grant also revokes its derived keys and sessions under the usual credential rules. A user or service with access to a surviving project may need to reconnect or obtain a replacement key.
 

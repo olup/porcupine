@@ -1,14 +1,13 @@
 # Stateless hosted architecture
 
 This decision record was started on 17 November 2026. The opt-in hosted profile
-implements the PostgreSQL and S3 storage model below. The standalone and
-owner-routed shared configurations keep their SQLite journal. See
+implements the PostgreSQL and S3 storage model below. Standalone keeps its SQLite journal. See
 [hosted setup](hosted-profile-composition.md) for the configuration and tested
 behavior.
 
 ## Two acceptance contracts
 
-| Contract | Standalone | Hosted target |
+| Contract | Standalone | Hosted |
 | --- | --- | --- |
 | Live success response | SQLite journal committed | Validated and admitted to bounded worker memory |
 | Durable event data | Journal, then DuckLake | DuckLake commit, with Parquet on S3 |
