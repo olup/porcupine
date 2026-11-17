@@ -20,6 +20,20 @@ import (
 // CommitLive owns the native transaction. It never acknowledges volatile input
 // or publishes PG jobs; its proof makes those later effects recoverable.
 func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager) (LiveCommitResult, error) {
+	return s.commitLive(ctx, fence, batch, reservation, stager, func(_ context.Context, commit func() error) error { return commit() })
+}
+
+// CommitLiveGuarded lets control admission hold its project and tenant row
+// locks across the final native COMMIT. The guard must invoke commit
+// synchronously, at most once, after checking the latest control fence.
+func (s *DuckLakeStore) CommitLiveGuarded(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
+	if guard == nil {
+		return nil, errors.New("hosted live commit requires a control fence guard")
+	}
+	return s.commitLive(ctx, fence, batch, reservation, stager, guard)
+}
+
+func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
 	fingerprint, err := validateLiveCommitBatch(fence, batch, reservation)
 	if err != nil {
 		return nil, err
@@ -113,7 +127,7 @@ func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence,
 		if err := insertNativeCommitProof(ctx, tx, evidence); err != nil {
 			return err
 		}
-		if err := tx.Commit(); err != nil {
+		if err := guard(ctx, tx.Commit); err != nil {
 			return err
 		}
 		result = CommittedLiveBatch{Evidence: evidence}

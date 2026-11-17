@@ -15,8 +15,9 @@ import (
 // FlushLive must retain the batch ID across retries, deduplicate under the project
 // write guard, recheck authoritative tenant/project deletion fences, and durably
 // commit recoverable effect evidence before returning nil.
-// An error leaves ownership and capacity with the buffer, including after a commit
-// whose response was lost. It must not mutate the batch or retain it after return.
+// A transient error leaves ownership and capacity with the buffer, including
+// after a commit whose response was lost. A durable deletion fence discards
+// pending input for that project. The writer must not retain or mutate the batch.
 type liveBatchFlusher interface {
 	FlushLive(context.Context, bufferedFlushBatch) error
 }
@@ -186,6 +187,18 @@ func (b *bufferedAcceptance) Accept(ctx context.Context, batch preparedLiveBatch
 				inputs[i].event.Properties = cookielessProperties(original.event.Properties, cookielessID, day)
 			}
 		}
+	}
+	if guard, ok := b.writer.(interface {
+		lockLiveAdmission(context.Context, string) (func(), error)
+	}); ok {
+		release, err := guard.lockLiveAdmission(ctx, batch.projectID)
+		if err != nil {
+			if errors.Is(err, errHostedProjectFenced) {
+				return nil, apiError(404, "project not found")
+			}
+			return nil, &acceptanceFailure{message: "project admission unavailable", retry: true}
+		}
+		defer release()
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -383,6 +396,12 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 	}
 	p.running = false
 	b.running--
+	if errors.Is(result.err, errHostedProjectFenced) {
+		b.bytes -= p.ready.bytes + p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
+		b.events -= len(p.ready.events) + len(p.pending)
+		delete(b.projects, result.project)
+		return
+	}
 	if result.err != nil {
 		p.failures++
 		delay := b.config.retryMin
