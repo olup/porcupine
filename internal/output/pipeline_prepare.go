@@ -1,5 +1,10 @@
 package output
 
+import (
+	"context"
+	"database/sql"
+)
+
 // validatePipelinePreparation runs before reservation/native commit. Publication
 // receives the identical digest-bound metadata, so capacity conversion cannot
 // discover a larger body/member demand after the native transaction commits.
@@ -54,4 +59,20 @@ func validatePipelinePreparation(b PipelineBinding, plan PipelinePlan, outputs [
 		return ErrPipelineConflict
 	}
 	return nil
+}
+
+// ReserveCurrentEffectsTx rechecks authoritative selection in capacity-first
+// order while acquiring the reservation. Call under the common project session.
+func (p *PGPipelineEffects) ReserveCurrentEffectsTx(ctx context.Context, tx *sql.Tx, b PipelineBinding, prepared []PipelineOutput) error {
+	if err := p.lockCapacity(ctx, tx, b, false); err != nil {
+		return err
+	}
+	plan, err := p.FreezeLivePlanTx(ctx, tx, b.TenantID, b.Scope)
+	if err != nil {
+		return err
+	}
+	if plan.ID != b.PlanID {
+		return ErrPipelineConflict
+	}
+	return p.ReserveEffectsTx(ctx, tx, b, plan, prepared)
 }

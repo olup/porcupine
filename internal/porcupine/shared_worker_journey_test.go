@@ -557,7 +557,7 @@ func TestSharedWorkerTwoProcessCrashAndOwnerRestart(t *testing.T) {
 	}
 }
 
-func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture) (*sharedJourneyNode, *sharedJourneyNode) {
+func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture, configure ...func(*Config)) (*sharedJourneyNode, *sharedJourneyNode) {
 	t.Helper()
 	control, catalogs := sharedPostgresDSN(t), sharedPostgresDSN(t)
 	var nodes []*sharedJourneyNode
@@ -571,6 +571,9 @@ func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture) (*sharedJo
 			config.Exports = &output.ExportConfig{S3: exportstore.Config{Endpoint: fixture.storage.Endpoint, Region: fixture.storage.Region, Bucket: fixture.storage.Bucket,
 				Prefix: fixture.storage.Prefix + "/exports", AccessKeyID: fixture.storage.AccessKeyID, SecretAccessKey: fixture.storage.SecretAccessKey, UsePathStyle: true},
 				MaxExecutionSeconds: 10, BandwidthBytesPerSecond: 10 << 20}
+		}
+		for _, configure := range configure {
+			configure(&config)
 		}
 		s, err := Open(config)
 		if err != nil {
