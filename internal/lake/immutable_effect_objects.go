@@ -15,44 +15,53 @@ import (
 
 const MaxImmutableEffectObjectBytes int64 = 8 << 20
 
-func (s *DuckLakeObjectStore) effectPrefix(scope HostedProjectScope) (string, error) {
+func (s *DuckLakeObjectStore) hostedStreamObjectPrefix(scope HostedProjectScope, namespace string) (string, error) {
 	if scope.Key.SourceID != s.sourceID || scope.Key.ProjectID == "" || scope.CatalogID != SharedNativeCatalogID(scope.Key.SourceID, scope.Key.ProjectID) || len(scope.StreamID) != 36 || !LakePrefixSegmentPattern.MatchString(scope.StreamID) {
 		return "", errors.New("immutable effect object scope is invalid")
 	}
-	return s.ProjectPrefix(scope.Key.ProjectID) + "effects/" + scope.StreamID + "/", nil
+	return s.ProjectPrefix(scope.Key.ProjectID) + namespace + "/" + scope.StreamID + "/", nil
 }
 
 // DescribeImmutableEffectObject computes the exact immutable key without I/O.
 // Reservation ownership must cover the returned acquisition prefix before PUT.
 func (s *DuckLakeObjectStore) DescribeImmutableEffectObject(scope HostedProjectScope, attemptID string, body []byte) (ImmutableObjectRef, string, error) {
-	prefix, err := s.effectPrefix(scope)
+	return s.describeHostedStreamObject(scope, "effects", attemptID, body)
+}
+
+func (s *DuckLakeObjectStore) DescribeImmutableMutationObject(scope HostedProjectScope, mutationID string, body []byte) (ImmutableObjectRef, string, error) {
+	return s.describeHostedStreamObject(scope, "mutations", mutationID, body)
+}
+
+func (s *DuckLakeObjectStore) describeHostedStreamObject(scope HostedProjectScope, namespace, ownerID string, body []byte) (ImmutableObjectRef, string, error) {
+	prefix, err := s.hostedStreamObjectPrefix(scope, namespace)
 	if err != nil {
 		return ImmutableObjectRef{}, "", err
 	}
-	if len(attemptID) != 36 || !LakePrefixSegmentPattern.MatchString(attemptID) || len(body) == 0 || int64(len(body)) > MaxImmutableEffectObjectBytes {
+	if len(ownerID) != 36 || !LakePrefixSegmentPattern.MatchString(ownerID) || len(body) == 0 || int64(len(body)) > MaxImmutableEffectObjectBytes {
 		return ImmutableObjectRef{}, "", errors.New("invalid immutable effect preparation")
 	}
 	digest := sha256.Sum256(body)
 	hash := hex.EncodeToString(digest[:])
-	prefix += attemptID + "/"
+	prefix += ownerID + "/"
 	return ImmutableObjectRef{Key: prefix + hash + ".json", SHA256: hash, Bytes: int64(len(body))}, prefix, nil
 }
 
 // PutImmutableEffectObject creates one content-addressed JSON object under an
 // isolated acquisition attempt. It never overwrites an existing object.
 func (s *DuckLakeObjectStore) PutImmutableEffectObject(ctx context.Context, scope HostedProjectScope, attemptID string, body []byte) (ImmutableObjectRef, error) {
-	prefix, err := s.effectPrefix(scope)
+	return s.putHostedStreamObject(ctx, scope, "effects", attemptID, body)
+}
+
+func (s *DuckLakeObjectStore) PutImmutableMutationObject(ctx context.Context, scope HostedProjectScope, mutationID string, body []byte) (ImmutableObjectRef, error) {
+	return s.putHostedStreamObject(ctx, scope, "mutations", mutationID, body)
+}
+
+func (s *DuckLakeObjectStore) putHostedStreamObject(ctx context.Context, scope HostedProjectScope, namespace, ownerID string, body []byte) (ImmutableObjectRef, error) {
+	ref, _, err := s.describeHostedStreamObject(scope, namespace, ownerID, body)
 	if err != nil {
 		return ImmutableObjectRef{}, err
 	}
-	if len(attemptID) != 36 || !LakePrefixSegmentPattern.MatchString(attemptID) || len(body) == 0 || int64(len(body)) > MaxImmutableEffectObjectBytes {
-		return ImmutableObjectRef{}, errors.New("immutable effect object attempt or size is invalid")
-	}
-	digest := sha256.Sum256(body)
-	hash := hex.EncodeToString(digest[:])
-	key := prefix + attemptID + "/" + hash + ".json"
-	ref := ImmutableObjectRef{Key: key, SHA256: hash, Bytes: int64(len(body))}
-	out, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(key), Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"), IfNoneMatch: aws.String("*")})
+	out, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(ref.Key), Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"), IfNoneMatch: aws.String("*")})
 	if putErr == nil {
 		ref.VersionID = aws.ToString(out.VersionId)
 		if len(ref.VersionID) > 1024 {
@@ -62,7 +71,7 @@ func (s *DuckLakeObjectStore) PutImmutableEffectObject(ctx context.Context, scop
 	}
 	// A lost successful response or an immutable-key collision is resolved by
 	// reading the same content address, never by replacing its bytes.
-	existing, version, readErr := s.readImmutableEffectObject(ctx, scope, ref)
+	existing, version, readErr := s.readHostedStreamObject(ctx, scope, namespace, ref)
 	if readErr == nil && bytes.Equal(existing, body) {
 		ref.VersionID = version
 		return ref, nil
@@ -70,11 +79,17 @@ func (s *DuckLakeObjectStore) PutImmutableEffectObject(ctx context.Context, scop
 	return ImmutableObjectRef{}, analyticalS3Error(ctx)
 }
 func (s *DuckLakeObjectStore) ReadImmutableEffectObject(ctx context.Context, scope HostedProjectScope, ref ImmutableObjectRef) ([]byte, error) {
-	raw, _, err := s.readImmutableEffectObject(ctx, scope, ref)
+	raw, _, err := s.readHostedStreamObject(ctx, scope, "effects", ref)
 	return raw, err
 }
-func (s *DuckLakeObjectStore) readImmutableEffectObject(ctx context.Context, scope HostedProjectScope, ref ImmutableObjectRef) ([]byte, string, error) {
-	prefix, err := s.effectPrefix(scope)
+
+func (s *DuckLakeObjectStore) ReadImmutableMutationObject(ctx context.Context, scope HostedProjectScope, ref ImmutableObjectRef) ([]byte, error) {
+	raw, _, err := s.readHostedStreamObject(ctx, scope, "mutations", ref)
+	return raw, err
+}
+
+func (s *DuckLakeObjectStore) readHostedStreamObject(ctx context.Context, scope HostedProjectScope, namespace string, ref ImmutableObjectRef) ([]byte, string, error) {
+	prefix, err := s.hostedStreamObjectPrefix(scope, namespace)
 	if err != nil {
 		return nil, "", err
 	}

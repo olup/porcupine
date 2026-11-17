@@ -3,8 +3,6 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"github.com/olup/porcupine/internal/exportstore"
-	"github.com/olup/porcupine/internal/output"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -12,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 
 	"github.com/olup/porcupine/internal/auth"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -136,7 +137,7 @@ func TestInstanceStatusConfigurationDoesNotProbeDestinations(t *testing.T) {
 	if err := s.configureExports(&output.ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "status-exports", Prefix: "tests", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "key", SecretAccessKey: "secret"}}); err != nil {
 		t.Fatal(err)
 	}
-	s.pipelines = &pipelineRuntime{}
+	enableTestPipelines(t, s)
 	s.oauth = &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{SendCode: func(context.Context, string, string) error {
 		sent.Add(1)
 		return nil

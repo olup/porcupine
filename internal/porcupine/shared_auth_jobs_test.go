@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -32,8 +34,8 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	healthy := eventapi.NewID()
-	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
-	encrypted, err := s.sealPipelineSecret(project, healthy, secret)
+	secret, _ := json.Marshal(output.WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
+	encrypted, err := s.pipelines.SealSecret(project, healthy, secret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{client, consent} {
-		if _, err := tx.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'Pipeline consent test',$2,$3,$4,$5)`, id, hash(id), string(grants), string(projects), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'output.Pipeline consent test',$2,$3,$4,$5)`, id, hash(id), string(grants), string(projects), now.Format(time.RFC3339Nano)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -73,7 +75,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE pipelines SET actor_id=$1 WHERE id=$2`, consent, expiredPipeline); err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), consent, project); err != nil || !allowed {
+	if allowed, err := s.pipelines.AuthorizeCreator(t.Context(), consent, project); err != nil || !allowed {
 		t.Fatal("consent was not initially valid", allowed, err)
 	}
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "consent-expiry-event"), 200)
@@ -89,11 +91,11 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 		t.Fatal("expired consent did not produce the domain authorization error", err)
 	}
 	var destinations []string
-	s.pipelines.webhooks.Client = &http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
+	*s.pipelineClient = http.Client{Transport: webhookRoundTrip(func(r *http.Request) (*http.Response, error) {
 		destinations = append(destinations, r.URL.Host)
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
-	if progress, err := s.pipelines.webhooks.Step(t.Context()); !progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(t.Context()); !progress || err != nil {
 		t.Fatal("expired creator stayed a transient queue error", progress, err)
 	}
 	var state, code string
@@ -103,7 +105,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if len(destinations) != 0 {
 		t.Fatal("expired consent sent a webhook", destinations)
 	}
-	if progress, err := s.pipelines.webhooks.Step(t.Context()); !progress || err != nil {
+	if progress, err := s.pipelines.RunWebhook(t.Context()); !progress || err != nil {
 		t.Fatal("expired creator blocked healthy destination", progress, err)
 	}
 	if len(destinations) != 1 || destinations[0] != "healthy.example.test" {

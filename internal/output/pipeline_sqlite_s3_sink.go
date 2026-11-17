@@ -1,9 +1,10 @@
-package porcupine
+package output
 
 import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,7 @@ import (
 	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
-	"github.com/olup/porcupine/internal/output"
+
 	"golang.org/x/time/rate"
 )
 
@@ -39,10 +40,10 @@ type pipelineS3Manifest struct {
 }
 type pipelineS3Sink struct {
 	ctx                       context.Context
-	s                         *Service
+	s                         *PipelineJobs
 	work                      *s3PipelineWork
 	store                     *exportstore.Store
-	config                    output.ExportConfig
+	config                    ExportConfig
 	encoder                   *delivery.RowEncoder
 	resultColumns             []lakeapi.AnalyticsResultColumn
 	limiter                   *rate.Limiter
@@ -54,8 +55,8 @@ type pipelineS3Sink struct {
 	decoded, compressed, rows int64
 }
 
-func newPipelineS3Sink(ctx context.Context, s *Service, w *s3PipelineWork, store *exportstore.Store) *pipelineS3Sink {
-	sink := &pipelineS3Sink{ctx: ctx, s: s, work: w, store: store, config: s.pipelines.config.ExportLimits, files: []pipelineS3File{}}
+func newPipelineS3Sink(ctx context.Context, s *PipelineJobs, w *s3PipelineWork, store *exportstore.Store) *pipelineS3Sink {
+	sink := &pipelineS3Sink{ctx: ctx, s: s, work: w, store: store, config: s.config.ExportLimits, files: []pipelineS3File{}}
 	sink.limiter = rate.NewLimiter(rate.Limit(sink.config.BandwidthBytesPerSecond), 64<<10)
 	return sink
 }
@@ -105,14 +106,16 @@ func (w *pipelineS3Sink) beginFile() error {
 		return errPipelineOutputLimit
 	}
 	key := fmt.Sprintf("%s/%d/%s/part-%06d.%s.gz", w.work.pipeline.ID, w.work.start, w.work.attemptID, len(w.files)+1, w.work.spec.Format)
-	if _, err := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) VALUES($1,$2)`, w.work.id, key); err != nil {
+	checkpoint, checkpointErr := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$3)`, w.work.id, key, w.work.claimID)
+	if err := pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
 		return err
 	}
 	upload, err := w.store.Begin(w.ctx, key)
 	if err != nil {
 		return err
 	}
-	if _, err = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=$1 WHERE run_id=$2 AND object_key=$3`, upload.ID(), w.work.id, key); err != nil {
+	checkpoint, checkpointErr = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=$1 WHERE run_id=$2 AND object_key=$3 AND EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$2 AND state='running' AND claim_id=$4)`, upload.ID(), w.work.id, key, w.work.claimID)
+	if err = pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
 		// The durable key still permits deletion after an ambiguous Complete. Abort
 		// this newly-created ID immediately if checkpointing it failed.
 		cleanup, cancel := context.WithTimeout(context.Background(), 10e9)
@@ -201,3 +204,17 @@ func (w *pipelineS3Sink) finish() (pipelineS3Manifest, error) {
 var errPipelineSink = errors.New("export object write failed")
 var errPipelineOutputLimit = errors.New("export output limit")
 var errPipelinePressure = errors.New("export delivery pressure")
+
+func pipelineCheckpoint(result sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("attempt_conflict")
+	}
+	return nil
+}

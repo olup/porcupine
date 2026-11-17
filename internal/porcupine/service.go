@@ -41,7 +41,7 @@ type Config struct {
 	TrustedProxies     []string
 	Clock              func() time.Time
 	DuckLake           *lakeapi.DuckLakeConfig
-	Pipelines          *PipelineConfig
+	Pipelines          *output.PipelineConfig
 	Exports            *output.ExportConfig
 	OAuth              *OAuthConfig
 	Auth               *AuthConfig
@@ -86,12 +86,15 @@ type Service struct {
 	interactiveConfig     InteractiveQueryConfig
 	tenantQueries         tenantQueryAdmission
 	sharedQueries         sharedQueryExecutions
+	hostedQueries         *hostedQueryRuntime
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
 	tokenSlots            chan struct{}
 	statusSlots           chan struct{}
 	mutationMu            sync.Mutex
-	pipelines             *pipelineRuntime
+	hostedMutations       *hostedLiveFlusher
+	pipelines             *output.PipelineJobs
+	pipelineClient        *http.Client
 	batchSlot             chan struct{}
 	exports               *output.ExportJobs
 	oauth                 *oauthRuntime
@@ -165,10 +168,6 @@ func Open(c Config) (*Service, error) {
 		}
 		resources = newResourceRuntime(oauth.issuer)
 	}
-	pipelines, err := newPipelineRuntime(c.Pipelines)
-	if err != nil {
-		return nil, err
-	}
 	if c.Exports != nil && c.DuckLake == nil {
 		return nil, errors.New("exports require an analytical store")
 	}
@@ -210,7 +209,7 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		pipelines: pipelines, batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.control = control
 	if c.Shared != nil {
 		copyConfig := *c.Shared
@@ -220,7 +219,6 @@ func Open(c Config) (*Service, error) {
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	durable := &durableAcceptance{db: db, rules: s.eventRules}
 	s.acceptance = durable
-	configureWebhooks(s, durable, pipelines)
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
@@ -385,14 +383,17 @@ func Open(c Config) (*Service, error) {
 		}
 		s.imports = newHostedImportManager(s.eventRules, flusher)
 	}
-	if err := s.initializePipelines(context.Background()); err != nil {
+	if err := s.configurePipelines(c.Pipelines); err != nil {
+		return fail(err)
+	}
+	if err := s.pipelines.Initialize(context.Background()); err != nil {
 		return fail(err)
 	}
 	if err := s.configureExports(c.Exports); err != nil {
 		return fail(err)
 	}
 	s.startDeletionRecovery()
-	s.startPipelines()
+	s.pipelines.Start()
 	if s.lake != nil {
 		s.startDelivery()
 	}
@@ -423,7 +424,7 @@ func (s *Service) Close() error {
 	}
 	s.deletionCancel()
 	<-s.deletionDone
-	s.stopPipelines()
+	s.pipelines.Close()
 	if s.exports != nil {
 		s.exports.Close()
 	}
@@ -779,7 +780,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 400, "batch must contain 1 to 1000 events")
 		return
 	}
-	receiptTime, releaseReceiptTime := s.beginCaptureReceipt(projectID)
+	receiptTime, releaseReceiptTime := s.pipelines.BeginReceipt(projectID)
 	defer releaseReceiptTime()
 	prepared, err := prepareLiveBatch(projectID, a.SourceID, batch, receiptTime)
 	if err != nil {
@@ -811,7 +812,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 503, err.Error())
 		return
 	}
-	s.wakeWebhook()
+	s.pipelines.WakeWebhook()
 	response, err := liveAcceptanceResponse(result, nativeResponse)
 	if err != nil {
 		problem(w, 503, err.Error())

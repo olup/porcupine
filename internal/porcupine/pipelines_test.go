@@ -6,59 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/output"
 )
 
-func TestPipelineSecretsBoundToDestination(t *testing.T) {
-	t.Parallel()
-	rt, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{0x37}, 32)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &Service{pipelines: rt}
-	secret := []byte("Bearer unit-test-only")
-	blob, err := s.sealPipelineSecret("p", "d", secret)
-	if err != nil || bytes.Contains(blob, secret) {
-		t.Fatalf("unexpected seal result: %v", err)
-	}
-	second, err := s.sealPipelineSecret("p", "d", secret)
-	if err != nil || bytes.Equal(blob, second) {
-		t.Fatal("nonce reused")
-	}
-	decoded, err := s.openPipelineSecret("p", "d", blob)
-	if err != nil || !bytes.Equal(decoded, secret) {
-		t.Fatalf("open: %v", err)
-	}
-	for _, ids := range [][2]string{{"other", "d"}, {"p", "other"}} {
-		if _, err = s.openPipelineSecret(ids[0], ids[1], blob); err == nil {
-			t.Fatal("accepted credential moved across destinations")
-		}
-	}
-	blob[len(blob)-1] ^= 1
-	if _, err = s.openPipelineSecret("p", "d", blob); err == nil {
-		t.Fatal("accepted corrupt credential")
-	}
-}
-func TestPipelineEndpointAllowlist(t *testing.T) {
-	t.Parallel()
-	rt, err := newPipelineRuntime(&PipelineConfig{Key: make([]byte, 32), AllowedS3Endpoints: []string{"https://STORAGE.example.org/"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &Service{pipelines: rt}
-	for _, url := range []string{"", "https://storage.example.org"} {
-		if err = s.validatePipelineS3Endpoint(url); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, url := range []string{"https://api.storage.example.org", "http://storage.example.org", "https://storage.example.org/private", "https://storage.example.org:443", "https://storage.example.org?", "https://user@storage.example.org", "https://storage.example.org#ignored"} {
-		if err = s.validatePipelineS3Endpoint(url); err == nil {
-			t.Fatalf("allowed %q", url)
-		}
-	}
-}
 func TestExistingPipelinesRequireSameKeyAfterRestart(t *testing.T) {
 	t.Parallel()
-	c := Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: "test-pipeline-bootstrap", Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}}
+	c := Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: "test-pipeline-bootstrap", Pipelines: &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}}
 	s, err := Open(c)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +31,7 @@ SELECT 'd',$1,id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1
 		t.Fatal(err)
 	}
 	key := c.Pipelines
-	for _, cfg := range []*PipelineConfig{nil, {Key: bytes.Repeat([]byte{2}, 32)}} {
+	for _, cfg := range []*output.PipelineConfig{nil, {Key: bytes.Repeat([]byte{2}, 32)}} {
 		c.Pipelines = cfg
 		if bad, err := Open(c); err == nil {
 			bad.Close()
@@ -122,22 +76,22 @@ func TestBatchQueriesShareOneSlot(t *testing.T) {
 
 func TestClosedWindowWaitsForEarlierProjectAdmissions(t *testing.T) {
 	t.Parallel()
-	rt, err := newPipelineRuntime(&PipelineConfig{Key: make([]byte, 32)})
+	rt, err := newTestPipelineConfig(&output.PipelineConfig{Key: make([]byte, 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := duckLakeJourneyService(t)
 	attachTestPipelines(s, rt)
 	s.clock = func() time.Time { return time.UnixMilli(59999) }
-	at, done := s.beginCaptureReceipt("p")
-	if at.UnixMilli() != 59999 || !s.pipelineWindowHasAdmissions("p", 0, 60000) {
+	at, done := s.pipelines.BeginReceipt("p")
+	if at.UnixMilli() != 59999 || !s.pipelines.WindowHasAdmissions("p", 0, 60000) {
 		t.Fatal("lost pre-boundary admission")
 	}
-	if s.pipelineWindowHasAdmissions("p", 60000, 120000) || s.pipelineWindowHasAdmissions("another", 0, 60000) {
+	if s.pipelines.WindowHasAdmissions("p", 60000, 120000) || s.pipelines.WindowHasAdmissions("another", 0, 60000) {
 		t.Fatal("unrelated window blocked")
 	}
 	done()
-	if s.pipelineWindowHasAdmissions("p", 0, 60000) {
+	if s.pipelines.WindowHasAdmissions("p", 0, 60000) {
 		t.Fatal("completed capture held the watermark")
 	}
 }

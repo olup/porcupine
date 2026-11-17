@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -65,7 +67,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 	projectID, ingest := project(t, s)
 	other, _ := project(t, s)
 	_, outsider := key(t, s, []string{"events:write", "imports:write"}, []string{other})
-	call("POST", "/api/v1/projects/"+projectID+"/pipelines", adminToken, PipelineCreateBody{Name: "synthetic destination must not receive imports", Kind: "webhook", Webhook: &WebhookPipelineSpec{Endpoint: "https://synthetic.example.test/not-contacted"}}, nil, 201)
+	call("POST", "/api/v1/projects/"+projectID+"/pipelines", adminToken, PipelineCreateBody{Name: "synthetic destination must not receive imports", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{Endpoint: "https://synthetic.example.test/not-contacted"}}, nil, 201)
 	identityCapture(t, s, ingest, []map[string]any{identifyEvent("live-profile", "live-user", "", map[string]any{"name": "fresh live"}, map[string]any{})}, 200)
 	call("POST", "/capture/", "", map[string]any{"api_key": ingest, "uuid": "live-first", "event": "live", "distinct_id": "anon"}, nil, 200)
 	persons := []byte(`{"person_id":"internal-not-an-app-id","distinct_id":"anon","person_version":5,"person_distinct_id_version":1,"properties":{"plan":"archive"},"created_at":"2020-01-01T00:00:00.123456Z","is_deleted":false}` + "\n" + `{"person_id":"old-internal","distinct_id":"live-user","person_version":9,"person_distinct_id_version":1,"properties":{"name":"stale"},"created_at":"2020-01-01T00:00:00Z","is_deleted":false}`)

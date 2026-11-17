@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 )
@@ -71,13 +73,13 @@ func benchmarkPipelineCapture(b *testing.B, mode string, backlog, batchSize int)
 	var noNetwork benchmarkNoNetwork
 	if mode != "disabled" {
 		// Attach after Open so the benchmark cannot start destination workers.
-		rt, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{0x42}, 32), WebhookMaxQueuedEvents: 110000, WebhookProjectMaxQueuedEvents: 110000, WebhookMaxQueuedBytes: 256 << 20, WebhookProjectMaxQueuedBytes: 256 << 20})
+		rt, err := newTestPipelineConfig(&output.PipelineConfig{Key: bytes.Repeat([]byte{0x42}, 32), WebhookMaxQueuedEvents: 110000, WebhookProjectMaxQueuedEvents: 110000, WebhookMaxQueuedBytes: 256 << 20, WebhookProjectMaxQueuedBytes: 256 << 20})
 		if err != nil {
 			b.Fatal(err)
 		}
 		attachTestPipelines(s, rt)
-		rt.webhooks.Client = &http.Client{Transport: &noNetwork}
-		spec := WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"purchase"}}
+		*s.pipelineClient = http.Client{Transport: &noNetwork}
+		spec := output.WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"purchase"}}
 		if mode == "unmatched" {
 			spec.DeliveryMode, spec.IncludeEvents = "event", []string{"other-event"}
 		}

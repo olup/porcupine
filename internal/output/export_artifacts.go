@@ -31,13 +31,13 @@ UNION SELECT project_id,storage_id,object_key,upload_id FROM project_deletion_fi
 
 // Preserve inventory before removing the final checkpoint. DeleteObject can
 // leave noncurrent object versions, so successful deletion is not purge proof.
-func (s *ExportJobs) retainArtifactOwnership(ctx context.Context, project, kind string, store *exportstore.Store, key, upload string) error {
+func retainArtifactOwnership(ctx context.Context, control *sql.DB, project, kind string, store *exportstore.Store, key, upload string) error {
 	var tenant string
-	err := s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 UNION ALL SELECT tenant_id FROM project_deletions WHERE project_id=$1 AND tenant_id<>'' LIMIT 1`, project).Scan(&tenant)
+	err := control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 UNION ALL SELECT tenant_id FROM project_deletions WHERE project_id=$1 AND tenant_id<>'' LIMIT 1`, project).Scan(&tenant)
 	if err != nil || tenant == "" {
 		return errors.New("managed artifact ownership unavailable")
 	}
-	_, err = s.control.ExecContext(ctx, `INSERT INTO managed_artifact_ownership(tenant_id,project_id,kind,storage_id,object_key,upload_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, tenant, project, kind, store.OwnershipID(), key, upload)
+	_, err = control.ExecContext(ctx, `INSERT INTO managed_artifact_ownership(tenant_id,project_id,kind,storage_id,object_key,upload_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, tenant, project, kind, store.OwnershipID(), key, upload)
 	return err
 }
 

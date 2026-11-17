@@ -1,8 +1,17 @@
-package porcupine
+package output
 
 import "context"
 
-func (s *Service) cleanupProjectPipelines(ctx context.Context, project string) error {
+func (s *PipelineJobs) CleanupProject(ctx context.Context, project string) error {
+	for {
+		worked, err := s.cleanupRetired(ctx, project, "")
+		if err != nil {
+			return err
+		}
+		if !worked {
+			break
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM pipelines WHERE project_id=$1 AND kind='s3' ORDER BY id`, project)
 	if err != nil {
 		return err

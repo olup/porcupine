@@ -348,7 +348,7 @@ func TestDuckLakeS3SharedPostgresHostedPrototypeUpgrade(t *testing.T) {
 					t.Fatal(scope, err)
 				}
 				version, err := lakeCatalogVersion(ctx, p.DB, false)
-				if err != nil || version != 5 {
+				if err != nil || version != hostedLakeSchemaVersion {
 					t.Fatal(version, err)
 				}
 			}

@@ -169,7 +169,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	var completed bool
 	err = s.db.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = s.cleanupProjectPipelines(ctx, id)
+		err = s.pipelines.CleanupProject(ctx, id)
 		if err == nil {
 			err = s.stageProjectDeletion(ctx, id)
 		}

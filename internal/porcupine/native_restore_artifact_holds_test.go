@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
@@ -20,7 +22,7 @@ func TestRestoreArtifactHoldsPreventFalseTenantCompletionWithoutSourceCalls(t *t
 	}))
 	defer source.Close()
 	s := service(t, 100)
-	s.pipelines = &pipelineRuntime{}
+	enableTestPipelines(t, s)
 	a, b := tenantTestCreate(t, s, "A"), tenantTestCreate(t, s, "B")
 	pa, ka := tenantJourneyProject(t, s, a)
 	pb, kb := tenantJourneyProject(t, s, b)
@@ -32,7 +34,7 @@ func TestRestoreArtifactHoldsPreventFalseTenantCompletionWithoutSourceCalls(t *t
 	}
 	storage := exportstore.NamespaceOwnershipID(exportstore.Config{Endpoint: source.URL, Region: "us-east-1", Bucket: "source-bucket", Prefix: "private"})
 	for _, project := range []string{pa, pb} {
-		config := tenantTestBody(t, S3PipelineSpec{SQL: "SELECT private_payload FROM events", Destination: S3PipelineDestination{Endpoint: source.URL, Region: "us-east-1", Bucket: "source-bucket", Prefix: "private"}})
+		config := tenantTestBody(t, output.S3PipelineSpec{SQL: "SELECT private_payload FROM events", Destination: output.S3PipelineDestination{Endpoint: source.URL, Region: "us-east-1", Bucket: "source-bucket", Prefix: "private"}})
 		for _, statement := range []struct {
 			sql  string
 			args []any

@@ -3,6 +3,8 @@ package porcupine
 import (
 	"testing"
 
+	"github.com/olup/porcupine/internal/output"
+
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -16,7 +18,7 @@ func TestHostedOutputPlanUsesWebhookContract(t *testing.T) {
 	for _, mode := range []string{"", "event", "batch"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			spec := WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}
+			spec := output.WebhookPipelineSpec{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}
 			if mode == "batch" {
 				spec.IntervalSeconds = 60
 			}

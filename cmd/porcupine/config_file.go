@@ -55,6 +55,9 @@ type FileConfig struct {
 		SnapshotRetention      string       `json:"snapshot_retention,omitempty" env:"PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION"`
 		CleanupGrace           string       `json:"cleanup_grace,omitempty" env:"PORCUPINE_DUCKLAKE_CLEANUP_GRACE"`
 		CleanupInterval        string       `json:"cleanup_interval,omitempty" env:"PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL"`
+		RestoreWindow          string       `json:"restore_window,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_WINDOW"`
+		RestoreMaxReaderTime   string       `json:"restore_max_reader_time,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_MAX_READER_TIME"`
+		RestoreSafetyMargin    string       `json:"restore_safety_margin,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_SAFETY_MARGIN"`
 		S3                     S3FileConfig `json:"s3" envprefix:"PORCUPINE_DUCKLAKE_S3_"`
 	} `json:"ducklake"`
 	OAuth struct {

@@ -38,7 +38,7 @@ Without a key, pipeline creation is disabled. Configure exactly one key source. 
 is local to the Go process; mount it explicitly when running in a container. Generate the value once with `openssl rand -base64 32` and preserve it through
 the deployment's private secret storage. Do not commit it, return it to an agent, or generate a replacement at each restart.
 
-The runtime encrypts destination credentials with AES-256-GCM, using a fresh nonce and project-and-pipeline binding. Webhook endpoints and headers are encrypted too. SQLite keeps only the key fingerprint, not the encryption key. If destinations already exist, startup rejects a missing or different key. There is no encryption-key rotation endpoint. Preserve the original key separately from database backups.
+The runtime encrypts destination credentials with AES-256-GCM, using a fresh nonce and project-and-pipeline binding. Webhook endpoints and headers are encrypted too. SQLite keeps only the key fingerprint, not the encryption key. If live or retired destinations already exist, startup rejects a missing or different key. There is no encryption-key rotation endpoint. Preserve the original key separately from database backups.
 
 Custom S3 origins match scheme, hostname, and port. They cannot contain paths, credentials, query strings, fragments, or wildcards. Custom origins use HTTPS, with HTTP available for local S3-compatible stores. An empty allowlist permits the normal AWS endpoint selection but no custom endpoint. Granting an origin is an operator decision; project credentials cannot expand the allowlist. The webhook destination rules are separate and do not inherit this exception.
 
@@ -73,7 +73,7 @@ out of list pages bounds API and MCP response size. State is `active` or `paused
 Creation has no idempotency-key field; inspect the project list after an
 uncertain response before creating another destination.
 
-The credential-replacement endpoint accepts `{"credentials":{...}}` without returning or requiring recovery of the old destination. Supply complete replacement credentials. A webhook replacement may also supply its full same-kind specification to change the endpoint, retaining exactly the same event filters. Pending deliveries use the replacement destination. The S3 specification, scheduling, and webhook filters cannot change through credential rotation. Delete and recreate a pipeline to change an immutable specification.
+The credential-replacement endpoint accepts `{"credentials":{...}}` without returning or requiring recovery of the old destination. Supply complete replacement credentials. A webhook replacement may also supply its full same-kind specification to change the endpoint, retaining exactly the same event filters. Replacing a webhook destination or credentials cancels its pending and failed deliveries, including replacement credentials at the same URL. New accepted events use the replacement destination. An HTTP request already in flight may still reach its receiver, but its late acknowledgment cannot restore canceled work or add usage. S3 replacement retires old queued and failed windows instead of sending them under the new account. It returns a retryable conflict while a native attempt is still running. Unpublished S3 cleanup retains the original encrypted credentials and namespace even if those credentials are revoked. Unavailable cleanup remains pending and can delay project deletion. Live pipelines and retained destination cleanup records share the limits of 64 per project and 512 per instance. The S3 specification, scheduling, and webhook filters cannot change through credential rotation. Delete and recreate a pipeline to change an immutable specification.
 
 ## Webhook event and batch modes
 
@@ -318,6 +318,10 @@ the actual bucket policy. See [AWS GetObject permissions](https://docs.aws.amazo
 creates the bucket and sets encryption, public-access policy, lifecycle, and any
 provider-specific permissions. A custom provider must support the conditional
 manifest contract; allowing its origin does not establish compatibility.
+
+Multipart reconciliation also requires `s3:ListBucketMultipartUploads` for the original bucket. It aborts only the recorded key or immutable attempt directory.
+
+DELETE pauses the pipeline before canceling an active native call. A `503` response that says cleanup is pending requires another DELETE after the call returns. The paused pipeline cannot start another window. Canceled S3 run history retains the latest 1000 windows; old cleanup ownership survives history pruning.
 
 Successful pipeline objects have no automatic seven-day expiry. SQLite keeps
 the newest 1,000 successful run summaries per pipeline and clears their full

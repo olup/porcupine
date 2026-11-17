@@ -94,6 +94,7 @@ func (m *sharedQueryExecutions) start(ctx context.Context, permit *sharedQueryPe
 			if errors.Is(e.stopErr, errSharedQueryPermitUncertain) || stopped == nil {
 				stopped = e.stopErr
 			}
+			permit.recordReturn()
 			delete(m.active, permit.id)
 			e.timer.Stop()
 			m.mu.Unlock()

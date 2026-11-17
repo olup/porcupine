@@ -174,3 +174,10 @@ func (r *Recorder) Prune(ctx context.Context, days int) error {
 	}
 	return tx.Commit()
 }
+
+// PruneExecutions removes old execution details from a recorder attached to a
+// control store. The control Store owns rollup retention.
+func (r *Recorder) PruneExecutions(ctx context.Context, days int) error {
+	_, err := r.DB.ExecContext(ctx, `DELETE FROM usage_executions WHERE day_start<$1`, Day(r.Clock().AddDate(0, 0, -days)))
+	return err
+}

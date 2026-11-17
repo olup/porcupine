@@ -31,7 +31,7 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	defer cancel()
 	asOf := s.clock().UTC().Truncate(time.Millisecond)
 	scope.Begin()
-	read, err := s.lake.Profile(native, input.ID, options, asOf)
+	read, err := s.interactiveReader().Profile(native, input.ID, options, asOf)
 	err = interactiveQueryResultError(native, scope.Finish(), err)
 	if err != nil {
 		return nil, err

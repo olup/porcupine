@@ -27,9 +27,17 @@ func sharedQueryUnresponsiveDeadline(hardDeadline time.Time, s3RequestTimeoutSec
 }
 
 type sharedQueryPermit struct {
-	id, worker string
-	control    *sql.DB
-	once       sync.Once
+	id, worker, project string
+	control             *sql.DB
+	hosted              *hostedQueryRuntime
+	returned            sync.Once
+	once                sync.Once
+}
+
+func (p *sharedQueryPermit) recordReturn() {
+	if p.hosted != nil {
+		p.returned.Do(func() { p.hosted.noteReturn(p.id, p.project) })
+	}
 }
 
 func (p *sharedQueryPermit) release() {
@@ -37,7 +45,11 @@ func (p *sharedQueryPermit) release() {
 		cleanup, cancel := context.WithTimeout(context.Background(), sharedQueryControlTimeout)
 		defer cancel()
 		// An unavailable control store leaves a conservative reservation until TTL.
+		p.recordReturn()
 		_, _ = p.control.ExecContext(cleanup, `DELETE FROM shared_query_permits WHERE permit_id=$1 AND worker_id=$2`, p.id, p.worker)
+		if p.hosted != nil {
+			_ = p.hosted.acknowledgeReturn(cleanup, p.control, p.id, p.project)
+		}
 	})
 }
 
@@ -82,10 +94,25 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
+	hosted := s.hostedQueries
+	if hosted != nil {
+		if !hosted.reserveCompletion() {
+			return InteractiveQueryConfig{}, nil, apiError(503, "hosted query completion backlog unavailable")
+		}
+		if err := hosted.register(ctx, tx, project, token); err != nil {
+			hosted.dropReservation()
+			return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
+		}
+	}
 	if err = tx.Commit(); err != nil {
+		if hosted != nil {
+			// An ambiguous commit may have installed the blocker. No native
+			// call can start without a successful admission response.
+			hosted.noteReturn(token, project)
+		}
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
-	return limits, &sharedQueryPermit{id: token, worker: s.shared.config.WorkerID, control: s.control}, nil
+	return limits, &sharedQueryPermit{id: token, worker: s.shared.config.WorkerID, project: project, control: s.control, hosted: hosted}, nil
 }
 
 func sharedQueryPermitError(ctx context.Context, err error) error {

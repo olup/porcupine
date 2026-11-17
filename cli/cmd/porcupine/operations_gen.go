@@ -167,7 +167,7 @@ var operations = []operation{
 	},
 	{
 		ID: "delete-event", Method: "DELETE", Path: "/api/v1/projects/{id}/events/{uuid}",
-		Summary: "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous",
+		Summary: "Queue a deletion tombstone. Analytical visibility changes after projection. Previously started queries or sends can still complete, and published customer outputs are outside this operation.",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "uuid", In: "path", Type: "string", Description: "", Required: true},
@@ -224,7 +224,7 @@ var operations = []operation{
 	},
 	{
 		ID: "get-event-catalog", Method: "GET", Path: "/api/v1/projects/{id}/catalog",
-		Summary: "Discover event names and sampled property types; filter properties by prefix or kind and follow next_property_cursor",
+		Summary: "Discover observed event names, sampled property types, and optional user-authored descriptions",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 			{Name: "event", In: "query", Type: "string", Description: "Optional exact event name. Supplying it also discovers sampled top-level property keys.", Required: false},
@@ -253,7 +253,7 @@ var operations = []operation{
 	},
 	{
 		ID: "get-event-mutation", Method: "GET", Path: "/api/v1/projects/{id}/event-mutations/{mutation_id}",
-		Summary: "Read whether an event correction or deletion is pending or applied",
+		Summary: "Read whether an event correction or deletion is pending, applied, or failed",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "mutation_id", In: "path", Type: "string", Description: "", Required: true},
@@ -551,7 +551,7 @@ var operations = []operation{
 	},
 	{
 		ID: "replace-pipeline-credentials", Method: "PUT", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}/credentials",
-		Summary: "Replace encrypted credentials and destination; pending deliveries use the new destination",
+		Summary: "Replace encrypted credentials and destination; pending deliveries to the old destination are retired",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "pipeline_id", In: "path", Type: "string", Description: "", Required: true},
@@ -639,6 +639,19 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "key_id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "set-catalog-description", Method: "PUT", Path: "/api/v1/projects/{id}/catalog/description",
+		Summary: "Set or clear documentation for an exact event name or top-level property",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"description (string, required) Plain text. Use an empty string to clear the description.",
+			"event (string, required) Exact event name.",
+			"property (string) Exact top-level property key. Omit to document the event itself.",
 		},
 	},
 	{

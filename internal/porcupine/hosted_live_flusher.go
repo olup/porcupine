@@ -63,7 +63,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		if e != nil {
 			return e
 		}
-		if e = f.reconcile(ctx, scope, fence, tenant); e != nil {
+		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
 			return e
 		}
 		if found {
@@ -131,7 +131,7 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := f.reconcile(ctx, scope, fence, input.TenantID); err != nil {
+		if err := f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
 			return err
 		}
 		result, err = f.commitImportHeld(ctx, session, fence, input, nil)
@@ -194,10 +194,20 @@ func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.Proj
 		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, key.ProjectID).Scan(&tenant); e != nil {
 			return e
 		}
-		return f.reconcile(ctx, scope, fence, tenant)
+		return f.reconcileHostedWrites(ctx, session, scope, fence, tenant)
 	})
 }
-func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
+
+// reconcileHostedWrites runs on an acquired project session after the caller
+// advances its native fence. Use it before selecting a snapshot or send cut.
+func (f *hostedLiveFlusher) reconcileHostedWrites(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
+	if err := f.reconcile(ctx, session, scope, fence, tenant); err != nil {
+		return err
+	}
+	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant)
+}
+
+func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
 	seq, checkpointHash, err := f.publisher.checkpoint(ctx, scope, tenant)
 	if err != nil {
 		return err
@@ -230,7 +240,7 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 			if resErr != nil {
 				return resErr
 			}
-		case lakeapi.NativeCommitImport:
+		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
 			if resErr == nil {
 				return output.ErrPipelineConflict
 			}
@@ -238,7 +248,13 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, scope lakeapi.HostedP
 		default:
 			return output.ErrPipelineConflict
 		}
-		if err = f.publisher.publish(ctx, binding, page.Evidence[0]); err != nil {
+		evidence := page.Evidence[0]
+		if evidence.Kind == lakeapi.NativeCommitMutation {
+			err = f.publisher.publishOn(ctx, binding, evidence, session)
+		} else {
+			err = f.publisher.publish(ctx, binding, evidence)
+		}
+		if err != nil {
 			return err
 		}
 		seq = page.Evidence[0].Sequence

@@ -19,6 +19,9 @@ type DuckLakeConfig struct {
 	SnapshotRetention      time.Duration
 	CleanupGrace           time.Duration
 	CleanupInterval        time.Duration
+	RestoreWindow          time.Duration
+	RestoreMaxReaderTime   time.Duration
+	RestoreSafetyMargin    time.Duration
 	DisableCleanup         bool
 	S3                     *DuckLakeS3Config
 	PostgresURL            string
@@ -74,6 +77,21 @@ func NormalizeDuckLakeCleanup(c *DuckLakeConfig) error {
 	}
 	if c.SnapshotRetention < time.Second || c.CleanupGrace < time.Second || c.CleanupInterval < time.Second {
 		return errors.New("DuckLake cleanup durations must be at least one second")
+	}
+	// An explicit policy checks the local deletion grace. Provider PITR and
+	// object lifecycle settings are independent and require a provider drill.
+	if c.RestoreWindow != 0 || c.RestoreMaxReaderTime != 0 || c.RestoreSafetyMargin != 0 {
+		if c.PostgresURL == "" || c.S3 == nil {
+			return errors.New("DuckLake restore policy requires PostgreSQL metadata and S3")
+		}
+		if c.RestoreWindow < time.Second || c.RestoreMaxReaderTime < time.Second || c.RestoreSafetyMargin < time.Second {
+			return errors.New("DuckLake restore window, maximum reader time and safety margin must each be at least one second")
+		}
+		// Subtract from the grace so large durations cannot wrap the sum.
+		remaining := c.CleanupGrace - c.RestoreWindow
+		if remaining < c.RestoreMaxReaderTime || remaining-c.RestoreMaxReaderTime < c.RestoreSafetyMargin {
+			return errors.New("DuckLake cleanup grace must cover the restore window, maximum reader time and safety margin")
+		}
 	}
 	return nil
 }

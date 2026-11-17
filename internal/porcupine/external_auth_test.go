@@ -150,16 +150,16 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 		t.Fatal("missing execution credential guidance", rejected)
 	}
 	created := request(t, s, "POST", "/api/v1/projects/"+idA+"/pipelines", native, pipelineBody("https://example.test"), 201)
-	stored, err := s.loadPipeline(t.Context(), idA, created["id"].(string))
+	stored, err := loadTestPipeline(s, t.Context(), idA, created["id"].(string))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), stored.ActorID, idA); err != nil || !allowed {
+	if allowed, err := s.pipelines.AuthorizeCreator(t.Context(), stored.ActorID, idA); err != nil || !allowed {
 		t.Fatal("native execution credential cannot authorize its pipeline", err)
 	}
 	request(t, s, "DELETE", "/api/v1/tenants/"+a+"/service-accounts/"+clientID+"/api-keys/"+key["id"].(string), admin, "", 204)
 	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", native, "", 401)
-	if allowed, err := s.pipelineCreatorAuthorized(t.Context(), stored.ActorID, idA); err != nil || allowed {
+	if allowed, err := s.pipelines.AuthorizeCreator(t.Context(), stored.ActorID, idA); err != nil || allowed {
 		t.Fatal("revoked execution credential still authorizes pipeline", err)
 	}
 	// An external-AS outage never enters the public SDK acceptance path.
