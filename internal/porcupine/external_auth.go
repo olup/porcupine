@@ -91,6 +91,9 @@ func checkControlAuthMode(ctx context.Context, query oauthQueryer, external bool
 }
 
 func (s *Service) requireExternalCurrent(ctx context.Context, query oauthQueryer) error {
+	if !s.externalAuthEnabled() {
+		return nil
+	}
 	actor := principal(ctx)
 	if actor.External == nil {
 		return nil
