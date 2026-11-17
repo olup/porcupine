@@ -11,13 +11,13 @@
 5. Run `CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite` and `make docs`. The build uses a pinned Hugo binary, downloaded once and verified against its SHA256 checksum. It checks local links and anchors as well as release labels.
 6. Add an entry headed `## X.Y.Z` to `CHANGELOG.md`. The release workflow includes that entry in the published notes.
 7. Merge the reviewed changes to `main`. Wait for the complete Check workflow to pass on the exact candidate revision. Verify that the approved hosted startup and recovery evidence covers the code that will ship.
-8. Create and verify the signed tag on that revision, then push that tag alone.
+8. Create and verify the annotated tag on that revision, then push that tag alone.
 
 ```sh
 release_sha=APPROVED_MAIN_COMMIT
 tag="v$(git show "$release_sha:VERSION")"
-git tag -s -m "Porcupine $tag" "$tag" "$release_sha"
-git verify-tag "$tag"
+git tag -a -m "Porcupine $tag" "$tag" "$release_sha"
+test "$(git rev-parse "$tag^{commit}")" = "$release_sha" || exit 1
 git push origin "refs/tags/$tag"
 ```
 
