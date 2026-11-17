@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"strconv"
 )
 
@@ -47,7 +48,10 @@ var localControlSchema = schemaStore{name: "control", steps: []string{controlSch
 
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema,
+	// 2: globally ordered native write epochs on the dedicated control session.
+	lakeapi.ProjectCoordinatorSchemaV1,
+}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {
