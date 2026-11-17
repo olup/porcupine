@@ -310,7 +310,8 @@ func (c *pausedS3HTTPClient) Do(request *http.Request) (*http.Response, error) {
 }
 
 func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
-	t.Parallel()
+	// This native I/O wall-clock bound runs without competing object-store
+	// tests. The rest of the S3 suite can still execute in parallel.
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
