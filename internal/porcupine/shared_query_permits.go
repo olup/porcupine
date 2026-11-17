@@ -4,76 +4,51 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
-	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-// Expiry is a recovery bound, not a renewable admission lease: it must remain
-// valid while a canceled native query finishes its in-flight object-store I/O.
-const sharedQueryPermitSafetyMargin = 30 * time.Second
-const sharedQueryWatchdogSafetyMargin = 15 * time.Second
-const sharedQueryWatchdogExitCode = 70
-const sharedQueryWatchdogLogGrace = time.Second
+const sharedQueryPermitLifetime = 30 * time.Second
+const sharedQueryRenewInterval = 5 * time.Second
+const sharedQueryControlTimeout = 2 * time.Second
+const sharedQueryAdmissionTimeout = 10 * time.Second
+const sharedQueryUnresponsiveGrace = 15 * time.Second
 
 func sharedQueryIOGrace(s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds int) time.Duration {
 	return time.Duration(max(0, s3RequestTimeoutSeconds)+max(0, metadataRequestTimeoutSeconds)) * time.Second
 }
 
-func sharedQueryPermitLifetime(limits InteractiveQueryConfig, s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds int) time.Duration {
-	return time.Duration(limits.TimeoutMS)*time.Millisecond + sharedQueryIOGrace(s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds) + sharedQueryPermitSafetyMargin
+func sharedQueryUnresponsiveDeadline(hardDeadline time.Time, s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds int) time.Time {
+	return hardDeadline.Add(sharedQueryIOGrace(s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds) + sharedQueryUnresponsiveGrace)
 }
 
-func sharedQueryWatchdogDeadline(hardDeadline time.Time, s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds int) time.Time {
-	return hardDeadline.Add(sharedQueryIOGrace(s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds) + sharedQueryWatchdogSafetyMargin)
+type sharedQueryPermit struct {
+	id, worker string
+	control    *sql.DB
+	once       sync.Once
 }
 
-// The process must stop before another worker can recycle its permit, even if
-// native blocking I/O ignores cancellation. A returned handler alone cannot
-// establish that native work stopped; only its actual scope release disarms it.
-func armSharedQueryWatchdog(hardDeadline time.Time, s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds int, clock func() time.Time) func() {
-	deadline := sharedQueryWatchdogDeadline(hardDeadline, s3RequestTimeoutSeconds, metadataRequestTimeoutSeconds)
-	timer := time.NewTimer(max(0, deadline.Sub(clock())))
-	done := make(chan struct{})
-	var state atomic.Uint32
-	go func() {
-		defer timer.Stop()
-		select {
-		case <-done:
-			return
-		case <-timer.C:
-		}
-		if state.CompareAndSwap(0, 2) {
-			// A blocked log sink must not prevent the process from fencing native work.
-			logged := make(chan struct{})
-			go func() {
-				slog.Error("shared analytics execution did not stop before its safety horizon; terminating worker")
-				close(logged)
-			}()
-			select {
-			case <-logged:
-			case <-time.After(sharedQueryWatchdogLogGrace):
-			}
-			os.Exit(sharedQueryWatchdogExitCode)
-		}
-	}()
-	return func() {
-		if state.CompareAndSwap(0, 1) {
-			close(done)
-		}
-	}
+func (p *sharedQueryPermit) release() {
+	p.once.Do(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), sharedQueryControlTimeout)
+		defer cancel()
+		// An unavailable control store leaves a conservative reservation until TTL.
+		_, _ = p.control.ExecContext(cleanup, `DELETE FROM shared_query_permits WHERE permit_id=$1 AND worker_id=$2`, p.id, p.worker)
+	})
 }
 
 // acquireSharedQueryPermit rechecks policy while holding its authoritative tenant
 // row. Every process participates in the same transaction; local worker slots
 // remain a separate protection for each process's own native engines.
-func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantID string) (InteractiveQueryConfig, func(), error) {
+func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantID string) (InteractiveQueryConfig, *sharedQueryPermit, error) {
+	// The initial grant must have enough lifetime left for the first renewal,
+	// even when a high query timeout permits a delayed COMMIT acknowledgement.
+	ctx, cancel := context.WithTimeout(ctx, sharedQueryAdmissionTimeout)
+	defer cancel()
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
@@ -102,7 +77,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 		return InteractiveQueryConfig{}, nil, tenantQueryConcurrencyError()
 	}
 	token := eventapi.NewID()
-	lifetimeMS := sharedQueryPermitLifetime(limits, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds).Milliseconds()
+	lifetimeMS := sharedQueryPermitLifetime.Milliseconds()
 	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.config.WorkerID, lifetimeMS)
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
@@ -110,17 +85,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 	if err = tx.Commit(); err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
-	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			// Caller cancellation must not prevent cleanup. If PostgreSQL is unavailable,
-			// the fixed safe expiry recovers this permit without freeing somebody else's.
-			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_, _ = s.control.ExecContext(cleanup, `DELETE FROM shared_query_permits WHERE permit_id=$1 AND worker_id=$2`, token, s.shared.config.WorkerID)
-		})
-	}
-	return limits, release, nil
+	return limits, &sharedQueryPermit{id: token, worker: s.shared.config.WorkerID, control: s.control}, nil
 }
 
 func sharedQueryPermitError(ctx context.Context, err error) error {
@@ -132,7 +97,8 @@ func sharedQueryPermitError(ctx context.Context, err error) error {
 
 // waitSharedProjectQueries is called after the durable project deletion fence is
 // committed, which prevents further permits. Files remain intact until existing
-// readers release their permits or their full native safety horizons expire.
+// readers release their permits or their renewable TTL expires. Expiry can also
+// follow a network partition, so it is not proof that a native reader stopped.
 func (s *Service) waitSharedProjectQueries(ctx context.Context, project string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

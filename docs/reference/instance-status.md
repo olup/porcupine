@@ -2,7 +2,7 @@
 
 Available in v0.10.0 and later on both the server and standalone CLI.
 
-Use `get-instance-status` to inspect the running server's version, dependency checks, and optional service configuration. Your credential needs `management:read`. A project-scoped management reader can use it without instance administration. The response contains no project IDs, event counts, destination URLs, or credentials.
+Use `get-instance-status` to inspect the running server's version, dependency checks, and optional service configuration. Your credential needs `management:read`. A project-scoped management reader can use it without instance administration. The response contains no destination URLs or credentials. Project IDs in execution health are visible only to instance administrators.
 
 ## From an agent, CLI, or HTTP
 
@@ -52,6 +52,8 @@ The overall `status` is `degraded` when a live check fails. An administrator als
 
 Version v0.14.0 adds `native_backup.source_id`, the analytical source identity needed with `latest_bundle` for [remote recovery](native-backup-recovery.md). It remains administrator-only.
 
+In shared deployments, `checks.query_execution` is `unavailable` when this worker is draining, has an uncertain query reservation, or has quarantined a project's interactive engine. This degrades the report for all callers. Instance administrators also receive `query_execution` with `active`, `uncertain_permits`, `draining`, and `unhealthy_projects`. Reasons are `native_query_unresponsive` or `query_permit_uncertain`. Active counts include canceled calls that have not returned. An expired reservation can already have been reassigned even while the old call remains alive. The check reads execution state without starting native work. See [shared query lifecycle](shared-deployment.md#native-timeouts-and-worker-supervision).
+
 `configuration.analytics` reports that the native analytical store is configured; it is not a health check. `configuration.native_s3_storage` reports the native analytical S3 option. It does not test bucket connectivity or disclose its prefix or credentials.
 
 Fields under `configuration` describe deployment configuration. They do not prove remote connectivity or grant the caller permission to use that service. The check sends no email, writes no S3 objects, and makes no requests to project destinations or the identity provider. Analytical S3 configuration does not prove bucket connectivity.
@@ -65,7 +67,9 @@ The existing public endpoints remain available:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /healthz` | Process liveness. |
-| `GET /readyz` | SQLite readiness. Returns `503` if local storage is unavailable. |
+| `GET /readyz` | Local and shared control readiness. Also returns `503` for shared query draining, uncertain reservations, or project quarantine. |
 | `GET /api/v1/status` | Authenticated dependency and configuration report. |
 
 `porcupine status` continues to call `/readyz`. Use `porcupine get-instance-status` for the detailed report. Authentication itself depends on SQLite, so if local storage is unavailable, the detailed report can fail before its probes run. Use `/readyz` for that condition.
+
+A shared worker with one quarantined project becomes unready as a whole. An orchestrator may remove it from public routing, although direct requests for healthy projects still work while capacity remains. `/healthz` stays a process-liveness check.

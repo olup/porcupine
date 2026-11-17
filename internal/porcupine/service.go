@@ -78,6 +78,7 @@ type Service struct {
 	querySlots            chan struct{}
 	interactiveConfig     InteractiveQueryConfig
 	tenantQueries         tenantQueryAdmission
+	sharedQueries         sharedQueryExecutions
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
 	tokenSlots            chan struct{}
@@ -383,6 +384,12 @@ func Open(c Config) (*Service, error) {
 }
 
 func (s *Service) Close() error {
+	if s.shared != nil {
+		s.BeginQueryDrain()
+		if s.sharedQueries.status().Active != 0 {
+			return errors.New("shared analytics execution is still active; permit renewal continues until it returns")
+		}
+	}
 	s.stopSharedIngestion()
 	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
@@ -540,6 +547,10 @@ func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	m.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.shared != nil && s.sharedQueries.status().unavailable() {
+			problem(w, 503, "analytics execution unavailable")
+			return
+		}
 		if err := s.db.PingContext(r.Context()); err != nil {
 			problem(w, 503, "storage unavailable")
 			return

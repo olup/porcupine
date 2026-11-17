@@ -22,6 +22,7 @@ type InstanceChecks struct {
 	DuckLake           DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second."`
 	SharedControl      DependencyStatus `json:"shared_control,omitempty" enum:"ok,unavailable" doc:"Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation."`
 	WorkerRegistration DependencyStatus `json:"worker_registration,omitempty" enum:"ok,unavailable" doc:"Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation."`
+	QueryExecution     DependencyStatus `json:"query_execution,omitempty" enum:"ok,unavailable" doc:"Shared analytical execution health on this worker, without a native query probe. Unavailable when draining or a project is quarantined; omitted in local mode."`
 }
 
 type InstanceConfiguration struct {
@@ -37,9 +38,10 @@ type InstanceConfiguration struct {
 }
 
 type InstanceStatus struct {
+	QueryExecution  *QueryExecutionStatus          `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
 	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
-	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
+	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
 	Version         string                         `json:"version" doc:"Server build version, or dev for an unversioned build."`
 	CheckedAt       string                         `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
 	Checks          InstanceChecks                 `json:"checks"`
@@ -67,6 +69,17 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			SharedControl:    s.shared != nil,
 			OwnerRouting:     s.shared != nil,
 		},
+	}
+	if s.shared != nil {
+		health := s.sharedQueries.status()
+		result.Checks.QueryExecution = dependencyOK
+		if health.unavailable() {
+			result.Checks.QueryExecution = dependencyUnavailable
+			result.Status = "degraded"
+		}
+		if principal(ctx).Admin() {
+			result.QueryExecution = &health
+		}
 	}
 	probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
 	err := s.db.PingContext(probe)

@@ -84,6 +84,14 @@ func (a *tenantQueryAdmission) acquire(tenant string, limit int) (func(), bool) 
 // beginInteractiveQuery reserves tenant and deployment capacity together for
 // SQL and discovery. Existing jobs retain their independent heavy-query policy.
 func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (context.Context, InteractiveQueryConfig, func(), error) {
+	if s.shared != nil {
+		if err := s.sharedQueries.allow(project); err != nil {
+			return nil, InteractiveQueryConfig{}, nil, err
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, InteractiveQueryConfig{}, nil, lakeapi.DuckLakeQueryError(ctx, ctx.Err())
+	}
 	lookup, stopLookup := context.WithTimeout(ctx, time.Duration(s.interactiveConfig.TimeoutMS)*time.Millisecond)
 	tenant, err := s.projectTenant(lookup, project)
 	stopLookup()
@@ -96,6 +104,7 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 	}
 	started := time.Now()
 	var releaseTenant func()
+	var permit *sharedQueryPermit
 	if s.shared != nil {
 		// Reserve local capacity first to avoid borrowing shared capacity when this
 		// process cannot execute. The shared transaction rechecks current policy.
@@ -105,12 +114,13 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 			return nil, InteractiveQueryConfig{}, nil, apiError(429, "analytics query concurrency limit reached")
 		}
 		admission, stop := context.WithTimeout(ctx, time.Duration(s.interactiveConfig.TimeoutMS)*time.Millisecond)
-		limits, releaseTenant, err = s.acquireSharedQueryPermit(admission, project, tenant.ID)
+		limits, permit, err = s.acquireSharedQueryPermit(admission, project, tenant.ID)
 		stop()
 		if err != nil {
 			<-s.querySlots
 			return nil, InteractiveQueryConfig{}, nil, err
 		}
+		releaseTenant = permit.release
 	} else {
 		var ok bool
 		releaseTenant, ok = s.tenantQueries.acquire(tenant.ID, limits.MaxConcurrent)
@@ -124,20 +134,20 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 			return nil, InteractiveQueryConfig{}, nil, apiError(429, "analytics query concurrency limit reached")
 		}
 	}
-	// Starting the hard deadline before shared admission ensures a delayed COMMIT
-	// response cannot start native work after its permit's recovery horizon.
+	// Admission uses part of the execution budget instead of restarting it.
 	hardDeadline := started.Add(time.Duration(limits.TimeoutMS) * time.Millisecond)
 	child, cancel := context.WithDeadline(ctx, hardDeadline)
 	var once sync.Once
-	var stopWatchdog func()
+	var finishShared func()
 	release := func() {
 		once.Do(func() {
-			if stopWatchdog != nil {
-				stopWatchdog()
+			if finishShared != nil {
+				finishShared()
+			} else {
+				releaseTenant()
 			}
 			cancel()
 			<-s.querySlots
-			releaseTenant()
 		})
 	}
 	if child.Err() != nil {
@@ -145,7 +155,11 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 		return nil, InteractiveQueryConfig{}, nil, lakeapi.DuckLakeQueryError(child, child.Err())
 	}
 	if s.shared != nil {
-		stopWatchdog = armSharedQueryWatchdog(hardDeadline, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds, time.Now)
+		finishShared, err = s.sharedQueries.start(permit, project, cancel, sharedQueryUnresponsiveDeadline(hardDeadline, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds))
+		if err != nil {
+			release()
+			return nil, InteractiveQueryConfig{}, nil, err
+		}
 	}
 	return child, limits, release, nil
 }

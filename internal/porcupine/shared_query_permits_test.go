@@ -141,7 +141,7 @@ func TestSharedQueryPermitLifetimeReleaseAndFailure(t *testing.T) {
 	_, a, b := sharedQueryTestFixture(t)
 	a.lakeS3RequestTimeoutSeconds = 7
 	a.lakeMetadataTimeoutSeconds = 10
-	limits, first, err := a.acquireSharedQueryPermit(context.Background(), "a", "one")
+	_, first, err := a.acquireSharedQueryPermit(context.Background(), "a", "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +149,9 @@ func TestSharedQueryPermitLifetimeReleaseAndFailure(t *testing.T) {
 	if err = a.control.QueryRow(`SELECT extract(epoch FROM expires_at-clock_timestamp())*1000 FROM shared_query_permits`).Scan(&remainingMS); err != nil {
 		t.Fatal(err)
 	}
-	minimum := float64(sharedQueryPermitLifetime(limits, 7, 10).Milliseconds() - 1000)
+	minimum := float64(sharedQueryPermitLifetime.Milliseconds() - 1000)
 	if remainingMS < minimum {
-		t.Fatal("lease could expire while native query still runs", remainingMS, minimum)
+		t.Fatal("initial lease omitted its renewal allowance", remainingMS, minimum)
 	}
 	// Simulated expiry permits a replacement; a late release must not erase it.
 	if _, err = a.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()-interval '1 second'`); err != nil {
@@ -161,14 +161,14 @@ func TestSharedQueryPermitLifetimeReleaseAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first()
-	first()
+	first.release()
+	first.release()
 	var count int
 	if err = a.control.QueryRow(`SELECT count(*) FROM shared_query_permits`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("stale release removed replacement", count, err)
 	}
-	second()
-	second()
+	second.release()
+	second.release()
 	if err = a.control.QueryRow(`SELECT count(*) FROM shared_query_permits`).Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
 	}
@@ -189,7 +189,7 @@ func TestSharedQueryPermitWorker(t *testing.T) {
 		t.Skip("subprocess helper")
 	}
 	s := sharedQueryTestService(t, dsn, "crashed-worker")
-	if _, _, err := s.acquireSharedQueryPermit(context.Background(), "a", "one"); err != nil {
+	if _, _, _, err := s.beginInteractiveQuery(context.Background(), "a"); err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println("shared-query-permit-ready")
@@ -199,9 +199,8 @@ func TestSharedQueryPermitWorker(t *testing.T) {
 func TestSharedQueryPermitCrashRecovery(t *testing.T) {
 	t.Parallel()
 	dsn, a, b := sharedQueryTestFixture(t)
-	// The 30-second fixed native safety margin is kept in the real crash proof.
-	// There is no test-only short lease or production renewal shortcut.
-	if _, err := a.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=1 WHERE id='one'`); err != nil {
+	// Keep the real renewable 30-second lease in the process-death proof.
+	if _, err := a.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=1000 WHERE id='one'`); err != nil {
 		t.Fatal(err)
 	}
 	child := exec.Command(os.Args[0], "-test.run=^TestSharedQueryPermitWorker$", "-test.v=false")
@@ -249,13 +248,13 @@ func TestSharedQueryPermitCrashRecovery(t *testing.T) {
 	}
 	_ = child.Wait()
 	if _, _, err = b.acquireSharedQueryPermit(context.Background(), "b", "one"); queryStatus(err) != 429 {
-		t.Fatal("crash released permit before safety horizon", err)
+		t.Fatal("crash released permit before its lease expired", err)
 	}
 	deadline := time.Now().Add(35 * time.Second)
 	for {
 		_, release, e := b.acquireSharedQueryPermit(context.Background(), "b", "one")
 		if e == nil {
-			release()
+			release.release()
 			break
 		}
 		if queryStatus(e) != 429 || time.Now().After(deadline) {
@@ -305,7 +304,7 @@ func TestSharedQueryProjectDeletionWaitsForReaders(t *testing.T) {
 	if _, _, err = a.acquireSharedQueryPermit(ctx, "a", "one"); queryStatus(err) != 404 {
 		t.Fatal("fenced project reacquired reader", err)
 	}
-	// A crashed reader is safe to ignore only after its database-clock expiry.
+	// Expiry permits cleanup after a lost heartbeat. It does not prove native return.
 	if _, err = a.control.Exec(`DELETE FROM project_deletions WHERE project_id='a'`); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +312,7 @@ func TestSharedQueryProjectDeletionWaitsForReaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer expiredRelease()
+	defer expiredRelease.release()
 	short, stop := context.WithTimeout(ctx, 10*time.Millisecond)
 	if err = b.waitSharedProjectQueries(short, "a"); err != context.DeadlineExceeded {
 		t.Fatal("reader wait ignored cancellation", err)
