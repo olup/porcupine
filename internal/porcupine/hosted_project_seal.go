@@ -44,7 +44,7 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 		if seal.Scope != scope {
 			return lakeapi.ErrNativeEvidenceGap
 		}
-		if err := f.reconcileHostedWrites(ctx, session, scope, fence, tenant); err != nil {
+		if err := f.reconcileEvidence(ctx, session, scope, fence, tenant, true); err != nil {
 			return err
 		}
 		sequence, hash, err := f.publisher.checkpoint(ctx, scope, tenant)
@@ -58,6 +58,15 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 		// requires a confirmed ACK under the current fenced session.
 		if err := f.native.AcknowledgeNativeEffects(ctx, fence, scope, sequence); err != nil {
 			return err
+		}
+		var pendingMutation bool
+		if err := f.publisher.control.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM hosted_mutation_intents WHERE source_id=$1 AND project_id=$2 AND tenant_id=$3
+AND state IN ('staging','ready'))`, key.SourceID, key.ProjectID, tenant).Scan(&pendingMutation); err != nil {
+			return err
+		}
+		if pendingMutation {
+			return errHostedProjectBusy
 		}
 		return f.recordHostedProjectSeal(ctx, seal, tenant, hash)
 	})

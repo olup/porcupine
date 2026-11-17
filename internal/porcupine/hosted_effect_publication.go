@@ -355,6 +355,12 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 }
 
 func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession) error {
+	return p.publishEvidence(ctx, b, e, session, false)
+}
+
+// publishEvidence can settle existing durable proofs after a deletion fence.
+// It does not admit new native work or add an output cursor.
+func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession, deleting bool) error {
 	if err := lakeapi.ValidateNativeCommitEvidence(e); err != nil {
 		return err
 	}
@@ -414,7 +420,14 @@ func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.Pipeline
 				return err
 			}
 		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
-			advanced, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
+			publishNoOutput := p.effects.PublishNoOutputEffectsTx
+			if deleting {
+				publishNoOutput = p.effects.PublishSealedProjectNoOutputEffectsTx
+				if e.Kind == lakeapi.NativeCommitImport && p.checkpointImport == nil {
+					return output.ErrPipelineConflict
+				}
+			}
+			advanced, err := publishNoOutput(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
 			if err != nil {
 				return err
 			}

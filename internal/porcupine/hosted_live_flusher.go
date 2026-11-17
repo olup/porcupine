@@ -242,6 +242,10 @@ func (f *hostedLiveFlusher) reconcileHostedWrites(ctx context.Context, session *
 }
 
 func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
+	return f.reconcileEvidence(ctx, session, scope, fence, tenant, false)
+}
+
+func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string, deleting bool) error {
 	seq, checkpointHash, err := f.publisher.checkpoint(ctx, scope, tenant)
 	if err != nil {
 		return err
@@ -283,7 +287,9 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.Proj
 			return output.ErrPipelineConflict
 		}
 		evidence := page.Evidence[0]
-		if evidence.Kind == lakeapi.NativeCommitMutation {
+		if deleting {
+			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true)
+		} else if evidence.Kind == lakeapi.NativeCommitMutation {
 			err = f.publisher.publishOn(ctx, binding, evidence, session)
 		} else {
 			err = f.publisher.publish(ctx, binding, evidence)

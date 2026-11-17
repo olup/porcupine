@@ -98,8 +98,8 @@ var hostedImportSchema string
 // Version 1 is idempotent because workers of that build reapplied it on start.
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
 // 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
-// 11: hosted mutations. 12: hosted imports. 13: shared output jobs.
-// 14: hosted project lifecycle.
+// 11: hosted mutations. 12: hosted historical upload checkpoints. 13: shared output jobs.
+// 14: hosted project activity and native seals.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,

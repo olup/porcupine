@@ -116,13 +116,16 @@ stopping, or query permit expiring does not establish this evidence. There
 is no public operation to force a ticket clear.
 
 Once all actual-return tickets clear, the deletion worker can acquire a new
-native write fence, verify the seal cut, publish the final committed live
+native write fence, verify the seal cut, publish the final committed
 effects and require a native acknowledgement through that exact sequence.
 It records the project, tenant, source, catalog, stream and final proof
 fingerprint in PostgreSQL. An unavailable catalog or missing proof keeps
-deletion pending. Shared mutations and imports must bring their original
-outcomes into this same publication protocol before startup binds the
-callback in a deployment that accepts those operations.
+deletion pending. Sealed recovery can settle a committed import or mutation
+only against the exact pending tenant/project tombstone and existing stream
+cursor. It updates the original import checkpoint or mutation receipt in
+the publication transaction, and preserves webhook cancellation for
+committed deletes. A mutation still staging or ready after that replay
+keeps the control seal pending.
 
 A recorded seal leaves the project and tenant tombstones pending while
 shared job inventory, retention and physical object reconciliation are

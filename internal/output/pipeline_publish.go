@@ -291,6 +291,17 @@ func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql
 // stream cursor. Publication needs no new metadata admission after native commit.
 // Cumulative usage commits in this same transaction before native ACK.
 func (p *PGPipelineEffects) PublishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
+	return p.publishNoOutputEffectsTx(ctx, tx, scope, tenant, v, false)
+}
+
+// PublishSealedProjectNoOutputEffectsTx settles an already-committed native
+// proof after the caller verifies the native seal. The control tombstone must
+// still be pending and belong to this exact project and tenant.
+func (p *PGPipelineEffects) PublishSealedProjectNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
+	return p.publishNoOutputEffectsTx(ctx, tx, scope, tenant, v, true)
+}
+
+func (p *PGPipelineEffects) publishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication, deleting bool) (bool, error) {
 	if tx == nil || !scope.valid() || !pipelineID(tenant) || v.Sequence <= 0 || !pipelineHash(v.ProofSHA256) || v.Manifest != (PipelineRef{}) || len(v.Outputs) != 0 {
 		return false, ErrPipelineConflict
 	}
@@ -299,7 +310,12 @@ func (p *PGPipelineEffects) PublishNoOutputEffectsTx(ctx context.Context, tx *sq
 		return false, err
 	}
 	var projectTenant string
-	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`, scope.ProjectID).Scan(&projectTenant); err != nil {
+	query := `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`
+	if deleting {
+		query = `SELECT p.tenant_id FROM projects p JOIN project_deletions d
+ON d.project_id=p.id AND d.tenant_id=p.tenant_id WHERE p.id=$1 AND d.completed=0 FOR UPDATE OF p,d`
+	}
+	if err := tx.QueryRowContext(ctx, query, scope.ProjectID).Scan(&projectTenant); err != nil {
 		return false, err
 	}
 	if projectTenant != tenant {
