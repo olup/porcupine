@@ -1,10 +1,9 @@
 # Hosted profile composition
 
-The hosted runtime is available to PostgreSQL and S3 integration fixtures. The
-server rejects public startup with this profile while an unpublished
-scheduled S3 attempt can prevent safe project or tenant reclamation. Standalone
-startup and the existing owner-routed shared deployment retain their durable
-SQLite acknowledgment.
+The hosted runtime is available to PostgreSQL and S3 integration fixtures.
+Public startup remains gated during combined verification of deletion, output
+recovery and maintenance. Standalone startup and the existing owner-routed
+shared deployment use durable SQLite acknowledgment.
 
 ## Candidate configuration
 
@@ -24,19 +23,24 @@ For example, these fields can be merged into the generated file.
     "cleanup_grace": "240h",
     "restore_window": "168h",
     "restore_max_reader_time": "1h",
-    "restore_safety_margin": "24h"
+    "restore_safety_margin": "24h",
+    "restore_floor_file": "/run/porcupine/restore-floor"
   }
 }
 ```
 
 The shared PostgreSQL URL also configures DuckLake metadata. An explicit
 `ducklake.postgres_url` must match it. The server checks the configured grace
-against the sum of the three recovery durations. The recovery floor must reflect the earliest PostgreSQL point the deployment can restore. See the [restore drill](hosted-restore-drill.md).
+against the sum of the three recovery durations. The optional
+`restore_floor_file` holds one operator-managed RFC3339 timestamp. It must
+reflect the earliest PostgreSQL point the deployment can restore, including
+secondary backups. Missing or invalid evidence keeps physical deletion
+pending. See the [restore drill](hosted-restore-drill.md).
 
 Use a fresh PostgreSQL control database. The server records the deployment
 profile and generates a new analytical source identity. Existing owner
-registries and development catalogs require a separate migration plan. The worker creates disposable analytical scratch space by
-default. `storage.ducklake` can point to a private disposable directory.
+registries and development catalogs require a separate migration plan. The
+worker creates disposable analytical scratch space by default. `storage.ducklake` can point to a private disposable directory.
 Keep one consistent configuration and pipeline encryption key across
 replicas. The candidate rejects local journal and control paths, receipt
 retention, owner routing settings and local native backups.
