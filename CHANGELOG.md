@@ -15,6 +15,7 @@
 - Authentication policy, upstream provider verification, and login/email admission limits have a separate `internal/auth` package. Persistence, consent issuance, and revocation keep their existing transaction owners. No sign-in mode is removed.
 - One typed `porcupine.json` server configuration with validated environment overrides and unknown-key rejection. Server commands `init`, `config check`, and atomic private `config install` support setup without extra runtime libraries. One Compose file replaces the optional overlays; the standalone API client stays separate.
 - Documentation reorganized into task guides, detailed reference, and design/validation records. The agent entry point describes the current contract rather than cumulative release history.
+- Hugo builds the documentation through a Go helper, using a pinned, checksum-verified binary. CLI packaging, artifact checks, and SDK identity probes also use Go; development and CI no longer require Python.
 
 Tenant-enabled deployments require fresh storage. The published v0.14.0 binaries do not include these changes. Additional stabilization work is tracked in the [review follow-up](docs/design/review-v0.14.md).
 

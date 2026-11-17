@@ -6,21 +6,30 @@ These checks cover the development branch after the v0.14.0 review. They do not 
 
 | Check | Local result |
 | --- | --- |
-| `make check` | Passed in 23.13 seconds, including contracts, vet, CLI, and short tests |
-| `make check-full` | Passed in 91.15 seconds, including the full Go race suite |
+| `make check` | Passed, including contracts, vet, CLI, and short tests; the first combined run took 23.13 seconds |
+| `make check-full` | Passed, including the full Go race suite; the first combined run took 91.15 seconds |
 | `make shared-integration` | Passed in 52.35 seconds with native PostgreSQL and isolated S3 |
 | Published-form server and standalone CLI smoke | Passed with compiled binaries and two isolated projects |
 | S3 HTTP and private-CA HTTPS fixtures | Passed, including storage failure and recovery |
 | `make ducklake-restore-drill` | Passed with the rebuilt nonroot image, read-only root filesystem, rotated credentials, and restored stable event IDs |
 | `scripts/check_config_compose.sh` | Passed against the same image: private init/install, masked config, restart, custom port and storage, and environment-only startup |
 | Browser OTP/OIDC tests | Passed with signed local provider fixtures; no claim about a configured live Google account |
-| `make compat` | All 13 supported PostHog scenarios passed |
+| `make compat` | All 13 supported PostHog scenarios and the fixture-environment isolation test passed |
 | Segment SDK contracts | Passed, including retry duplicates |
 | `npm --prefix compat run test:identify` | Passed with supported browser and backend SDKs |
-| Python tooling tests | All 18 dependency-free tooling checks and 5 documentation checks passed in their respective environments |
-| Strict HTML/Markdown documentation build | Passed with links and anchor checks |
+| Go development tools | CGO-free tests and vet passed for CLI packaging, standalone artifact checks, SDK identity probes, and documentation helpers |
+| Standalone CLI packaging | Six archives built; the extracted native CLI passed lifecycle, isolation, retry, and revocation checks against an isolated server |
+| Hugo HTML/Markdown documentation build | Pinned Hugo rendered 118 HTML pages and their Markdown counterparts, including compatibility aliases; local links, anchors, and version checks passed |
 
 An independent GPT-6 Astra review checked the storage, authorization, configuration, and test changes. It found and prompted fixes for unfamiliar catalog adoption, reordered columns, dormant-catalog recovery, global admission blocking, person snapshot retries, and container defaults. Existing project/tenant authorization and full CI suites remain in place.
+
+## Development tools
+
+Python and MkDocs have been removed from the development and CI requirements. `make docs` uses a Go helper and a pinned, checksum-verified Hugo executable. A warm build took 2.28 seconds on this Mac. Documentation unit tests run without downloading Hugo; the documentation CI job also exercises the real renderer. Browser checks preserved the existing desktop layout and found no horizontal overflow at 390 pixels. Markdown is served inline as `text/plain` in the local preview.
+
+CLI packaging and the standalone server/CLI journey now run in Go. The SDK suites compile their Go SQLite identity probe once per suite and isolate server configuration from inherited environment variables. Both temporary tooling worktrees were removed after integration; their commits and verification artifacts were retained.
+
+The old Python drivers for remote load testing were retired, not reproduced as remote Go commands. Current load and recovery measurements use the isolated Go benchmarks described in [load testing](load-testing.md). Historical experiment records still mention the tools used at the time.
 
 The first combined restore attempt exposed a real container default-path bug. The distroless image inherited `/home/nonroot`; relative defaults therefore wrote outside `/data`. The image now starts at `/`, and the same restore drill passes without adding path overrides to hide the problem. The test prints the recovered server's logs on failure.
 
