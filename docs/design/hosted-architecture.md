@@ -140,6 +140,8 @@ Serialized SHA-256 state contains a partial raw input block, not just a digest. 
 
 The analytical `registry.sqlite` is also authoritative today. Move its `source`, `catalogs`, `deleting_projects`, `cleanup_progress` and `storage_configuration` responsibilities to PostgreSQL, reusing existing `pc_native_sources`/`pc_native_projects` where suitable. Local registry inode checks cannot be a hosted durability requirement.
 
+The [native registry unit](hosted-native-registry.md) records its schema ownership, cold discovery, cleanup recovery and explicit owner-local cutover refusal. Completing that unit alone does not enable the full hosted path.
+
 Keep shared browser sessions, email budgets, credentials and query permits in PostgreSQL. Retire `shared_project_owners`, persistent-volume registrations, routing nonces and worker-local cumulative usage only when their consumers have been replaced. Temporary worker identifiers can remain for diagnostics and leases; they must not impose project ownership. Replace export/pipeline SQLite event and mutation watermarks with retained analytical snapshots.
 
 ## Phases and evidence

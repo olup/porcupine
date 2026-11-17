@@ -95,12 +95,8 @@ func TestSharedNativeMetadataLockTimeout(t *testing.T) {
 func TestSharedNativeSourceIDMetadataProbeBounded(t *testing.T) {
 	t.Parallel()
 	dsn := sharedPostgresDSN(t)
-	store := openLakeStorageTest(t, t.TempDir(), 1)
-	metadata, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.SharedCatalog = metadata
+	store := openSharedNativeMetadataTest(t, dsn)
+	metadata := store.SharedCatalog
 	metadata.SetMaxOpenConns(1)
 	held, err := metadata.Conn(t.Context())
 	if err != nil {
@@ -114,8 +110,8 @@ func TestSharedNativeSourceIDMetadataProbeBounded(t *testing.T) {
 	if err == nil || time.Since(started) > time.Second {
 		t.Fatal("metadata health probe did not honor its caller deadline")
 	}
-	if err := store.Registry.PingContext(t.Context()); err != nil {
-		t.Fatal("local registry was not healthy during metadata failure")
+	if store.Registry != nil {
+		t.Fatal("metadata health retained an authoritative local registry")
 	}
 	if err := held.Close(); err != nil {
 		t.Fatal(err)

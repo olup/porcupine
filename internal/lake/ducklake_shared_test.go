@@ -65,6 +65,86 @@ func sharedNativeStores(t *testing.T) (context.Context, *DuckLakeStore, *DuckLak
 	return ctx, a, b, config
 }
 
+func TestDuckLakeS3SharedPostgresRegistryColdDiscovery(t *testing.T) {
+	t.Parallel()
+	ctx, a, b, config := sharedNativeStores(t)
+	for _, store := range []*DuckLakeStore{a, b} {
+		if store.Registry != nil {
+			t.Fatal("shared store opened a local authoritative registry")
+		}
+		if _, err := os.Lstat(filepath.Join(store.Root, "registry.sqlite")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("shared registry unexpectedly persisted on worker", err)
+		}
+	}
+	if err := a.Apply(ctx, []EventProjection{lakeStorageProjection(t, "a", "a-original", 1), lakeStorageProjection(t, "b", "b-original", 2)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Projects) != 0 {
+		t.Fatal("cold worker already had native project engines")
+	}
+	status, err := b.CleanupStatus(ctx)
+	if err != nil || status.RegisteredCatalogs != 2 || len(b.Projects) != 0 {
+		t.Fatal("cold status did not discover authoritative catalogs", status, err)
+	}
+	b.Config.DisableCleanup = false
+	if err := b.CleanupDue(ctx, time.Now()); err != nil {
+		t.Fatal("cold maintenance could not open an existing catalog", err)
+	}
+	status, err = a.CleanupStatus(ctx)
+	if err != nil || status.CompletedCatalogs != 1 {
+		t.Fatal("cleanup result was only worker-local", status, err)
+	}
+	if err := a.DeleteProject(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, release, err := b.LeaseProject(ctx, "a"); err == nil {
+		release()
+		t.Fatal("other worker reopened deleted catalog")
+	}
+	if got := lakeStorageCount(t, b, "b", "events"); got != 1 {
+		t.Fatal("deletion changed unrelated project", got)
+	}
+	// Scratch directory replacement does not replace the source identity.
+	coldConfig := config
+	coldConfig.Directory = filepath.Join(t.TempDir(), "cold")
+	cold, err := NewDuckLake(coldConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cold.Close() })
+	c := cold.(*DuckLakeStore)
+	if err := os.RemoveAll(c.Root); err != nil {
+		t.Fatal(err)
+	}
+	if source, err := c.SourceID(ctx); err != nil || source != config.SharedSourceID {
+		t.Fatal("scratch replacement changed durable source identity", source, err)
+	}
+	if _, release, err := c.LeaseProject(ctx, "a"); err == nil {
+		release()
+		t.Fatal("cold worker resurrected deleted catalog")
+	}
+	wrong := config
+	wrong.Directory = filepath.Join(t.TempDir(), "wrong-binding")
+	storage := *wrong.S3
+	storage.Prefix += "/different"
+	wrong.S3 = &storage
+	if store, err := NewDuckLake(wrong); err == nil {
+		store.Close()
+		t.Fatal("cold worker changed authoritative storage binding")
+	}
+	legacy := config
+	legacy.Directory = t.TempDir()
+	if err := os.WriteFile(filepath.Join(legacy.Directory, "registry.sqlite"), []byte("unreconciled owner-local inventory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := NewDuckLake(legacy); err == nil {
+		store.Close()
+		t.Fatal("owner-local registry was silently discarded")
+	} else if !strings.Contains(err.Error(), "offline inventory") {
+		t.Fatal("owner-local cutover refusal was not explicit", err)
+	}
+}
+
 func TestDuckLakeS3SharedPostgresIndependentEngines(t *testing.T) {
 	t.Parallel()
 	ctx, a, b, config := sharedNativeStores(t)

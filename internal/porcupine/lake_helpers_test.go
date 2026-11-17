@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -20,6 +22,32 @@ func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *lakeapi.D
 		t.Fatal(err)
 	}
 	s := lake.(*lakeapi.DuckLakeStore)
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return s
+}
+
+func openSharedNativeMetadataTest(t *testing.T, dsn string) *lakeapi.DuckLakeStore {
+	t.Helper()
+	// Health exercises real PG registry authority without requiring analytical
+	// objects. Any accidental object request fails this metadata-only fixture.
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("metadata health fixture accessed analytical objects")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(endpoint.Close)
+	store, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{
+		Directory: t.TempDir(), PostgresURL: dsn, SharedSourceID: eventapi.NewID(),
+		MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 1, DisableCleanup: true,
+		S3: &lakeapi.DuckLakeS3Config{Bucket: "metadata-probe", Prefix: "native", Region: "us-east-1", Endpoint: endpoint.URL, UsePathStyle: true, AccessKeyID: "fixture", SecretAccessKey: "fixture"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.(*lakeapi.DuckLakeStore)
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)
