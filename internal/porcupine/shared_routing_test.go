@@ -384,6 +384,26 @@ func TestSharedRouteWorkerIdentityAndOwnerUnavailable(t *testing.T) {
 	}
 }
 
+func TestSharedRoutingCloseAcknowledgesSessionUnlock(t *testing.T) {
+	t.Parallel()
+	dsn := sharedPostgresDSN(t)
+	worker := sharedRoutingTestService(t, dsn, "owner", "http://127.0.0.1:1")
+	for attempt := 0; attempt < 20; attempt++ {
+		pid := worker.shared.routing.backendPID
+		worker.closeSharedRouting()
+		var held bool
+		if err := worker.control.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND granted)`, pid).Scan(&held); err != nil {
+			t.Fatal(err)
+		}
+		if held {
+			t.Fatalf("shutdown returned before PostgreSQL released the registration lock, attempt %d", attempt)
+		}
+		if err := worker.initializeSharedRouting(context.Background()); err != nil {
+			t.Fatalf("clean restart %d failed: %v", attempt, err)
+		}
+	}
+}
+
 func TestSharedRouteStripsUntrustedContextHeaders(t *testing.T) {
 	t.Parallel()
 	for _, shared := range []bool{false, true} {

@@ -191,6 +191,11 @@ func (s *Service) sharedWorkerVolume(ctx context.Context, worker string) (string
 }
 
 func closeSharedRoutingConnection(conn *sql.Conn) {
+	// Wait for PostgreSQL to acknowledge a clean release. Closing the socket
+	// alone leaves a window before the backend notices EOF and drops its lock.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock_all()`)
+	cancel()
 	// Discard the physical session so an advisory lock cannot return to the pool.
 	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 	_ = conn.Close()
