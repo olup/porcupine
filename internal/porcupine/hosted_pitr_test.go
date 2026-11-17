@@ -63,6 +63,7 @@ func TestHostedPostgresPITR(t *testing.T) {
 	}
 	hostedConfig := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
 		Shared: &SharedConfig{DatabaseURL: pg.dsn("hosted")}, allowUnreleasedHostedFixture: true,
+		OAuth: &OAuthConfig{Issuer: "https://porcupine-pitr-hosted.invalid", AllowLegacyKeys: true},
 		DuckLake: &lakeapi.DuckLakeConfig{PostgresURL: pg.dsn("hosted"), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1,
 			MaintenanceInterval: time.Hour, CleanupGrace: 72 * time.Hour,
 			RestoreWindow: 24 * time.Hour, RestoreMaxReaderTime: time.Hour, RestoreSafetyMargin: time.Hour}}
