@@ -56,5 +56,8 @@ func configureWebhooks(s *Service, acceptance *durableAcceptance, runtime *pipel
 	clock := &s.eventRules.clock
 	now := func() time.Time { return (*clock)() }
 	runtime.webhooks = delivery.NewWebhookQueue(s.db, limits, now, webhookHost{s})
+	if s.usage != nil {
+		runtime.webhooks.Usage = s.usage.recorder
+	}
 	acceptance.enqueueWebhooks = runtime.webhooks.Enqueuer().Enqueue
 }

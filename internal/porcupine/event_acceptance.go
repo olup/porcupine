@@ -13,11 +13,13 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 // eventRules is the shared policy for live and historical acceptance. Its clock
 // and budgets have one owner even when several entry points write the journal.
 type eventRules struct {
+	usage             *usage.Recorder
 	receiptGates      receiptProjectGates
 	admission         *contextMutex
 	clock             func() time.Time
@@ -292,6 +294,11 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 	if a.enqueueWebhooks != nil {
 		if err = a.enqueueWebhooks(ctx, tx, webhookEvents); err != nil {
 			return nil, &acceptanceFailure{message: "webhook queue unavailable", retry: true}
+		}
+	}
+	if a.rules.usage != nil {
+		if err = a.rules.usage.AddTx(ctx, tx, batch.projectID, acceptedAt, usage.Counters{Live: int64(accepted)}, 0); err != nil {
+			return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
 		}
 	}
 	if err = tx.Commit(); err != nil {

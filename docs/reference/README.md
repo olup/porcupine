@@ -29,6 +29,7 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Server configuration keys](configuration.md) and [detailed hosting configuration](hosting-options.md)
 - [Analytical S3](ducklake-s3.md) and [shared PostgreSQL deployment](shared-deployment.md)
 - [Instance status](instance-status.md), [durability](reliability.md), and [retry receipts](receipts.md)
+- Unreleased: [operator numerical usage](usage.md), including replayable consumption and current Parquet sampling
 - [History cleanup](ducklake-cleanup.md)
 - [Local backup scheduler](native-backups.md), [S3 backups and offline restore](native-backup-recovery.md), and [Compose backup setup](backup-compose.md)
 - [Backup consistency](online-backup.md) and [stopped-volume recovery](restore.md)

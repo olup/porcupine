@@ -12,6 +12,7 @@ import (
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 type importChunkWork struct {
@@ -158,6 +159,11 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=$1,delivery_cursor=CASE WHEN delivery_cursor<coalesce((SELECT max(id) FROM events WHERE project_id=$2),0) THEN coalesce((SELECT max(id) FROM events WHERE project_id=$2),0) ELSE delivery_cursor END WHERE id=$3`, m.importTime(), project, jobID); err != nil {
 		return apiError(503, "import checkpoint unavailable")
+	}
+	if m.rules.usage != nil {
+		if err := m.rules.usage.AddTx(ctx, tx, project, m.rules.clock(), usage.Counters{Import: work.file.Counts.Accepted - original.Counts.Accepted}, 0); err != nil {
+			return apiError(503, "import usage checkpoint unavailable")
+		}
 	}
 	if actor.External != nil {
 		if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {

@@ -21,7 +21,7 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	native, limits, finish, err := s.beginInteractiveQuery(ctx, input.ID)
+	native, limits, finish, err := s.beginUsageQuery(ctx, input.ID, "profile")
 	if err != nil {
 		return nil, err
 	}

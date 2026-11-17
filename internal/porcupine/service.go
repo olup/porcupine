@@ -23,6 +23,7 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 	_ "modernc.org/sqlite"
 )
 
@@ -47,6 +48,7 @@ type Config struct {
 	NativeBackup       *lakeapi.NativeBackupConfig
 	InteractiveQueries *InteractiveQueryConfig
 	Shared             *SharedConfig
+	Usage              *usage.Config
 }
 
 type Service struct {
@@ -93,6 +95,7 @@ type Service struct {
 	oauth                 *oauthRuntime
 	resources             *resourceRuntime
 	projectionGuard       *projectionGuard
+	usage                 *usageRuntime
 }
 
 func Open(c Config) (*Service, error) {
@@ -374,6 +377,9 @@ func Open(c Config) (*Service, error) {
 	if err := s.initializeLakeSource(context.Background()); err != nil {
 		return fail(err)
 	}
+	if err := s.initializeUsage(context.Background(), c.Usage); err != nil {
+		return fail(err)
+	}
 	if err := s.initializePipelines(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -392,6 +398,7 @@ func Open(c Config) (*Service, error) {
 		return nil, errors.Join(err, s.Close())
 	}
 	s.startSharedIngestion()
+	s.startUsage()
 	return s, nil
 }
 
@@ -421,6 +428,7 @@ func (s *Service) Close() error {
 		s.deliveryCancel()
 		<-s.deliveryDone
 	}
+	s.stopUsage()
 	var lakeErr error
 	if s.lake != nil {
 		lakeErr = s.lake.Close()

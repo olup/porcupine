@@ -11,6 +11,7 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 func pipelineManifestKey(w *s3PipelineWork) string {
@@ -234,6 +235,11 @@ func (s *Service) publishPipelineS3(ctx context.Context, w *s3PipelineWork, stor
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_runs WHERE pipeline_id=$1 AND state='succeeded' AND id NOT IN (SELECT id FROM pipeline_s3_runs WHERE pipeline_id=$2 AND state='succeeded' ORDER BY window_start_ms DESC LIMIT 1000)`, w.pipeline.ID, w.pipeline.ID); err != nil {
 		return err
+	}
+	if s.usage != nil {
+		if err = s.usage.recorder.AddTx(ctx, tx, w.pipeline.ProjectID, s.clock(), usage.Counters{PipelineBytes: pipelineManifestBytes(manifest)}, 0); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
