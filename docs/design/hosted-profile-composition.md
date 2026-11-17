@@ -31,9 +31,7 @@ For example, these fields can be merged into the generated file.
 
 The shared PostgreSQL URL also configures DuckLake metadata. An explicit
 `ducklake.postgres_url` must match it. The server checks the configured grace
-against the sum of the three recovery durations. The provider's actual PITR
-window and S3 retention require an independent check. See the
-[restore drill](hosted-restore-drill.md).
+against the sum of the three recovery durations. The recovery floor must reflect the earliest PostgreSQL point the deployment can restore. See the [restore drill](hosted-restore-drill.md).
 
 Use a fresh PostgreSQL control database. The recorded deployment profile
 prevents owner-routed workers and stateless workers from sharing the same
@@ -66,8 +64,10 @@ retention, owner routing settings and local native backups.
   physical reclamation and finalization pending. Restore-safe reclamation
   remains open for several classes of immutable objects.
 - The two-process fixture proves startup, steady-path acceptance and
-  replacement in an isolated environment. It does not establish production
-  capacity, a loss-age objective, managed-provider recovery or full teardown.
+  replacement in an isolated environment. S3 validation may use the AWS
+  Emulator. Emulator results describe the tested requests and observable
+  storage behavior. Production capacity and a loss-age objective still need
+  separate measurements.
 
 The [architecture and phase gates](hosted-architecture.md) apply before public
 enablement.
