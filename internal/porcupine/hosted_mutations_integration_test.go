@@ -156,10 +156,28 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	_, err = b.service.getEventMutation(actorContext, &EventMutationInput{ID: other, MutationID: first.Body.MutationID})
 	mutationErrorStatus(t, err, 404)
+	assertDeleteGate := func(project string, want bool) {
+		t.Helper()
+		err := fb.withHostedMutationProject(ctx, project, func(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string) error {
+			return session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				blocked, err := hostedReadyDelete(ctx, tx, scope, tenant)
+				if err == nil && blocked != want {
+					t.Fatalf("sender delete gate for %s = %v, want %v", project, blocked, want)
+				}
+				return err
+			})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertDeleteGate(project, false)
 	pendingDelete, err := a.service.deleteEvent(actorContext, &EventDeleteInput{ID: project, UUID: uuid, Body: EventDeleteBody{ExpectedRevision: "1", IdempotencyKey: "delete"}})
 	if err != nil || pendingDelete.Body.State != "pending" {
 		t.Fatal(pendingDelete, err)
 	}
+	assertDeleteGate(project, true)
+	assertDeleteGate(other, false)
 	_, err = b.service.getEvent(actorContext, &EventGetInput{ID: project, UUID: uuid})
 	mutationErrorStatus(t, err, 410)
 	if err := fb.RecoverProject(ctx, scope.Key); !errors.Is(err, errHostedMutationBusy) {
@@ -201,6 +219,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	assertDeleteGate(project, false)
 	tombstone, err := fb.native.LoadHostedEvent(ctx, scope, uuid)
 	if err != nil || !tombstone.IsDeleted || tombstone.Revision != 2 || tombstone.ID != before.ID {
 		t.Fatal(tombstone, err)
