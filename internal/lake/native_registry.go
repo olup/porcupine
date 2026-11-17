@@ -109,12 +109,16 @@ type postgresNativeRegistry struct {
 	timeout             time.Duration
 }
 
-func (r *postgresNativeRegistry) sourceID(ctx context.Context) (string, error) {
+func (r *postgresNativeRegistry) metadataContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	timeout := r.timeout
 	if timeout == 0 {
 		timeout = time.Duration(defaultDuckLakeMetadataTimeoutSeconds) * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	return context.WithTimeout(ctx, timeout)
+}
+
+func (r *postgresNativeRegistry) sourceID(ctx context.Context) (string, error) {
+	ctx, cancel := r.metadataContext(ctx)
 	defer cancel()
 	var fingerprint string
 	if err := r.db.QueryRowContext(ctx, `SELECT fingerprint FROM pc_native_sources WHERE source_id=$1`, r.source).Scan(&fingerprint); err != nil {
@@ -126,6 +130,8 @@ func (r *postgresNativeRegistry) sourceID(ctx context.Context) (string, error) {
 	return r.source, nil
 }
 func (r *postgresNativeRegistry) lookup(ctx context.Context, project string) (nativeProjectRecord, error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	p := nativeProjectRecord{ProjectID: project}
 	err := r.db.QueryRowContext(ctx, `SELECT catalog_id,ready<>0,deleted<>0 FROM pc_native_projects WHERE source_id=$1 AND project_id=$2`, r.source, project).Scan(&p.CatalogID, &p.Ready, &p.Deleted)
 	if err == nil && p.CatalogID != SharedNativeCatalogID(r.source, project) {
@@ -137,6 +143,8 @@ func (r *postgresNativeRegistry) scan(ctx context.Context, after string, limit i
 	if limit < 1 || limit > 256 {
 		return nil, errors.New("native registry page size must be between 1 and 256")
 	}
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	rows, err := r.db.QueryContext(ctx, `SELECT project_id,catalog_id,ready<>0,deleted<>0 FROM pc_native_projects WHERE source_id=$1 AND project_id>$2 ORDER BY project_id LIMIT $3`, r.source, after, limit)
 	page, err := readNativeRegistryPage(rows, err)
 	if err != nil {
@@ -166,6 +174,8 @@ func readNativeRegistryPage(rows *sql.Rows, err error) ([]nativeProjectRecord, e
 	return page, rows.Err()
 }
 func (r *postgresNativeRegistry) ensure(ctx context.Context, project string) (nativeProjectRecord, error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	_, err := r.db.ExecContext(ctx, `INSERT INTO pc_native_projects(source_id,project_id,catalog_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, r.source, project, SharedNativeCatalogID(r.source, project))
 	if err != nil {
 		return nativeProjectRecord{}, err
@@ -173,6 +183,8 @@ func (r *postgresNativeRegistry) ensure(ctx context.Context, project string) (na
 	return r.lookup(ctx, project)
 }
 func (r *postgresNativeRegistry) markReady(ctx context.Context, project string) error {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	result, err := r.db.ExecContext(ctx, `UPDATE pc_native_projects SET ready=1 WHERE source_id=$1 AND project_id=$2 AND deleted=0`, r.source, project)
 	if err != nil {
 		return err
@@ -191,6 +203,8 @@ func (r *postgresNativeRegistry) deleting(ctx context.Context, project string) (
 	return p.Deleted, err
 }
 func (r *postgresNativeRegistry) claimCleanup(ctx context.Context, at, next time.Time) (nativeCleanupAttempt, error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	a := nativeCleanupAttempt{ID: event.NewID()}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,6 +237,8 @@ WHERE pc_native_cleanup.next_attempt<=$5`, r.source, a.ProjectID, a.ID, next.Uni
 	return a, tx.Commit()
 }
 func (r *postgresNativeRegistry) finishCleanup(ctx context.Context, a nativeCleanupAttempt, state string, completed, next time.Time) error {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	result, err := r.db.ExecContext(ctx, `UPDATE pc_native_cleanup SET state=$1,
 failed=CASE WHEN $1='ok' THEN 0 WHEN $1='failed' THEN 1 ELSE failed END,
 last_success=CASE WHEN $1='ok' THEN $2 ELSE last_success END,
@@ -238,6 +254,8 @@ WHERE source_id=$4 AND project_id=$5 AND attempt_id=$6 AND state='running'`, sta
 	return err
 }
 func (r *postgresNativeRegistry) cleanupSummary(ctx context.Context) (nativeCleanupSummary, error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
 	var s nativeCleanupSummary
 	err := r.db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE p.last_success>0),
 coalesce(sum(p.failed),0),count(*) FILTER(WHERE p.state='running'),coalesce(max(p.last_attempt),0),coalesce(max(p.last_success),0)

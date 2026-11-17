@@ -280,3 +280,44 @@ func TestSharedNativeRegistryConcurrentCleanupClaims(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedNativeRegistryBoundsBlockedMetadata(t *testing.T) {
+	t.Parallel()
+	db, _ := registryTestDB(t)
+	if err := migrateNativeRegistry(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	source := event.NewID()
+	if _, err := db.Exec(`INSERT INTO pc_native_sources VALUES($1,'binding')`, source); err != nil {
+		t.Fatal(err)
+	}
+	r := &postgresNativeRegistry{db: db, source: source, fingerprint: "binding", timeout: time.Second}
+	if _, err := r.ensure(t.Context(), "blocked"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback()
+	if _, err := lock.Exec(`SELECT 1 FROM pc_native_projects WHERE project_id='blocked' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	r.timeout = 50 * time.Millisecond
+	work, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	if err := r.markReady(work, "blocked"); err == nil {
+		t.Fatal("blocked metadata update ignored its bound")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("blocked metadata exceeded configured timeout")
+	}
+	if err := lock.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	r.timeout = time.Second
+	if record, err := r.lookup(t.Context(), "blocked"); err != nil || record.Ready {
+		t.Fatal("expired metadata update published readiness", record, err)
+	}
+}
