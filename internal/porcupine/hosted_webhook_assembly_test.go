@@ -2,12 +2,36 @@ package porcupine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
+
+func TestHostedWebhookAssemblyMemberDecodeBound(t *testing.T) {
+	t.Parallel()
+	input := strings.NewReader(`[{},` + strings.Repeat(`0,`, 1<<20) + `0]`)
+	if _, err := decodeHostedAssemblyMembers(input, 1); err == nil || err.Error() != "webhook fragment event count mismatch" {
+		t.Fatalf("surplus members: %v", err)
+	}
+	if read := input.Size() - int64(input.Len()); read > 1024 {
+		t.Fatalf("read %d bytes before rejecting surplus members", read)
+	}
+	for _, raw := range []string{`[]`, `[{},{}]`, `{}`, `[{}] {}`, `[{}] [`, `[{}]`, `[{} `} {
+		wantValid := raw == `[{}]`
+		members, err := decodeHostedAssemblyMembers(strings.NewReader(raw), 1)
+		if (err == nil) != wantValid || wantValid && len(members) != 1 {
+			t.Fatalf("decode %q: members=%d error=%v", raw, len(members), err)
+		}
+	}
+	for _, count := range []int{0, -1, delivery.WebhookChunkEvents + 1} {
+		if _, err := decodeHostedAssemblyMembers(strings.NewReader(`[{}]`), count); err == nil {
+			t.Fatalf("accepted count %d", count)
+		}
+	}
+}
 
 func assemblyTestClaim(t *testing.T) frozenWebhookAssemblyClaim {
 	t.Helper()

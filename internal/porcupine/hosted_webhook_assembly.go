@@ -261,9 +261,9 @@ func readHostedAssemblyFragment(ctx context.Context, objects *lakeapi.DuckLakeOb
 	if err != nil {
 		return nil, err
 	}
-	var events []json.RawMessage
-	if err := json.Unmarshal(raw, &events); err != nil || len(events) != len(fragment.EventUUIDs) {
-		return nil, errors.New("webhook fragment event count mismatch")
+	events, err := decodeHostedAssemblyMembers(bytes.NewReader(raw), len(fragment.EventUUIDs))
+	if err != nil {
+		return nil, err
 	}
 	encoded := make([][]byte, len(events))
 	for i, raw := range events {
@@ -299,4 +299,34 @@ func readHostedAssemblyFragment(ctx context.Context, objects *lakeapi.DuckLakeOb
 		encoded[i] = raw
 	}
 	return encoded, nil
+}
+
+func decodeHostedAssemblyMembers(input io.Reader, expected int) ([]json.RawMessage, error) {
+	if expected < 1 || expected > delivery.WebhookChunkEvents {
+		return nil, errors.New("webhook fragment event count mismatch")
+	}
+	decoder := json.NewDecoder(input)
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('[') {
+		return nil, errors.New("invalid webhook fragment array")
+	}
+	events := make([]json.RawMessage, 0, expected)
+	for decoder.More() {
+		if len(events) == expected {
+			return nil, errors.New("webhook fragment event count mismatch")
+		}
+		var event json.RawMessage
+		if err := decoder.Decode(&event); err != nil {
+			return nil, errors.New("invalid webhook fragment event")
+		}
+		events = append(events, event)
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim(']') || len(events) != expected {
+		return nil, errors.New("webhook fragment event count mismatch")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, errors.New("extra webhook fragment array data")
+	}
+	return events, nil
 }
