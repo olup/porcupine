@@ -135,6 +135,8 @@ An internal ownership inventory retains opaque managed object and multipart-uplo
 
 A small permanent operator-only status tombstone retains the tenant ID, state, timestamps, project progress, and constant recovery categories. Minimal cumulative usage totals retain opaque IDs and UTC periods, without names, email addresses, secrets, SQL, or event payloads. Deletion never refunds usage. No audit retention period or pricing policy is selected by this operation.
 
+The current offline credential-reset restore preserves opaque cleanup holds before neutralizing source export and pipeline jobs. Deleting a restored tenant stays `deleting` with `error_code=restored_artifacts_pending` until source ownership and outstanding current artifacts are reconciled. Reset and deletion do not contact or delete the source bucket. Reconciliation must verify the original namespace, published customer ownership, current objects, and multipart uploads. This version provides no ignore-hold endpoint or automatic reconciliation. The planned hosted recovery keeps operational keys and resumable cleanup instead of this access reset.
+
 The `default` tenant can be deleted. Startup honors its tombstone and never recreates it. Create an explicit replacement tenant and provide its ID when creating projects; omitting the ID then returns `404`.
 
 ## Interactive query limits

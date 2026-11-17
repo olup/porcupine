@@ -94,8 +94,12 @@ func New(ctx context.Context, c Config) (*Store, error) {
 		return nil, storageError(ctx)
 	}
 
-	identity := sha256.Sum256([]byte(strings.Join([]string{c.Endpoint, c.Region, c.Bucket, prefix}, "\x00")))
-	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", ownershipID: hex.EncodeToString(identity[:]), transport: transport}, nil
+	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", ownershipID: NamespaceOwnershipID(c), transport: transport}, nil
+}
+
+func NamespaceOwnershipID(c Config) string {
+	identity := sha256.Sum256([]byte(strings.Join([]string{c.Endpoint, c.Region, c.Bucket, strings.TrimSuffix(c.Prefix, "/")}, "\x00")))
+	return hex.EncodeToString(identity[:])
 }
 
 // OwnershipID identifies the object namespace without retaining its identifying

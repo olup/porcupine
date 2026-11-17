@@ -23,6 +23,8 @@ type TenantDeletion struct {
 
 type TenantDeletionOutput struct{ Body TenantDeletion }
 
+var errRestoredArtifactsPending = errors.New("restored artifact ownership requires reconciliation")
+
 const tenantOwnedPrincipals = `(SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
 UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1)
 UNION SELECT g.principal_id FROM oauth_grant_tenants t JOIN oauth_interactive_grants g ON g.id=t.grant_id WHERE t.tenant_id=$1)`
@@ -185,6 +187,9 @@ func (s *Service) resumeTenantDeletions(ctx context.Context) {
 		code := ""
 		if err := s.finishTenantDeletion(ctx, id); err != nil {
 			code = "cleanup_pending"
+			if errors.Is(err, errRestoredArtifactsPending) {
+				code = "restored_artifacts_pending"
+			}
 			if s.shared != nil {
 				code = "shared_local_cleanup_pending"
 			}
@@ -202,6 +207,13 @@ func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error
 	}
 	if remaining != 0 || s.shared != nil {
 		return errors.New("tenant local cleanup pending")
+	}
+	var held bool
+	if err := s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM restored_artifact_holds WHERE tenant_id=$1)`, tenant).Scan(&held); err != nil {
+		return err
+	}
+	if held {
+		return errRestoredArtifactsPending
 	}
 	if err := s.localAdmission.Lock(ctx); err != nil {
 		return err

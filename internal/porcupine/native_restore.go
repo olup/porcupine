@@ -291,6 +291,14 @@ func nativeRestoreTableSchemas(ctx context.Context, db *sql.DB) (map[string]stri
 
 func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB, bootstrap string) (NativeRestoreResult, error) {
 	result := NativeRestoreResult{IngestionKeys: []NativeRestoreIngestionKey{}, Warning: "Physical DuckLake snapshot history is rebuilt. Data deleted after the checkpoint cannot be inferred or reconciled by this restore."}
+	for _, store := range []struct {
+		db     *sql.DB
+		schema schemaStore
+	}{{journal, journalSchema}, {control, localControlSchema}} {
+		if err := migrateSQLite(ctx, store.db, store.schema); err != nil {
+			return result, err
+		}
+	}
 	tx, err := control.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
@@ -310,6 +318,19 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 			return result, errors.New("recovery bootstrap token must differ from every archived credential")
 		}
 	}
+	if err := preserveNativeRestoreArtifactHolds(ctx, journal, tx); err != nil {
+		return result, err
+	}
+	// Commit the safety inventory before any reset can discard the journal's
+	// last object reference. A crash between these transactions is retry-safe.
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	tx, err = control.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx, `SELECT k.name,k.projects,k.source_id FROM access_keys k WHERE k.revoked_at IS NULL AND json_array_length(k.permissions)=1 AND json_extract(k.permissions,'$[0]')='events:write' AND json_array_length(k.projects)=1 AND NOT EXISTS(SELECT 1 FROM oauth_clients c WHERE c.client_id=k.id) AND NOT EXISTS(SELECT 1 FROM service_api_keys s WHERE s.principal_id=k.id)`)
 	if err != nil {

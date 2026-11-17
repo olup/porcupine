@@ -56,13 +56,18 @@ tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind I
 storage_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,
 PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));`
 
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+const restoredArtifactHoldSchema = `CREATE TABLE restored_artifact_holds (
+tenant_id TEXT NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('export','pipeline')),
+storage_id TEXT NOT NULL,object_key TEXT NOT NULL,upload_id TEXT NOT NULL,
+PRIMARY KEY(tenant_id,project_id,kind,storage_id,object_key,upload_id));`
+
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {
