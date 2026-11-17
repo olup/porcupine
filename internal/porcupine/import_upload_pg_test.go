@@ -194,12 +194,12 @@ CREATE TRIGGER reject_eof BEFORE UPDATE ON import_upload_files FOR EACH ROW WHEN
 			return
 		}
 	}
-	var imported, rawColumns, activeParsers int64
+	var imported, activeParsers int64
 	if err := db.QueryRow(`SELECT coalesce(sum(import_events),0) FROM usage_rollups WHERE tenant_id=$1`, defaultTenantID).Scan(&imported); err != nil || imported != total {
 		t.Fatalf("usage = %d, want %d: %v", imported, total, err)
 	}
-	if err := db.QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name LIKE 'import_upload%' AND (data_type='bytea' OR column_name IN ('tail','hash_state','properties','raw_body'))`).Scan(&rawColumns); err != nil || rawColumns != 0 {
-		t.Fatalf("private data columns: %d %v", rawColumns, err)
+	if err := checkSharedImportMetadata(t.Context(), db); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM import_upload_files WHERE parser_key<>''`).Scan(&activeParsers); err != nil || activeParsers != 0 {
 		t.Fatalf("completed jobs kept active parsers: %d %v", activeParsers, err)
