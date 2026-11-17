@@ -33,7 +33,7 @@ func ValidateConfig(c Config) error {
 			return errors.New("external settings require auth.mode external")
 		}
 	}
-	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
+	if err := validateDeploymentProfile(c); err != nil {
 		return err
 	}
 	if _, err := usage.Normalize(c.Usage); err != nil {
@@ -45,7 +45,7 @@ func ValidateConfig(c Config) error {
 	if _, err := normalizeInteractiveQueries(c.InteractiveQueries); err != nil {
 		return err
 	}
-	if c.Shared != nil {
+	if c.Shared != nil && c.Profile != ProfileHosted {
 		if _, err := validateSharedRouteURL(c.Shared.RouteURL); err != nil {
 			return err
 		}

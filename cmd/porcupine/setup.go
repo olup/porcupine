@@ -47,10 +47,11 @@ func run(args []string, input io.Reader, output io.Writer) error {
 	}
 	if len(command) >= 1 && command[0] == "init" {
 		docker := len(command) == 2 && command[1] == "--docker"
-		if len(command) > 1 && !docker {
-			return errors.New("usage: porcupine init [--config FILE] [--docker]")
+		hosted := len(command) == 2 && command[1] == "--hosted"
+		if len(command) > 1 && !docker && !hosted {
+			return errors.New("usage: porcupine init [--config FILE] [--docker|--hosted]")
 		}
-		if err := writeInitialConfig(path, docker); err != nil {
+		if err := writeProfileConfig(path, docker, hosted); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintf(output, "Created %s with private permissions. Keep it out of source control.\nRun porcupine config check --config %s before starting.\n", path, path)
@@ -90,6 +91,10 @@ func run(args []string, input io.Reader, output io.Writer) error {
 			"PORCUPINE_QUERY_MAX_CONCURRENT": "2", "PORCUPINE_QUERY_TIMEOUT_MS": "5000", "PORCUPINE_QUERY_MAX_ROWS": "1000", "PORCUPINE_QUERY_MAX_RESULT_BYTES": "1048576",
 			"PORCUPINE_DUCKLAKE_DIR": config.DuckLake.Directory,
 		}
+		if config.Profile == porcupine.ProfileHosted {
+			delete(defaults, "PORCUPINE_DB")
+			delete(defaults, "PORCUPINE_DUCKLAKE_DIR")
+		}
 		for key, value := range defaults {
 			if _, ok := values[key]; !ok {
 				values[key] = value
@@ -124,6 +129,10 @@ func validateServerConfig(addr string, config porcupine.Config) error {
 }
 
 func writeInitialConfig(path string, docker bool) error {
+	return writeProfileConfig(path, docker, false)
+}
+
+func writeProfileConfig(path string, docker, hosted bool) error {
 	var config FileConfig
 	config.Listen = "127.0.0.1:8080"
 	config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "./data/porcupine.db", "./data/porcupine.db.control", "./data/ducklake"
@@ -131,6 +140,11 @@ func writeInitialConfig(path string, docker bool) error {
 	if docker {
 		config.Listen = "0.0.0.0:8080"
 		config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "/data/porcupine.db", "/data/porcupine.db.control", "/data/ducklake"
+	}
+	if hosted {
+		config.Profile = string(porcupine.ProfileHosted)
+		config.Acceptance.Mode = string(porcupine.AcceptanceModeBuffered)
+		config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "", "", ""
 	}
 	var token, key [32]byte
 	if _, err := rand.Read(token[:]); err != nil {

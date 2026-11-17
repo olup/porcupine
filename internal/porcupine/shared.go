@@ -55,6 +55,9 @@ func (s *Service) bindSharedControl(ctx context.Context) error {
 }
 
 func validateSharedConfiguration(c Config) error {
+	if c.Profile == ProfileHosted {
+		return nil // Hosted requirements are checked at the deployment profile boundary.
+	}
 	if c.Shared != nil && c.ControlDBPath != "" {
 		return errors.New("local control path cannot be combined with shared PostgreSQL")
 	}

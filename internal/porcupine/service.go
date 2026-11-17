@@ -28,6 +28,7 @@ import (
 )
 
 type Config struct {
+	Profile        DeploymentProfile
 	DBPath         string
 	ControlDBPath  string
 	BootstrapToken string
@@ -108,8 +109,8 @@ func Open(c Config) (*Service, error) {
 	if err := ValidateConfig(c); err != nil {
 		return nil, err
 	}
-	if err := validateSharedConfiguration(c); err != nil {
-		return nil, err
+	if c.Profile == ProfileHosted {
+		return nil, errors.New("hosted profile startup is unavailable pending shared job and lifecycle verification")
 	}
 	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
 	if err != nil {

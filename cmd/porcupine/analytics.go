@@ -14,7 +14,7 @@ func (s settings) analyticsConfiguration() (*lakeapi.DuckLakeConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	if directory == "" {
+	if directory == "" && s.get("PORCUPINE_PROFILE") != "hosted" {
 		directory = defaultAnalyticsDirectory(s.get("PORCUPINE_DB"))
 	}
 	config := &lakeapi.DuckLakeConfig{Directory: directory, S3: remote}

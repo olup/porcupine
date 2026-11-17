@@ -18,6 +18,9 @@ func (s settings) sharedConfiguration() (*porcupine.SharedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.get("PORCUPINE_PROFILE") == string(porcupine.ProfileHosted) {
+		return &porcupine.SharedConfig{DatabaseURL: database, WorkerID: worker, RouteURL: route, RoutingSecret: []byte(secret)}, nil
+	}
 	if database == "" && worker == "" && route == "" && secret == "" {
 		return nil, nil
 	}
