@@ -25,8 +25,9 @@ type FileConfig struct {
 		DuckLake string `json:"ducklake,omitempty" env:"PORCUPINE_DUCKLAKE_DIR"`
 	} `json:"storage"`
 	Queue struct {
-		MaxEvents *int   `json:"max_events,omitempty" env:"PORCUPINE_QUEUE_MAX_EVENTS"`
-		MaxBytes  *int64 `json:"max_bytes,omitempty" env:"PORCUPINE_QUEUE_MAX_BYTES"`
+		MaxEvents        *int   `json:"max_events,omitempty" env:"PORCUPINE_QUEUE_MAX_EVENTS"`
+		MaxBytes         *int64 `json:"max_bytes,omitempty" env:"PORCUPINE_QUEUE_MAX_BYTES"`
+		ReceiptRetention string `json:"receipt_retention,omitempty" env:"PORCUPINE_RECEIPT_RETENTION"`
 	} `json:"queue"`
 	Query struct {
 		MaxConcurrent  *int `json:"max_concurrent,omitempty" env:"PORCUPINE_QUERY_MAX_CONCURRENT"`
@@ -177,14 +178,21 @@ func fileSettings(c FileConfig) settings {
 	return result
 }
 
-func loadSettings(path string, explicit bool) (settings, error) {
+func validateEnvironment() error {
 	known := map[string]bool{"PORCUPINE_CONFIG": true}
 	configFields(reflect.ValueOf(FileConfig{}), "", func(name string, _ reflect.Value, _ bool) { known[name] = true })
 	for _, item := range os.Environ() {
 		name, _, _ := strings.Cut(item, "=")
 		if strings.HasPrefix(name, "PORCUPINE_") && !known[name] {
-			return nil, fmt.Errorf("unknown environment variable %s", name)
+			return fmt.Errorf("unknown environment variable %s", name)
 		}
+	}
+	return nil
+}
+
+func loadSettings(path string, explicit bool) (settings, error) {
+	if err := validateEnvironment(); err != nil {
+		return nil, err
 	}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) && !explicit {
@@ -194,7 +202,11 @@ func loadSettings(path string, explicit bool) (settings, error) {
 		return nil, errors.New("cannot open configuration file")
 	}
 	defer f.Close()
-	body, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	return readSettings(f)
+}
+
+func readSettings(input io.Reader) (settings, error) {
+	body, err := io.ReadAll(io.LimitReader(input, (1<<20)+1))
 	if err != nil || len(body) > 1<<20 {
 		return nil, errors.New("configuration file must be at most 1 MiB")
 	}
@@ -226,7 +238,7 @@ func (s settings) redacted() map[string]string {
 	result := map[string]string{}
 	configFields(reflect.ValueOf(FileConfig{}), "", func(name string, _ reflect.Value, secret bool) {
 		if value := s.get(name); value != "" {
-			if secret {
+			if secret || strings.Contains(value, "://") && (strings.Contains(value, "@") || strings.Contains(value, "?")) {
 				value = "[redacted]"
 			}
 			result[name] = value

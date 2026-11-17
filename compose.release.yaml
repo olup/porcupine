@@ -1,4 +1,6 @@
-# Use with compose.yaml (Docker Compose 2.24.4+).
+# Use only from the matching released Git tag with Compose 2.24.4+.
+# This unreleased checkout adds init/--config, which v0.14.0 cannot execute.
+# Build the source image with compose.yaml until these commands are released.
 x-release: &release
   build: !reset null
   image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.14.0}

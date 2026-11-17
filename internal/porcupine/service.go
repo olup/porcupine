@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +91,9 @@ type Service struct {
 }
 
 func Open(c Config) (*Service, error) {
+	if err := ValidateConfig(c); err != nil {
+		return nil, err
+	}
 	if err := validateSharedConfiguration(c); err != nil {
 		return nil, err
 	}
@@ -177,14 +179,9 @@ func Open(c Config) (*Service, error) {
 	if c.Clock == nil {
 		c.Clock = time.Now
 	}
-	origins := map[string]bool{}
-	for _, origin := range c.AllowedOrigins {
-		origin = strings.TrimSpace(origin)
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(origin, "*") || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errors.New("allowed origins must be exact http(s) origins without paths or wildcards")
-		}
-		origins[origin] = true
+	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	if err != nil {
+		return nil, err
 	}
 	db, err := openLocalSQLite(c.DBPath)
 	if err != nil {

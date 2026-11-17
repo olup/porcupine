@@ -45,27 +45,9 @@ func prepareNativeBackup(c *lakeapi.NativeBackupConfig, database, controlDatabas
 	if c == nil {
 		return nil, nil
 	}
-	if lake != nil && lake.S3 != nil && c.S3 == nil {
-		return nil, errors.New("native local backups do not include remote analytical S3 objects; disable native backups for this storage mode")
-	}
-	if lake == nil || lake.Directory == "" || (database == ":memory:" || controlDatabase == ":memory:") || (c.Directory == "" && c.S3 == nil) {
-		return nil, errors.New("native backups require file-backed SQLite, DuckLake and one backup destination")
-	}
-	if c.Directory != "" && c.S3 != nil {
-		return nil, errors.New("configure exactly one native backup destination")
-	}
-	config := *c
-	if config.Interval == 0 {
-		config.Interval = 24 * time.Hour
-	}
-	if config.Timeout == 0 {
-		config.Timeout = 5 * time.Minute
-	}
-	if config.Retain == 0 {
-		config.Retain = 7
-	}
-	if config.Interval < time.Minute || config.Timeout < time.Second || config.Timeout > time.Hour || config.Retain < 1 || config.Retain > 1000 {
-		return nil, errors.New("invalid native backup schedule, timeout or retention")
+	config, err := normalizeNativeBackupConfig(c, database, controlDatabase, lake)
+	if err != nil {
+		return nil, err
 	}
 	path, err := filepath.Abs(database)
 	if err != nil {
@@ -79,18 +61,6 @@ func prepareNativeBackup(c *lakeapi.NativeBackupConfig, database, controlDatabas
 		return nil, errors.New("native backup requires separate journal and control databases")
 	}
 	if config.S3 != nil {
-		normalized, err := lakeapi.NormalizeDuckLakeS3(config.S3)
-		if err != nil {
-			return nil, errors.New("invalid native backup S3 configuration")
-		}
-		config.S3 = normalized
-		source, err := lakeapi.NormalizeDuckLakeS3(lake.S3)
-		if err != nil {
-			return nil, errors.New("invalid analytical S3 configuration for native backups")
-		}
-		if source != nil && source.Bucket == normalized.Bucket && (strings.HasPrefix(normalized.Prefix+"/", source.Prefix+"/") || strings.HasPrefix(source.Prefix+"/", normalized.Prefix+"/")) {
-			return nil, errors.New("backup S3 destination must not overlap analytical storage")
-		}
 		return &nativeBackupRuntime{config: config, databasePath: path, controlDatabasePath: controlPath, slot: make(chan struct{}, 1), status: NativeBackupStatus{Enabled: true, State: "waiting", IntervalSeconds: int64(config.Interval / time.Second), TimeoutSeconds: int64(config.Timeout / time.Second), RetainCompleted: config.Retain}}, nil
 	}
 	directory, err := filepath.Abs(config.Directory)
@@ -115,21 +85,14 @@ func prepareNativeBackup(c *lakeapi.NativeBackupConfig, database, controlDatabas
 	if err != nil {
 		return nil, err
 	}
-	relative, err := filepath.Rel(native, directory)
-	if err != nil || relative == "." || filepath.IsLocal(relative) {
-		return nil, errors.New("backup destination must be outside the DuckLake directory")
-	}
-	if inverse, err := filepath.Rel(directory, native); err != nil || inverse == "." || filepath.IsLocal(inverse) {
-		return nil, errors.New("backup destination must not contain the DuckLake directory")
-	}
-	for _, databasePath := range []string{path, controlPath} {
-		databaseLocation := databasePath
+	databases := []string{path, controlPath}
+	for i, databasePath := range databases {
 		if parent, err := filepath.EvalSymlinks(filepath.Dir(databasePath)); err == nil {
-			databaseLocation = filepath.Join(parent, filepath.Base(databasePath))
+			databases[i] = filepath.Join(parent, filepath.Base(databasePath))
 		}
-		if relative, err := filepath.Rel(directory, databaseLocation); err != nil || relative == "." || filepath.IsLocal(relative) {
-			return nil, errors.New("backup destination must not contain a live SQLite database")
-		}
+	}
+	if err := validateBackupDirectory(directory, native, databases); err != nil {
+		return nil, err
 	}
 	info, err := os.Stat(directory)
 	if err != nil {

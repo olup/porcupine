@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfigFileStrictDecoding(t *testing.T) {
@@ -108,6 +109,7 @@ func TestConfigCheckRedactsAllCredentialFields(t *testing.T) {
 	s := settings{
 		"PORCUPINE_BOOTSTRAP_TOKEN": "secret", "PORCUPINE_DUCKLAKE_POSTGRES_URL": "postgres://user:secret@db/test",
 		"PORCUPINE_CONTROL_DATABASE_URL": "postgres://user:secret@db/control", "PORCUPINE_SHARED_ROUTING_SECRET": "secret",
+		"PORCUPINE_WORKER_URL":         "https://user:secret@worker.example.com",
 		"PORCUPINE_OIDC_CLIENT_SECRET": "secret", "PORCUPINE_SMTP_PASSWORD_FILE": "/secret/file",
 		"PORCUPINE_DUCKLAKE_S3_SECRET_ACCESS_KEY": "secret", "PORCUPINE_EXPORT_S3_SESSION_TOKEN": "secret", "PORCUPINE_BACKUP_S3_ACCESS_KEY_ID": "secret",
 	}
@@ -134,7 +136,7 @@ func TestConfigInitDockerAndMissingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.get("PORCUPINE_ADDR") != "0.0.0.0:8080" || s.get("PORCUPINE_DB") != "/data/porcupine.db" || s.get("PORCUPINE_CONTROL_DB") != "/data/porcupine.control.db" {
+	if s.get("PORCUPINE_ADDR") != "0.0.0.0:8080" || s.get("PORCUPINE_DB") != "/data/porcupine.db" || s.get("PORCUPINE_CONTROL_DB") != "/data/porcupine.db.control" {
 		t.Fatal("incorrect Docker config")
 	}
 }
@@ -148,5 +150,124 @@ func TestConfigCheckNoOutputOnFailure(t *testing.T) {
 	var output bytes.Buffer
 	if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || output.Len() != 0 {
 		t.Fatalf("failed config produced output: %v %s", err, output.String())
+	}
+}
+
+func TestConfigReceiptRetention(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		value   string
+		want    time.Duration
+		invalid bool
+	}{
+		{"", 30 * 24 * time.Hour, false}, {"0", 0, false}, {"48h", 48 * time.Hour, false},
+		{"-1h", 0, true}, {"2h", 0, true}, {"never", 0, true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "porcupine.json")
+			body, _ := json.Marshal(map[string]any{"queue": map[string]string{"receipt_retention": tc.value}})
+			if err := os.WriteFile(path, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			s, err := loadSettings(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, config, err := s.serviceConfig()
+			if (err != nil) != tc.invalid {
+				t.Fatalf("unexpected validation %v", err)
+			}
+			if !tc.invalid && config.ReceiptRetention != tc.want {
+				t.Fatalf("got %v want %v", config.ReceiptRetention, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfigCheckValidatesRuntimeSemantics(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"storage":{"journal":"same.db","control":"same.db"}}`,
+		`{"allowed_origins":["https://*.example.com"]}`,
+		`{"trusted_proxies":["not-a-network"]}`,
+		`{"oauth":{"issuer":"http://insecure.example.com"}}`,
+		`{"export":{"s3":{"bucket":"analytics","prefix":"results","region":"us-east-1"},"max_execution_seconds":999999999}}`,
+		`{"storage":{"ducklake":"data/lake"},"backup":{"directory":"data/lake/backup"}}`,
+		`{"bootstrap_token":"short"}`,
+		`{"export":{"s3":{"bucket":"invalid*bucket","prefix":"results","region":"us-east-1"}}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "porcupine.json")
+			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || output.Len() != 0 {
+				t.Fatalf("invalid runtime config accepted: %v %s", err, output.String())
+			}
+		})
+	}
+	path := filepath.Join(t.TempDir(), "existing-instance.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"config", "check", "--config", path}, nil, &bytes.Buffer{}); err != nil {
+		t.Fatalf("an initialized instance may omit bootstrap: %v", err)
+	}
+}
+
+func TestConfigInstallKeepsOldFileOnInvalidInput(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "porcupine.json")
+	old := []byte(`{"listen":"127.0.0.1:8080"}`)
+	if err := os.WriteFile(path, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{
+		`{"not_an_option":"secret-value"}`, `{"query":{"max_rows":-1}}`,
+		`{"bootstrap_token":"short"}`, strings.Repeat("x", (1<<20)+1),
+	} {
+		var output bytes.Buffer
+		if err := run([]string{"config", "install", "--config", path}, strings.NewReader(invalid), &output); err == nil || output.Len() != 0 {
+			t.Fatalf("invalid replacement accepted: %v", err)
+		}
+		current, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(current, old) {
+			t.Fatal("invalid input replaced existing configuration")
+		}
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatal("temporary replacement files leaked")
+	}
+}
+
+func TestConfigInstallReplacesPrivatelyAndMasksOutput(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "porcupine.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0400); err != nil {
+		t.Fatal(err)
+	}
+	input := `{"bootstrap_token":"private-replacement-token","query":{"max_rows":123}}`
+	var output bytes.Buffer
+	if err := run([]string{"config", "install", "--config", path}, strings.NewReader(input), &output); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != input {
+		t.Fatal("configuration was not replaced")
+	}
+	info, err := os.Stat(path)
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		t.Fatal("replacement file must be private")
+	}
+	if strings.Contains(output.String(), "private-replacement-token") {
+		t.Fatal("install printed a secret")
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatal("temporary replacement file leaked")
 	}
 }

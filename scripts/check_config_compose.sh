@@ -50,10 +50,24 @@ case "$user" in ''|0|0:*) printf 'Server ran as root.\n' >&2; exit 1;; esac
 compose exec -T porcupine /porcupine config check --config /data/porcupine.json > "$work/running.json"
 grep -q '\[redacted\]' "$work/running.json"
 compose restart porcupine >/dev/null
+address=$(compose port porcupine 8080)
 attempt=0
 until curl --fail --silent "http://$address/readyz" > /dev/null; do
   attempt=$((attempt+1))
-  if [ "$attempt" -ge 100 ]; then exit 1; fi
+  if [ "$attempt" -ge 100 ]; then compose logs porcupine >&2; exit 1; fi
   sleep 0.2
 done
-printf 'Private initialization, masked config check, nonroot startup and restart passed.\n'
+compose stop porcupine >/dev/null
+compose cp porcupine:/data/porcupine.json "$work/edited.json"
+compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$work/edited.json"
+compose --profile tools run --rm --no-deps config-check > "$work/reinstalled.json"
+grep -q '\[redacted\]' "$work/reinstalled.json"
+compose up -d --no-build porcupine
+address=$(compose port porcupine 8080)
+attempt=0
+until curl --fail --silent "http://$address/readyz" > /dev/null; do
+  attempt=$((attempt+1))
+  if [ "$attempt" -ge 100 ]; then compose logs porcupine >&2; exit 1; fi
+  sleep 0.2
+done
+printf 'Private initialization, masked config check, nonroot startup, restart and atomic config install passed.\n'

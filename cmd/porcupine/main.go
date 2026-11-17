@@ -100,7 +100,26 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
-	return addr, porcupine.Config{DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+	retention, err := s.receiptRetention()
+	if err != nil {
+		return "", porcupine.Config{}, err
+	}
+	return addr, porcupine.Config{ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, DuckLake: duckLake, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+}
+
+func (s settings) receiptRetention() (time.Duration, error) {
+	raw := s.get("PORCUPINE_RECEIPT_RETENTION")
+	if raw == "" {
+		return 30 * 24 * time.Hour, nil
+	}
+	if raw == "0" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 24*time.Hour {
+		return 0, errors.New("PORCUPINE_RECEIPT_RETENTION must be 0 or a duration of at least 24h")
+	}
+	return value, nil
 }
 
 func (s settings) queueMaxBytesFromEnvironment() (int64, error) {
