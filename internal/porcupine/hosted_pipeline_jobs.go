@@ -10,6 +10,7 @@ import (
 	"github.com/olup/porcupine/internal/delivery"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 type hostedPipelineAuthority struct {
@@ -66,6 +67,7 @@ func (a hostedPipelineAuthority) ResolveCreatorTx(ctx context.Context, tx *sql.T
 }
 
 type hostedPipelineExecution struct {
+	snapshotCut    output.ExportSnapshotCut
 	deleteGate     func(context.Context, *sql.Tx, lakeapi.HostedProjectScope, string) (bool, error)
 	beginAttemptTx func(context.Context, *sql.Tx, string, string) error
 	endAttempt     func(context.Context, string, string) error
@@ -85,7 +87,8 @@ func (s *Service) configureHostedPipelines(c *output.PipelineConfig, flusher *ho
 	d := output.HostedPipelineDependencies{
 		PipelineDependencies: output.PipelineDependencies{
 			Control: s.control, Clock: func() time.Time { return s.clock() },
-			Reader: s.lake, WebhookClient: s.pipelineClient,
+			Reader: s.lake, WebhookClient: s.pipelineClient, Acquire: s.acquirePipelineExport,
+			Usage: usage.NewRecorder(s.control, "pipelines-"+flusher.native.Config.SharedSourceID, s.clock),
 		},
 		Effects: effects,
 		ProjectTransaction: func(ctx context.Context, project string, work func(context.Context, *sql.Tx) error) error {
@@ -97,6 +100,13 @@ func (s *Service) configureHostedPipelines(c *output.PipelineConfig, flusher *ho
 			defer session.Release()
 			return session.RunControlTx(ctx, work)
 		},
+	}
+	if execution.snapshotCut != nil {
+		reader, ok := s.lake.(output.HostedScheduledReader)
+		if !ok || execution.beginAttemptTx == nil || execution.endAttempt == nil {
+			return errors.New("hosted scheduled pipelines require retained analytical snapshots")
+		}
+		d.Scheduled = output.HostedScheduledDependencies{Reader: reader, SnapshotCut: execution.snapshotCut, BeginAttemptTx: execution.beginAttemptTx, EndAttempt: execution.endAttempt}
 	}
 	p, err := output.NewHostedPipelines(d, c)
 	if err != nil {

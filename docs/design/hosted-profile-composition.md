@@ -1,8 +1,8 @@
 # Hosted profile composition
 
 The hosted runtime is available to PostgreSQL and S3 integration fixtures. The
-server rejects public startup with this profile while physical project and
-tenant deletion and restore-safe object reclamation are incomplete. Standalone
+server rejects public startup with this profile while an unpublished
+scheduled S3 attempt can prevent safe project or tenant reclamation. Standalone
 startup and the existing owner-routed shared deployment retain their durable
 SQLite acknowledgment.
 
@@ -33,9 +33,9 @@ The shared PostgreSQL URL also configures DuckLake metadata. An explicit
 `ducklake.postgres_url` must match it. The server checks the configured grace
 against the sum of the three recovery durations. The recovery floor must reflect the earliest PostgreSQL point the deployment can restore. See the [restore drill](hosted-restore-drill.md).
 
-Use a fresh PostgreSQL control database. The recorded deployment profile
-prevents owner-routed workers and stateless workers from sharing the same
-control state. The worker creates disposable analytical scratch space by
+Use a fresh PostgreSQL control database. The server records the deployment
+profile and generates a new analytical source identity. Existing owner
+registries and development catalogs require a separate migration plan. The worker creates disposable analytical scratch space by
 default. `storage.ducklake` can point to a private disposable directory.
 Keep one consistent configuration and pipeline encryption key across
 replicas. The candidate rejects local journal and control paths, receipt
@@ -59,10 +59,11 @@ retention, owner routing settings and local native backups.
   has a separate 10-second deadline before the buffer drain.
 - The candidate composes PostgreSQL-backed import uploads, mutation intents,
   queries, output jobs and usage with the shared native coordinator.
-  Candidate startup does not yet schedule guarded compaction. Scheduled S3
-  pipelines are unavailable. Project and tenant deletion fence access, with
-  physical reclamation and finalization pending. Restore-safe reclamation
-  remains open for several classes of immutable objects.
+  The candidate schedules guarded compaction and runs scheduled S3 pipelines.
+  Project and tenant deletion fence access and can reclaim inventoried objects
+  after the configured grace and recovery floor permit it. An unresolved
+  scheduled S3 attempt keeps physical deletion pending until its destination
+  ownership is verified.
 - The two-process fixture proves startup, steady-path acceptance and
   replacement in an isolated environment. S3 validation may use the AWS
   Emulator. Emulator results describe the tested requests and observable

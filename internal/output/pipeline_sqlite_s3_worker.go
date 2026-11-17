@@ -42,7 +42,7 @@ func (s *PipelineJobs) pipelineS3CanContinue(ctx context.Context, w *s3PipelineW
 }
 func (s *PipelineJobs) RunS3(ctx context.Context) (bool, error) {
 	if s != nil && s.pg != nil {
-		return false, nil
+		return s.runHostedScheduled(ctx)
 	}
 	if !s.s3StepMu.TryLock() {
 		return false, nil

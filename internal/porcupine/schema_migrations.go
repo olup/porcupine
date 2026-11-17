@@ -100,6 +100,7 @@ var hostedImportSchema string
 // 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
 // 11: hosted mutations. 12: hosted historical upload checkpoints. 13: shared output jobs.
 // 14: hosted project activity and native seals. 15: retained project cleanup.
+// 16: scheduled S3 pipeline state and attempts.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -116,6 +117,7 @@ var sharedControlSteps = []string{
 	output.PipelineJobsPostgresSchemaV1 + output.PipelineDeliverySchemaV1 + output.ExportPostgresSchemaV1,
 	hostedProjectLifecycleSchema,
 	hostedProjectCleanupSchema,
+	output.ScheduledPipelinePostgresSchemaV1,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

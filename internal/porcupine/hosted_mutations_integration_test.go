@@ -356,6 +356,10 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 	_, err = b.service.editEvent(actorContext, edit)
 	mutationErrorStatus(t, err, 403)
 
+	priorSeal, err := fb.native.PendingNativeEffects(ctx, scope, 0, 20)
+	if err != nil || priorSeal.AcknowledgedThrough != priorSeal.NativeHighWater {
+		t.Fatalf("pre-seal history not acknowledged: %+v %v", priorSeal, err)
+	}
 	readyActor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:edit"})
 	readyContext := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: readyActor, Projects: []string{project}, Permissions: []string{"events:edit"}})
 	ready, err := a.service.editEvent(readyContext, mutationEdit(project, laterUUID, "ready-at-project-fence", "0"))
@@ -376,8 +380,8 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 	if err != nil || settled.state != "applied" {
 		t.Fatal(settled.state, err)
 	}
-	page, err = fb.native.PendingNativeEffects(ctx, scope, 4, 1)
-	if err != nil || page.NativeHighWater != 5 || page.AcknowledgedThrough != 5 || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
+	page, err = fb.native.PendingNativeEffects(ctx, scope, priorSeal.NativeHighWater, 1)
+	if err != nil || page.NativeHighWater != priorSeal.NativeHighWater+1 || page.AcknowledgedThrough != page.NativeHighWater || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
 		t.Fatal(page, err)
 	}
 	_, err = b.service.editEvent(readyContext, edit)

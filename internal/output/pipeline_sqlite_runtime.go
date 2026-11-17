@@ -274,6 +274,10 @@ func (s *PipelineJobs) Start() {
 		if s.pg.step != nil {
 			start("webhook", rt.webhookWake, s.RunWebhook)
 		}
+		if s.pg.scheduled.ready() {
+			start("s3", rt.s3Wake, s.RunS3)
+			start("retired-s3", make(chan struct{}, 1), s.cleanHostedScheduledRetirement)
+		}
 		return
 	}
 	start("webhook", rt.webhookWake, s.RunWebhook)

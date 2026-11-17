@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/olup/porcupine/internal/exportstore"
 )
 
 // FinalizeHostedOutputsTx releases the selected project's output records and
@@ -42,8 +44,9 @@ func releaseHostedPipelineCapacity(ctx context.Context, tx *sql.Tx, tenant, proj
 		UNION ALL SELECT refs,bytes,rows,artifacts,0 FROM pipeline_effect_cleanup WHERE project_id=$1
 		UNION ALL SELECT refs,bytes,rows-checkpoint_rows,artifacts,proofs FROM pipeline_effect_reservations WHERE project_id=$1
 		UNION ALL SELECT 0,0,1,0,0 FROM pipeline_effect_streams WHERE project_id=$1
+		UNION ALL SELECT 0,0,$2,reserved_bytes+$3,1 FROM hosted_s3_pipeline_runs WHERE project_id=$1 AND (state IN ('queued','running','failed') OR (state='canceled' AND attempt_id<>''))
 	) SELECT coalesce(sum(refs),0),coalesce(sum(bytes),0),coalesce(sum(rows),0),coalesce(sum(artifacts),0),coalesce(sum(proofs),0) FROM charges`,
-		project).Scan(&demand.References, &demand.QueuedBytes, &demand.MetadataRows, &demand.ArtifactBytes, &demand.ProofSlots)
+		project, hostedScheduledMaxFiles+1, exportstore.MaxManifestBytes).Scan(&demand.References, &demand.QueuedBytes, &demand.MetadataRows, &demand.ArtifactBytes, &demand.ProofSlots)
 	if err != nil {
 		return err
 	}
