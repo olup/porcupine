@@ -68,7 +68,7 @@ func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, token := sharedJourneyKey(t, a.host.URL, project, []string{"imports:write", "events:write", "events:read"})
+	_, token := sharedJourneyKey(t, a.host.URL, project, []string{"imports:write", "events:write", "events:read", "events:delete"})
 	_, foreign := sharedJourneyKey(t, b.host.URL, other, []string{"imports:write", "events:write", "events:read"})
 
 	binary := filepath.Join(t.TempDir(), "porcupine")
@@ -80,6 +80,7 @@ func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 	}
 
 	var sequence, total int64
+	var completedJob string
 	for _, format := range []string{"native", "posthog", "segment"} {
 		if !t.Run(format, func(t *testing.T) {
 			lines := bytes.Split(historicalJourney(t, format), []byte("\n"))
@@ -109,6 +110,7 @@ func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 			}
 			job := request(a.host.URL, "POST", base, token, body, nil, 201)
 			id := job["id"].(string)
+			completedJob = id
 			path := base + "/" + id
 			request(b.host.URL, "GET", path, foreign, nil, nil, 403)
 			request(b.host.URL, "GET", importTestBase(other, id), foreign, nil, nil, 404)
@@ -247,6 +249,33 @@ CREATE TRIGGER reject_eof BEFORE UPDATE ON import_upload_files FOR EACH ROW WHEN
 	if err := db.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs`).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatalf("historical import created output work: %d %v", jobs, err)
 	}
+
+	// The upload path on another worker also settles a native mutation proof
+	// with the same publisher, including the webhook cancellation callback.
+	observed := sharedJourneyQuery(t, b.host.URL, project, token, "SELECT uuid FROM events WHERE is_imported=1 ORDER BY id LIMIT 1", 200)
+	uuid := observed["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["uuid"].(string)
+	mutation := sharedJourneyHTTP(t, a.host.URL, "DELETE", "/api/v1/projects/"+project+"/events/"+uuid, token,
+		[]byte(`{"expected_revision":"0","idempotency_key":"recover-mutation-through-upload"}`), nil, 202)
+	if _, err := db.Exec(`CREATE FUNCTION reject_mutation_settlement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'mutation settlement interrupted'; END $$;
+CREATE TRIGGER reject_mutation_settlement BEFORE UPDATE ON hosted_mutation_intents FOR EACH ROW WHEN (NEW.state='applied') EXECUTE FUNCTION reject_mutation_settlement()`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.service.hosted.flusher.RecoverProject(t.Context(), key); err == nil {
+		t.Fatal("mutation settlement unexpectedly returned success")
+	}
+	proof, err := native.PendingNativeEffects(t.Context(), scope, sequence, 1)
+	if err != nil || len(proof.Evidence) != 1 || proof.Evidence[0].Kind != lakeapi.NativeCommitMutation {
+		t.Fatalf("missing unpublished mutation proof: %+v %v", proof, err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER reject_mutation_settlement ON hosted_mutation_intents; DROP FUNCTION reject_mutation_settlement()`); err != nil {
+		t.Fatal(err)
+	}
+	sharedJourneyHTTP(t, b.host.URL, "GET", "/api/v1/projects/"+project+"/imports/"+completedJob, token, nil, nil, 200)
+	status := sharedJourneyHTTP(t, b.host.URL, "GET", "/api/v1/projects/"+project+"/event-mutations/"+mutation["mutation_id"].(string), token, nil, nil, 200)
+	if status["state"] != "applied" {
+		t.Fatalf("the upload worker did not settle the mutation: %v", status)
+	}
+	sequence++
 
 	// Leave the real upload cursor unpublished, fence the project, then let a
 	// cold worker settle both the native proof and the same upload checkpoint.
