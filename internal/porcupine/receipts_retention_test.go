@@ -11,6 +11,7 @@ import (
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -306,8 +307,8 @@ func TestHistoricalPersonsDeduplicateAfterReceiptPruning(t *testing.T) {
 	s.receiptRetention = 48 * time.Hour
 	projectID, _ := project(t, s)
 	data := append([]byte(`{"person_id":"posthog-person","distinct_id":"browser","person_version":1,"person_distinct_id_version":1,"properties":{"plan":"team"}}`), '\n')
-	create := func(key string) ImportUploadJob {
-		return importTestCreate(t, s, projectID, adminToken, key, []ImportUploadFileSpec{{Path: "persons.jsonl", Kind: "persons", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	create := func(key string) importer.ImportUploadJob {
+		return importTestCreate(t, s, projectID, adminToken, key, []importer.ImportUploadFileSpec{{Path: "persons.jsonl", Kind: "persons", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 	}
 	initial := finishFormatImport(t, s, projectID, adminToken, create("first-persons"), data)
 	if initial.Counts.Accepted != 1 {
