@@ -7,8 +7,8 @@ hosted project lifecycle, restore, all proof recovery callers, and the hosted
 acceptance gates in [hosted architecture](hosted-architecture.md).
 
 The same project-scoped credentials, format adapters, chunk checksums and
-limits apply to native, PostHog and Segment input. An administrator can resume
-with current authority; the job keeps its creator's original source. Imports
+limits apply to native, PostHog and Segment input. An administrator with current authority can resume a job under
+its creator's original source. Imports
 remain HTTP-only. There is no binary upload tool in MCP.
 
 ## Durable progress
