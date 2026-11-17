@@ -7,6 +7,7 @@ These records explain decisions and report measurements at the commit and config
 - [Native ownership boundaries](native-only-architecture.md)
 - [Shared deployment design](shared-deployment-design.md)
 - [Tenant budgets](tenant-budget-design.md)
+- [Numerical usage accounting](usage-contract.md)
 - [SaaS and separate-compute plans](saas-and-compute-plans.md)
 - [Export design](export-design.md)
 - [v0.14.0 review follow-up](review-v0.14.md)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/olup/porcupine/internal/usage"
 	"time"
 )
 
@@ -189,6 +190,11 @@ func (s *WebhookQueue) Complete(ctx context.Context, d *WebhookAttempt, status i
 		}
 	} else if code == "" {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM webhook_cooldowns WHERE pipeline_id=$1`, d.PipelineID); err != nil {
+			return err
+		}
+	}
+	if state == "delivered" && s.Usage != nil {
+		if err = s.Usage.AddTx(ctx, tx, d.ProjectID, s.clock(), usage.Counters{Webhooks: 1}, 0); err != nil {
 			return err
 		}
 	}

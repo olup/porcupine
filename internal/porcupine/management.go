@@ -315,6 +315,7 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
 	s.registerQuarantine(api, op)
 	s.registerTenants(api, op)
+	s.registerUsage(api, op)
 	s.registerTenantMembers(api, op)
 	s.registerTenantServiceCredentials(api, op)
 	s.registerImportUploads(api, op)

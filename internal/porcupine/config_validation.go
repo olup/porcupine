@@ -5,6 +5,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 	"net/url"
 	"strings"
 )
@@ -31,6 +32,9 @@ func ValidateConfig(c Config) error {
 		}
 	}
 	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
+		return err
+	}
+	if _, err := usage.Normalize(c.Usage); err != nil {
 		return err
 	}
 	if err := validateSharedConfiguration(c); err != nil {

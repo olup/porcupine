@@ -38,6 +38,11 @@ type FileConfig struct {
 		MaxRows        *int `json:"max_rows,omitempty" env:"PORCUPINE_QUERY_MAX_ROWS"`
 		MaxResultBytes *int `json:"max_result_bytes,omitempty" env:"PORCUPINE_QUERY_MAX_RESULT_BYTES"`
 	} `json:"query"`
+	Usage struct {
+		RetentionDays    *int   `json:"retention_days,omitempty" env:"PORCUPINE_USAGE_RETENTION_DAYS"`
+		MaxSnapshots     *int   `json:"max_snapshots,omitempty" env:"PORCUPINE_USAGE_MAX_SNAPSHOTS"`
+		MaxSnapshotBytes *int64 `json:"max_snapshot_bytes,omitempty" env:"PORCUPINE_USAGE_MAX_SNAPSHOT_BYTES"`
+	} `json:"usage"`
 	DuckLake struct {
 		MemoryMB               *int         `json:"memory_mb,omitempty" env:"PORCUPINE_DUCKLAKE_MEMORY_MB"`
 		Threads                *int         `json:"threads,omitempty" env:"PORCUPINE_DUCKLAKE_THREADS"`

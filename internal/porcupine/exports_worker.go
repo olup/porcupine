@@ -10,6 +10,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 var (
@@ -343,6 +344,11 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result la
 	count, _ := updated.RowsAffected()
 	if count != 1 {
 		return errExportCanceled
+	}
+	if s.usage != nil {
+		if err = s.usage.recorder.AddTx(ctx, tx, job.ProjectID, completed, usage.Counters{ExportBytes: sink.compressed}, 0); err != nil {
+			return errExportSink
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return errExportSink

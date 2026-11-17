@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 // The project-row lock is also taken by shared query admission. Once this fence
@@ -58,12 +59,12 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 		return err
 	}
 	defer tx.Rollback()
-	var project string
+	var project, tenant string
 	lock := ""
 	if s.shared != nil {
 		lock = " FOR UPDATE"
 	}
-	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1`+lock, id).Scan(&project)
+	err = tx.QueryRowContext(ctx, `SELECT id,tenant_id FROM projects WHERE id=$1`+lock, id).Scan(&project, &tenant)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -79,6 +80,12 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	}
 	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
+	}
+	if s.usage != nil && project != "" {
+		at := s.clock()
+		if err := s.usage.store.RecordStorageSampleTx(ctx, tx, usage.StorageSample{TenantID: tenant, ProjectID: id, Day: usage.Day(at), ObservedAt: usage.Stamp(at), Bytes: 0}); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=$1`, id); err != nil {
 		return err

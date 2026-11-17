@@ -67,6 +67,13 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 	if err = s.publishPipelineS3(context.Background(), w, store, committed); err != nil {
 		t.Fatal(err)
 	}
+	if err = s.publishPipelineS3(context.Background(), w, store, committed); err == nil {
+		t.Fatal("publication retry bypassed the cursor checkpoint")
+	}
+	var published int64
+	if err = s.db.QueryRow(`SELECT COALESCE(SUM(pipeline_bytes),0) FROM usage_rollups WHERE project_id=?`, projectID).Scan(&published); err != nil || published != 20 {
+		t.Fatal("manifest publication bytes changed on retry", published, err)
+	}
 	var count, failed, manifestBytes int
 	if s.db.QueryRow(`SELECT count(*) FROM pipeline_s3_runs WHERE pipeline_id=? AND state='succeeded'`, id).Scan(&count) != nil || count != 1000 {
 		t.Fatal("successful history is not bounded")

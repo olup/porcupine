@@ -16,6 +16,7 @@ import (
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/usage"
 )
 
 // NativeRestoreRequest is an offline operator contract. It is read from private
@@ -440,6 +441,9 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 	if err := resetNativeRestoreJournal(ctx, journal); err != nil {
 		return result, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('usage_epoch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, usage.NewID()); err != nil {
+		return result, err
+	}
 	return result, tx.Commit()
 }
 
@@ -474,6 +478,9 @@ func resetNativeRestoreJournal(ctx context.Context, db *sql.DB) error {
 		if _, err = tx.ExecContext(ctx, statement); err != nil {
 			return err
 		}
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('usage_source_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, usage.NewID()); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
