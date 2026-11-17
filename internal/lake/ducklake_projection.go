@@ -244,8 +244,9 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 	if _, err := tx.ExecContext(ctx, `
  DELETE FROM lake.current_events WHERE uuid IN (SELECT uuid FROM _pc_changes);
  DELETE FROM lake.heads WHERE uuid IN (SELECT uuid FROM _pc_changes);
- INSERT INTO lake.heads SELECT uuid,id,revision,is_deleted,received_at FROM _pc_changes;
- INSERT INTO lake.current_events
+ INSERT INTO lake.heads (uuid,event_id,revision,is_deleted,received_at) SELECT uuid,id,revision,is_deleted,received_at FROM _pc_changes;
+ INSERT INTO lake.current_events (id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,
+ received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot)
  SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,
  received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot
  FROM _pc_changes WHERE NOT is_deleted;
@@ -333,7 +334,7 @@ func applyLakeIdentity(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapsho
 			if _, err = tx.ExecContext(ctx, "DELETE FROM lake.identity_profiles WHERE identified_id=?", snapshot.IdentifiedID); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, "INSERT INTO lake.identity_profiles VALUES(?,?,?)", snapshot.IdentifiedID, version, string(traits)); err != nil {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO lake.identity_profiles (identified_id,version,traits) VALUES(?,?,?)", snapshot.IdentifiedID, version, string(traits)); err != nil {
 				return err
 			}
 		}
@@ -352,7 +353,7 @@ func applyLakeIdentity(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapsho
 			if _, err = tx.ExecContext(ctx, "DELETE FROM lake.identity_links WHERE anonymous_id=?", link.AnonymousID); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, "INSERT INTO lake.identity_links VALUES(?,?,?)", link.AnonymousID, link.IdentifiedID, version); err != nil {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO lake.identity_links (anonymous_id,identified_id,version) VALUES(?,?,?)", link.AnonymousID, link.IdentifiedID, version); err != nil {
 				return err
 			}
 		}
@@ -452,16 +453,64 @@ const lakeSchemaVersion = 2
 
 // lakeCatalogVersion reads the format before any catalog DDL. Refusing a newer
 // or unknown layout must leave its persistent schema and snapshots untouched.
-func lakeCatalogVersion(ctx context.Context, db *sql.DB) (int, error) {
-	var hasVersion bool
-	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_tables() WHERE database_name='lake' AND table_name='schema_version'").Scan(&hasVersion); err != nil {
+func lakeCatalogVersion(ctx context.Context, db *sql.DB, initializing bool) (int, error) {
+	return applicationCatalogVersion(ctx, db, "lake", initializing)
+}
+
+// The caller selects one fixed catalog alias. Restore uses the same read-only
+// format validation as ordinary opening before translating a supported archive.
+func applicationCatalogVersion(ctx context.Context, db *sql.DB, catalog string, initializing bool) (int, error) {
+	if catalog != "lake" && catalog != "archive" {
+		return 0, errors.New("invalid analytical catalog alias")
+	}
+	rows, err := db.QueryContext(ctx, "SELECT table_name,column_name,data_type FROM duckdb_columns() WHERE database_name=? AND schema_name='main'", catalog)
+	if err != nil {
 		return 0, err
 	}
+	tables := map[string]map[string]string{}
+	for rows.Next() {
+		var table, name, kind string
+		if err := rows.Scan(&table, &name, &kind); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if tables[table] == nil {
+			tables[table] = map[string]string{}
+		}
+		tables[table][name] = kind
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, err
+	}
+	var foreignSchema bool
+	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_tables() WHERE database_name=? AND schema_name<>'main'", catalog).Scan(&foreignSchema); err != nil {
+		return 0, err
+	}
+	if foreignSchema {
+		return 0, errors.New("unknown DuckLake catalog schema")
+	}
+	expected := map[string]map[string]string{
+		"catalog_identity": {"id": "VARCHAR"},
+		"schema_version":   {"version": "INTEGER"},
+		"heads":            {"uuid": "VARCHAR", "event_id": "BIGINT", "revision": "UBIGINT", "is_deleted": "BOOLEAN", "received_at": "VARCHAR"},
+		"current_events": {
+			"id": "BIGINT", "project_id": "VARCHAR", "uuid": "VARCHAR", "event": "VARCHAR", "distinct_id": "VARCHAR",
+			"properties": "VARCHAR", "timestamp": "VARCHAR", "timestamp_ms": "BIGINT", "event_time": "TIMESTAMP WITH TIME ZONE",
+			"received_at": "VARCHAR", "received_at_ms": "BIGINT", "revision": "UBIGINT", "source_id": "VARCHAR", "message_id": "VARCHAR",
+			"event_type": "VARCHAR", "context": "VARCHAR", "is_imported": "UTINYINT", "identity_snapshot": "VARCHAR", "original_snapshot": "VARCHAR",
+		},
+		"identity_profiles":   {"identified_id": "VARCHAR", "version": "UBIGINT", "traits": "VARCHAR"},
+		"identity_links":      {"anonymous_id": "VARCHAR", "identified_id": "VARCHAR", "version": "UBIGINT"},
+		"project_write_guard": {"id": "INTEGER", "generation": "UBIGINT", "deleted": "BOOLEAN"},
+	}
 	version := 0
-	if hasVersion {
+	if columns, exists := tables["schema_version"]; exists {
+		if len(columns) != 1 || columns["version"] != "INTEGER" {
+			return 0, errors.New("unknown DuckLake schema version table")
+		}
 		var count int
 		var stored sql.NullInt64
-		if err := db.QueryRowContext(ctx, "SELECT count(*),max(version) FROM lake.schema_version").Scan(&count, &stored); err != nil {
+		if err := db.QueryRowContext(ctx, "SELECT count(*),max(version) FROM "+catalog+".schema_version").Scan(&count, &stored); err != nil {
 			return 0, err
 		}
 		if count > 1 || count == 1 && (!stored.Valid || stored.Int64 < 1) {
@@ -472,41 +521,42 @@ func lakeCatalogVersion(ctx context.Context, db *sql.DB) (int, error) {
 		}
 		version = int(stored.Int64)
 	}
-	rows, err := db.QueryContext(ctx, "SELECT column_name,data_type FROM duckdb_columns() WHERE database_name='lake' AND table_name='current_events'")
-	if err != nil {
-		return 0, err
+	if version < 2 && tables["current_events"]["payload"] == "VARCHAR" {
+		delete(expected["current_events"], "original_snapshot")
+		expected["current_events"]["payload"] = "VARCHAR"
 	}
-	columns := map[string]string{}
-	for rows.Next() {
-		var name, kind string
-		if err := rows.Scan(&name, &kind); err != nil {
-			rows.Close()
-			return 0, err
+	for table, columns := range tables {
+		want, known := expected[table]
+		if !known || len(columns) != len(want) {
+			return 0, fmt.Errorf("unknown DuckLake %s schema", table)
 		}
-		columns[name] = kind
+		for name, kind := range want {
+			if columns[name] != kind {
+				return 0, fmt.Errorf("unknown DuckLake %s schema", table)
+			}
+		}
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return 0, err
-	}
-	if len(columns) == 0 && version == 0 {
+	if initializing && version == 0 && len(tables) == 0 {
 		return 0, nil
 	}
-	expected := map[string]string{
-		"id": "BIGINT", "project_id": "VARCHAR", "uuid": "VARCHAR", "event": "VARCHAR", "distinct_id": "VARCHAR",
-		"properties": "VARCHAR", "timestamp": "VARCHAR", "timestamp_ms": "BIGINT", "event_time": "TIMESTAMP WITH TIME ZONE",
-		"received_at": "VARCHAR", "received_at_ms": "BIGINT", "revision": "UBIGINT", "source_id": "VARCHAR", "message_id": "VARCHAR",
-		"event_type": "VARCHAR", "context": "VARCHAR", "is_imported": "UTINYINT", "identity_snapshot": "VARCHAR", "original_snapshot": "VARCHAR",
+	// Catalog identity commits before application tables are created. Only an
+	// unfinished opening may fill missing known tables; ready catalogs must be
+	// complete, even if they predate the explicit schema version.
+	if tables["catalog_identity"] == nil {
+		return 0, errors.New("DuckLake catalog identity is missing")
 	}
-	if version < 2 && columns["payload"] == "VARCHAR" {
-		delete(expected, "original_snapshot")
-		expected["payload"] = "VARCHAR"
+	var identities, invalid int
+	if err := db.QueryRowContext(ctx, "SELECT count(*),count(*) FILTER(WHERE id IS NULL OR id='') FROM "+catalog+".catalog_identity").Scan(&identities, &invalid); err != nil {
+		return 0, err
 	}
-	if len(expected) != len(columns) {
-		return 0, errors.New("unknown DuckLake event schema")
+	if identities != 1 || invalid != 0 {
+		return 0, errors.New("invalid DuckLake catalog identity")
 	}
-	for name, kind := range expected {
-		if columns[name] != kind {
-			return 0, errors.New("unknown DuckLake event schema")
+	if !initializing || version > 0 {
+		for _, table := range []string{"heads", "current_events", "identity_profiles", "identity_links"} {
+			if tables[table] == nil {
+				return 0, fmt.Errorf("DuckLake %s table is missing", table)
+			}
 		}
 	}
 	return version, nil
@@ -515,7 +565,7 @@ func lakeCatalogVersion(ctx context.Context, db *sql.DB) (int, error) {
 // migrateLakeCatalog upgrades one project catalog. The column rewrite is one
 // transaction; partitioning and the version marker can be replayed after a crash.
 func migrateLakeCatalog(ctx context.Context, db *sql.DB) error {
-	version, err := lakeCatalogVersion(ctx, db)
+	version, err := lakeCatalogVersion(ctx, db, false)
 	if err != nil {
 		return err
 	}

@@ -430,7 +430,7 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 			return fail(err)
 		}
 	}
-	if _, err = lakeCatalogVersion(ctx, db); err != nil {
+	if _, err = lakeCatalogVersion(ctx, db, !ready); err != nil {
 		return fail(err)
 	}
 	if s.SharedCatalog != nil {

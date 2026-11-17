@@ -173,3 +173,126 @@ func TestLakeCatalogResumesAfterColumnRewriteBeforeVersionCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestLakeCatalogRejectsMalformedOrUnfamiliarTablesBeforeWrites(t *testing.T) {
+	t.Parallel()
+	for name, statement := range map[string]string{
+		"unversioned-heads":          "DROP TABLE lake.schema_version; DROP TABLE lake.current_events; DROP TABLE lake.heads; CREATE TABLE lake.heads(uuid VARCHAR)",
+		"unversioned-unrelated-only": "DROP TABLE lake.schema_version; DROP TABLE lake.current_events; DROP TABLE lake.heads; DROP TABLE lake.identity_profiles; DROP TABLE lake.identity_links; CREATE TABLE lake.unrelated(value INTEGER)",
+		"identity-type":              "DROP TABLE lake.catalog_identity; CREATE TABLE lake.catalog_identity(id BIGINT); INSERT INTO lake.catalog_identity VALUES(1)",
+		"duplicate-identities":       "INSERT INTO lake.catalog_identity VALUES('unexpected-second-identity')",
+		"profile-layout":             "ALTER TABLE lake.identity_profiles ADD COLUMN unknown_column INTEGER",
+		"missing-table":              "DROP TABLE lake.identity_links",
+		"version-type":               "DROP TABLE lake.schema_version; CREATE TABLE lake.schema_version(version VARCHAR); INSERT INTO lake.schema_version VALUES('2')",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			directory := t.TempDir()
+			store := openLakeStorageTest(t, directory, 1)
+			p, release, err := store.LeaseProject(ctx, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = p.DB.ExecContext(ctx, statement)
+			release()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(store.ProjectDirectory("a"), "catalog.ducklake")
+			before := catalogDigest(t, path)
+			reopened := openLakeStorageTest(t, directory, 1)
+			if _, _, err := reopened.LeaseProject(ctx, "a"); err == nil {
+				t.Fatal("opened invalid catalog")
+			}
+			if err := reopened.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if catalogDigest(t, path) != before {
+				t.Fatal("refusal modified catalog metadata")
+			}
+		})
+	}
+}
+
+func TestLakeCatalogCompletesKnownUnfinishedInitialization(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	directory := t.TempDir()
+	store := openLakeStorageTest(t, directory, 1)
+	p, release, err := store.LeaseProject(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.DB.ExecContext(ctx, "DROP TABLE lake.schema_version; DROP TABLE lake.current_events; DROP TABLE lake.identity_profiles; DROP TABLE lake.identity_links")
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Registry.ExecContext(ctx, "UPDATE catalogs SET ready=0 WHERE project_id='a'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openLakeStorageTest(t, directory, 1)
+	want := lakeStorageProjection(t, "a", "first", 1)
+	if err := reopened.Apply(ctx, []EventProjection{want}); err != nil {
+		t.Fatal("known partial bootstrap did not resume", err)
+	}
+	if got, err := reopened.Load(ctx, "a", "first"); err != nil || got.Event.Event != want.Event.Event {
+		t.Fatal(got, err)
+	}
+}
+
+func TestLakeCatalogWritesUseColumnNamesAfterPhysicalReordering(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	directory := t.TempDir()
+	store := openLakeStorageTest(t, directory, 1)
+	initial := lakeStorageProjection(t, "a", "initial", 1)
+	if err := store.Apply(ctx, []EventProjection{initial}); err != nil {
+		t.Fatal(err)
+	}
+	p, release, err := store.LeaseProject(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for table, columns := range map[string]string{
+		"current_events":    "id,project_id,uuid,distinct_id,event,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot",
+		"heads":             "received_at,event_id,revision,is_deleted,uuid",
+		"identity_profiles": "traits,version,identified_id",
+		"identity_links":    "identified_id,anonymous_id,version",
+	} {
+		_, err = p.DB.ExecContext(ctx, "CREATE TABLE lake.reordered AS SELECT "+columns+" FROM lake."+table+"; DROP TABLE lake."+table+"; ALTER TABLE lake.reordered RENAME TO "+table)
+		if err != nil {
+			release()
+			t.Fatal(err)
+		}
+	}
+	release()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openLakeStorageTest(t, directory, 1)
+	want := lakeStorageProjection(t, "a", "after-reorder", 2)
+	want.Event.Event = "signup_completed"
+	want.DistinctID = "browser"
+	control := lakeStorageProjection(t, "a", "identity", 3)
+	control.Event.Event = "$identify"
+	control.IdentitySnapshot = `{"version":"1","identified_id":"person","traits":{"plan":"team"},"links":[{"anonymous_id":"browser","identified_id":"person","version":"1"}]}`
+	if err := reopened.Apply(ctx, []EventProjection{want, control}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.Load(ctx, "a", want.UUID)
+	if err != nil || got.ID != want.ID || got.Event.Event != want.Event.Event || got.DistinctID != want.DistinctID {
+		t.Fatal("column order changed event values", got, err)
+	}
+	result, err := reopened.Query(ctx, "a", "SELECT person_id,json_extract_string(person_properties,'$.plan') AS plan FROM events WHERE uuid='after-reorder'", nil, DefaultQueryExecutionLimits())
+	if err != nil || len(result.Data) != 1 || string(result.Data[0]["person_id"]) != `"person"` || string(result.Data[0]["plan"]) != `"team"` {
+		t.Fatal("column order changed identity values", result, err)
+	}
+}
