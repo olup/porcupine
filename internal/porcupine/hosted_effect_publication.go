@@ -24,7 +24,7 @@ type hostedEffectPublisher struct {
 	usage                 *usage.Store
 	objects               *lakeapi.DuckLakeObjectStore
 	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
-	checkpointImport func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
 }
 type hostedPublicationManifest struct {
 	Version                                                  int

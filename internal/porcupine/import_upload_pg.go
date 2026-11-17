@@ -63,7 +63,7 @@ func (m *importManager) withHostedImport(ctx context.Context, project string, fn
 		if err = f.native.AdvanceRecoveryFence(ctx, p.fence); err != nil {
 			return err
 		}
-		if err = f.reconcile(ctx, p.scope, p.fence, p.tenant); err != nil {
+		if err = f.reconcileHostedWrites(ctx, session, p.scope, p.fence, p.tenant); err != nil {
 			return err
 		}
 		if err := importCheckAuthority(ctx, m.control, principal(ctx), project, m.rules.clock()); err != nil {

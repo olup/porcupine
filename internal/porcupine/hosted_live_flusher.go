@@ -160,9 +160,6 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := f.reconcile(ctx, scope, fence, input.TenantID); err != nil {
-			return err
-		}
 		if err = f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
 			return err
 		}

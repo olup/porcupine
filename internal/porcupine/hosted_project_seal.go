@@ -44,7 +44,7 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 		if seal.Scope != scope {
 			return lakeapi.ErrNativeEvidenceGap
 		}
-		if err := f.reconcile(ctx, scope, fence, tenant); err != nil {
+		if err := f.reconcileHostedWrites(ctx, session, scope, fence, tenant); err != nil {
 			return err
 		}
 		sequence, hash, err := f.publisher.checkpoint(ctx, scope, tenant)
@@ -56,7 +56,7 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 		}
 		// Ordinary recovery treats native ACK as best effort. A terminal seal
 		// requires a confirmed ACK under the current fenced session.
-		if err := f.native.AcknowledgeLiveEffects(ctx, fence, scope, sequence); err != nil {
+		if err := f.native.AcknowledgeNativeEffects(ctx, fence, scope, sequence); err != nil {
 			return err
 		}
 		return f.recordHostedProjectSeal(ctx, seal, tenant, hash)
