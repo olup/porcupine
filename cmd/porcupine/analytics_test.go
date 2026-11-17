@@ -47,4 +47,3 @@ func TestAnalyticsCleanupConfiguration(t *testing.T) {
 		t.Fatalf("cleanup policy not parsed: %+v %v", lake, err)
 	}
 }
-

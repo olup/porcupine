@@ -53,7 +53,6 @@ func TestPermanentReceiptsKeepNativeIDsAcrossRestart(t *testing.T) {
 	}
 }
 
-
 func TestReceiptAndHeadNumericIDRemainAtomic(t *testing.T) {
 	s := service(t, 10)
 	projectID, writer := project(t, s)
