@@ -12,7 +12,8 @@ import (
 // PipelineRestoreArtifacts enumerates opaque source ownership before reset.
 func PipelineRestoreArtifacts(ctx context.Context, journal *sql.DB) ([]RestoreArtifact, error) {
 	rows, err := journal.QueryContext(ctx, `SELECT p.project_id,p.config,f.object_key,f.upload_id FROM pipeline_s3_files f JOIN pipeline_s3_runs r ON r.id=f.run_id JOIN pipelines p ON p.id=r.pipeline_id WHERE r.state<>'succeeded'
- UNION ALL SELECT d.project_id,d.config,f.object_key,f.upload_id FROM pipeline_retired_files f JOIN pipeline_retired_destinations d ON d.id=f.destination_id`)
+ UNION ALL SELECT d.project_id,d.config,f.object_key,f.upload_id FROM pipeline_retired_files f JOIN pipeline_retired_destinations d ON d.id=f.destination_id
+ UNION ALL SELECT project_id,config,pipeline_id||'/'||window_start_ms||'/'||attempt_id||'/', '' FROM pipeline_retired_destinations WHERE attempt_id<>''`)
 	if err != nil {
 		return nil, err
 	}

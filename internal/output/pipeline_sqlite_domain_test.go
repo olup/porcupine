@@ -166,10 +166,13 @@ func TestSQLitePipelineReplacementRetainsRevokedS3CleanupIdentity(t *testing.T) 
 	if err = p.db.QueryRow(`SELECT cursor_ms FROM pipeline_s3_state WHERE pipeline_id=?`, created.ID).Scan(&cursor); err != nil || cursor != start.Add(time.Minute).UnixMilli() {
 		t.Fatal("old window could retarget", cursor, err)
 	}
-	if _, err = p.cleanupRetired(t.Context(), "project"); err == nil {
+	if _, err = p.cleanupRetired(t.Context(), "project", ""); err == nil {
 		t.Fatal("revoked old credentials reported clean")
 	}
-	if err = p.Delete(t.Context(), "project", created.ID); err != nil {
+	if err = p.Delete(t.Context(), "project", created.ID); err == nil {
+		t.Fatal("revoked retired cleanup reported deletion success")
+	}
+	if _, err = p.db.Exec(`DELETE FROM pipelines WHERE id=?`, created.ID); err != nil {
 		t.Fatal(err)
 	}
 	holds, err := PipelineRestoreArtifacts(t.Context(), p.db)
@@ -398,7 +401,7 @@ func TestSQLiteRetiredS3CleanupPreservesPublishedDataAndOtherProjects(t *testing
 			if _, err = p.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES('other','tenant','Other','now');INSERT INTO pipeline_retired_destinations(id,pipeline_id,project_id,config,secret,window_start_ms,manifest,created_at_ms) SELECT 'other-hold','other-pipeline','other',config,secret,0,'',1 FROM pipeline_retired_destinations WHERE id='old-run';INSERT INTO pipeline_retired_files VALUES('other-hold','other-key','other-upload')`); err != nil {
 				t.Fatal(err)
 			}
-			worked, err := p.cleanupRetired(t.Context(), "project")
+			worked, err := p.cleanupRetired(t.Context(), "project", "")
 			if mode == "conflicting-manifest" {
 				if err == nil || worked || len(operations) != 0 {
 					t.Fatal("ambiguous manifest authorized cleanup", worked, err, operations)
@@ -445,5 +448,135 @@ func TestSQLiteRetiredS3CleanupPreservesPublishedDataAndOtherProjects(t *testing
 				t.Fatal("retired evidence cleared before settlement", remaining)
 			}
 		})
+	}
+}
+
+func TestSQLiteRotationBoundsCanceledHistoryAndPreservesPrefixOwnership(t *testing.T) {
+	t.Parallel()
+	p := isolatedPipelines(t, nil)
+	created, err := p.Define(t.Context(), "project", PipelineRequest{Name: "S3", Kind: "s3", S3: &S3PipelineSpec{SQL: "SELECT event FROM events", IntervalSeconds: 60, StartAt: "2026-11-17T12:00:00Z", Destination: S3PipelineDestination{Bucket: "private-reports", Region: "us-east-1", Prefix: "reports"}}, Credentials: PipelineCredentials{AccessKeyID: "old-access", SecretAccessKey: "old-secret"}}, auth.Principal{ID: "actor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := p.loadPipeline(t.Context(), "project", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.db.Exec(`INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,attempt_id,created_at_ms) VALUES('uncertain-prefix',?,0,60000,'failed','original-attempt',1)`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.db.Exec(`WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1005) INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms) SELECT 'fileless-'||i,?,i*60000,(i+1)*60000,'queued',1 FROM n`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.db.Exec(`INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms,completed_at_ms) VALUES('already-canceled',?,1006*60000,1007*60000,'canceled',1,123)`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, access := range []string{"replacement-one", "replacement-two"} {
+		if _, err = p.Replace(t.Context(), "project", created.ID, PipelineChange{Credentials: PipelineCredentials{AccessKeyID: access, SecretAccessKey: "replacement-secret"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count, pruned int
+	var completed int64
+	var attempt string
+	var secret []byte
+	if err = p.db.QueryRow(`SELECT count(*) FROM pipeline_s3_runs WHERE pipeline_id=? AND state='canceled'`, created.ID).Scan(&count); err != nil || count != 1000 {
+		t.Fatal("canceled history is unbounded", count, err)
+	}
+	if err = p.db.QueryRow(`SELECT completed_at_ms FROM pipeline_s3_runs WHERE id='already-canceled'`).Scan(&completed); err != nil || completed != 123 {
+		t.Fatal("rotation rewrote terminal completion time", completed, err)
+	}
+	if err = p.db.QueryRow(`SELECT count(*) FROM pipeline_s3_runs WHERE id='uncertain-prefix'`).Scan(&pruned); err != nil || pruned != 0 {
+		t.Fatal("old terminal history was not pruned", pruned, err)
+	}
+	if err = p.db.QueryRow(`SELECT attempt_id,secret FROM pipeline_retired_destinations WHERE id='uncertain-prefix'`).Scan(&attempt, &secret); err != nil || attempt != "original-attempt" || !bytes.Equal(secret, original.Secret) {
+		t.Fatal("prefix ownership or original credentials vanished with history", attempt, err)
+	}
+	holds, err := PipelineRestoreArtifacts(t.Context(), p.db)
+	if err != nil || len(holds) != 1 || !strings.HasSuffix(holds[0].Key, "/0/original-attempt/") {
+		t.Fatal("prefix-only restore hold missing", holds, err)
+	}
+}
+
+func TestSQLitePipelineDeleteCommitsPauseBeforeCancelingActualNativeCall(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Query().Has("uploads") {
+			io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
+			return
+		}
+		w.WriteHeader(404)
+		io.WriteString(w, `<Error><Code>NoSuchKey</Code></Error>`)
+	}))
+	defer server.Close()
+	p := isolatedPipelines(t, nil, server.URL)
+	reader := &blockingPipelineReader{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	p.lake = reader
+	var released, finished atomic.Int32
+	p.acquire = func(context.Context) (func(), bool) { return func() { released.Add(1) }, true }
+	p.beginActivity = func(ctx context.Context, _ string) (context.Context, func(), bool) {
+		return ctx, func() { finished.Add(1) }, true
+	}
+	created, err := p.Define(t.Context(), "project", PipelineRequest{Name: "native delete", Kind: "s3", S3: &S3PipelineSpec{SQL: "SELECT event FROM events", IntervalSeconds: 60, StartAt: "2026-11-17T11:59:00Z", Destination: S3PipelineDestination{Bucket: "private-reports", Region: "us-east-1", Prefix: "reports", Endpoint: server.URL}}, Credentials: PipelineCredentials{AccessKeyID: "access", SecretAccessKey: "secret"}}, auth.Principal{ID: "actor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := p.RunS3(t.Context()); done <- err }()
+	select {
+	case <-reader.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native call did not start")
+	}
+	if _, err = p.db.Exec(`CREATE TRIGGER reject_pause BEFORE UPDATE OF state ON pipelines BEGIN SELECT RAISE(ABORT,'pause rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Delete(t.Context(), "project", created.ID); err == nil {
+		t.Fatal("failed pause reported deletion")
+	}
+	select {
+	case <-reader.canceled:
+		t.Fatal("rolled-back pause canceled native call")
+	default:
+	}
+	if _, err = p.db.Exec(`DROP TRIGGER reject_pause`); err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Delete(t.Context(), "project", created.ID); err == nil {
+		t.Fatal("deletion reported success before actual return")
+	} else {
+		var status interface{ GetStatus() int }
+		if !errors.As(err, &status) || status.GetStatus() != 503 || !strings.Contains(err.Error(), "retry deletion cleanup") {
+			t.Fatal("missing explicit pending cleanup", err)
+		}
+	}
+	var state string
+	if err = p.db.QueryRow(`SELECT state FROM pipelines WHERE id=?`, created.ID).Scan(&state); err != nil || state != "paused" {
+		t.Fatal("deletion did not durably pause", state, err)
+	}
+	select {
+	case <-reader.canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deletion did not request native cancellation")
+	}
+	if released.Load() != 0 || finished.Load() != 0 {
+		t.Fatal("native capacity released before actual return")
+	}
+	if worked, err := p.RunS3(t.Context()); worked || err != nil {
+		t.Fatal("new run began during pending deletion", worked, err)
+	}
+	close(reader.release)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if released.Load() != 1 || finished.Load() != 1 {
+		t.Fatal("actual native lifetime not drained exactly once")
+	}
+	if worked, err := p.RunS3(t.Context()); worked || err != nil {
+		t.Fatal("paused backlog restarted after native return", worked, err)
+	}
+	if err = p.Delete(t.Context(), "project", created.ID); err != nil {
+		t.Fatal("deletion retry did not settle cleanup", err)
 	}
 }

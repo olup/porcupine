@@ -333,14 +333,32 @@ func (s *Store) AbortKeyUploads(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
+	return s.abortOwnedUploads(ctx, full, func(candidate string) bool { return candidate == full })
+}
+
+// AbortAttemptUploads reconciles the immutable prefix recorded before an attempt
+// could begin an upload. The trailing slash excludes sibling attempt names.
+func (s *Store) AbortAttemptUploads(ctx context.Context, prefix string) error {
+	if !strings.HasSuffix(prefix, "/") {
+		return ErrKey
+	}
+	full, err := s.objectKey(strings.TrimSuffix(prefix, "/"))
+	if err != nil {
+		return err
+	}
+	full += "/"
+	return s.abortOwnedUploads(ctx, full, func(candidate string) bool { return strings.HasPrefix(candidate, full) })
+}
+func (s *Store) abortOwnedUploads(ctx context.Context, prefix string, owned func(string) bool) error {
 	var keyMarker, uploadMarker *string
 	for {
-		out, err := s.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: aws.String(s.bucket), Prefix: aws.String(full), KeyMarker: keyMarker, UploadIdMarker: uploadMarker, MaxUploads: aws.Int32(1000)})
+		out, err := s.client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), KeyMarker: keyMarker, UploadIdMarker: uploadMarker, MaxUploads: aws.Int32(1000)})
 		if err != nil {
 			return storageError(ctx)
 		}
 		for _, u := range out.Uploads {
-			if aws.ToString(u.Key) == full && aws.ToString(u.UploadId) != "" {
+			if owned(aws.ToString(u.Key)) && aws.ToString(u.UploadId) != "" {
+				key := strings.TrimPrefix(aws.ToString(u.Key), s.prefix)
 				if err = s.Abort(ctx, key, aws.ToString(u.UploadId)); err != nil {
 					return err
 				}

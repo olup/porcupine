@@ -48,3 +48,35 @@ func TestAbortKeyUploadsReconcilesOnlyExactOwnedKey(t *testing.T) {
 		t.Fatal("reconciliation crossed exact key ownership", pages, aborted)
 	}
 }
+
+func TestAbortAttemptUploadsExcludesSiblingPrefixes(t *testing.T) {
+	t.Parallel()
+	var aborted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.Method == http.MethodDelete {
+			aborted = append(aborted, r.URL.Query().Get("uploadId"))
+			w.WriteHeader(204)
+			return
+		}
+		if r.URL.Query().Get("prefix") != "private/pipeline/0/attempt/" {
+			t.Error("attempt ownership prefix lost", r.URL)
+		}
+		fmt.Fprint(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated><Upload><Key>private/pipeline/0/attempt/part-1.gz</Key><UploadId>owned</UploadId></Upload><Upload><Key>private/pipeline/0/attempt-other/part-1.gz</Key><UploadId>sibling</UploadId></Upload><Upload><Key>private/other/0/attempt/part-1.gz</Key><UploadId>other-project</UploadId></Upload></ListMultipartUploadsResult>`)
+	}))
+	defer server.Close()
+	store, err := New(t.Context(), Config{Region: "us-east-1", Bucket: "private-bucket", Prefix: "private", Endpoint: server.URL, UsePathStyle: true, AccessKeyID: "test-access", SecretAccessKey: "test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.AbortAttemptUploads(t.Context(), "pipeline/0/attempt/"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(aborted, []string{"owned"}) {
+		t.Fatal("attempt cleanup crossed ownership", aborted)
+	}
+	if err = store.AbortAttemptUploads(t.Context(), "pipeline/0/attempt"); err == nil {
+		t.Fatal("unbounded sibling prefix accepted")
+	}
+}

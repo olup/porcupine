@@ -286,7 +286,7 @@ func (s *PipelineJobs) Delete(ctx context.Context, project, id string) error {
 	}
 	if p.Kind == "s3" {
 		if err := s.deleteS3Pipeline(ctx, p.ProjectID, p.ID); err != nil {
-			return apiError(503, "pipeline cleanup unavailable")
+			return err
 		}
 		s.Wake()
 		return nil

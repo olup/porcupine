@@ -319,6 +319,10 @@ creates the bucket and sets encryption, public-access policy, lifecycle, and any
 provider-specific permissions. A custom provider must support the conditional
 manifest contract; allowing its origin does not establish compatibility.
 
+Multipart reconciliation also requires `s3:ListBucketMultipartUploads` for the original bucket. It aborts only the recorded key or immutable attempt directory.
+
+DELETE pauses the pipeline before canceling an active native call. A `503` response that says cleanup is pending requires another DELETE after the call returns. The paused pipeline cannot start another window. Canceled S3 run history retains the latest 1000 windows; old cleanup ownership survives history pruning.
+
 Successful pipeline objects have no automatic seven-day expiry. SQLite keeps
 the newest 1,000 successful run summaries per pipeline and clears their full
 manifest checkpoints after commit. Failed and active runs remain available;

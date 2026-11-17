@@ -91,8 +91,18 @@ func (s *PipelineJobs) RunS3(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(s.config.ExportLimits.MaxExecutionSeconds)*time.Second)
-	err = s.executePipelineS3(attemptCtx, w)
+	s.activeS3Mu.Lock()
+	s.activeS3ID, s.activeS3Cancel = w.pipeline.ID, cancel
+	s.activeS3Mu.Unlock()
+	err = s.pipelineS3CanContinue(attemptCtx, w)
+	if err == nil {
+		err = s.executePipelineS3(attemptCtx, w)
+	}
 	cancel()
+	s.activeS3Mu.Lock()
+	s.activeS3ID, s.activeS3Cancel = "", nil
+	s.activeS3Mu.Unlock()
+
 	if err != nil {
 		// Publication may have succeeded despite a lost acknowledgement. Keep the
 		// validated manifest and its objects for read-back recovery on the next try.

@@ -45,11 +45,14 @@ type PipelineJobs struct {
 	beginActivity               func(context.Context, string) (context.Context, func(), bool)
 	acquire                     func(context.Context) (func(), bool)
 
-	s3StepMu     sync.Mutex
-	retiredMu    sync.Mutex
-	s3Lifecycle  sync.Map // per-pipeline exclusion between resume and remote deletion cleanup
-	admissionsMu sync.Mutex
-	admissions   map[*pipelineAdmission]struct{}
+	activeS3Mu     sync.Mutex
+	activeS3ID     string
+	activeS3Cancel context.CancelFunc
+	s3StepMu       sync.Mutex
+	retiredMu      sync.Mutex
+	s3Lifecycle    sync.Map // per-pipeline exclusion between resume and remote deletion cleanup
+	admissionsMu   sync.Mutex
+	admissions     map[*pipelineAdmission]struct{}
 
 	config      PipelineConfig
 	aead        cipher.AEAD
@@ -264,7 +267,7 @@ func (s *PipelineJobs) Start() {
 		}()
 	}
 	start("webhook", rt.webhookWake, s.RunWebhook)
-	start("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "") })
+	start("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "", "") })
 	if s.lake != nil {
 		start("s3", rt.s3Wake, s.RunS3)
 	}
@@ -321,4 +324,12 @@ func (s *PipelineJobs) lockS3Lifecycle(id string) (func(), error) {
 		return nil, apiError(409, "pipeline lifecycle change in progress")
 	}
 	return func() { s.s3Lifecycle.Delete(id) }, nil
+}
+
+func (s *PipelineJobs) cancelActiveS3(id string) {
+	s.activeS3Mu.Lock()
+	defer s.activeS3Mu.Unlock()
+	if s.activeS3ID == id && s.activeS3Cancel != nil {
+		s.activeS3Cancel()
+	}
 }

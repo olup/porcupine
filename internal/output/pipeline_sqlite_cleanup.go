@@ -4,7 +4,7 @@ import "context"
 
 func (s *PipelineJobs) CleanupProject(ctx context.Context, project string) error {
 	for {
-		worked, err := s.cleanupRetired(ctx, project)
+		worked, err := s.cleanupRetired(ctx, project, "")
 		if err != nil {
 			return err
 		}

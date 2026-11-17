@@ -122,16 +122,20 @@ func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string)
 	if !s.Enabled() {
 		return apiError(503, "pipelines are not configured")
 	}
-	release, err := s.lockS3Lifecycle(id)
+	// Commit the pause before cancellation or waiting for an actual native return.
+	result, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state='paused' WHERE project_id=$1 AND id=$2`, project, id)
 	if err != nil {
-		return err
-	}
-	defer release()
-	// Pausing and claiming both serialize in SQLite, so a new attempt cannot start
-	// after this point. A running attempt observes the pause and is cleaned next.
-	if _, err := s.db.ExecContext(ctx, `UPDATE pipelines SET state='paused' WHERE project_id=$1 AND id=$2`, project, id); err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return apiError(404, "pipeline not found")
+	}
+	s.cancelActiveS3(id)
+	release, err := s.lockS3Lifecycle(id)
+	if err != nil {
+		return apiError(503, "pipeline attempt is stopping; retry deletion cleanup")
+	}
+	defer release()
 	p, err := s.loadPipeline(ctx, project, id)
 	if err != nil {
 		return pipelineLookupError(err)
@@ -140,19 +144,20 @@ func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string)
 	if s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=$1 AND state='running')`, id).Scan(&running) != nil || running {
 		return apiError(503, "pipeline attempt is stopping; retry deletion")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT f.run_id,r.window_start_ms,r.manifest FROM pipeline_s3_files f JOIN pipeline_s3_runs r ON r.id=f.run_id WHERE r.pipeline_id=$1 AND r.state!='succeeded'`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.window_start_ms,r.manifest,r.attempt_id FROM pipeline_s3_runs r WHERE r.pipeline_id=$1 AND r.state IN('queued','failed') AND (r.attempt_id<>'' OR r.manifest<>'' OR EXISTS(SELECT 1 FROM pipeline_s3_files f WHERE f.run_id=r.id))`, id)
 	if err != nil {
 		return apiError(503, "pipeline storage unavailable")
 	}
 	type candidate struct {
-		id       string
-		start    int64
-		manifest string
+		id        string
+		start     int64
+		manifest  string
+		attemptID string
 	}
 	var ids []candidate
 	for rows.Next() {
 		var run candidate
-		if rows.Scan(&run.id, &run.start, &run.manifest) != nil {
+		if rows.Scan(&run.id, &run.start, &run.manifest, &run.attemptID) != nil {
 			rows.Close()
 			return apiError(503, "pipeline storage unavailable")
 		}
@@ -187,6 +192,22 @@ func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string)
 			if s.cleanupPipelineS3Run(ctx, store, run.id, "") != nil {
 				return apiError(503, "pipeline cleanup incomplete")
 			}
+			if run.attemptID != "" {
+				prefix := fmt.Sprintf("%s/%d/%s/", id, run.start, run.attemptID)
+				if retainArtifactOwnership(ctx, s.control, project, "pipeline_unpublished", store, prefix, "") != nil || store.AbortAttemptUploads(ctx, prefix) != nil {
+					return apiError(503, "pipeline prefix cleanup pending; retry deletion cleanup")
+				}
+			}
+
+		}
+	}
+	for {
+		worked, cleanupErr := s.cleanupRetired(ctx, project, id)
+		if cleanupErr != nil {
+			return apiError(503, "retired destination cleanup pending; retry deletion cleanup")
+		}
+		if !worked {
+			break
 		}
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE pipeline_id=$3 AND state='running')`, project, id, id)
