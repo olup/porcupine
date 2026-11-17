@@ -244,7 +244,13 @@ func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.Proj
 		default:
 			return output.ErrPipelineConflict
 		}
-		if err = f.publisher.publishOn(ctx, binding, page.Evidence[0], session); err != nil {
+		evidence := page.Evidence[0]
+		if evidence.Kind == lakeapi.NativeCommitMutation {
+			err = f.publisher.publishOn(ctx, binding, evidence, session)
+		} else {
+			err = f.publisher.publish(ctx, binding, evidence)
+		}
+		if err != nil {
 			return err
 		}
 		seq = page.Evidence[0].Sequence
