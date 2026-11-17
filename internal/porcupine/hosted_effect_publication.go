@@ -361,6 +361,10 @@ func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.Pipeline
 		if b != (output.PipelineBinding{}) || session == nil {
 			return output.ErrPipelineConflict
 		}
+		fence := session.Fence(e.Scope.StreamID)
+		if fence.Key != e.Scope.Key || fence.Epoch < e.FenceEpoch {
+			return output.ErrPipelineConflict
+		}
 		mutation, err = hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
 		if err != nil {
 			return err
@@ -368,7 +372,7 @@ func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.Pipeline
 		if mutation.body.SHA256 != e.InputFingerprint || mutation.revision != int64(e.Mutation.Revision) || (mutation.operation == "delete") != e.Mutation.Deleted {
 			return output.ErrPipelineConflict
 		}
-		if e.Mutation.Deleted && e.Mutation.ErrorCode == "" {
+		if mutation.state == "ready" && e.Mutation.Deleted && e.Mutation.ErrorCode == "" {
 			if p.cancelMutationWebhook == nil {
 				return output.ErrPipelineConflict
 			}
@@ -400,15 +404,22 @@ func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.Pipeline
 			if err != nil {
 				return err
 			}
-			if advanced && e.Kind == lakeapi.NativeCommitMutation {
-				if mutationUUID != "" {
-					if err := p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUID); err != nil {
-						return err
-					}
+			if e.Kind != lakeapi.NativeCommitMutation {
+				break
+			}
+			if !advanced {
+				if !mutation.settledBy(e) {
+					return output.ErrPipelineConflict
 				}
-				if err := finishHostedMutationTx(ctx, tx, mutation, e); err != nil {
+				break
+			}
+			if mutationUUID != "" {
+				if err := p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUID); err != nil {
 					return err
 				}
+			}
+			if err := finishHostedMutationTx(ctx, tx, mutation, e); err != nil {
+				return err
 			}
 		default:
 			return output.ErrPipelineConflict
@@ -427,7 +438,13 @@ func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.Pipeline
 	// checkpoint read can release the volatile batch in that case.
 	seq, hash, readErr := p.checkpoint(ctx, e.Scope, e.TenantID)
 	if readErr == nil && seq == e.Sequence && hash == e.ProofFingerprint {
-		return nil
+		if e.Kind != lakeapi.NativeCommitMutation {
+			return nil
+		}
+		receipt, readErr := hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
+		if readErr == nil && receipt.settledBy(e) {
+			return nil
+		}
 	}
 	return fmt.Errorf("effect publication not confirmed: %w", err)
 }

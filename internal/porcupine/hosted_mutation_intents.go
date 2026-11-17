@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -211,14 +212,11 @@ func finishHostedMutationTx(ctx context.Context, tx *sql.Tx, i hostedMutationInt
 	if !i.order.Valid || i.state != "ready" {
 		return errHostedMutationConflict
 	}
-	state := "applied"
-	if evidence.Mutation.ErrorCode != "" {
-		state = "failed"
-	}
+	state := hostedMutationTerminalState(evidence)
 	var id string
 	err := tx.QueryRowContext(ctx, `UPDATE hosted_mutation_intents SET state=$4,applied_at=$5,error_code=$6
 WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='ready' AND acceptance_order=$7 AND body_sha256=$8
-RETURNING mutation_id`, i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, state, evidence.AccountedAt.Format("2006-01-02T15:04:05.999999999Z07:00"), evidence.Mutation.ErrorCode, i.order.Int64, i.body.SHA256).Scan(&id)
+RETURNING mutation_id`, i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, state, evidence.AccountedAt.Format(time.RFC3339Nano), evidence.Mutation.ErrorCode, i.order.Int64, i.body.SHA256).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -227,6 +225,19 @@ RETURNING mutation_id`, i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, state
 WHERE source_id=$1 AND project_id=$2 AND tenant_id=$3 AND catalog_id=$4 AND stream_id=$5
 AND accepted_through=$6 AND settled_through=$6-1 RETURNING settled_through`,
 		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, i.order.Int64).Scan(&order)
+}
+
+func hostedMutationTerminalState(evidence lakeapi.NativeCommitEvidence) string {
+	if evidence.Mutation.ErrorCode != "" {
+		return "failed"
+	}
+	return "applied"
+}
+
+func (i hostedMutationIntent) settledBy(evidence lakeapi.NativeCommitEvidence) bool {
+	return i.order.Valid && i.state == hostedMutationTerminalState(evidence) &&
+		i.errorCode == evidence.Mutation.ErrorCode && i.appliedAt == evidence.AccountedAt.Format(time.RFC3339Nano) &&
+		i.body.SHA256 == evidence.InputFingerprint
 }
 
 func retireHostedMutationStagingTx(ctx context.Context, tx *sql.Tx, scope lakeapi.HostedProjectScope, tenant, createdBefore string) error {
