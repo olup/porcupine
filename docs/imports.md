@@ -4,7 +4,7 @@ Available in v0.14.0 and later. Install matching released server and CLI version
 
 ## Import a file or directory
 
-Use an API-audience credential with `imports:write` and `events:write` on the destination project. Set `PORCUPINE_URL` and obtain a [service key](service-keys.md), or use `porcupine login --admin` as an instance administrator. The default read-only CLI login does not permit imports.
+Use an API-audience credential with `imports:write` and `events:write` on the destination project. Set `PORCUPINE_URL` and obtain a [service key](reference/service-keys.md), or use `porcupine login --admin` as an instance administrator. The default read-only CLI login does not permit imports.
 
 Choose one format and run one command:
 
@@ -24,11 +24,11 @@ An agent with local file access can run this command directly. No import script,
 
 | Format | One JSONL record |
 | --- | --- |
-| `native` | A Porcupine `track`, `pageview`, or `identify` message with `message_id` and the original `timestamp`. [Native contract](native-event-contract.md) |
-| `posthog` | One exported event with `uuid`, `event`, `distinct_id`, and `timestamp`. Persons files use PostHog's separate persons model. [Export formats](posthog-import-format.md) |
+| `native` | A Porcupine `track`, `pageview`, or `identify` message with `message_id` and the original `timestamp`. [Native contract](reference/native-event-contract.md) |
+| `posthog` | One exported event with `uuid`, `event`, `distinct_id`, and `timestamp`. Persons files use PostHog's separate persons model. [Export formats](reference/posthog-import-format.md) |
 | `segment` | One Segment `track`, `page`, or `identify` message with `messageId` and the original `timestamp`. HTTP batch envelopes and destination-specific warehouse transformations are not file records. |
 
-Every event needs its original occurrence time and a stable producer ID. The import does not substitute today's time or generate a new ID on each run. The same authenticated logical source and producer ID deduplicate with live capture. Unbound native, Segment, and PostHog sources are separate namespaces. [Retry identity](native-event-contract.md#ids-and-retry-semantics)
+Every event needs its original occurrence time and a stable producer ID. The import does not substitute today's time or generate a new ID on each run. The same authenticated logical source and producer ID deduplicate with live capture. Unbound native, Segment, and PostHog sources are separate namespaces. [Retry identity](reference/native-event-contract.md#ids-and-retry-semantics)
 
 For custom data, convert each source row to the native format. A file can contain a backend event with no user:
 
@@ -75,4 +75,4 @@ Historical identify messages can contribute explicit identity evidence. Their in
 
 Imported events retain their original timestamps and are marked as history. They appear in ordinary analytics and on-demand exports. They do not trigger individual or batch webhooks, and automatic receipt-window S3 queries exclude them. Identity, corrections, and the project's normal privacy rules still apply.
 
-For clients implementing their own uploader, see the [HTTP upload protocol](posthog-import.md). The API remains the source of operation contracts used by the CLI.
+For clients implementing their own uploader, see the [HTTP upload protocol](reference/posthog-import.md). The API remains the source of operation contracts used by the CLI.

@@ -10,16 +10,18 @@ With MCP connected, ask:
 
 > Find the project I want to analyze. Inspect its SQL schema and observed event names. Count each event by UTC day, and explain which data and identity fields you used.
 
-The agent discovers operation contracts with `porcupine_docs`, then calls these operations through `porcupine_call`:
+On development builds, `porcupine_schema` returns the schema and observed event names in one read-only call, then `porcupine_query` runs the SQL. Specify `project_id` when the credential can access several projects. These tools are not in v0.14.0.
+
+On v0.14.0, discover operation contracts with `porcupine_docs`, then call them through `porcupine_call`:
 
 1. `list-projects` to resolve a name to a project ID.
 2. `get-event-schema` to read columns, supported functions, and limits.
 3. `get-event-catalog` to inspect observed event names and property keys.
 4. `query-events` to execute SQL for that project.
 
-The catalog samples delivered events. It helps discover what is present, but does not describe every historical property or explain your application's business meaning. The [discovery reference](analytics.md#observed-event-and-property-discovery) describes its bounds.
+The catalog samples delivered events. It helps discover what is present, but does not describe every historical property or explain your application's business meaning. The [discovery reference](reference/analytics.md#observed-event-and-property-discovery) describes its bounds.
 
-Porcupine also exposes `get-event-profile` for activity, recent examples, and sampled property coverage. Discover its contract before using it; v0.12.0 does not include this operation. [Inspect an event](event-discovery.md)
+Porcupine also exposes `get-event-profile` for activity, recent examples, and sampled property coverage. Discover its contract before using it. [Inspect an event](reference/event-discovery.md)
 
 ## Discover data from the CLI
 
@@ -40,7 +42,7 @@ porcupine get-event-catalog --id "$PROJECT_ID" --event article_published
 
 Replace `article_published` with a name from your project. The schema and catalog contain the field names an agent needs to build a query.
 
-In v0.12.0 and later, property discovery also supports `--property-kind custom`, `--property-prefix thread`, `--property-limit 10` and `--property-cursor CURSOR`. Read `next_property_cursor` and keep the same filters for the next page. Event-name pagination uses separate `--limit` and `--offset` flags.
+Property discovery also supports `--property-kind custom`, `--property-prefix thread`, `--property-limit 10` and `--property-cursor CURSOR`. Read `next_property_cursor` and keep the same filters for the next page. Event-name pagination uses separate `--limit` and `--offset` flags.
 
 ## Run a query
 
@@ -67,22 +69,22 @@ Run it with:
 porcupine query-events --id "$PROJECT_ID" --body @query.json
 ```
 
-Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](analytics.md) lists supported syntax, bindings, and fixed execution limits.
+Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](reference/analytics.md) lists supported syntax, bindings, and execution limits.
 
-**Unreleased:** [tenant budgets](tenants.md#interactive-query-limits) can lower a project's interactive query deadline, result size, and concurrency. `get-event-schema` returns configured `tenant_budgets`, `deployment_limits`, and effective `limits`. SQL, catalog discovery, and event profiles share the tenant's interactive places; requests return `429` when capacity is full. Changing budgets and reading aggregate tenant consumption remain operator-only. These controls are not included in v0.14.0.
+**Unreleased:** [tenant budgets](reference/tenants.md#interactive-query-limits) can lower a project's interactive query deadline, result size, and concurrency. `get-event-schema` returns configured `tenant_budgets`, `deployment_limits`, and effective `limits`. SQL, catalog discovery, and event profiles share the tenant's interactive places; requests return `429` when capacity is full. Only the instance operator changes hard budgets. Tenant administrators can read their own aggregate usage. These controls are not included in v0.14.0.
 
-Use the [DuckDB SQL recipes](duckdb-recipes.md) for trends, sessions, funnels, retention and percentiles. They state their metric definitions and are tested against a known fixture through MCP.
+Use the [DuckDB SQL recipes](reference/duckdb-recipes.md) for trends, sessions, funnels, retention and percentiles. They state their metric definitions and are tested against a known fixture through MCP.
 
-For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. Through MCP, call `query-events` with `path: {"id": "PROJECT_ID"}` and the JSON as `body`. See the [MCP request examples](mcp.md#execution-with-porcupine_call).
+For the same request over HTTP, send `query.json` to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. Through MCP, call `query-events` with `path: {"id": "PROJECT_ID"}` and the JSON as `body`. See the [MCP request examples](reference/mcp.md#execution-with-porcupine_call).
 
 ## Check a recently sent event
 
 DuckLake queries execute against the current delivered state, without a result cache. Queries do not wait for queued events to reach analytical storage.
 
-The response's `delivery.pending` and `delivery.pending_mutations` report work awaiting projection. After sending an event, allow that work to drain before checking its count. See [query consistency](analytics.md#delivery-consistency-and-errors).
+The response's `delivery.pending` and `delivery.pending_mutations` report work awaiting projection. After sending an event, allow that work to drain before checking its count. See [query consistency](reference/analytics.md#delivery-consistency-and-errors).
 
 ## Count people or export more data
 
 Use `person_id` for the currently resolved identity and `distinct_id` for the actor recorded at capture. Daily cookieless identifiers cannot measure a person's return across days. Read [identity and sessions](data-and-identity.md) before writing a retention or unique-user query.
 
-For a large result, create a [one-off export](exports.md). To deliver results on a schedule, configure an [S3 pipeline](pipelines.md#scheduled-s3-query-windows).
+For a large result, create a [one-off export](exports.md). To deliver results on a schedule, configure an [S3 pipeline](reference/pipeline-api.md#scheduled-s3-query-windows).

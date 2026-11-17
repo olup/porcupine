@@ -43,6 +43,13 @@ class ReleaseVersionTests(unittest.TestCase):
                     check_release(self.root)
                 path.write_text(original)
 
+    def test_quickstart_checkout_must_match_the_release(self):
+        path = self.root / "README.md"
+        version = release_version(self.root)
+        path.write_text(path.read_text().replace("git clone --branch v" + version, "git clone --branch v999.0.0"))
+        with self.assertRaisesRegex(ValueError, "current release pointers"):
+            check_release(self.root)
+
     def test_rejects_hardcoded_badges(self):
         for name, old, new in [
             ("site/index.html", "__PORCUPINE_RELEASE_TAG__", "v0.9.0"),

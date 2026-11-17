@@ -35,7 +35,7 @@ For example, authorize Léa to query project A and import historical events into
 
 Use the same `grants` field for updates, omitting `email`. When all assigned projects have identical permissions, the alternative body shape is `{"email":"lea@example.org","projects":["PROJECT_A","PROJECT_B"],"permissions":["events:read"]}`. Choose one shape per request. The `grants` field in the response gives the authoritative per-project rights. The `projects` and `permissions` fields summarize the union of project IDs and permissions, respectively.
 
-Send the person your instance URL and the [tool connection guide](connect-tools.md). They request a fresh code from their own inbox when connecting each tool.
+Send the person your instance URL and the [tool connection guide](../connect-tools.md). They request a fresh code from their own inbox when connecting each tool.
 
 ## Add another administrator
 

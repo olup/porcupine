@@ -1,6 +1,6 @@
 # Management API reference
 
-This reference lists HTTP operations, required permissions, and response codes. For a task walkthrough, start with [projects](projects.md), [people](email-accounts.md), [queries](query-events.md), or [pipelines](pipelines.md).
+This reference lists HTTP operations, required permissions, and response codes. For a task walkthrough, start with [projects](projects.md), [people](email-accounts.md), [queries](../query-events.md), or [pipelines](../pipelines.md).
 
 The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
 
@@ -12,7 +12,7 @@ Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-prof
 
 ## Authentication and scope
 
-Send a Bearer credential issued for `ISSUER/api/v1`. A person can authorize the [CLI](../cli/README.md) with email sign-in. A machine can use an [API-audience service key](service-keys.md) or exchange its client credentials for a short-lived [OAuth access token](oauth.md).
+Send a Bearer credential issued for `ISSUER/api/v1`. A person can authorize the [CLI](../../cli/README.md) with email sign-in. A machine can use an [API-audience service key](service-keys.md) or exchange its client credentials for a short-lived [OAuth access token](oauth.md).
 
 On first startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
 principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
@@ -68,7 +68,7 @@ The following table describes v0.14.0. The [unreleased tenant operations](#unrel
 | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
 
-For managed SQL exports, see the [export job operations](exports.md). The [pipeline operations](pipelines.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
+For managed SQL exports, see the [export job operations](../exports.md). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
 
 ### Unreleased tenant operations
 
@@ -118,7 +118,7 @@ creation operation requires the same permissions for both modes. See the
 
 `rename-project` accepts `{"name":"Research"}`. Names must contain 1–200 UTF-8 bytes after trimming whitespace. The response contains the updated `project`. Existing SDKs, dashboards and pipelines continue to address the project by ID.
 
-`delete-project` accepts the project ID in the path and takes no request body. An instance administrator can use it to permanently remove a project's queued and analytical events, metadata, pipeline definitions and Porcupine-managed exports. Copies already delivered to customers' webhook or S3 destinations and existing backups are outside the deletion scope. Bucket lifecycle rules control retention of noncurrent object versions. See [export cleanup](exports.md#bucket-permissions-lifecycle-and-cleanup). If a storage dependency is unavailable and the request returns `503`, retry the same ID. The server also retries pending cleanup every minute and on restart. A repeat request for a completed deletion returns `204`. An unknown ID returns `404`.
+`delete-project` accepts the project ID in the path and takes no request body. An instance administrator can use it to permanently remove a project's queued and analytical events, metadata, pipeline definitions and Porcupine-managed exports. Copies already delivered to customers' webhook or S3 destinations and existing backups are outside the deletion scope. Bucket lifecycle rules control retention of noncurrent object versions. See [export cleanup](export-api.md#bucket-permissions-lifecycle-and-cleanup). If a storage dependency is unavailable and the request returns `503`, retry the same ID. The server also retries pending cleanup every minute and on restart. A repeat request for a completed deletion returns `204`. An unknown ID returns `404`.
 
 Deleting a project removes it from access grants. Changing a parent grant also revokes its derived keys and sessions under the usual credential rules. A user or service with access to a surviving project may need to reconnect or obtain a replacement key.
 
@@ -209,14 +209,14 @@ The [analytics API reference](analytics.md) describes `get-event-schema`,
 `get-event-catalog`, and `query-events`, including SQL examples, fixed quotas,
 and eventual consistency. All three require one permitted project per request.
 
-The [event mutation reference](events.md) describes current-event reads, full
+The [event mutation reference](../events.md) describes current-event reads, full
 replacement corrections, deletion tombstones, revision checks, idempotency, and
 mutation status. A `202` confirms durable acceptance, not analytical visibility.
 Storage tiering is deployment-only and has no management endpoint.
 
 ## Historical imports
 
-The [import guide](imports.md) covers one-command native, PostHog, and Segment imports. The [HTTP protocol](posthog-import.md) covers manifest creation, binary chunk upload, status, resume, cancellation and import permissions. These operations use the API audience.
+The [import guide](../imports.md) covers one-command native, PostHog, and Segment imports. The [HTTP protocol](posthog-import.md) covers manifest creation, binary chunk upload, status, resume, cancellation and import permissions. These operations use the API audience.
 
 ## Delivery pipeline management
 
@@ -225,7 +225,7 @@ scheduled S3 delivery. Reads require `pipelines:read` plus `events:read`; all
 writes and retries require `pipelines:write` plus `events:read`. These are explicit
 egress grants, separate from management permissions and event-reading authority.
 
-The [pipeline reference](pipelines.md#permissions-and-api) lists all ten operation
+The [pipeline reference](pipeline-api.md#permissions-and-api) lists all ten operation
 IDs and routes. Lists contain bounded metadata; a detail read includes the
 nonsecret rule. Destination endpoint URLs, credentials, event payloads, and
 remote response bodies are never returned. The operator must configure the

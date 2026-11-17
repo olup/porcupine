@@ -1,5 +1,7 @@
 # Store analytical data on S3
 
+Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+
 Available in v0.13.0 and later. A new DuckLake deployment can write its analytical data files to S3 or an S3-compatible service. SQLite and the per-project DuckLake catalogs remain on persistent local storage. No separate analytical database server is required.
 
 Queries, ingestion, identify, corrections and deletion use the same API, CLI and MCP contracts as local storage. DuckDB reads the remote Parquet files for those queries. Query-result exports and destination pipelines are separate features.

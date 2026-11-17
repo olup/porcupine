@@ -73,7 +73,7 @@ The accepted permission names are:
 | `pipelines:read` | Inspect project pipeline and run metadata, also requiring `events:read`. |
 | `pipelines:write` | Configure project destinations and retries, also requiring `events:read`. |
 
-[Event editing and deletion](events.md) are implemented through native mutation
+[Event editing and deletion](../events.md) are implemented through native mutation
 operations. They require their explicit permissions; ingestion authority alone
 does not grant either capability. `identity:write` remains reserved, for future administrative operations. Capturing a supported
 `$identify` or `$set` uses the project's `events:write` permission. Public
@@ -149,7 +149,7 @@ Shared catalog cleanup preserves at least eight days of snapshots and obsolete-f
 
 ## Pipeline boundaries
 
-[Project pipelines](pipelines.md) deliver webhook events and scheduled S3
+[Project pipelines](../pipelines.md) deliver webhook events and scheduled S3
 results. `pipelines:read` or `pipelines:write` alone is insufficient; the caller
 also needs `events:read` for the same project. Native storage policy remains
 operator-only. One-off export configuration remains separate.

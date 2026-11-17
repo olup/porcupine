@@ -1,5 +1,7 @@
 # Native architecture boundaries
 
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
 This design records the native-only runtime and transaction boundaries released in v0.14.0 after historical import PR #40.
 
 ## What changes

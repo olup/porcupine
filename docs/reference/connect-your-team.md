@@ -1,6 +1,6 @@
 # Set up team sign-in
 
-This guide is for the instance operator. If you have already been invited and want to connect an agent or the CLI, use [Connect your tools](connect-tools.md).
+This guide is for the instance operator. If you have already been invited and want to connect an agent or the CLI, use [Connect your tools](../connect-tools.md).
 
 A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. For email verification codes, enable [SMTP delivery](email-transport.md). The server sends a notice when an administrator grants access and issues a verification code only when the person starts a login. In an OIDC-only development setup without SMTP, share the instance URL and connection instructions yourself.
 
@@ -12,7 +12,7 @@ Optionally set `PORCUPINE_ADMIN_EMAIL` to the mailbox of the operator during dep
 
 Deployments with human sign-in provide the public PKCE client `porcupine-local` for local read-only tools. They also provide the separate `porcupine-local-admin` client for instance administrators. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
 
-To administer the instance from the [standalone CLI](../cli/README.md), set `PORCUPINE_URL` to the issuer and run `porcupine login --admin`. Authenticate with your invited administrator address using the configured sign-in method, then approve the grant. Run `porcupine list-projects` to check the connection. Each tool gets its own grant.
+To administer the instance from the [standalone CLI](../../cli/README.md), set `PORCUPINE_URL` to the issuer and run `porcupine login --admin`. Authenticate with your invited administrator address using the configured sign-in method, then approve the grant. Run `porcupine list-projects` to check the connection. Each tool gets its own grant.
 
 For Codex, add the following to your Codex configuration, replacing the host with your own. The client and its callback are configured once. Use the issuer's `/mcp` URL exactly.
 

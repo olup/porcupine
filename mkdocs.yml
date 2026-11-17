@@ -14,70 +14,40 @@ markdown_extensions:
   - fenced_code
   - toc:
       permalink: "#"
+not_in_nav: |
+  /*.md
+  /reference/**
+  /design/**
+validation:
+  links:
+    anchors: warn
 nav:
   - Get started:
       - Overview: README.md
       - Quickstart: quickstart.md
       - Connect your tools: connect-tools.md
-      - Install and use the CLI: cli.md
-  - Collect events:
-      - Choose an input: collect-events.md
-      - PostHog SDKs: compatibility.md
-      - Native and Segment: native-and-segment-ingestion.md
+      - CLI: cli.md
+  - Use your data:
+      - Collect events: collect-events.md
       - Users and sessions: data-and-identity.md
       - Import history: imports.md
-  - Analyze and deliver:
-      - Query your events: query-events.md
-      - Inspect an event: event-discovery.md
-      - DuckDB SQL recipes: duckdb-recipes.md
-      - Export query results: exports.md
-      - Webhooks and S3 pipelines: pipelines.md
+      - Query events: query-events.md
       - Correct or delete events: events.md
-  - Projects and access:
-      - Team access (unreleased): tenant-access.md
-      - Manage projects: projects.md
-      - Invite and manage people: email-accounts.md
-      - Create service keys: service-keys.md
-      - Permissions: security-and-interfaces.md
-  - Deploy and operate:
+      - Export results: exports.md
+      - Deliver to other systems: pipelines.md
+  - Run an instance:
       - Hosting: hosting.md
-      - Tenants and budgets (unreleased): tenants.md
-      - Shared deployment (unreleased): shared-deployment.md
-      - Check instance status: instance-status.md
-      - Clean up DuckLake history: ducklake-cleanup.md
-      - Schedule native backups: native-backups.md
-      - Remote backups and restore: native-backup-recovery.md
-      - Set up team sign-in: connect-your-team.md
-      - Configure email delivery: email-transport.md
-      - Recover sign-in identities (unreleased): identity-recovery.md
-      - Storage options: storage.md
-      - Analytical S3 storage: ducklake-s3.md
-      - Backup consistency: online-backup.md
-      - Compose backup setup: backup-compose.md
-      - Stopped-volume recovery: restore.md
-  - API reference:
-      - HTTP management API: management-api.md
-      - Native event contract: native-event-contract.md
-      - SQL and discovery: analytics.md
-      - MCP tools: mcp.md
-      - Machine OAuth: oauth.md
-      - OIDC configuration: mcp-interactive-oauth.md
-      - Historical upload protocol: posthog-import.md
-      - PostHog export format: posthog-import-format.md
-  - How Porcupine works:
+      - People and permissions: access.md
+      - Storage: storage.md
+      - Back up and restore: backup-and-restore.md
       - Architecture: architecture.md
-      - Native ownership boundaries: native-only-architecture.md
-      - Durability and recovery: reliability.md
-      - Deduplication: receipts.md
-      - Export internals: export-design.md
-      - SDK compatibility tests: sdk-compatibility-tests.md
-      - Load testing: load-testing.md
-      - Large-event delivery: ducklake-large-batches.md
+  - Reference:
+      - HTTP API: reference/management-api.md
+      - SQL and discovery: reference/analytics.md
+      - DuckDB recipes: reference/duckdb-recipes.md
+      - MCP: reference/mcp.md
+      - Native event schema: reference/native-event-contract.md
+      - All reference pages: reference/README.md
+  - Project:
       - Roadmap: roadmap.md
-      - Publish a release: releasing.md
-  - Historical measurements:
-      - Initial DuckLake experiment: ducklake-experiment.md
-      - Native validation record: ducklake-validation.md
-      - Validation plan: ducklake-validation-plan.md
-      - Maintenance investigation: ducklake-maintenance.md
-      - Maintenance load record: ducklake-maintenance-soak.md
+      - Design and validation records: design/README.md

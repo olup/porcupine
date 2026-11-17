@@ -1,6 +1,8 @@
 # SQL export design
 
-Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](exports.md) for requests and operator settings.
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
+Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](../exports.md) for requests and operator settings.
 
 ## Query and publication boundaries
 

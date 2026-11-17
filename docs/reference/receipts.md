@@ -10,7 +10,13 @@ Before delivery, the accepted original in SQLite prevents duplicate acceptance. 
 
 A worker applies the original to DuckLake, then records its receipt and removes the queued payload in one SQLite transaction. A failure between the analytical commit and SQLite acknowledgment leaves the original available for replay. Native revision and event-ID checks make that replay converge on one logical event.
 
-A duplicate cannot change properties, update traits a second time, enqueue another webhook, or acquire a new numeric ID. Corrections use the [event management API](events.md).
+A duplicate cannot change properties, update traits a second time, enqueue another webhook, or acquire a new numeric ID. Corrections use the [event management API](../events.md).
+
+## Bounded receipts
+
+The maintenance worker checks each candidate against the project's DuckLake heads before pruning it. Pending queue payloads and mutations keep their receipts. The batch's durable project marker and receipt deletion commit in the same SQLite transaction, serialized with ingestion.
+
+Once a project has pruned any receipts, live ingestion and historical import chunks check producer IDs against DuckLake before acceptance. Producer timestamps cannot select this check: a retry may omit or change its timestamp while keeping its message ID. The marker survives restart and setting retention to `0`; that setting stops future pruning but cannot recreate old local receipts. A failed analytical lookup rejects the whole batch or import chunk for retry. Projects that have never pruned receipts retain the SQLite-only acceptance path. Without DuckLake, receipts are never pruned.
 
 ## Bounded receipts
 

@@ -19,7 +19,7 @@ def check_release(root=ROOT, tag=None):
         raise ValueError(f"release tag {tag} does not match VERSION v{version}")
     checks = {
         "compose.release.yaml": r"ghcr\.io/olup/porcupine:([0-9]+\.[0-9]+\.[0-9]+)",
-        "README.md": r"releases/tag/v([0-9]+\.[0-9]+\.[0-9]+)",
+        "README.md": r"(?:releases/tag/v|git clone --branch v)([0-9]+\.[0-9]+\.[0-9]+)",
         "site/llms.txt": r"(?:This guide covers v|releases/tag/v|porcupine/v)([0-9]+\.[0-9]+\.[0-9]+)",
         "docs/hosting.md": r"(?:^# Host Porcupine |releases/(?:tag|download)/v|ghcr\.io/olup/porcupine:|porcupine-)([0-9]+\.[0-9]+\.[0-9]+)",
     }

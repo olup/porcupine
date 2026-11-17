@@ -1,8 +1,10 @@
 # DuckLake experiment
 
-This is a historical development record. Its measurements and comparison results describe the tested revision, not the current supported deployment. Old commands, external-database setup, and build tags below belong to that revision. For current use, read [hosting](hosting.md), [storage](storage.md), and [load testing](load-testing.md). The earlier external-database implementation remains on `reference/clickhouse-before-ducklake`.
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
 
-These are historical design and experiment notes. For the released service, use [hosting](hosting.md), [architecture](architecture.md), and the [analytics reference](analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
+This is a historical development record. Its measurements and comparison results describe the tested revision, not the current supported deployment. Old commands, external-database setup, and build tags below belong to that revision. For current use, read [hosting](../hosting.md), [storage](../storage.md), and [load testing](load-testing.md). The earlier external-database implementation remains on `reference/clickhouse-before-ducklake`.
+
+These are historical design and experiment notes. For the released service, use [hosting](../hosting.md), [architecture](../architecture.md), and the [analytics reference](../reference/analytics.md). Old unsupported-feature lists below describe the prototype at the time of measurement.
 
 The initial experiment compared native storage with the then-current ClickHouse release. The preserved reference is `reference/clickhouse-before-ducklake`, commit `d869fd6`.
 

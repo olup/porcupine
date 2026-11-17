@@ -77,7 +77,7 @@ A pageview has no top-level `name`. An optional page label belongs in `context.p
 }
 ```
 
-This message requests a link between `browser-7` and `user-42`, and updates current traits. It does not rewrite the original actor in earlier events. A target-only identify can omit `anonymous_id`. Arbitrary identified-person merges are unsupported. See [identity rules](data-and-identity.md).
+This message requests a link between `browser-7` and `user-42`, and updates current traits. It does not rewrite the original actor in earlier events. A target-only identify can omit `anonymous_id`. Arbitrary identified-person merges are unsupported. See [identity rules](../data-and-identity.md).
 
 An identify is a control message, not an ordinary analytics occurrence. It is excluded from ordinary event counts. The native endpoint does not accept anonymous-only trait updates; the Segment adapter separately supports Segment's anonymous identify semantics.
 
@@ -115,7 +115,7 @@ For native and Segment messages, replay identity is the tuple of authenticated p
 
 A source-bound PostHog writer joins the same scheme using its event UUID as the producer message ID. Unbound PostHog ingestion retains the legacy UUID namespace and reserved source `posthog`. It does not automatically deduplicate with unbound native or Segment messages.
 
-The first accepted message wins. A retry with changed properties does not edit the event. Corrections use [event management operations](events.md). Native receipts return `message_id`, a decimal-string `event_id`, an opaque `uuid` used by management routes, and `duplicate`. Clients preserve these values exactly and do not decode the UUID's internal format.
+The first accepted message wins. A retry with changed properties does not edit the event. Corrections use [event management operations](../events.md). Native receipts return `message_id`, a decimal-string `event_id`, an opaque `uuid` used by management routes, and `duplicate`. Clients preserve these values exactly and do not decode the UUID's internal format.
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
@@ -158,13 +158,13 @@ Current person traits are not a snapshot of what was true at the event's occurre
 
 The adapters preserve business values, but their metadata layouts are not identical. PostHog browser, page, and session fields remain supported reserved properties. Native uses `context`. Segment keeps `context` and copies supported page properties into `context.page`. Porcupine does not yet flatten all three into a universal browser object. Agents inspect the stored schema before assuming where a property lives.
 
-The equivalent live journey is available as [native JSON](../examples/events/native.json), [Segment JSON](../examples/events/segment.json), and [PostHog JSON](../examples/events/posthog.json). Credentials are absent from these files. The test suite sends each journey through its real adapter, verifies the original times and identity link, then retries through all three with the same configured source.
+The equivalent live journey is available as [native JSON](../../examples/events/native.json), [Segment JSON](../../examples/events/segment.json), and [PostHog JSON](../../examples/events/posthog.json). Credentials are absent from these files. The test suite sends each journey through its real adapter, verifies the original times and identity link, then retries through all three with the same configured source.
 
 ## Historical records
 
 A native historical message uses the live shape with mandatory `message_id` and `timestamp`. Files are UTF-8 JSONL, one message per line. Historical `track` and `pageview` records become analytics events. An `identify` contributes explicit historical identity evidence; its `set` and `set_once` fields are never replayed as current traits.
 
-Use `porcupine import --project PROJECT_ID --format native FILE_OR_DIRECTORY` for historical data. A backdated message sent to the live endpoint still follows live identity and pipeline behavior. It is not a substitute for historical import. [Import guide](imports.md)
+Use `porcupine import --project PROJECT_ID --format native FILE_OR_DIRECTORY` for historical data. A backdated message sent to the live endpoint still follows live identity and pipeline behavior. It is not a substitute for historical import. [Import guide](../imports.md)
 
 Historical import distinguishes these record semantics:
 

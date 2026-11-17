@@ -1,6 +1,6 @@
 # Analytics API reference
 
-For a first query with your agent or CLI, follow [Query your events](query-events.md). This reference describes the DuckDB SQL dialect. Always inspect the running instance's schema before generating SQL.
+For a first query with your agent or CLI, follow [Query your events](../query-events.md). This reference describes the DuckDB SQL dialect. Always inspect the running instance's schema before generating SQL.
 
 Every request targets one project and requires `events:read`. HTTP and the CLI accept an API-audience service key or OAuth token. MCP requires an MCP-audience credential. There are no prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
@@ -136,7 +136,7 @@ DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 
 
 ## Large result exports
 
-[SQL result exports](exports.md) use the project's validated dialect with background admission, operator budgets, durable job state, cancellation, and private gzip CSV or JSONL downloads. They do not raise interactive output limits or rewrite SQL into pages. All export operations require project-scoped `events:read`; cancellation also requires the creator credential or instance administration.
+[SQL result exports](../exports.md) use the project's validated dialect with background admission, operator budgets, durable job state, cancellation, and private gzip CSV or JSONL downloads. They do not raise interactive output limits or rewrite SQL into pages. All export operations require project-scoped `events:read`; cancellation also requires the creator credential or instance administration.
 
 A delivery barrier waits for accepted originals and mutations through the job's watermarks. It does not exclude later writes. URLs appear only after the whole attempt succeeds.
 
@@ -155,13 +155,13 @@ The published v0.14.0 release uses these fixed interactive limits:
 
 Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
 
-**Unreleased:** [tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting.md#unreleased-interactive-query-ceilings) replace fixed interactive limits with configurable bounds. Their defaults remain the values above. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This exposes configured allowances, including the monthly ingestion budget, but no aggregate tenant consumption. SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls. These tenant controls are not in v0.14.0.
+**Unreleased:** [tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting-options.md#unreleased-interactive-query-ceilings) replace fixed interactive limits with configurable bounds. Their defaults remain the values above. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This exposes configured allowances, including the monthly ingestion budget, but no aggregate tenant consumption. SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls. These tenant controls are not in v0.14.0.
 
 ## Delivery consistency and errors
 
 Successful schema, catalog, and query responses include project-scoped delivery state. `pending` counts queued originals; `pending_mutations` counts corrections and deletions. `last_success` is optional. `oldest_pending_received_at` identifies the earliest pending original by acceptance order. A generic `error` appears only when the project has pending work.
 
-Results are eventually consistent. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
+Results are eventually consistent. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](../events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 

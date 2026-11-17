@@ -1,5 +1,7 @@
 # Sign in with Google or another OpenID Connect provider
 
+Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+
 **Unreleased.** Use a development server and CLI from the same version. The published v0.14.0 OIDC configuration does not provide this combined login model.
 
 Porcupine can verify an invited person's identity through Google or an operator-configured OpenID Connect provider. Email OTP remains available when SMTP is configured. Both methods use the same Porcupine human account, tenant memberships, and project permissions. The identity provider authenticates the person; it does not assign their Porcupine access.
@@ -44,7 +46,7 @@ Discovery, authorization, token, and JWKS endpoints require HTTPS except on loop
 
 Configure [SMTP delivery](email-transport.md) to keep email codes alongside Google. The browser then offers both methods. A person who uses either method reaches the same Porcupine consent page and can connect another tool without another membership invitation.
 
-With OIDC configured and no SMTP, invited people can still sign in with the provider. Porcupine authorizes their account and membership without sending an invitation notice. Give them the instance URL and the [tool connection instructions](connect-tools.md). No one-time login code is created by an invitation.
+With OIDC configured and no SMTP, invited people can still sign in with the provider. Porcupine authorizes their account and membership without sending an invitation notice. Give them the instance URL and the [tool connection instructions](../connect-tools.md). No one-time login code is created by an invitation.
 
 ## Invite people before they connect
 
@@ -58,7 +60,7 @@ For Google, automatic first linking requires a Gmail address or an authoritative
 
 The upstream Google client identifies Porcupine to Google. It is different from the downstream client that identifies Codex, a CLI, ChatGPT, or Claude to Porcupine. Never put the Google client secret in an agent's MCP configuration.
 
-The local CLI and compatible local MCP tools use Porcupine's public PKCE clients. Run `porcupine login` for analysis, `porcupine login --tenant-admin` to select a tenant you administer, or `porcupine login --admin` for instance administration. Each administrative command requires that account's actual role. See [connect your tools](connect-tools.md) and [team administration](connect-your-team.md).
+The local CLI and compatible local MCP tools use Porcupine's public PKCE clients. Run `porcupine login` for analysis, `porcupine login --tenant-admin` to select a tenant you administer, or `porcupine login --admin` for instance administration. Each administrative command requires that account's actual role. See [connect your tools](../connect-tools.md) and [team administration](connect-your-team.md).
 
 For a hosted client, register its exact callback with Porcupine through the OAuth client management API. Keep its requested scopes within the rights needed by that application. The registration limits what the application may request; the current human account and memberships limit what it can receive.
 

@@ -1,5 +1,7 @@
 # Configure backups with Compose
 
+Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+
 Keep the instance's existing proxy, sign-in, analytical storage, and release overlays. Add one backup overlay for the destination you need.
 
 | Destination | Overlay | Guide |

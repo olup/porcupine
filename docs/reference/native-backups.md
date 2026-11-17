@@ -1,5 +1,7 @@
 # Configure native backups
 
+Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+
 **Unreleased storage layout.** Tenant-enabled development builds keep control metadata and the ingestion journal in separate SQLite files. Their `porcupine-native-v2` backups require the matching development server and CLI. This version does not restore the single-database bundles produced by v0.14.0.
 
 Porcupine supports local backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.

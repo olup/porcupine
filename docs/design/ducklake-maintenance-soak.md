@@ -1,6 +1,8 @@
 # Repeated DuckLake maintenance under product analytics load
 
-This is a historical development record. Its measurements and comparison results describe the tested revision, not the current supported deployment. Old commands, external-database setup, and build tags below belong to that revision. For current use, read [hosting](hosting.md), [storage](storage.md), and [load testing](load-testing.md). The earlier external-database implementation remains on `reference/clickhouse-before-ducklake`.
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
+This is a historical development record. Its measurements and comparison results describe the tested revision, not the current supported deployment. Old commands, external-database setup, and build tags below belong to that revision. For current use, read [hosting](../hosting.md), [storage](../storage.md), and [load testing](load-testing.md). The earlier external-database implementation remains on `reference/clickhouse-before-ducklake`.
 
 This investigation follows the [single-pass maintenance measurements](ducklake-maintenance.md). It tests whether small native compaction passes keep working during continuous ingestion, and whether the compactor can run without Porcupine's event-projection mutex. Normal event projection remains serialized.
 

@@ -1,6 +1,6 @@
 # SDK compatibility tests
 
-This guide is for contributors who run the SDK contract suite or change a supported SDK version. To configure an application, use the [PostHog capture guide](compatibility.md).
+This guide is for contributors who run the SDK contract suite or change a supported SDK version. To configure an application, use the [PostHog capture guide](../reference/compatibility.md).
 
 ## Run the suite
 
@@ -39,7 +39,7 @@ successful response with a 503, then observes the SDK resend the same UUID. The
 read API must show one logical event. This proves retry deduplication for that
 scenario, not exactly-once delivery under every failure.
 
-Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journeys verify SQL identity resolution for historical events.
+Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](../data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journeys verify SQL identity resolution for historical events.
 
 The browser tests use fetch and a bot-filter override so headless Chromium can send events. The example above restores normal SDK bot filtering for application use.
 
@@ -83,4 +83,4 @@ See the [pinned SDK checks](https://github.com/olup/porcupine/actions/workflows/
 
 ## Cookieless contract
 
-The cookieless profile is checked with real Chromium contexts and deterministic Go tests. See the [capture behavior](compatibility.md#cookieless-product-default) and [identity contract](data-and-identity.md#cookieless-by-default).
+The cookieless profile is checked with real Chromium contexts and deterministic Go tests. See the [capture behavior](../reference/compatibility.md#cookieless-product-default) and [identity contract](../data-and-identity.md#cookieless-by-default).

@@ -1,4 +1,6 @@
-"""Publish each guide as HTML and its original Markdown from one source."""
+"""Publish HTML and readable Markdown from the same guide sources."""
+import json
+import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
@@ -7,7 +9,9 @@ from mkdocs.structure.files import File
 from mkdocs.utils import get_relative_url
 
 ROOT = Path(__file__).resolve().parents[1]
+RELOCATED = json.loads((ROOT / "docs-theme/relocated-guides.json").read_text())
 GENERATED = {"quickstart.md": "README.md", "cli.md": "cli/README.md"}
+GENERATED.update({old: "docs/" + new for old, new in RELOCATED.items()})
 
 
 def on_config(config):
@@ -27,6 +31,7 @@ def generated_content(target, source):
 
 
 def on_files(files, config):
+    # Old public guide URLs remain useful to installed clients and external links.
     for target, source in GENERATED.items():
         files.append(File.generated(config, target, content=generated_content(target, source)))
     return files
@@ -37,22 +42,31 @@ def on_page_markdown(markdown, page, config, files):
 
 
 def rewrite_links(markdown, source_uri):
-    source_dir = ROOT / GENERATED.get(source_uri, "docs/" + source_uri)
+    source = ROOT / GENERATED.get(source_uri, "docs/" + source_uri)
+
     def destination(match):
         href = match.group(1)
         parsed = urlsplit(href)
-        if parsed.scheme or href.startswith("#"):
+        if parsed.scheme or href.startswith(("#", "/")):
             return match.group(0)
-        target = (source_dir.parent / parsed.path).resolve()
-        relative = target.relative_to(ROOT).as_posix()
+        target = (source.parent / parsed.path).resolve()
+        try:
+            relative = target.relative_to(ROOT).as_posix()
+        except ValueError:
+            return match.group(0)
         mapped = {"README.md": "quickstart.md", "cli/README.md": "cli.md"}
-        if relative in mapped:
-            return "](" + mapped[relative] + ("#" + parsed.fragment if parsed.fragment else "") + ")"
+        doc_target = mapped.get(relative)
         if relative.startswith("docs/") and relative.endswith(".md"):
-            return "](" + relative.removeprefix("docs/") + ("#" + parsed.fragment if parsed.fragment else "") + ")"
+            doc_target = relative.removeprefix("docs/")
+            doc_target = RELOCATED.get(doc_target, doc_target)
+        fragment = "#" + parsed.fragment if parsed.fragment else ""
+        if doc_target:
+            destination_uri = os.path.relpath(doc_target, str(Path(source_uri).parent))
+            return "](" + destination_uri + fragment + ")"
         if target.is_file():
-            return "](https://github.com/olup/porcupine/blob/main/" + relative + ("#" + parsed.fragment if parsed.fragment else "") + ")"
+            return "](https://github.com/olup/porcupine/blob/main/" + relative + fragment + ")"
         return match.group(0)
+
     markdown = re.sub(r"\]\(([^)\s]+)\)", destination, markdown)
     if source_uri == "quickstart.md":
         markdown = markdown.replace('src="site/assets/', 'src="/porcupine/assets/')
@@ -66,11 +80,15 @@ def on_page_context(context, page, config, nav):
 
 def on_post_build(config):
     output = Path(config.site_dir)
-    for source in (ROOT / "docs").glob("*.md"):
-        (output / source.name).write_bytes(source.read_bytes())
+    for source in (ROOT / "docs").rglob("*.md"):
+        relative = source.relative_to(ROOT / "docs")
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(rewrite_links(source.read_text(), relative.as_posix()))
     for name, source in GENERATED.items():
-        (output / name).write_text(rewrite_links(generated_content(name, source), name))
-    # Preserve relative links in raw Markdown as well.
+        destination = output / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(rewrite_links(generated_content(name, source), name))
     (output.parent / "README.md").write_bytes((ROOT / "README.md").read_bytes())
     (output.parent / "cli").mkdir(exist_ok=True)
     (output.parent / "cli" / "README.md").write_bytes((ROOT / "cli/README.md").read_bytes())

@@ -10,14 +10,14 @@ OUTPUT = ROOT / "bin/docs-web/porcupine"
 
 def main():
     version = check_release()
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_docs*.py"], cwd=ROOT, check=True)
     subprocess.run([sys.executable, "-m", "mkdocs", "build", "--strict", "--clean"], cwd=ROOT, check=True)
     shutil.copytree(ROOT / "site", OUTPUT, dirs_exist_ok=True)
     landing = OUTPUT / "index.html"
     landing.write_text(landing.read_text().replace("__PORCUPINE_RELEASE_TAG__", "v" + version))
     # Source links in raw Markdown retain their repository-relative locations.
-    for relative in [
-        "compat/matrix.json", "compat/profiles.mjs",
-        "compose.yaml", "compose.oauth.yaml", "compose.exports.yaml",
+    for relative in ["compat/matrix.json", "compat/profiles.mjs"] + [
+        path.name for path in sorted(ROOT.glob("compose*.yaml"))
     ]:
         source = ROOT / relative
         destination = OUTPUT / relative

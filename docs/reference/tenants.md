@@ -120,12 +120,12 @@ Shared mode reserves tenant places immediately in PostgreSQL across workers, whi
 
 Effective limits are the lower of the tenant budget and the deployment ceiling. The deployment defaults are two analytical places, 5,000 ms, 1,000 rows, and 1 MiB. Increasing a tenant budget cannot raise a deployment ceiling. Existing background exports and pipelines keep their separate execution budgets and deployment-level admission controls.
 
-A project reader can call `get-event-schema` to see configured `tenant_budgets`, `deployment_limits`, and effective interactive `limits`. The configured monthly allowance is visible; aggregate tenant consumption is not. Use [query discovery](query-events.md) before building a query, and [exports](exports.md) for a larger result. Operators configure deployment ceilings in the [hosting guide](hosting.md#unreleased-interactive-query-ceilings).
+A project reader can call `get-event-schema` to see configured `tenant_budgets`, `deployment_limits`, and effective interactive `limits`. The configured monthly allowance is visible; aggregate tenant consumption is not. Use [query discovery](../query-events.md) before building a query, and [exports](../exports.md) for a larger result. Operators configure deployment ceilings in the [hosting guide](hosting-options.md#unreleased-interactive-query-ceilings).
 
 ## Deployment boundary
 
 The default uses separate control and journal SQLite files in one Porcupine process. The journal performs exact transactional ingestion accounting; control stores policy and replayable aggregate usage. Each batch refreshes policy under a local admission lock, which also serializes operator budget changes. Tenant usage reads reconcile journal high-water counters into control without double-counting. Query admission remains local. The optional unreleased [shared deployment](shared-deployment.md) uses PostgreSQL metadata, shared query reservations, ten-second usage publication and policy refresh, owner-local SQLite queues, and S3 Parquet. No event payloads enter operational PostgreSQL or PostgreSQL-backed DuckLake catalogs.
 
-Hosted billing, rate limits across workers, replicated acceptance, automatic owner failover, and separately provisioned query compute remain [future architecture work](roadmap.md#future-saas-architecture-to-evaluate).
+Hosted billing, rate limits across workers, replicated acceptance, automatic owner failover, and separately provisioned query compute remain [future architecture work](../roadmap.md#hosted-architecture-to-evaluate).
 
 The unreleased tenant schema requires a fresh data directory. A pre-tenant or combined control/journal SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.

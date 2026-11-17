@@ -1,10 +1,12 @@
 # Shared metadata and owner-local event queues
 
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
 This pre-launch change supports two configurations of the same published server.
 The default keeps separate control and journal SQLite files with local DuckLake catalogs. Shared deployment adds
 PostgreSQL control metadata and PostgreSQL DuckLake catalogs with S3 data files.
 No existing-data migration, commercial fork or billing service is introduced.
-See [shared deployment](shared-deployment.md) for the operator instructions.
+See [shared deployment](../reference/shared-deployment.md) for the operator instructions.
 
 ## The storage boundary
 

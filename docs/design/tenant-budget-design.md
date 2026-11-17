@@ -1,5 +1,7 @@
 # Tenant and budget boundaries
 
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
 This change adds tenant ownership and operator-configured budgets to the existing
 single-process SQLite deployment. It does not add a hosted billing service,
 PostgreSQL, distributed workers, or isolated analytical compute.

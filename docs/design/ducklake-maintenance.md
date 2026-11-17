@@ -1,5 +1,7 @@
 # DuckLake maintenance investigation
 
+> Historical record: this page documents a past design or validation and is not a guide to the current release.
+
 This records the initial single-pass investigation on 13 November 2026. The [sustained follow-up](ducklake-maintenance-soak.md) tests repeated passes and concurrent lifecycle operations, and describes the maintenance policy selected for v0.11.0. Statements below about unchanged defaults refer to that earlier checkpoint.
 
 The measured delay came from file compaction while Porcupine held its project write mutex. Flushing inlined data took about 31 ms; compaction took about 7.82 seconds. Receiving events into SQLite and reading existing analytical data do not acquire that mutex. The load run accepted every event and every reader request succeeded, but its pooled timings do not establish which requests finished during the hold.

@@ -4,7 +4,7 @@ A project separates event data, identities, and delivery pipelines. Every analyt
 
 **Unreleased:** every project belongs to a [tenant](tenants.md), which shares usage budgets across its projects. Fresh installations provide the tenant `default`. A tenant membership can grant selected projects or all current and future projects in that tenant. Project permissions still control each action; tenant ownership alone does not grant access. These changes are not in v0.14.0.
 
-Use the [CLI](../cli/README.md), HTTP API, or a connected MCP agent. For v0.14.0, set `PORCUPINE_URL` and run `porcupine login --admin` with an instance administrator's email address. In tenant-enabled development builds, a tenant administrator uses `porcupine login --tenant-admin` and selects the team. See [tenant access](tenant-access.md).
+Use the [CLI](../../cli/README.md), HTTP API, or a connected MCP agent. For v0.14.0, set `PORCUPINE_URL` and run `porcupine login --admin` with an instance administrator's email address. In tenant-enabled development builds, a tenant administrator uses `porcupine login --tenant-admin` and selects the team. See [tenant access](tenant-access.md).
 
 ## List and create projects
 

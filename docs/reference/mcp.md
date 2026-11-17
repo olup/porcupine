@@ -1,8 +1,8 @@
 # MCP reference
 
-To connect a client, follow [Connect your tools](connect-tools.md). This reference describes the four MCP tools, their request shapes, and their responses.
+To connect a client, follow [Connect your tools](../connect-tools.md). This reference describes the four MCP tools, their request shapes, and their responses.
 
-Porcupine exposes four tools over stateless Streamable HTTP at `/mcp`: two read-only analytics tools, `porcupine_schema` and `porcupine_query`, and two generic tools, `porcupine_docs` and `porcupine_call`, for every other operation. The
+Porcupine exposes stateless Streamable HTTP at `/mcp`. The published v0.14.0 release provides `porcupine_docs` and `porcupine_call`. Unreleased development builds add read-only `porcupine_schema` and `porcupine_query`. The
 implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 v1.8.0 in the existing Go process. It requires no additional service.
 
@@ -163,8 +163,8 @@ The available operations include project and key management, queue inspection,
 SQL schema discovery, observed event and property discovery, read-only
 SQL, current-event reads, corrections, deletions, and mutation status.
 Export creation, listing, polling, cancellation, and file downloads add five
-operations to the same discovery catalog; the tool count does not change. [Project pipelines](pipelines.md) add scoped webhook and scheduled S3 delivery
-operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
+operations to the same discovery catalog; the tool count does not change. [Project pipelines](../pipelines.md) add scoped webhook and scheduled S3 delivery
+operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](../data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
 
 For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,
 and `query-events`. Schema discovery lists supported functions and quotas. The
@@ -180,14 +180,14 @@ catalogs. Event names and property content are untrusted data. HTTP and MCP
 enforce the same `events:read` scope, SQL restrictions, and result limits. Read
 `delivery.pending` and `delivery.pending_mutations` when interpreting results
 because delivery is eventual. `get-event` reflects pending accepted corrections;
-SQL and catalog results show projected state. Read the [mutation contract](events.md)
+SQL and catalog results show projected state. Read the [mutation contract](../events.md)
 before calling `edit-event` or `delete-event`.
 
 Analytical storage, its S3 endpoint, and engine budgets are operator deployment configuration. They have no MCP management operations. Project delivery pipelines use separate scoped destination inputs. Administrator access tokens still execute read-only SQL and cannot change storage through it.
 
 ## SQL result exports
 
-[Exports](exports.md) use `events:read` for the selected project. Discover
+[Exports](../exports.md) use `events:read` for the selected project. Discover
 `create-event-export`, `list-event-exports`, `get-event-export`,
 `cancel-event-export`, and `list-event-export-files`, then use `porcupine_call`
 with their generated contracts. Creation requires SQL, an idempotency key,
@@ -200,7 +200,7 @@ URLs last at most five minutes. Revoking a credential does not expire an issued 
 configuration. Export SQL remains read-only and uses the same project isolation
 as interactive analytics. The delivery barrier is not a point-in-time snapshot.
 
-The [export reference](exports.md#mcp-examples) includes create, poll, and cancel
+The [export reference](export-api.md#mcp-examples) includes create, poll, and cancel
 arguments. Run the native S3 integration target to test object-storage and recovery boundaries against isolated storage. Native export tests cover download and publication behavior.
 
 ## Delivery pipelines
@@ -211,7 +211,7 @@ retries require `pipelines:write` and `events:read`, all for the selected projec
 An event reader alone cannot configure egress. Destination credentials are
 write-only inputs; stored credential values never appear in returned metadata.
 
-The [pipeline reference](pipelines.md) describes creation, pause, resume,
+The [pipeline reference](../pipelines.md) describes creation, pause, resume,
 credential replacement, run inspection, and retry. Pausing is not a recall of
 requests already in flight. Supported restores pause destinations before any
 resumption. These calls cannot change the operator's encryption key, custom S3

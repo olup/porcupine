@@ -1,6 +1,6 @@
 # Native and Segment ingestion
 
-The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. Version v0.14.0 exposes JSON Schema discovery and [historical imports](imports.md) for native, PostHog, and Segment JSONL.
+The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. Version v0.14.0 exposes JSON Schema discovery and [historical imports](../imports.md) for native, PostHog, and Segment JSONL.
 
 Native, Segment and supported [PostHog inputs](compatibility.md) write to the same project event table. Choose a stable producer message ID for each original event so that a retry returns the same event ID.
 
@@ -47,7 +47,7 @@ Save the following as `journey.json`. A timestamp can be supplied in RFC 3339 fo
 ]
 ```
 
-The pageview and purchase become two queryable rows. The identify operation updates the profile and links the earlier visit. Subsequent trait updates can omit `anonymous_id`. A conflicting link is ignored and contributes to the response's `identity_ignored` count. See the [identity rules](data-and-identity.md). Native ordinary messages may omit `actor_id`. An inventory update can therefore contribute to event totals without creating a user. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` when counting known or pseudonymous actors.
+The pageview and purchase become two queryable rows. The identify operation updates the profile and links the earlier visit. Subsequent trait updates can omit `anonymous_id`. A conflicting link is ignored and contributes to the response's `identity_ignored` count. See the [identity rules](../data-and-identity.md). Native ordinary messages may omit `actor_id`. An inventory update can therefore contribute to event totals without creating a user. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` when counting known or pseudonymous actors.
 
 ### Receipts and logical sources
 
@@ -79,7 +79,7 @@ analytics.track({
 await analytics.flush({ timeout: 10000 })
 ```
 
-The adapter accepts Segment destination routing options without storing credentials from those options or dispatching to Segment destinations. Configure outbound delivery through [Porcupine pipelines](pipelines.md).
+The adapter accepts Segment destination routing options without storing credentials from those options or dispatching to Segment destinations. Configure outbound delivery through [Porcupine pipelines](../pipelines.md).
 
 | Segment input | Porcupine result |
 | --- | --- |

@@ -16,17 +16,17 @@ A process can stop after the analytical commit and before SQLite acknowledgment.
 
 SQLite keeps project-and-UUID receipts indefinitely. There is no finite receipt eviction mode. Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have their own storage costs.
 
-The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](ducklake-maintenance.md)
+The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](../design/ducklake-maintenance.md)
 
 Porcupine leases only the project currently undergoing maintenance. Projects waiting for their turn remain evictable, and maintenance skips candidates evicted or deleted in the meantime. This prevents a maintenance pass from occupying every resident-engine slot and rejecting an otherwise admissible cold-project query. These changes are not in v0.12.1.
 
 ## Identity, edits, and deletion
 
-Supported identity controls commit authoritative SQLite changes and their queued projections in the capture transaction. Analytical views resolve project-local identities and profile versions after projection. A capture acknowledgment can precede identity visibility in SQL. [Identity contract](data-and-identity.md)
+Supported identity controls commit authoritative SQLite changes and their queued projections in the capture transaction. Analytical views resolve project-local identities and profile versions after projection. A capture acknowledgment can precede identity visibility in SQL. [Identity contract](../data-and-identity.md)
 
 Edits and deletions commit a revision head, audit metadata, and pending projection before returning `202`. Revision checks prevent lost updates, and each event can have one pending mutation. The bounded mutation outbox retains its exact payload until analytical acknowledgment, then removes it in the transaction that marks the audit applied. Audit metadata retains no before-and-after values.
 
-A deleted event returns `410` from the current-event API after acceptance. SQL excludes it after its tombstone projects. A late original or stale correction cannot resurrect it. Tombstones remain for retry protection. This is logical deletion: historical DuckLake snapshots, SQLite free pages or WAL, backups, and external copies can retain old payloads. Porcupine schedules snapshot expiration and obsolete-file cleanup, but does not promise physical erasure within 30 days. [Mutation API](events.md) · [Storage](storage.md)
+A deleted event returns `410` from the current-event API after acceptance. SQL excludes it after its tombstone projects. A late original or stale correction cannot resurrect it. Tombstones remain for retry protection. This is logical deletion: historical DuckLake snapshots, SQLite free pages or WAL, backups, and external copies can retain old payloads. Porcupine schedules snapshot expiration and obsolete-file cleanup, but does not promise physical erasure within 30 days. [Mutation API](../events.md) · [Storage](../storage.md)
 
 ## Whole-project deletion
 
@@ -46,10 +46,10 @@ Manual full-volume restoration also restores credentials and destination state. 
 
 Webhook enqueueing commits with event acceptance. A lost receiver acknowledgment can redeliver the same stable delivery ID, so receivers must deduplicate before applying side effects. Batch retries preserve each attempted payload.
 
-Scheduled S3 queries publish a conditional manifest after every output file succeeds. SQLite advances the window cursor only after reading that manifest back. Interrupted attempts can rerun a whole query. A conflicting commit marker fails closed. Successful files are independent external copies and do not change after source edits or deletions. [Pipeline contract](pipelines.md)
+Scheduled S3 queries publish a conditional manifest after every output file succeeds. SQLite advances the window cursor only after reading that manifest back. Interrupted attempts can rerun a whole query. A conflicting commit marker fails closed. Successful files are independent external copies and do not change after source edits or deletions. [Pipeline contract](../pipelines.md)
 
 ## Verification
 
-`make test-race` exercises real native storage, query restrictions, HTTP and MCP journeys, identity, revisions, retries, project isolation, cancellation, and restart under the race detector. The stopped-volume restore test covers matching paths and queued work. `make ducklake-smoke` runs the compiled native server and standalone CLI. Capacity measurements and their limits are linked from the [DuckLake validation report](ducklake-validation.md).
+`make test-race` exercises real native storage, query restrictions, HTTP and MCP journeys, identity, revisions, retries, project isolation, cancellation, and restart under the race detector. The stopped-volume restore test covers matching paths and queued work. `make ducklake-smoke` runs the compiled native server and standalone CLI. Capacity measurements and their limits are linked from the [DuckLake validation report](../design/ducklake-validation.md).
 
 `make check` exercises the native Go contracts. Native race, S3, compiled CLI, SDK compatibility, and restore checks cover their respective boundaries. The server requires a C/C++ toolchain for DuckDB; the standalone CLI remains CGO-free.

@@ -1,6 +1,6 @@
 # Shared PostgreSQL deployment
 
-**Unreleased.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the implemented deployment contract, not a production availability guarantee. For a single-server setup, compare the [SQLite and PostgreSQL modes](hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
+**Unreleased.** The published v0.14.0 server does not support this configuration. Use the matching development server and CLI. This guide describes the implemented deployment contract, not a production availability guarantee. For a single-server setup, compare the [SQLite and PostgreSQL modes](../hosting.md#choose-local-sqlite-or-shared-postgresql-unreleased) first.
 
 The same server binary has two modes. The default keeps control metadata in one local SQLite file and accepted events and jobs in a separate SQLite journal, with local DuckLake catalogs. Shared mode moves control metadata and DuckLake catalogs to PostgreSQL and analytical files to S3. Every worker still needs its own persistent SQLite volume.
 
@@ -118,4 +118,4 @@ The native whole-instance backup scheduler and offline restore are not supported
 - Every worker's complete SQLite and managed local volume, including upload and job files.
 - Deployment identities, keys, credentials, configuration, and the matching server build.
 
-Do not restore one worker bundle over live shared metadata or treat an S3 bucket listing as a complete backup. Validate coordinated recovery in isolation before promising service availability or loss bounds. [Storage boundaries](storage.md) · [Architecture](architecture.md)
+Do not restore one worker bundle over live shared metadata or treat an S3 bucket listing as a complete backup. Validate coordinated recovery in isolation before promising service availability or loss bounds. [Storage boundaries](../storage.md) · [Architecture](../architecture.md)

@@ -13,7 +13,7 @@ Event mutations use project-scoped permissions and durable SQLite acceptance. An
 | `delete-event` | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` | `202` |
 | `get-event-mutation` | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` | `200` |
 
-Use a [service key](service-keys.md) or [OAuth token](oauth.md) with the required project grant and the audience of the interface. The CLI and HTTP API use the API audience. The same operations are available through [MCP](mcp.md) with the MCP audience. Use the mutation endpoints to correct or delete individual events. To remove an entire project, see [project deletion](management-api.md#operations).
+Use a [service key](reference/service-keys.md) or [OAuth token](reference/oauth.md) with the required project grant and the audience of the interface. The CLI and HTTP API use the API audience. The same operations are available through [MCP](reference/mcp.md) with the MCP audience. Use the mutation endpoints to correct or delete individual events. To remove an entire project, see [project deletion](reference/management-api.md#operations).
 
 ## Current accepted event
 
@@ -23,7 +23,7 @@ Use a [service key](service-keys.md) or [OAuth token](oauth.md) with the require
 
 SQL and catalog discovery read the latest projected analytical state. They can therefore return an older revision until mutation delivery completes. Delivery status adds `pending_mutations` alongside `pending` original events. No cross-database snapshot joins these states.
 
-DuckLake has no result cache. SQL executes against projected state; it does not wait for pending mutations. `get-event` reads current accepted state, including pending corrections. See [delivery consistency](analytics.md#delivery-consistency-and-errors).
+DuckLake has no result cache. SQL executes against projected state; it does not wait for pending mutations. `get-event` reads current accepted state, including pending corrections. See [delivery consistency](reference/analytics.md#delivery-consistency-and-errors).
 
 ## Full event replacement
 
@@ -77,4 +77,4 @@ The audit retains actor, operation, revision, time, idempotency hash, request di
 
 ## Reclaim historical storage
 
-After mutation delivery, current analytics reflect the deletion. DuckLake can retain the old payload in historical snapshots and obsolete files. Porcupine schedules [native cleanup](ducklake-cleanup.md), with deployment-wide retention and reader protection. That cleanup is separate from removing the event from current queries, and from retention of backups or external copies.
+After mutation delivery, current analytics reflect the deletion. DuckLake can retain the old payload in historical snapshots and obsolete files. Porcupine schedules [native cleanup](reference/ducklake-cleanup.md), with deployment-wide retention and reader protection. That cleanup is separate from removing the event from current queries, and from retention of backups or external copies.

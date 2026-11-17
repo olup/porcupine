@@ -94,7 +94,7 @@ Invite a reader to that project:
 porcupine invite-tenant-member --tenant-id TENANT_ID --body '{"email":"analyst@example.org","role":"member","project_scope":"selected","grants":[{"project_id":"PROJECT_ID","role":"reader"}]}'
 ```
 
-A reader can discover events and run SQL, without ingesting, correcting, or deleting events. The person connects their own tool with ordinary `porcupine login`, or follows [Connect your tools](connect-tools.md) for MCP. Their consent selects the project and requested scopes.
+A reader can discover events and run SQL, without ingesting, correcting, or deleting events. The person connects their own tool with ordinary `porcupine login`, or follows [Connect your tools](../connect-tools.md) for MCP. Their consent selects the project and requested scopes.
 
 For different access on two projects, give each grant its own role or permission list:
 
