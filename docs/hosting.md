@@ -32,7 +32,7 @@ make build
 
 The server loads `porcupine.json` by default. Select another file with `--config FILE` or `PORCUPINE_CONFIG`. Existing environment variables override matching file settings. Unknown JSON keys and unknown `PORCUPINE_` variables are errors.
 
-The main sections group storage, queue, query, OAuth, email, OIDC, analytical S3, exports, backups, and shared metadata. For example, these fields choose the local files and query ceilings inside the generated config:
+The main sections group storage, queue, query, OAuth, email, OIDC, analytical S3, exports, backups, and shared metadata. See the [configuration key reference](reference/configuration.md). For example, these fields choose the local files and query ceilings inside the generated config:
 
 ```json
 {
