@@ -324,7 +324,7 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now().UTC()
-	start, end := tenantMonth(now)
+	start, _ := tenantMonth(now)
 	month := start.Format(time.RFC3339)
 	if p.month != month || time.Since(p.refreshed) >= hostedPolicyRefreshInterval {
 		// One grouped shared read, never a per-event control call or escrow.
