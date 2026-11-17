@@ -32,6 +32,8 @@ Shared mode requires a PostgreSQL catalog and S3 whenever analytics is enabled. 
 
 Each operational database records a schema version: SQLite in `PRAGMA user_version`, shared PostgreSQL control in `metadata.schema_version`. On start, the server applies the missing numbered steps in one transaction. It refuses a database written by a newer release, and an unversioned database it does not recognize, before changing anything. A native backup restores at its own version; the next start upgrades it.
 
+Each project DuckLake catalog records its own version in `lake.schema_version`. Version 2 drops the per-row copy of the whole event, keeps an original snapshot only for corrected events, and partitions current events by year and month of occurrence. Opening an older catalog upgrades it in place; a catalog from a newer release is refused.
+
 ## Retention and deletion
 
 Live events have no automatic age limit. Edits and deletions change the current analytical state once projected. Payload-free heads preserve revision and deletion facts so a late original cannot resurrect deleted data.

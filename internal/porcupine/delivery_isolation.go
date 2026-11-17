@@ -35,11 +35,9 @@ func (s *Service) advanceDeliveryCursor(ctx context.Context, id int64) error {
 func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool, error) {
 	projections := make([]eventProjection, 0, len(batch))
 	for _, event := range batch {
-		snapshot, err := originalSnapshot(event)
-		if err != nil {
-			return false, err
-		}
-		projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
+		// Unedited events need no stored original: the first correction
+		// snapshots the current values, which are still the original.
+		projections = append(projections, eventProjection{Event: event})
 	}
 	if err := s.applyAnalyticalProjections(ctx, projections); err != nil {
 		return false, err

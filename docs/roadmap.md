@@ -15,6 +15,7 @@
 - Removed inert ClickHouse-era API fields: `use_cache` in `query-events` (now rejected), `sql.result_cache` and the zero scan-quota limits in `get-event-schema`, and the zero read and temporary-disk limits in exports.
 - Versioned schema migrations for the journal, local control and shared control databases. Newer or unknown databases are refused before any change, and restores accept older versions. [Schema versions](storage.md#unreleased-schema-versions)
 - Bounded retry receipts: `PORCUPINE_RECEIPT_RETENTION` (default 30 days, `0` keeps all). Older events are deduplicated against DuckLake event heads, including during imports. [Receipts](receipts.md#bounded-receipts)
+- DuckLake catalog schema version 2: no duplicated event payload, original snapshots only for corrected events, monthly partitions on `event_time`. On 20,000 synthetic events, current-event Parquet files are 48% smaller. Existing catalogs upgrade in place.
 - A fresh data directory is required. Pre-tenant SQLite databases are rejected; no legacy migration or compatibility layer is included.
 
 The default remains a single-process SQLite deployment. Optional shared mode is implementation work, not a released hosting guarantee. Hosted billing, tenant-wide rate limiting, replicated acceptance, automatic owner failover, and separately provisioned analytical compute remain future work below. None of these unreleased changes is included in the published v0.14.0 release.
