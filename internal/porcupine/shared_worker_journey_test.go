@@ -415,12 +415,13 @@ func TestSharedWorkerNativeCLIInterruptedImportResume(t *testing.T) {
 }
 
 type sharedJourneyProcessConfig struct {
-	DatabaseURL string
-	DBPath      string
-	WorkerID    string
-	OAuthIssuer string
-	ReadyFile   string
-	HostedLake  *lakeapi.DuckLakeConfig
+	DatabaseURL         string
+	DBPath              string
+	WorkerID            string
+	OAuthIssuer         string
+	ReadyFile           string
+	HostedLake          *lakeapi.DuckLakeConfig
+	HostedFlushInterval time.Duration
 }
 
 func TestSharedWorkerProcessHelper(t *testing.T) {
@@ -457,6 +458,14 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 			t.Error("worker close:", err)
 		}
 	}()
+	// Change the timer before the fixture accepts events. The scheduler reads
+	// the interval under the same lock.
+	if input.HostedLake != nil && input.HostedFlushInterval > 0 {
+		buffer := s.hosted.buffer
+		buffer.mu.Lock()
+		buffer.config.flushInterval = input.HostedFlushInterval
+		buffer.mu.Unlock()
+	}
 	server := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
 	done := make(chan error, 1)
@@ -495,7 +504,11 @@ func startSharedJourneyProcess(t *testing.T, config sharedJourneyProcessConfig) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(binary, "-test.run=^TestSharedWorkerProcessHelper$", "-test.timeout=60s")
+	timeout := 60 * time.Second
+	if config.HostedFlushInterval > 0 {
+		timeout += 2 * config.HostedFlushInterval
+	}
+	command := exec.Command(binary, "-test.run=^TestSharedWorkerProcessHelper$", "-test.timeout="+timeout.String())
 	command.Env = append(os.Environ(), "PORCUPINE_SHARED_JOURNEY_HELPER="+string(raw))
 	logfile, err := os.Create(filepath.Join(t.TempDir(), "worker.log"))
 	if err != nil {
