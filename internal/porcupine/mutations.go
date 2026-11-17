@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -377,7 +378,7 @@ func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventPr
 		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES($1,$2,$3,$4)`, seq, projection.ProjectID, projection.UUID, string(payload))
 	}
 	if err == nil && operation == "delete" {
-		err = s.cancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID)
+		err = delivery.CancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID, s.clock)
 		if err == nil {
 			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
 		}
