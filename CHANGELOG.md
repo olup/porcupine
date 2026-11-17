@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Retry bounded native transaction conflicts between local projection and inline-data maintenance without serializing the default maintenance path. Cancellation, validation errors and allocation recovery keep their separate handling.
 - Shared interactive queries renew execution-scoped reservations until the native call returns. Unresponsive or uncertain calls quarantine the affected project's interactive engine and degrade readiness instead of terminating the worker. Automatic reservation expiry accepts possible physical concurrency overshoot during a control-network partition.
 - Tenants with team administrators, project-scoped memberships, monthly ingestion allowances, and configurable interactive query concurrency, timeout, row, and byte limits.
 - Separate SQLite control and ingestion databases. Optional shared PostgreSQL stores control and DuckLake catalog metadata; event payloads remain in owner-local SQLite before S3 Parquet.

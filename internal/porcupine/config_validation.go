@@ -30,6 +30,9 @@ func ValidateConfig(c Config) error {
 			return errors.New("external settings require auth.mode external")
 		}
 	}
+	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
+		return err
+	}
 	if err := validateSharedConfiguration(c); err != nil {
 		return err
 	}

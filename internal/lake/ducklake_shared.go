@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	duckdb "github.com/duckdb/duckdb-go/v2"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -252,7 +251,7 @@ func (s *DuckLakeStore) deleteSharedNativeProject(ctx context.Context, project s
 }
 
 func (p *ProjectLake) markSharedDeleted(ctx context.Context) error {
-	return retrySharedNative(ctx, func() error {
+	return retryNativeTransaction(ctx, func() error {
 		tx, err := p.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -291,29 +290,6 @@ func (s *DuckLakeStore) openSharedDeletionProject(ctx context.Context, project, 
 		return fail()
 	}
 	return &ProjectLake{DB: db, shared: true}, nil
-}
-
-func retrySharedNative(ctx context.Context, operation func() error) error {
-	for attempt := 0; ; attempt++ {
-		err := operation()
-		if err == nil || attempt >= 15 || !isSharedNativeConflict(err) {
-			return err
-		}
-		timer := time.NewTimer(time.Duration(min(5*(attempt+1), 100)) * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-func isSharedNativeConflict(err error) bool {
-	// Bound diagnostics to native transaction errors; connection/authentication
-	// errors must never be retried based on server-provided strings.
-	var native *duckdb.Error
-	return errors.As(err, &native) && native.Type == duckdb.ErrorTypeTransaction
 }
 
 func minTime(a, b time.Time) time.Time {

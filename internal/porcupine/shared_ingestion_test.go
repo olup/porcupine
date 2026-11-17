@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/olup/porcupine/internal/auth"
@@ -45,6 +46,13 @@ func sharedIngestionTestService(t *testing.T, dsn, worker string) *Service {
 
 func sharedIngestionProject(t *testing.T, s *Service, id string) {
 	t.Helper()
+	if _, err := s.control.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$1,$3,'mixed') ON CONFLICT(id) DO NOTHING`, id, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
+	var tenant string
+	if err := s.control.QueryRow(`SELECT tenant_id FROM projects WHERE id=$1`, id).Scan(&tenant); err != nil || tenant != defaultTenantID {
+		t.Fatal("fixture project ownership differs from its local mirror", tenant, err)
+	}
 	_, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$1,$3,'mixed')`, id, defaultTenantID, now())
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +62,7 @@ func sharedIngestionProject(t *testing.T, s *Service, id string) {
 func sharedIngestionBatch(project, prefix string, n int) preparedLiveBatch {
 	batch := preparedLiveBatch{projectID: project}
 	for i := range n {
-		batch.events = append(batch.events, eventapi.Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()})
+		batch.events = append(batch.events, validatedLiveEvent{event: eventapi.Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()}})
 	}
 	return batch
 }
@@ -67,6 +75,86 @@ func sharedUsageCount(t *testing.T, s *Service) int64 {
 		t.Fatal(err)
 	}
 	return count
+}
+
+// Include complete rows so an overwritten identity or usage watermark is not
+// mistaken for an unchanged state merely because its row count stayed equal.
+func sharedAdmissionSnapshot(t *testing.T, s *Service) string {
+	t.Helper()
+	var snapshot []any
+	for _, table := range []string{"queue_usage", "events", "event_receipts", "identity_profiles", "identity_links", "tenant_usage", "shared_tenant_cache", "cookieless_keys", "webhook_deliveries"} {
+		rows, err := s.db.Query(`SELECT * FROM ` + table + ` ORDER BY 1,2`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			snapshot = append(snapshot, []any{table, values})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func sharedIdentityBatch(t *testing.T, project, prefix string) preparedLiveBatch {
+	t.Helper()
+	batch, err := prepareLiveBatch(project, "", eventBatch{
+		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},
+		{UUID: prefix + "-page", Event: "visited", DistinctID: "visitor", Properties: map[string]any{}},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return batch
+}
+
+func TestSharedIngestionRequiresAuthoritativeActiveProject(t *testing.T) {
+	t.Parallel()
+	s := sharedIngestionTestService(t, sharedPostgresDSN(t), "fenced-writer")
+	if _, err := s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('local-only',$1,'local-only',$2,'mixed')`, defaultTenantID, now()); err != nil {
+		t.Fatal(err)
+	}
+	assertRefused := func(project string) {
+		t.Helper()
+		before := sharedAdmissionSnapshot(t, s)
+		_, err := s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, project, "refused"), ingestionPeer{}, true)
+		var managed *managementError
+		if !errors.As(err, &managed) || managed.GetStatus() != 404 {
+			t.Fatal("inactive authoritative project did not return terminal 404", err)
+		}
+		if sharedAdmissionSnapshot(t, s) != before {
+			t.Fatal("refused acceptance changed journal, identity or quota")
+		}
+	}
+	assertRefused("local-only")
+	sharedIngestionProject(t, s, "active")
+	if _, err := s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "active", "before"), ingestionPeer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.beginTenantDeletion(t.Context(), defaultTenantID); err != nil {
+		t.Fatal(err)
+	}
+	// The local journal and fresh policy cache still exist. Neither authorizes
+	// admission after the authoritative deletion intent commits.
+	assertRefused("active")
 }
 
 func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
@@ -84,14 +172,14 @@ func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
 		}
 	}
 	first, err := a.acceptance.Accept(t.Context(), sharedIngestionBatch("a", "a", 6), ingestionPeer{}, true)
-	if err != nil || first.accepted != 6 {
+	if err != nil || durableResultForTest(t, first).accepted != 6 {
 		t.Fatal(first, err)
 	}
 	second, err := b.acceptance.Accept(t.Context(), sharedIngestionBatch("b", "b", 6), ingestionPeer{}, true)
-	if err != nil || second.accepted != 6 {
+	if err != nil || durableResultForTest(t, second).accepted != 6 {
 		t.Fatal(second, err)
 	}
-	if first.receipts[0].EventID == second.receipts[0].EventID {
+	if durableResultForTest(t, first).receipts[0].EventID == durableResultForTest(t, second).receipts[0].EventID {
 		t.Fatal("independent workers reused a global ID")
 	}
 	if got := sharedUsageCount(t, a); got != 0 {
@@ -111,7 +199,7 @@ func TestSharedIngestionLocalDurabilityAndIdempotentHighWater(t *testing.T) {
 		t.Fatal("refreshed global usage did not stop new events", err)
 	}
 	duplicate, err := a.acceptance.Accept(t.Context(), sharedIngestionBatch("a", "a", 6), ingestionPeer{}, true)
-	if err != nil || duplicate.accepted != 0 || duplicate.duplicates != 6 || duplicate.receipts[0].EventID != first.receipts[0].EventID {
+	if err != nil || durableResultForTest(t, duplicate).accepted != 0 || durableResultForTest(t, duplicate).duplicates != 6 || durableResultForTest(t, duplicate).receipts[0].EventID != durableResultForTest(t, first).receipts[0].EventID {
 		t.Fatal("owner retry changed stable IDs or consumed quota", duplicate, err)
 	}
 	var count int
@@ -138,10 +226,19 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	if err = s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// A ready ID range and fresh policy allow durable local acceptance without
-	// another PostgreSQL call on each event. Publication can recover later.
-	if _, err = s.acceptance.Accept(t.Context(), sharedIngestionBatch("recover", "offline", 2), ingestionPeer{}, true); err != nil {
-		t.Fatal(err)
+	// Cached budgets and reserved IDs cannot prove that no deletion or
+	// revocation happened while authoritative control is unavailable.
+	before := sharedAdmissionSnapshot(t, s)
+	if _, err = s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "recover", "offline"), ingestionPeer{}, true); err == nil {
+		t.Fatal("fresh cached policy admitted work without authoritative control")
+	} else {
+		var failure *acceptanceFailure
+		if !errors.As(err, &failure) || !failure.retry {
+			t.Fatal("unavailable control was not a retryable admission error", err)
+		}
+	}
+	if after := sharedAdmissionSnapshot(t, s); after != before {
+		t.Fatal("refused offline acceptance changed queue, identity or quota", before, after)
 	}
 	if err = s.syncSharedIngestion(t.Context()); err == nil {
 		t.Fatal("publication claimed success while the authority was unavailable")
@@ -149,6 +246,9 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	s.control, err = openSharedControl(t.Context(), SharedConfig{DatabaseURL: dsn})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err = s.acceptance.Accept(t.Context(), sharedIdentityBatch(t, "recover", "offline"), ingestionPeer{}, true); err != nil {
+		t.Fatal("retry after control recovery failed", err)
 	}
 	for range 2 {
 		if err = s.syncSharedIngestion(t.Context()); err != nil {
@@ -161,7 +261,7 @@ func TestSharedIngestionPublicationRecoveryAndRestartedAllocator(t *testing.T) {
 	// Restart the allocator without reusing abandoned values from its old range.
 	s.sharedIngestion.nextID, s.sharedIngestion.endID = 0, 0
 	last, err := s.acceptance.Accept(t.Context(), sharedIngestionBatch("recover", "after", 1), ingestionPeer{}, true)
-	if err != nil || last.receipts[0].EventID == first.receipts[0].EventID {
+	if err != nil || durableResultForTest(t, last).receipts[0].EventID == durableResultForTest(t, first).receipts[0].EventID {
 		t.Fatal(last, err)
 	}
 	if err = s.syncSharedIngestion(t.Context()); err != nil {
@@ -196,7 +296,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 		t.Helper()
 		batch := sharedIngestionBatch("cookie", prefix, 1)
 		batch.cookieless = true
-		batch.events[0].DistinctID = ingestfmt.CookielessSentinel
+		batch.events[0].event.DistinctID = ingestfmt.CookielessSentinel
 		if _, err := s.acceptance.Accept(t.Context(), batch, peer, true); err != nil {
 			t.Fatal(err)
 		}
@@ -241,7 +341,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 	at = at.Add(-time.Second)
 	batch := sharedIngestionBatch("cookie", "rollback", 1)
 	batch.cookieless = true
-	batch.events[0].DistinctID = ingestfmt.CookielessSentinel
+	batch.events[0].event.DistinctID = ingestfmt.CookielessSentinel
 	if _, err := a.acceptance.Accept(t.Context(), batch, peer, true); err == nil {
 		t.Fatal("expired identity day was resurrected")
 	}
@@ -254,11 +354,12 @@ func TestSharedIngestionExplicitIDHookKeepsAtomicIdentity(t *testing.T) {
 	var next int64 = 100
 	s.allocateID = func(context.Context, *sql.Tx) (int64, error) { next++; return next, nil }
 	batch := sharedIngestionBatch(project, "identity", 1)
-	batch.events[0].Event = "$identify"
-	batch.events[0].DistinctID = "known"
-	batch.events[0].Properties = []byte(`{"$anon_distinct_id":"anonymous","$set":{"plan":"team"}}`)
+	batch.events[0].event.Event = "$identify"
+	batch.events[0].event.DistinctID = "known"
+	batch.events[0].event.Properties = []byte(`{"$anon_distinct_id":"anonymous","$set":{"plan":"team"}}`)
+	batch.events[0], _ = validateLiveEvent(batch.events[0].event)
 	result, err := s.acceptance.Accept(t.Context(), batch, ingestionPeer{}, true)
-	if err != nil || result.receipts[0].EventID != "101" {
+	if err != nil || durableResultForTest(t, result).receipts[0].EventID != "101" {
 		t.Fatal(result, err)
 	}
 	var version int64

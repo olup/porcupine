@@ -740,7 +740,14 @@ func (p *ProjectLake) maintainPolicy(ctx context.Context, maxCompactions int, se
 
 func (p *ProjectLake) MaintenanceCommand(ctx context.Context, statement string, stats *DuckLakeMaintenanceStats) error {
 	if !p.shared {
-		return runLakeMaintenanceCommand(ctx, p.DB, statement, stats)
+		return retryNativeTransaction(ctx, func() error {
+			next := *stats
+			if err := runLakeMaintenanceCommand(ctx, p.DB, statement, &next); err != nil {
+				return err
+			}
+			*stats = next
+			return nil
+		})
 	}
 	if strings.Contains(statement, "ducklake_merge_adjacent_files") || strings.Contains(statement, "ducklake_rewrite_data_files") {
 		// DuckLake forbids row changes and file compaction in the same native
@@ -754,7 +761,7 @@ func (p *ProjectLake) MaintenanceCommand(ctx context.Context, statement string, 
 		if _, _, err := p.sharedStore.sharedNativeProject(ctx, p.projectID); err != nil {
 			return err
 		}
-		return retrySharedNative(ctx, func() error {
+		return retryNativeTransaction(ctx, func() error {
 			next := *stats
 			if err := runLakeMaintenanceCommand(ctx, p.DB, statement, &next); err != nil {
 				return err
@@ -763,7 +770,7 @@ func (p *ProjectLake) MaintenanceCommand(ctx context.Context, statement string, 
 			return nil
 		})
 	}
-	return retrySharedNative(ctx, func() error {
+	return retryNativeTransaction(ctx, func() error {
 		tx, err := p.DB.BeginTx(ctx, nil)
 		if err != nil {
 			return err

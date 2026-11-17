@@ -133,12 +133,7 @@ func (p *ProjectLake) apply(ctx context.Context, projections []PreparedLakeProje
 		}
 		end := min(offset+chunkSize, len(projections))
 		operation := func() error { return p.ApplyChunk(ctx, projections[offset:end]) }
-		var err error
-		if p.shared {
-			err = retrySharedNative(ctx, operation)
-		} else {
-			err = operation()
-		}
+		err := retryNativeTransaction(ctx, operation)
 		if err == nil {
 			offset = end
 			continue
