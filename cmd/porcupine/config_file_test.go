@@ -78,6 +78,9 @@ func TestConfigInitAndCheck(t *testing.T) {
 	if config.Storage.Control == config.Storage.Journal {
 		t.Fatal("journal and control must be separate")
 	}
+	if config.Queue.ReceiptRetention != "0" {
+		t.Fatal("init must preserve local retry receipts by default")
+	}
 	if runtime.GOOS != "windows" {
 		info, _ := os.Stat(path)
 		dir, _ := os.Stat(filepath.Dir(path))
@@ -160,7 +163,7 @@ func TestConfigReceiptRetention(t *testing.T) {
 		want    time.Duration
 		invalid bool
 	}{
-		{"", 30 * 24 * time.Hour, false}, {"0", 0, false}, {"48h", 48 * time.Hour, false},
+		{"", 0, false}, {"0", 0, false}, {"48h", 48 * time.Hour, false},
 		{"-1h", 0, true}, {"2h", 0, true}, {"never", 0, true},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
@@ -182,6 +185,26 @@ func TestConfigReceiptRetention(t *testing.T) {
 				t.Fatalf("got %v want %v", config.ReceiptRetention, tc.want)
 			}
 		})
+	}
+}
+
+func TestReceiptRetentionDefaultsAndEnvironmentOverride(t *testing.T) {
+	// Environment overrides are process-wide, so this test runs before the
+	// parallel configuration readers.
+	for _, test := range []struct {
+		file, environment string
+		want              time.Duration
+	}{
+		{"", "", 0}, {"", "0", 0}, {"", "48h", 48 * time.Hour},
+		{"720h", "0", 0}, {"0", "48h", 48 * time.Hour},
+	} {
+		t.Setenv("PORCUPINE_RECEIPT_RETENTION", test.environment)
+		var config FileConfig
+		config.Queue.ReceiptRetention = test.file
+		got, err := fileSettings(config).receiptRetention()
+		if err != nil || got != test.want {
+			t.Fatalf("file=%q env=%q got=%v want=%v error=%v", test.file, test.environment, got, test.want, err)
+		}
 	}
 }
 

@@ -112,10 +112,7 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 
 func (s settings) receiptRetention() (time.Duration, error) {
 	raw := s.get("PORCUPINE_RECEIPT_RETENTION")
-	if raw == "" {
-		return 30 * 24 * time.Hour, nil
-	}
-	if raw == "0" {
+	if raw == "" || raw == "0" {
 		return 0, nil
 	}
 	value, err := time.ParseDuration(raw)

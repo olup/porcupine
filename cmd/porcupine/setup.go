@@ -127,6 +127,7 @@ func writeInitialConfig(path string, docker bool) error {
 	var config FileConfig
 	config.Listen = "127.0.0.1:8080"
 	config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "./data/porcupine.db", "./data/porcupine.db.control", "./data/ducklake"
+	config.Queue.ReceiptRetention = "0"
 	if docker {
 		config.Listen = "0.0.0.0:8080"
 		config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "/data/porcupine.db", "/data/porcupine.db.control", "/data/ducklake"

@@ -53,7 +53,7 @@ DuckLake snapshots can retain old payloads. Porcupine schedules deleted-row rewr
 
 **Unreleased shared mode:** both snapshot retention and obsolete-file grace have an eight-day minimum to protect remote readers and exports. Shorter configured values are raised to that floor. Cleanup and physical deletion may therefore take longer than on a local catalog.
 
-Retry receipts are separate from payload history. The unreleased retention policy keeps recent SQLite receipts for 30 days by default, verifies their DuckLake heads before pruning, and preserves historical stable-ID checks afterward. See [retry receipts](reference/receipts.md).
+Retry receipts are separate from payload history and stay in SQLite indefinitely by default. Unreleased builds can opt into pruning, which introduces an analytical dependency after the first prune. The [receipt reference](reference/receipts.md) describes that tradeoff and the effect of changing retention back to zero.
 
 Logical deletion does not promise physical erasure within 30 days. SQLite free pages or WAL, snapshots, S3 noncurrent versions, backups, and external copies can retain earlier payloads. Their retention policies need to match the operator's requirements.
 
