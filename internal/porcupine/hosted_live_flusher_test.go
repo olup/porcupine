@@ -424,6 +424,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_effect_definitions SET state='paused' WHERE project_id=$1`, project); err != nil {
+		t.Fatal(err)
+	}
+
 	blocked := batch("blocked")
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
 		t.Fatal("full queue admitted", err)
