@@ -8,8 +8,8 @@ import (
 
 const defaultDuckLakeMemoryMB = 512
 
-// DuckLakeConfig selects the local analytical store. The native
-// engine is available only in builds made with the ducklake build tag.
+// DuckLakeConfig selects native resource limits, a local working directory and
+// optional shared PostgreSQL metadata with S3 analytical data.
 type DuckLakeConfig struct {
 	Directory           string
 	MemoryLimitMB       int
@@ -21,6 +21,8 @@ type DuckLakeConfig struct {
 	CleanupInterval     time.Duration
 	DisableCleanup      bool
 	S3                  *DuckLakeS3Config
+	PostgresURL         string
+	SharedSourceID      string
 }
 
 type lakeStore interface {

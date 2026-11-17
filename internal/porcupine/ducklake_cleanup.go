@@ -49,6 +49,12 @@ func (s *duckLakeStore) cleanupDue(ctx context.Context, now time.Time) error {
 	// A future reader uses the current snapshot. Only readers that already hold
 	// a lease can require files scheduled for deletion before this point.
 	snapshotBefore, fileBefore := now.Add(-s.config.SnapshotRetention), now.Add(-s.config.CleanupGrace)
+	if s.sharedCatalog != nil {
+		// Remote exports can run for seven days. Local leases cannot describe
+		// readers on other workers, so shared cleanup keeps a longer horizon.
+		snapshotBefore = minTime(snapshotBefore, now.Add(-sharedNativeReaderHorizon))
+		fileBefore = minTime(fileBefore, now.Add(-sharedNativeReaderHorizon))
+	}
 	if p := s.projects[id]; p != nil {
 		for lease := range p.leases {
 			protected := lease.started.Add(-time.Second)
@@ -114,6 +120,10 @@ func (p *projectLake) cleanupHistory(ctx context.Context, snapshotBefore, fileBe
 
 func (s *duckLakeStore) CleanupStatus(ctx context.Context) (DuckLakeCleanupStatus, error) {
 	status := DuckLakeCleanupStatus{Enabled: !s.config.DisableCleanup, SnapshotRetentionSeconds: int64(s.config.SnapshotRetention / time.Second), ObsoleteFileGraceSeconds: int64(s.config.CleanupGrace / time.Second), IntervalSeconds: int64(s.config.CleanupInterval / time.Second)}
+	if s.sharedCatalog != nil {
+		status.SnapshotRetentionSeconds = max(status.SnapshotRetentionSeconds, int64(sharedNativeReaderHorizon/time.Second))
+		status.ObsoleteFileGraceSeconds = max(status.ObsoleteFileGraceSeconds, int64(sharedNativeReaderHorizon/time.Second))
+	}
 	if err := s.mu.Lock(ctx); err != nil {
 		return status, err
 	}

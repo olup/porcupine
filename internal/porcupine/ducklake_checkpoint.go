@@ -19,6 +19,9 @@ import (
 // The caller holds the exclusive projection guard until this method returns.
 // Remote data remains protected from expiration and project deletion until Close.
 func (s *duckLakeStore) stageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (checkpoint *nativeCheckpoint, result error) {
+	if s.sharedCatalog != nil {
+		return nil, errors.New("local native checkpoints are unavailable for shared PostgreSQL catalogs; back up shared PostgreSQL, S3 and worker volumes together")
+	}
 	if err := s.cleanup.Lock(ctx); err != nil {
 		return nil, err
 	}

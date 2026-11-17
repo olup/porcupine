@@ -30,6 +30,7 @@ type duckLakeStore struct {
 	deletionActive   bool
 	checkpointActive int
 	backupPins       map[string]int
+	sharedCatalog    *sql.DB
 }
 
 type projectLake struct {
@@ -40,6 +41,9 @@ type projectLake struct {
 	catalogInfo os.FileInfo
 	leases      map[*projectLease]struct{}
 	lastUsed    time.Time
+	shared      bool
+	sharedStore *duckLakeStore
+	projectID   string
 }
 
 type projectLease struct{ started time.Time }
@@ -49,6 +53,9 @@ type projectOpening struct {
 }
 
 func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
+	if err := validateSharedNativeConfig(&config); err != nil {
+		return nil, err
+	}
 	remoteConfig, err := normalizeDuckLakeS3(config.S3)
 	if err != nil {
 		return nil, err
@@ -103,6 +110,9 @@ func newDuckLake(config DuckLakeConfig) (lakeStore, error) {
 	registry.SetMaxOpenConns(1)
 	s := &duckLakeStore{root: root, config: config, registry: registry, owner: owner, projects: make(map[string]*projectLake), opening: make(map[string]*projectOpening)}
 	fail := func(err error) (lakeStore, error) {
+		if s.sharedCatalog != nil {
+			s.sharedCatalog.Close()
+		}
 		if s.remote != nil {
 			s.remote.transport.CloseIdleConnections()
 		}
@@ -123,7 +133,16 @@ CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_a
 		return fail(errors.New("invalid DuckLake source registry"))
 	}
 	if count == 0 {
-		if _, err = registry.Exec("INSERT INTO source(id) VALUES(?)", newID()); err != nil {
+		source := config.SharedSourceID
+		if source == "" {
+			source = newID()
+		}
+		if _, err = registry.Exec("INSERT INTO source(id) VALUES(?)", source); err != nil {
+			return fail(err)
+		}
+	}
+	if config.PostgresURL != "" {
+		if err := s.initializeSharedNative(context.Background()); err != nil {
 			return fail(err)
 		}
 	}
@@ -203,6 +222,11 @@ func (s *duckLakeStore) leaseProjectLocked(ctx context.Context, project string) 
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	if s.sharedCatalog != nil {
+		if _, _, err := s.sharedNativeProject(ctx, project); err != nil {
+			return nil, nil, err
+		}
+	}
 	var deleting bool
 	if err := s.registry.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deleting_projects WHERE project_id=?)", project).Scan(&deleting); err != nil {
 		return nil, nil, err
@@ -226,9 +250,11 @@ func (s *duckLakeStore) leaseProjectLocked(ctx context.Context, project string) 
 		return s.leaseProjectLocked(ctx, project)
 	}
 	if p := s.projects[project]; p != nil {
-		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
-		if err != nil || !os.SameFile(info, p.catalogInfo) {
-			return nil, nil, errors.New("DuckLake project catalog changed")
+		if s.sharedCatalog == nil {
+			info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
+			if err != nil || !os.SameFile(info, p.catalogInfo) {
+				return nil, nil, errors.New("DuckLake project catalog changed")
+			}
 		}
 		return p, s.addProjectLease(p), nil
 	}
@@ -293,7 +319,20 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	directory := s.projectDirectory(project)
 	var catalogID string
 	var ready bool
-	err := s.registry.QueryRowContext(ctx, "SELECT id,ready FROM catalogs WHERE project_id=?", project).Scan(&catalogID, &ready)
+	var err error
+	if s.sharedCatalog != nil {
+		if initialize != nil {
+			return nil, errors.New("offline native restore is unavailable for shared catalogs")
+		}
+		finish, lockErr := s.sharedNativeInitialization(ctx, project)
+		if lockErr != nil {
+			return nil, lockErr
+		}
+		defer finish()
+		catalogID, ready, err = s.sharedNativeProject(ctx, project)
+	} else {
+		err = s.registry.QueryRowContext(ctx, "SELECT id,ready FROM catalogs WHERE project_id=?", project).Scan(&catalogID, &ready)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		catalogID = newID()
 		if _, err = s.registry.ExecContext(ctx, "INSERT INTO catalogs(project_id,id) VALUES(?,?)", project, catalogID); err != nil {
@@ -306,7 +345,7 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		return nil, errors.New("restore initializer requires a fresh project catalog")
 	}
 	catalog := filepath.Join(directory, "catalog.ducklake")
-	if ready {
+	if ready && s.sharedCatalog == nil {
 		if _, err := os.Stat(catalog); err != nil {
 			return nil, errors.New("DuckLake project catalog is missing")
 		}
@@ -335,6 +374,13 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 			return fail(errors.New("DuckLake extension is unavailable"))
 		}
 	}
+	if s.sharedCatalog != nil {
+		if _, err := db.ExecContext(ctx, "LOAD postgres"); err != nil {
+			if _, err := db.ExecContext(ctx, "INSTALL postgres; LOAD postgres"); err != nil {
+				return fail(errors.New("DuckLake PostgreSQL extension is unavailable"))
+			}
+		}
+	}
 	dataPath := filepath.Join(directory, "files")
 	caFile := ""
 	if s.remote != nil {
@@ -347,15 +393,29 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		}
 		dataPath = s.remote.projectPath(project)
 	}
+	if s.sharedCatalog != nil {
+		if err := s.configureSharedPostgres(ctx, db); err != nil {
+			return fail(err)
+		}
+	}
+	attach := "ATTACH " + lakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + lakeLiteral(dataPath) + ")"
+	if s.sharedCatalog != nil {
+		attach = "ATTACH 'ducklake:postgres:' AS lake (DATA_PATH " + lakeLiteral(dataPath) + ", METADATA_SCHEMA " + lakeLiteral(sharedNativeSchema(catalogID)) + ", META_SECRET 'pc_analytics_postgres', DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false)"
+	}
 	for _, statement := range []string{
 		fmt.Sprintf("SET memory_limit='%dMiB'", s.config.MemoryLimitMB),
 		fmt.Sprintf("SET threads=%d", s.config.Threads),
 		"SET TimeZone='UTC'",
 		"SET temp_directory=" + lakeLiteral(filepath.Join(directory, "temp")),
 		"SET max_temp_directory_size='256MiB'",
-		"ATTACH " + lakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + lakeLiteral(dataPath) + ")",
+		attach,
 	} {
 		if _, err = db.ExecContext(ctx, statement); err != nil {
+			return fail(err)
+		}
+	}
+	if s.sharedCatalog != nil {
+		if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','data_inlining_row_limit','0')"); err != nil {
 			return fail(err)
 		}
 	}
@@ -390,6 +450,11 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	}
 	if _, err = db.ExecContext(ctx, duckLakeSchema); err != nil {
 		return fail(err)
+	}
+	if s.sharedCatalog != nil {
+		if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS lake.project_write_guard AS SELECT 1::INTEGER AS id, 0::UBIGINT AS generation, false AS deleted"); err != nil {
+			return fail(err)
+		}
 	}
 	if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
 		return fail(err)
@@ -429,6 +494,12 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 	if _, err = s.registry.ExecContext(ctx, "UPDATE catalogs SET ready=1 WHERE project_id=?", project); err != nil {
 		return fail(err)
 	}
+	if s.sharedCatalog != nil {
+		if _, err := s.sharedCatalog.ExecContext(ctx, "UPDATE pc_native_projects SET ready=1 WHERE source_id=$1 AND project_id=$2 AND deleted=0", s.config.SharedSourceID, project); err != nil {
+			return fail(errors.New("shared analytical registry unavailable"))
+		}
+		return &projectLake{db: db, directory: directory, leases: make(map[*projectLease]struct{}), lastUsed: time.Now(), shared: true, sharedStore: s, projectID: project}, nil
+	}
 	info, err := os.Stat(catalog)
 	if err != nil {
 		return fail(err)
@@ -437,6 +508,9 @@ func (s *duckLakeStore) openProjectInitialized(ctx context.Context, project stri
 }
 
 func (s *duckLakeStore) DeleteProject(ctx context.Context, project string) error {
+	if s.sharedCatalog != nil {
+		return s.deleteSharedNativeProject(ctx, project)
+	}
 	// A pinned project must return immediately even when another project has a
 	// slow deletion in progress. Recheck after taking the deletion guard too.
 	if err := s.mu.Lock(ctx); err != nil {
@@ -588,9 +662,19 @@ func (s *duckLakeStore) leaseMaintenanceProject(ctx context.Context, id string, 
 	if p != expected {
 		return nil, nil
 	}
-	info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
-	if err != nil || !os.SameFile(info, p.catalogInfo) {
-		return nil, errors.New("DuckLake project catalog changed")
+	if s.sharedCatalog != nil {
+		if _, _, err := s.sharedNativeProject(ctx, id); err != nil {
+			if errors.Is(err, errSharedNativeDeleted) {
+				return nil, nil
+			}
+			return nil, err
+		}
+	}
+	if s.sharedCatalog == nil {
+		info, err := os.Stat(filepath.Join(p.directory, "catalog.ducklake"))
+		if err != nil || !os.SameFile(info, p.catalogInfo) {
+			return nil, errors.New("DuckLake project catalog changed")
+		}
 	}
 	return s.addProjectLease(p), nil
 }
@@ -629,7 +713,55 @@ func (p *projectLake) maintainPolicy(ctx context.Context, maxCompactions int, se
 }
 
 func (p *projectLake) maintenanceCommand(ctx context.Context, statement string, stats *duckLakeMaintenanceStats) error {
-	rows, err := p.db.QueryContext(ctx, statement)
+	if !p.shared {
+		return runLakeMaintenanceCommand(ctx, p.db, statement, stats)
+	}
+	if strings.Contains(statement, "ducklake_merge_adjacent_files") || strings.Contains(statement, "ducklake_rewrite_data_files") {
+		// DuckLake forbids row changes and file compaction in the same native
+		// transaction. Compaction therefore shares the project lifecycle lock
+		// with deletion; its logical conflicts still retry at the native layer.
+		finish, err := p.sharedStore.sharedNativeInitialization(ctx, p.projectID)
+		if err != nil {
+			return err
+		}
+		defer finish()
+		if _, _, err := p.sharedStore.sharedNativeProject(ctx, p.projectID); err != nil {
+			return err
+		}
+		return retrySharedNative(ctx, func() error {
+			next := *stats
+			if err := runLakeMaintenanceCommand(ctx, p.db, statement, &next); err != nil {
+				return err
+			}
+			*stats = next
+			return nil
+		})
+	}
+	return retrySharedNative(ctx, func() error {
+		tx, err := p.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := p.acquireNativeWrite(ctx, tx); err != nil {
+			return err
+		}
+		next := *stats
+		if err := runLakeMaintenanceCommand(ctx, tx, statement, &next); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		*stats = next
+		return nil
+	})
+}
+
+func runLakeMaintenanceCommand(ctx context.Context, query interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, statement string, stats *duckLakeMaintenanceStats) error {
+	rows, err := query.QueryContext(ctx, statement)
 	if err != nil {
 		return err
 	}
@@ -690,6 +822,9 @@ func (s *duckLakeStore) Close() error {
 	}
 	if s.remote != nil {
 		s.remote.transport.CloseIdleConnections()
+	}
+	if s.sharedCatalog != nil {
+		err = errors.Join(err, s.sharedCatalog.Close())
 	}
 	err = errors.Join(err, s.registry.Close(), s.owner.Close())
 	return err
