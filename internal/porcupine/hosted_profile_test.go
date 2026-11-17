@@ -44,7 +44,7 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 	status := sharedJourneyHTTP(t, b.origin, "GET", "/api/v1/status", adminToken, nil, nil, 200)
 	checks := status["checks"].(map[string]any)
 	configuration := status["configuration"].(map[string]any)
-	if status["status"] != "ok" || checks["sqlite"] != "not_configured" || configuration["owner_routing"] != false {
+	if status["status"] != "ok" || checks["sqlite"] != "not_configured" || configuration["shared_control"] != true {
 		t.Fatalf("incorrect hosted instance status: %v", status)
 	}
 	schema := sharedJourneyHTTP(t, b.origin, "GET", "/ingest/v1/schema", "", nil, nil, 200)
@@ -135,10 +135,12 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer control.Close()
-	var owners, workers, live int
-	err = control.QueryRow("SELECT (SELECT count(*) FROM shared_project_owners),(SELECT count(*) FROM shared_workers),(SELECT coalesce(sum(live_events),0) FROM usage_rollups WHERE project_id=$1)", project).Scan(&owners, &workers, &live)
-	if err != nil || owners != 0 || workers != 0 || live != 4 {
-		t.Fatalf("shared control state owners=%d registrations=%d live=%d: %v", owners, workers, live, err)
+	var obsoleteSchema bool
+	var live int
+	err = control.QueryRow(`SELECT to_regclass('shared_project_owners') IS NOT NULL OR to_regclass('shared_workers') IS NOT NULL,
+        (SELECT coalesce(sum(live_events),0) FROM usage_rollups WHERE project_id=$1)`, project).Scan(&obsoleteSchema, &live)
+	if err != nil || obsoleteSchema || live != 4 {
+		t.Fatalf("hosted control state has retired owner schema=%t live=%d: %v", obsoleteSchema, live, err)
 	}
 }
 
