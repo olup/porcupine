@@ -1,250 +1,95 @@
 # Shared metadata and owner-local event queues
 
-**Implementation in progress, unreleased.** PostgreSQL stores control metadata and
-DuckLake metadata. Event payloads go from the owning worker's SQLite queue directly
-to DuckLake and its S3 data files. No PostgreSQL event inbox is introduced.
+This pre-launch change supports two configurations of the same published server.
+The default keeps SQLite and local DuckLake catalogs. Shared deployment adds
+PostgreSQL control metadata and PostgreSQL DuckLake catalogs with S3 data files.
+No existing-data migration, commercial fork or billing service is introduced.
+See [shared deployment](shared-deployment.md) for the operator instructions.
 
-Two designs were compared. A recoverable PostgreSQL payload handoff was rejected
-because it puts events into PostgreSQL before DuckLake. The selected design uses
-durable project ownership and internal forwarding. It accepts owner affinity and
-the need to recover that owner's volume after failure. It does not promise
-automatic failover of an acknowledged but undelivered event.
+## The storage boundary
 
-## Problem and caller usage
+`Service.db` always owns a local SQLite journal. It contains accepted events,
+receipts, identity state, imports, mutations and destination jobs. A producer is
+acknowledged only after its SQLite transaction commits.
 
-Keep the SQLite queue as the real acceptance authority. A shared deployment has many
-Porcupine workers, but exactly one durable owner for each project. Any public worker
-can receive a request. Project operations that depend on accepted-but-undelivered
-state are forwarded to that owner; delivered SQL can run on any worker.
+`Service.control` aliases that database in local mode. In shared mode it connects
+to PostgreSQL and owns projects, tenant policies, cumulative usage, credentials,
+humans, OAuth state, worker registration and query permits. It contains no event,
+identity-profile, import, export or pipeline-payload tables. PostgreSQL allocates
+ID ranges, rather than receiving a row for every event.
 
-Local deployment remains:
+The shared DuckLake PostgreSQL database is a separate metadata role and may be a
+separate database/server. Each project has its own catalog schema and S3 prefix.
+Row inlining is disabled there: event payloads go from SQLite to Parquet on S3.
+DuckLake metadata still contains schemas, file references and column statistics.
 
-```text
-PORCUPINE_DB_PATH=/data/porcupine.db
-PORCUPINE_DUCKLAKE_DIRECTORY=/data/lake
-```
+Common control queries use numbered parameters and explicit conflict clauses.
+Schemas and locks are defined for each database. The source conversion tool is
+not a runtime SQL translator. Integer flag binding is normalized at the PostgreSQL
+driver boundary; transaction semantics remain explicit.
 
-Shared deployment adds:
+## Durable project ownership
 
-```text
-PORCUPINE_CONTROL_DATABASE_URL=postgres://.../porcupine
-PORCUPINE_WORKER_ID=eu-1
-PORCUPINE_WORKER_PUBLIC_URL=https://worker-1.internal
-PORCUPINE_CLUSTER_AUTH_FILE=/run/secrets/cluster-routing-key
-PORCUPINE_DUCKLAKE_CATALOG_URL=postgres://.../analytics
-PORCUPINE_DUCKLAKE_S3_BUCKET=...
-```
+Every project has a stable journal owner. Any public worker can authenticate and
+accept an API, CLI, MCP or SDK request, then forward owner-bound operations over an
+authenticated internal route. SQL analyses can execute on another worker against
+the shared catalog. Signed requests bind their method, URI, credentials and body,
+expire, and are single-use. The owner reauthenticates the original credential.
 
-The worker ID is bound to its durable SQLite volume, not to a replaceable process.
-Restarting that worker reuses its volume. Adding a worker immediately admits new
-projects there. Clients still send their existing HTTP, MCP, CLI or SDK requests to
-one load-balanced public address. No public ownership parameter is accepted.
+Worker identity is pinned to its persistent SQLite volume. A dedicated PostgreSQL
+session lock prevents two active processes from claiming the same worker ID.
+Owner registration failure blocks new work. Adding a worker adds capacity for new
+projects and analytical reads; it does not automatically rebalance an existing
+project's writer. An unavailable owner returns a retryable failure. Restarting its
+original volume preserves receipts and import checkpoints. Permanent disk loss
+can lose accepted, undelivered events; horizontal replication of processes does
+not replicate their journals.
 
-## Shape and core signatures
+## Budgets and recovery
 
-```go
-type ControlStore interface {
-    ResolvePrincipal(ctx context.Context, credential Credential) (actor, error)
-    Project(ctx context.Context, id string) (ProjectAccess, error)
-    Route(ctx context.Context, project string) (ProjectOwner, error)
-    NewProjects(ctx context.Context, spec ProjectSpec) (Project, error)
-    TenantPolicy(ctx context.Context, tenant string) (TenantPolicy, error)
-    PublishUsage(ctx context.Context, report UsageReport) error
-    AcquireQuery(ctx context.Context, scope QueryScope, limits QueryLimits) (QueryLease, error)
-    RenewQuery(ctx context.Context, lease QueryLease) error
-    ReleaseQuery(ctx context.Context, lease QueryLease) error
-    BeginProjectDeletion(ctx context.Context, project string) (DeletionFence, error)
-    // Human, credential, OAuth and short-lived browser session operations.
-}
+The acceptance transaction increments a local tenant/month cumulative counter.
+Every ten seconds, the worker publishes its high-water marks to PostgreSQL. Only
+the positive difference from the previous report updates aggregate usage. Reports
+are replayable after a crash; project/event deletion never refunds consumption.
+Admission compares cached aggregate usage with the worker's own unpublished
+consumption. This allows the agreed small overshoot across owners. Expired policy
+fails closed. Authentication and revocation do not use that quota cache.
 
-type ProjectOwner struct {
-    WorkerID string
-    RouteURL string
-    Generation uint64
-    VolumeIdentity string
-}
+Interactive SQL, catalog and profile requests reserve a shared tenant place as
+well as worker capacity. The permit covers the SQL deadline, S3 and PostgreSQL
+metadata I/O allowances, then a thirty-second margin. Release is fenced by its
+random token. A native call that still has not returned fifteen seconds after its
+deadline and I/O allowances triggers worker exit 70, before permit reuse. Normal
+cancellation interrupts execution and releases the place. Local mode has no
+shared fail-stop watchdog.
 
-type LocalProjects struct {
-    DB *sql.DB // Always SQLite. Owns queue, identities, receipts, imports and jobs.
-    WorkerID string
-}
+Project deletion fences all workers before cleanup. Local work registers before
+materializing foreign-key anchors, so deletion cancels and drains it before
+purging the journal. Shared reader permits drain before analytical files are
+removed. Permanent control and analytical tombstones block stale recreation.
+Native projection updates a guard inside the actual DuckLake transaction and
+retries conflicts; a separate advisory lock alone would not fence a stale native
+write. Shared cleanup retains an eight-day reader horizon for bounded exports.
 
-type UsageReport struct {
-    WorkerID string
-    PeriodStart time.Time
-    Totals []TenantCumulativeUsage // Monotonic per worker, tenant and period.
-}
+## Alternatives and costs
 
-type ProjectDispatcher interface {
-    ServeOwner(w http.ResponseWriter, r *http.Request, owner ProjectOwner)
-}
-```
+Two complete designs were compared. A recoverable PostgreSQL canonical payload
+handoff was rejected after the user clarified that events must not enter
+PostgreSQL before DuckLake. Stable project ownership keeps the SQLite acceptance
+transaction and requires no shared payload queue or per-event PostgreSQL receipt.
+It accepts owner affinity and volume recovery instead of automatic writer failover.
 
-Control storage has SQLite and PostgreSQL implementations of domain operations.
-SQL does not escape those implementations. Existing authorization remains pure.
-There is no generic runtime dialect converter. Local queue/identity/import helpers
-can retain SQLite transactions because only the durable project owner calls them.
-The dispatcher hides routing, authenticated forwarding and owner-generation checks.
-It does not make callers decide whether a transaction is local or shared.
+Shared grants and browser sessions use PostgreSQL transactions. Owner-local jobs
+retain their SQLite transactions and check current shared grants before external
+work. A restored local journal must not replace cluster credentials; the existing
+full-instance backup/restore is therefore rejected in shared mode. Coordinated
+shared backup and automatic project migration remain separate work.
 
-## Ownership map
+## Verification
 
-Shared control owns tenants, policies, projects and immutable owner bindings, human
-and service principals, credentials, OAuth tokens/grants, browser OTP/CSRF sessions,
-daily cookieless key material, worker registration, usage reports and query leases.
-
-Project-owner SQLite owns accepted originals, receipts, identity state, identity
-versioning, mutation CAS/audit, import checkpoints and local upload bytes, webhook
-memberships/delivery state, exports and recurring pipeline execution state. Pipeline
-configuration may live with these owner-bound jobs in this candidate; CRUD is still
-available from every public worker through forwarding. It need not pretend to be
-stateless management data.
-
-PostgreSQL DuckLake metadata plus S3 owns delivered analytical state. The source UUID
-and project catalog UUID live in shared control, never independently generated in
-local registries. Catalog metadata schemas and S3 prefixes are derived from trusted
-project identity. Default standalone mode keeps its local DuckDB catalog files.
-
-## Request and durability paths
-
-1. Any worker authenticates against shared control. The credential determines project
-   access. Routing comes from trusted project metadata, never the request body.
-2. A project-dependent operation resolves its durable owner. An owner-local request
-   executes directly. A non-owner forwards the original bounded request to the trusted
-   internal owner URL over authenticated transport, retaining the client credential
-   for revalidation. External routing headers are stripped. The owner validates the
-   internal route token and ownership generation before processing.
-3. Owner acceptance is the existing atomic SQLite transaction: deduplication, ID,
-   identity controls, event and webhook membership, and durable usage outbox together.
-   Only the SQLite commit permits an acknowledgment.
-4. The response streams back without changing the public contract. Thus a retry
-   arriving at another edge worker reaches exactly the same permanent receipt ledger
-   and returns exactly the same event_id.
-
-Globally unique event IDs come from PostgreSQL-reserved ID blocks. A worker writes its
-current reservation and next ID to SQLite before using the block, with bounds checked
-inside each acceptance transaction. Reserving another block is infrequent. Its owner
-executes one project serially, so event.ID remains a valid strictly increasing identity
-version within a project. Crashed reservations merely waste numbers. An empty/replaced
-volume cannot silently reuse an existing worker identity.
-
-The local default keeps the same allocator interface backed by its SQLite sequence.
-IDs remain global BIGINTs; no UUID-as-int hash or probabilistic collision assumption.
-
-## Usage and limits
-
-Each acceptance transaction increments a local cumulative usage value for its tenant
-and UTC acceptance month. The publisher sends a bounded report at the configured
-interval, initially ten seconds. PostgreSQL locks the report row, compares previous
-cumulative usage and applies only a positive delta to aggregate tenant_usage. It
-persists report watermark and aggregate increment in one transaction. Retrying after
-an ambiguous commit cannot double count. Month history is retained. Event/project
-deletion does not remove the worker/tenant report or refund usage.
-
-The owner refreshes policy and aggregated usage in one bounded query. It adds local
-unpublished consumption to its cached shared value, avoiding the worker's own
-underestimate. Several owners serving one tenant may overshoot within the permitted
-report/cache delay. This is the previously accepted soft ingestion budget model.
-Policies expire: beyond a configured bounded stale interval new acceptance fails,
-while already accepted queue delivery continues. Revocation and deletion fences do
-not use this eventual budget cache.
-
-Query admission is shared and immediate. PostgreSQL acquires a row-scoped tenant lock,
-checks live leases and inserts an unguessable lease/fencing token with DB-clock expiry.
-A heartbeat renews only the same live token. Cancellation or renewal failure interrupts
-the native query. Release is conditional on token and idempotent. A query deadline must
-end before its reservation can be reused; renewal must never extend an already expired
-lease. Per-process engine capacity remains an additional hard ceiling. Local mode uses
-the same admission contract with an in-process semaphore.
-
-A shared query/reader lease also protects maintenance cleanup. A separate shared
-project writer lock serializes current delete+insert projection, maintenance and
-mutation projection. Relying on process-local p.write would permit duplicate heads.
-Lock ownership must be held through the native transaction's completion; generation
-checks fence stale deletion/project ownership. No expiring lock may be reassigned while
-a native operation can still commit under its old generation.
-
-## OAuth, jobs and lifecycle
-
-Browser session/OTP state moves into control storage with compare-and-consume changes.
-Thus authorization can start on worker A and finish on B. Hashed OTPs, CSRF and refresh
-family reuse semantics remain intact; no session affinity is required for authentication.
-
-Imports, exports, pipelines, quarantine repair and pending event listing are forwarded
-to the project owner. This preserves their current local transaction boundaries and
-upload checkpoints. The owner-down response is an explicit temporary 503, not a fake
-missing job or a new empty import. A public worker is interchangeable as an entry point,
-but durable owners are intentionally not interchangeable as storage.
-
-Project deletion first writes a shared deleting fence and removes admission/grants in
-control storage. Every worker must check the fence before opening native reads; the
-project owner drains local work and purges its SQLite project state and analytical/S3
-objects. Shared cleanup state remains until completion. Repeated deletion converges.
-A project owner that is offline cannot accept/project until it refreshes ownership and
-fences after restart. If its volume is permanently lost, operator-directed cleanup can
-remove the project after fencing that identity permanently.
-
-## Failure behavior and accepted costs
-
-This is a valid PostgreSQL deployment, with multi-worker ingestion across projects and
-multi-worker queries. It is not automatic failover of a project whose sole durable
-SQLite queue volume is unavailable. That limitation follows directly from retaining
-only local copies of acknowledged-but-undelivered events. An automatic owner switch
-without restoring the old volume would violate the durable acceptance promise.
-
-A worker process may restart freely with the same volume. It does not lose receipts,
-identity state, import checkpoints, usage outbox or pending deliveries. A process crash
-releases native PostgreSQL locks; expired query reservations become reclaimable.
-A worker-volume loss requires restoring the project-owner checkpoint or explicitly
-accepting data loss. New projects can use another worker while the old one is down.
-
-We accept an internal request hop and stable owner placement in exchange for avoiding
-a PostgreSQL canonical-event payload handoff and keeping the existing strong SQLite
-acceptance transaction. A single hot project still writes through one owner. Adding
-workers scales the number of projects and analytical reads, not that one writer.
-
-Whole-instance local backup/restore cannot represent this deployment. Reject that mode
-when shared control/catalogs are configured. Document coordinated PostgreSQL backup,
-S3 retention and per-owner volume checkpoint recovery. Do not let restoring one worker
-revoke shared credentials or overwrite cluster metadata.
-
-## Structurally distinct alternatives
-
-A staged PostgreSQL canonical handoff makes any worker accept the same project and
-recover another worker's interrupted handoff. It removes owner routing and permits
-more flexible writer placement, but it changes the acceptance transaction fundamentally:
-canonical identity changes and receipts need recoverable shared prepared records,
-local materialization and confirmation. It adds at least one shared transaction to
-every batch and temporary shared payload retention. Prefer it if arbitrary-worker
-acceptance/failover is a requirement, not merely horizontal capacity across projects.
-
-Moving every queue and job into PostgreSQL simplifies shared state but abandons the
-per-worker SQLite queue architecture and increases PostgreSQL write/storage load.
-It should not be described as an adapter-only implementation.
-
-Mirroring whole SQLite snapshots under PostgreSQL leases or rewriting SQLite SQL at
-runtime is rejected: it hides ownership, creates stale reads and makes distributed
-transaction correctness depend on a string adapter.
-
-## File/module map and commit chain
-
-1. Commit design and contracts in docs/shared-deployment.md; introduce config validation,
-   control.Store and worker/volume identity contract. Fail invalid partial shared config.
-2. Add SQLite and PostgreSQL control stores, explicit schemas and transactional domain
-   methods for auth/projects/tenants/humans/tokens, with parameterized cross-dialect tests.
-   Move OAuth browser state into control.Store; bootstrap once under an installation lock.
-3. Add PostgreSQL owner registry and internal authenticated project dispatcher. Route all
-   project operation entry points, including ingestion paths, uploads, MCP dispatch and
-   job cancellation. Test owner down, stale generation, unauthorized forwarding and retries.
-4. Add reserved global IDs and cumulative per-worker usage publication. Refactor acceptance
-   to allocator + local usage outbox in the same SQLite transaction. Prove crash/retry and
-   month boundaries with two owners under one tenant.
-5. Add shared query/reader/write admission and shared DuckLake catalogs with S3. Preserve
-   native cancellation; test two engines' conflicting writes/reads and cleanup behavior.
-6. Fence project deletion across nodes, add coordinated owner startup/recovery checks,
-   explicit shared backup restrictions, and CLI/system status discovery of these limits.
-7. Add real two-process PostgreSQL/S3 CI journeys, docs and default local regression suite.
-
-The first implementation step is the storage/owner contract, not transplanting existing
-SQLite SQL into PostgreSQL. Owner routing is a meaningful deployment contract that must
-be chosen explicitly; it cannot be slipped in behind a configuration variable.
+Both configurations need real database tests. Shared journeys cover independent
+workers and processes, stable-ID retries through another edge, identify, import
+resume, global counters, permissions, OAuth one-use consumption and revocation,
+query crash recovery, deletion races, and native PostgreSQL/S3 projection. CI
+starts its own disposable PostgreSQL and S3 fixtures. No production deployment is
+part of this implementation request.

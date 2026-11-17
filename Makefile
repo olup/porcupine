@@ -20,7 +20,7 @@ check: api-check cli-check
 fmt:
 	gofmt -w cmd internal cli/cmd
 
-integration: ducklake-smoke ducklake-s3-test ducklake-restore-drill
+integration: ducklake-smoke ducklake-s3-test ducklake-restore-drill shared-integration
 
 integration-s3: ducklake-s3-test
 
@@ -100,3 +100,9 @@ ducklake-restore-drill: cli
 .PHONY: shared-postgres-test
 shared-postgres-test:
 	CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration
+
+SHARED_TEST_RACE ?= true
+
+.PHONY: shared-integration
+shared-integration:
+	CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- go run ./internal/cmd/ducklake-s3-integration -run '^(TestShared|TestDuckLakeS3SharedPostgres)' -race=$(SHARED_TEST_RACE) -timeout=600s

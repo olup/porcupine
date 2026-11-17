@@ -35,6 +35,8 @@ Version v0.14.0 includes [remote backups and offline recovery](native-backup-rec
 
 **Unreleased:** [tenants and usage budgets](tenants.md) group projects under a monthly ingestion allowance and shared interactive query limits. Tenant management is restricted to instance administrators. This feature requires a fresh data directory and is not included in v0.14.0.
 
+Optional [shared PostgreSQL deployment](shared-deployment.md) is also unreleased: one binary can use PostgreSQL control/catalog metadata, owner-local SQLite queues, and S3 Parquet. Any worker can serve as a public entry point; accepted events and jobs stay with their durable project owner. This does not provide automatic owner failover or native whole-instance backup/restore.
+
 ## Look up a contract
 
 Use the [HTTP API reference](management-api.md), [SQL reference](analytics.md), or [MCP reference](mcp.md) for request fields, permissions, and limits. The [native event contract](native-event-contract.md) describes producer fields and historical message semantics. The running instance serves its OpenAPI contract at `/openapi.json`. In MCP, `porcupine_docs` describes the operations available to your credential.

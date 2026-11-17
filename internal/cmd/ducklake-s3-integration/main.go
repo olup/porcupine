@@ -37,6 +37,9 @@ func main() {
 	expectedVersion := flag.String("expected-version", "", "Require this server version in image mode")
 	useTLS := flag.Bool("tls", false, "Use a private TLS S3 fixture for the native test suite")
 	probe := flag.Bool("probe", false, "Run the isolated internal image probe")
+	pattern := flag.String("run", "^TestDuckLakeS3", "Go test name pattern in native suite mode")
+	race := flag.Bool("race", true, "Enable the Go race detector in native suite mode")
+	timeout := flag.Duration("timeout", 180*time.Second, "Go test timeout in native suite mode")
 	flag.Parse()
 	execute := func() error {
 		if *probe {
@@ -45,18 +48,21 @@ func main() {
 		if *image != "" {
 			return runImage(ctx, *image, *expectedVersion, *credentialChain)
 		}
-		return run(ctx, *useTLS)
+		if *timeout <= 0 {
+			return errors.New("native integration timeout must be positive")
+		}
+		return run(ctx, *useTLS, *pattern, *race, *timeout)
 	}
 	if err := execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	if *image == "" && !*probe {
-		fmt.Println("ok: native DuckLake S3 ingestion, identity, mutations, isolation, cleanup and restart")
+		fmt.Println("ok: isolated DuckLake S3 integration suite")
 	}
 }
 
-func run(ctx context.Context, useTLS bool) error {
+func run(ctx context.Context, useTLS bool, pattern string, race bool, timeout time.Duration) error {
 	suffix, err := randomHex(8)
 	if err != nil {
 		return err
@@ -164,7 +170,11 @@ func run(ctx context.Context, useTLS bool) error {
 	if err := os.WriteFile(awsConfigFile, nil, 0600); err != nil {
 		return err
 	}
-	tests := exec.CommandContext(ctx, "go", "test", "-race", "./internal/porcupine", "-run", "^TestDuckLakeS3", "-count=1", "-timeout=180s", "-v")
+	arguments = []string{"test", "./internal/porcupine", "-run", pattern, "-count=1", "-timeout=" + timeout.String(), "-v"}
+	if race {
+		arguments = append(arguments, "-race")
+	}
+	tests := exec.CommandContext(ctx, "go", arguments...)
 	tests.Env = environment(map[string]string{
 		"CGO_ENABLED":                                  "1",
 		"PORCUPINE_TEST_DUCKLAKE_S3_ENDPOINT":          endpoint,

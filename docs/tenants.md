@@ -73,7 +73,9 @@ These are technical limits, not a subscription or price. Replacing budgets does 
 
 `ingestion_monthly_events` counts new unique canonical rows durably accepted across all projects in the tenant. A supported identity control or accepted historical person snapshot also consumes a row. Duplicate retries, ignored snapshots, invalid rows, and rolled-back work consume nothing. A later edit, event deletion, or project deletion does not refund usage.
 
-Use `null` for unlimited ingestion and `0` to disallow new events. Zero still permits retries of events already accepted. Porcupine updates the counter in the same SQLite transaction as durable acceptance; it does not wait for analytical delivery. A quota refusal does not leave a partially charged acceptance transaction.
+Use `null` for unlimited ingestion and `0` to disallow new events. Zero still permits retries of events already accepted. Porcupine records usage in the same SQLite transaction as durable acceptance; it does not wait for analytical delivery. A quota refusal does not leave a partially charged acceptance transaction. In default standalone mode, this transaction also enforces the tenant's complete allowance exactly.
+
+In optional [shared mode](shared-deployment.md#shared-budgets), each project owner publishes cumulative usage to PostgreSQL and refreshes cached policy on a ten-second cycle. Its own unpublished usage counts immediately. Other owners' usage and policy changes can lag, allowing soft quota overshoot. Publication is idempotent; duplicate reports do not charge twice. An expired cache must refresh before new acceptance continues. Authentication revocation does not use this policy cache.
 
 Periods are UTC calendar months, from midnight on the first day until midnight on the next month's first day. Historical imports consume the allowance of the month when they are accepted, even if their occurrence dates are years earlier. A new month opens a new counter; previous counters remain available. There is no reset command. An operator can raise the allowance when more ingestion is needed.
 
@@ -92,6 +94,8 @@ Call `get-tenant-usage` without `period` for the current month, or pass `period=
 
 Counts are decimal strings. `remaining_events` is `null` for an unlimited allowance. Reducing a budget below existing consumption leaves zero remaining; it does not rewrite the counter. The usage response's `ingestion_allowed` combines the operator switch with the selected period's remaining allowance, using the current budget configuration. It is not a historical record of past budget settings.
 
+On a shared deployment, aggregate usage reflects the counters published so far. It can lag events already durably accepted on owner volumes. These APIs do not promise a hard cross-worker quota or spending cap.
+
 ## Suspend or resume ingestion
 
 Send `{"ingestion_allowed":false}` to `update-tenant` to stop accepting new events. Send `true` to lift that suspension. An exhausted monthly budget still prevents new acceptance until the allowance increases or the next UTC month begins.
@@ -108,6 +112,8 @@ When a tenant is suspended or its ingestion allowance is exhausted:
 
 All projects in a tenant share `hot_query_max_concurrent`. SQL queries, catalog discovery, and event profiles reserve a place before execution and release it when they finish or fail. A full tenant or deployment pool returns `429`; creating another project or credential does not create more places.
 
+Shared mode reserves tenant places immediately in PostgreSQL across workers, while enforcing local process capacity separately. A crashed request or failed release keeps its reservation until the execution deadline, object-storage grace, PostgreSQL metadata grace, and 30-second safety margin have elapsed. If native work still has not returned after that deadline and both I/O allowances plus 15 seconds, a watchdog terminates the worker with status `70` before the place can be reused. Run it under a supervisor that restarts with the same owner volume. These safeguards are independent of the ten-second ingestion budget cache. [Native timeouts and supervision](shared-deployment.md#native-timeouts-and-worker-supervision)
+
 `hot_query_timeout_ms`, `hot_query_max_rows`, and `hot_query_max_result_bytes` bound each interactive SQL execution. Row or byte overflow fails rather than silently truncating the result. A SQL `LIMIT` can reduce a result, but does not replace the execution deadline.
 
 Effective limits are the lower of the tenant budget and the deployment ceiling. The deployment defaults are two analytical places, 5,000 ms, 1,000 rows, and 1 MiB. Increasing a tenant budget cannot raise a deployment ceiling. Existing background exports and pipelines keep their separate execution budgets and deployment-level admission controls.
@@ -116,6 +122,8 @@ A project reader can call `get-event-schema` to see configured `tenant_budgets`,
 
 ## Deployment boundary
 
-This implementation uses exact transactional ingestion accounting and local query admission in one Porcupine process with SQLite. It does not implement distributed quota caches, PostgreSQL coordination, hosted billing, rate limits across workers, or separate query compute. These remain [future architecture work](roadmap.md#future-saas-architecture-to-evaluate).
+The default uses exact transactional ingestion accounting and local query admission in one Porcupine process with SQLite. The optional unreleased [shared deployment](shared-deployment.md) uses PostgreSQL metadata, shared query reservations, ten-second usage publication and policy refresh, owner-local SQLite queues, and S3 Parquet. No event payloads enter operational PostgreSQL or PostgreSQL-backed DuckLake catalogs.
+
+Hosted billing, rate limits across workers, replicated acceptance, automatic owner failover, and separately provisioned query compute remain [future architecture work](roadmap.md#future-saas-architecture-to-evaluate).
 
 The unreleased tenant schema requires a fresh data directory. A pre-tenant SQLite database is rejected at startup; no automatic migration or compatibility mode is provided. Preserve an older deployment and its matching backup separately if you need to export data into a fresh instance.

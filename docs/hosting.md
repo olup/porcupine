@@ -4,6 +4,8 @@ The default server embeds DuckDB and DuckLake. One container holds the Go servic
 
 The [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
 
+**Unreleased:** the same development binary can run with [shared control PostgreSQL and DuckLake catalogs](shared-deployment.md), S3 analytical files, and an owner-local SQLite volume on every worker. This optional mode is not in the published v0.14.0 image. The standalone setup below remains the default.
+
 ## Laptop with Docker Compose
 
 Install Git, curl, OpenSSL, jq, the [standalone CLI](../cli/README.md), Docker, and Docker Compose 2.24.4 or newer. Use a POSIX shell, such as WSL on Windows.
@@ -177,7 +179,11 @@ These settings belong to the unreleased [tenant implementation](tenants.md), not
 
 The concurrency pool also retains the existing background export safety slot; tenant interactive budgets do not create additional deployment capacity. These settings do not change DuckDB's per-engine memory budget or provide process isolation. Increase them only within the host's measured resource capacity. An unset value uses the default. Query readers discover their effective limits through `get-event-schema`.
 
-Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance administrator can create additional tenants, set per-tenant budgets, or inspect aggregate usage. This remains one Porcupine process with SQLite; it does not add shared PostgreSQL or multi-worker support.
+Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance administrator can create additional tenants, set per-tenant budgets, or inspect aggregate usage. This works in the default single-process SQLite mode and optional [shared mode](shared-deployment.md). In shared mode, query places are reserved across workers, and each process retains its own local resource ceiling.
+
+Shared PostgreSQL analytical metadata also uses `PORCUPINE_DUCKLAKE_METADATA_TIMEOUT_SECONDS`: default 10, range 2–60 seconds. This setting applies to native connection, statement, lock, and TCP waits and is not accepted for local catalogs. `get-event-schema` reports `limits.metadata_request_timeout_seconds`. Some native network calls can outlast cancellation; the setting does not guarantee that every query timeout returns an HTTP error immediately.
+
+Supervise shared workers and restart them with the same SQLite volume and worker identity. If a native interactive execution exceeds its SQL deadline, S3 and PostgreSQL I/O allowances, and a 15-second safety margin, the process exits with status `70`. This happens before its shared reservation's later expiry can admit a replacement. The whole process stops, so clients may need stable-ID retries. Default local mode has no shared watchdog. See [shared execution and status](shared-deployment.md#native-timeouts-and-worker-supervision) for the failure contract and the `shared_control`/`worker_registration` status checks.
 
 ## Optional destinations
 

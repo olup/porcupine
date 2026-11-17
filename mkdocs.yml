@@ -41,6 +41,7 @@ nav:
   - Deploy and operate:
       - Hosting: hosting.md
       - Tenants and budgets (unreleased): tenants.md
+      - Shared deployment (unreleased): shared-deployment.md
       - Check instance status: instance-status.md
       - Clean up DuckLake history: ducklake-cleanup.md
       - Schedule native backups: native-backups.md

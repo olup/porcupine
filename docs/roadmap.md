@@ -6,9 +6,13 @@
 - Monthly ingestion allowances shared by a tenant's projects. Counts commit atomically with newly accepted canonical rows, including imports and identity controls. Duplicate, invalid, ignored, and rolled-back rows consume nothing; deletion does not refund usage. Periods are UTC calendar months, with preserved history and no manual reset endpoint.
 - Shared tenant limits for interactive query concurrency, execution time, result rows, and result bytes. Effective limits cannot exceed deployment ceilings and are discoverable through the project schema. [Query limits](analytics.md#query-limits)
 - Operator ingestion suspension and resumable import checkpoints when an allowance is exhausted. These technical controls contain no pricing or billing logic.
+- Optional [shared PostgreSQL deployment](shared-deployment.md): shared control metadata and DuckLake catalogs, one persistent SQLite volume per worker, and S3 Parquet. Public entry points forward owner-bound requests internally; delivered SQL can run on any worker. Event payloads do not enter operational PostgreSQL, and PostgreSQL DuckLake data inlining is disabled.
+- Cumulative usage publication and cached shared ingestion policies on a ten-second cycle, with fail-closed stale policies and soft quota overshoot across owners. Tenant interactive query places are reserved immediately in PostgreSQL, with per-process protection and fixed safe expiry after a failed release.
+- Bounded native PostgreSQL metadata settings and schema-visible I/O allowances. Shared interactive queries use a fail-stop watchdog if native work remains after cancellation and its safety grace: exit `70`, followed by supervisor restart on the same persistent volume. Worker status distinguishes shared control and registration checks. This is not a guarantee that every SQL timeout returns an HTTP error immediately.
+- Stable project-owner/volume identity, owner-down `503` responses, and explicit `delivery.pending_unknown` on non-owner query responses. Shared cleanup preserves at least eight days of snapshots and obsolete-file grace. Automatic owner failover and native whole-instance backup/restore are not supported in shared mode.
 - A fresh data directory is required. Pre-tenant SQLite databases are rejected; no legacy migration or compatibility layer is included.
 
-These changes target the existing single-process SQLite deployment. PostgreSQL coordination, distributed quota refresh, hosted billing, and separate analytical compute remain future work below. They are not included in the published v0.14.0 release.
+The default remains a single-process SQLite deployment. Optional shared mode is implementation work, not a released hosting guarantee. Hosted billing, tenant-wide rate limiting, replicated acceptance, automatic owner failover, and separately provisioned analytical compute remain future work below. None of these unreleased changes is included in the published v0.14.0 release.
 
 ## Available in v0.14.0
 
@@ -48,27 +52,33 @@ These changes target the existing single-process SQLite deployment. PostgreSQL c
 
 ## Future SaaS architecture to evaluate
 
-This is a design candidate, not an implementation commitment. No SaaS work starts
-with this roadmap entry. Keep the standalone deployment unchanged.
+The commercial service remains a design candidate, not an implementation
+commitment. Its shared-storage foundation is being implemented in the unreleased
+open-source [shared deployment](shared-deployment.md). Keep default standalone
+deployment simple; no billing service or hosted availability promise follows from
+that implementation.
 
 The candidate shares workers across customer teams instead of running one permanent
 instance per customer. A tenant represents a team and contains projects, members,
 service accounts, grants, and usage limits. Resolve tenant and project scope from
 authenticated access, never from an untrusted event payload.
 
-Proposed layout:
+Shared-deployment foundation and remaining hosted questions:
 
 - Each ingestion worker owns a bounded, durable SQLite queue on its own persistent
   volume. Acknowledge capture only after that queue commits. Workers deliver batches
   to DuckLake and resume unfinished work after restart.
-- Shared PostgreSQL holds accounts, grants, usage records, DuckLake catalogs, and
-  the coordination needed across workers. Evaluate a separate logical DuckLake
-  catalog per project in the shared PostgreSQL service.
+- Shared PostgreSQL holds accounts, grants, usage records, per-project DuckLake
+  catalogs, and coordination across workers. It holds no event-payload inbox.
+  PostgreSQL-backed DuckLake data inlining is disabled.
 - Parquet files live on S3, separated by tenant and project prefixes. Prefixes
   organize storage; authorization and SQL restrictions must enforce isolation.
-- Shared state also covers cross-worker deduplication, import and pipeline progress,
-  maintenance ownership, and mutation rules. A queued event must not resurrect an
-  event or project deleted through another worker.
+- Stable project ownership and forwarding make retries from different public
+  workers reach the same SQLite receipts. Identity state, import and pipeline
+  progress, and jobs remain owner-local. PostgreSQL coordinates analytical writes,
+  maintenance, query admission, and project deletion. A queued event must not
+  resurrect an event or project deleted through another worker. Automatic owner
+  reassignment without recovering its volume remains outside the implementation.
 
 ### Usage budgets and hosted control
 
@@ -80,26 +90,30 @@ budgets or explicit suspensions through an authenticated operator API, with no
 direct access to Porcupine's database. That API may run on multiple workers behind
 the same load balancer. Tenant administrators cannot raise operator-set limits.
 
-The proposed default scope is the tenant, aggregating all its projects and workers.
+The budget scope is the tenant, aggregating all its projects and workers.
 Creating another project or credential must not multiply the tenant's allowance.
 Optional project ceilings may subdivide that allowance later. Worker and deployment
 resource ceilings remain independent safety limits.
 
-The unreleased single-process implementation counts new canonical rows at durable
-acceptance. Preserve that accounting definition when evaluating distributed workers.
-Keep shared accounting overhead off the synchronous capture path where possible,
-using idempotent batch publication without losing accepted usage after a crash.
+The unreleased implementations count new canonical rows at durable acceptance.
+Standalone mode enforces allowance exactly in SQLite. Shared mode records cumulative
+owner-local counters in that same transaction and publishes them idempotently to
+PostgreSQL. Keep shared accounting overhead off the synchronous capture path where
+possible without losing accepted usage after a crash.
 Track received, pending, stored, and discarded events separately; delivery metrics
 must not charge accepted events a second time. Workers compare cached usage with
 event budgets, without consulting the private service on each capture.
 An event consumes period allowance once; a concurrent query instead reserves a
-place and releases it on completion. Coordinate query admission atomically across
-workers, with tested crash recovery. Retain usage history when opening a new period.
+place and releases it on completion. Shared query admission reserves places
+atomically in PostgreSQL; fixed safe expiry recovers reservations after a failed
+release. Validate crash recovery before making a hosted guarantee. Retain usage
+history when opening a new period.
 
-Use a fixed, configurable cache refresh interval rather than adapting it to each
-tenant's remaining budget. Start evaluation at 10 seconds. Batch reads for active
-tenants on each worker and stagger refreshes across workers. Counter publication
-must be frequent enough to make those reads useful. No per-worker invalidation
+The unreleased shared implementation uses a fixed ten-second publication and policy
+refresh cycle, with an expired-cache refusal when refresh fails. It includes each
+owner's unpublished consumption in local decisions. Evaluate configurable intervals,
+batch-read costs and staggered refreshes under larger deployments rather than
+adapting frequency to each tenant's remaining budget. No per-worker invalidation
 endpoint is required initially. This cache policy applies to usage budgets, not
 credential revocation.
 
@@ -160,7 +174,7 @@ More workers increase concurrent capacity; they do not automatically distribute
 one DuckDB query across machines. Shared native processes also need resource
 budgets and protection against noisy tenants.
 
-### Evidence required before implementation or a service guarantee
+### Evidence required before a hosted service guarantee
 
 - [ ] Measure sustained ingestion, queue growth, end-to-end freshness, and recovery
   with concurrent queries and maintenance. Include many quiet tenants and one busy
@@ -192,4 +206,4 @@ on hold. The editable event and property documentation above is separate planned
 
 Saved parameterized SQL queries and report collections remain on hold. Agents write SQL and use tested [DuckDB recipes](duckdb-recipes.md). A server-side graph renderer is not a current priority; the client agent can generate graphs where its tools support it.
 
-General aliasing, merging identified users, unlinking, remote DuckLake catalogs, native result caching and finite native receipt history remain outside this release. The [compatibility matrix](../compat/matrix.json) records the exact supported SDK behaviors. Feature flags and replay are outside the current product scope.
+General aliasing, merging identified users, unlinking, native result caching and finite native receipt history remain deferred. PostgreSQL-backed remote DuckLake catalogs are part of unreleased shared-deployment work, not v0.14.0. The [compatibility matrix](../compat/matrix.json) records the exact supported SDK behaviors. Feature flags and replay are outside the current product scope.

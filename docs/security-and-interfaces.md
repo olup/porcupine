@@ -107,6 +107,20 @@ Local data paths and engine resource settings belong to deployment configuration
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
+### Unreleased shared deployment boundary
+
+Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. This mode is not included in v0.14.0.
+
+Any public worker authenticates against shared control. Owner-dependent work is forwarded to the trusted registered worker URL with a signed, bounded internal request. The receiving worker validates routing identity, project ownership, request integrity, and replay protection, then revalidates the original client credential. Public routing headers cannot select an owner or bypass project authorization. Internal transport requires HTTPS outside loopback; network access and routing secrets belong to the operator.
+
+Tenant policies and usage refresh on a ten-second cycle. Cached limits may temporarily lag, but expired policy cannot authorize unlimited new ingestion. Credential revocation and project-deletion fences are checked against shared control independently of that cache. Shared query reservations coordinate tenant capacity immediately, with additional per-process limits.
+
+Native metadata I/O has configurable connection, statement, lock, and TCP bounds. These do not guarantee instant cancellation of every PostgreSQL/libpq or object-store call. A shared query reservation remains valid for the SQL deadline, both I/O grace intervals, and 30 seconds. If native execution has not returned after the deadline, both I/O graces, and 15 seconds, a watchdog terminates the whole worker with exit status `70` before that reservation can be reused. Operators must supervise restart with the same durable volume. This is a process-level safety boundary; it can interrupt unrelated requests and is not enabled for default local mode.
+
+Worker registration binds one stable worker ID to its durable local volume and prevents two active processes from claiming it. This does not replicate accepted events or authorize a replacement owner without its volume. Owner-bound requests return `503` when that owner is unavailable. Non-owner SQL responses set `delivery.pending_unknown: true`; do not infer a drained queue from their zero local counts.
+
+Shared catalog cleanup preserves at least eight days of snapshots and obsolete-file grace for remote readers. Native whole-instance backup and restore are unsupported in this mode; coordinated PostgreSQL, S3, and worker-volume recovery remains an operator responsibility. These are storage and failure boundaries, not a promise of automatic failover or immediate physical erasure.
+
 ## Pipeline boundaries
 
 [Project pipelines](pipelines.md) deliver webhook events and scheduled S3
