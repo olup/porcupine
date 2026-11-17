@@ -58,11 +58,12 @@ To change the container's configuration, keep a private local copy. Stop the ser
 
 ```sh
 umask 077
+porcupine_config_copy=$(mktemp -d)
 docker compose stop porcupine
-docker compose cp porcupine:/data/porcupine.json ./porcupine.private.json
-chmod 600 ./porcupine.private.json
-# Edit porcupine.private.json with your local editor.
-docker compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < porcupine.private.json
+docker compose cp porcupine:/data/porcupine.json "$porcupine_config_copy/porcupine.json"
+chmod 600 "$porcupine_config_copy/porcupine.json"
+# Edit the file at $porcupine_config_copy/porcupine.json with your local editor.
+docker compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$porcupine_config_copy/porcupine.json"
 docker compose --profile tools run --rm config-check
 docker compose up -d porcupine
 ```
