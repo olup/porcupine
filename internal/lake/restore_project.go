@@ -188,8 +188,12 @@ func validateNativeRestoreCatalog(ctx context.Context, reader NativeBackupReader
 			return false, err
 		}
 	}
-	if _, err := applicationCatalogVersion(ctx, db, "archive", false); err != nil {
+	version, err := applicationCatalogVersion(ctx, db, "archive", false)
+	if err != nil {
 		return false, err
+	}
+	if version >= hostedFenceSchemaVersion {
+		return false, errors.New("hosted catalog restore requires the hosted identity and commit-proof recovery protocol; standalone restore cannot discard that authority")
 	}
 	if err := db.QueryRowContext(ctx, "SELECT count(*)>0 FROM duckdb_columns() WHERE database_name='archive' AND table_name='current_events' AND column_name='payload'").Scan(&legacy); err != nil {
 		return false, err

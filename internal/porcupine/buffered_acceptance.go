@@ -227,7 +227,7 @@ func bufferedInputBytes(input validatedLiveEvent) int64 {
 	e := input.event
 	size := bufferedEventOverhead + int64(len(e.ProjectID)+len(e.UUID)+len(e.Event)+len(e.DistinctID)+len(e.Properties)+len(e.Timestamp)+len(e.ReceivedAt)+len(e.SourceID)+len(e.MessageID)+len(e.EventType)+len(e.Context))
 	if c := input.identity; c != nil {
-		size += int64(len(c.target) + len(c.anonymous) + len(c.set) + len(c.setOnce))
+		size += int64(len(c.Target) + len(c.Anonymous) + len(c.Set) + len(c.SetOnce))
 	}
 	return size
 }
@@ -246,10 +246,10 @@ func cloneValidatedLiveEvent(input validatedLiveEvent) validatedLiveEvent {
 	e.Context = append([]byte(nil), e.Context...)
 	if input.identity != nil {
 		c := *input.identity
-		c.target = strings.Clone(c.target)
-		c.anonymous = strings.Clone(c.anonymous)
-		c.set = append([]byte(nil), c.set...)
-		c.setOnce = append([]byte(nil), c.setOnce...)
+		c.Target = strings.Clone(c.Target)
+		c.Anonymous = strings.Clone(c.Anonymous)
+		c.Set = append([]byte(nil), c.Set...)
+		c.SetOnce = append([]byte(nil), c.SetOnce...)
 		input.identity = &c
 	}
 	return input
