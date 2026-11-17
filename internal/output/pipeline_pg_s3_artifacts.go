@@ -1,7 +1,6 @@
 package output
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -35,38 +34,26 @@ func (w *pipelineS3Sink) beginHostedUpload(key string) (*exportstore.Upload, err
 }
 
 func (s *PipelineJobs) cleanupHostedScheduledFiles(ctx context.Context, tx *sql.Tx, w *hostedScheduledWork, store *exportstore.Store) error {
-	rows, err := tx.QueryContext(ctx, `SELECT object_key,upload_id FROM hosted_s3_pipeline_files WHERE run_id=$1 ORDER BY object_key`, w.id)
+	files, err := listHostedScheduledFiles(ctx, tx, w.id)
 	if err != nil {
 		return err
 	}
-	type artifact struct{ key, upload string }
-	var files []artifact
-	for rows.Next() {
-		var f artifact
-		if err = rows.Scan(&f.key, &f.upload); err != nil {
-			break
-		}
-		files = append(files, f)
-	}
-	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
-		return err
-	}
 	for _, f := range files {
-		_, err = tx.ExecContext(ctx, `INSERT INTO managed_artifact_ownership(tenant_id,project_id,kind,storage_id,object_key,upload_id)
-VALUES($1,$2,'pipeline_unpublished',$3,$4,$5) ON CONFLICT DO NOTHING`, w.tenant, w.pipeline.ProjectID, store.OwnershipID(), f.key, f.upload)
+		items, err := exactScheduledFileArtifacts(ctx, w, store, f)
 		if err != nil {
 			return err
 		}
-		if f.upload == "" {
-			err = store.AbortKeyUploads(ctx, f.key)
-		} else {
-			err = store.Abort(ctx, f.key, f.upload)
+		for _, item := range items {
+			if err = store.DeleteExactArtifact(ctx, f.key, item.VersionID, item.UploadID); err != nil {
+				return err
+			}
 		}
+		remaining, err := exactScheduledFileArtifacts(ctx, w, store, f)
 		if err != nil {
 			return err
 		}
-		if err = store.Delete(ctx, f.key); err != nil {
-			return err
+		if len(remaining) != 0 {
+			return errHostedOutputOwnership
 		}
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM hosted_s3_pipeline_files WHERE run_id=$1`, w.id)
@@ -125,25 +112,29 @@ func (s *PipelineJobs) releaseHostedScheduledArtifactsTx(ctx context.Context, tx
 			return err
 		}
 		defer store.Close()
-		remote, err := store.ReadManifest(ctx, pipelineManifestKey(&w.s3PipelineWork))
-		switch {
-		case errors.Is(err, exportstore.ErrNotFound):
+		published, err := scheduledManifestPublished(ctx, w, store)
+		if err != nil {
+			return err
+		}
+		if published {
+			var manifest pipelineS3Manifest
+			if err := json.Unmarshal([]byte(w.manifest), &manifest); err != nil {
+				return err
+			}
+			if err := s.RecordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, pipelineManifestBytes(manifest)); err != nil {
+				return err
+			}
+		} else {
+			if w.manifest != "" {
+				// A supported restore could replay this checkpoint. Project
+				// deletion can reclaim its files after the recovery floor.
+				return ErrPipelineConflict
+			}
 			if err = s.cleanupHostedScheduledFiles(ctx, tx, w, store); err != nil {
 				return err
 			}
-		case err != nil:
-			return err
-		case w.manifest == "" || !bytes.Equal(remote, []byte(w.manifest)):
-			return ErrPipelineConflict
-		default:
-			var manifest pipelineS3Manifest
-			if err := json.Unmarshal(remote, &manifest); err != nil {
-				return err
-			}
-			if err := s.recordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, manifest); err != nil {
-				return err
-			}
 		}
+
 	}
 	b := w.binding()
 	return s.pg.effects.charge(ctx, tx, b, b.Demand, -1)
