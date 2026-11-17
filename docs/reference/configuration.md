@@ -15,6 +15,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | Section | Common keys and purpose |
 | --- | --- |
 | Top level | `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
+| `acceptance` | `mode`: omitted or `"durable"` preserves journal-backed acceptance; `"buffered"` is reserved and rejected until the hosted writer and shared state providers exist |
 | `storage` | `journal`, `control`, `ducklake`: local paths; omit `control` for shared PostgreSQL |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
@@ -26,6 +27,8 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `pipeline` | `key` or `key_file` for destination encryption, plus allowed `s3_endpoints` |
 | `export` | Separate export-result `s3` settings and job/output limits |
 | `backup` | `directory` or separate backup `s3`, plus `interval`, `timeout`, and `retain` |
+
+`PORCUPINE_ACCEPTANCE_MODE` overrides `acceptance.mode`. Selecting shared PostgreSQL does not select buffered acceptance. No available configuration acknowledges live input without the SQLite commit.
 
 The default generated local control path is the journal path plus `.control`. Shared mode requires PostgreSQL control, PostgreSQL DuckLake catalogs, analytical S3, and a separate local journal per worker. See [shared deployment](shared-deployment.md).
 

@@ -15,6 +15,9 @@ import (
 // FileConfig is the operator configuration. Environment tags are also the
 // allowlist, so a newly supported setting cannot be forgotten by validation.
 type FileConfig struct {
+	Acceptance struct {
+		Mode string `json:"mode,omitempty" env:"PORCUPINE_ACCEPTANCE_MODE"`
+	} `json:"acceptance"`
 	Listen         string   `json:"listen,omitempty" env:"PORCUPINE_ADDR"`
 	BootstrapToken string   `json:"bootstrap_token,omitempty" env:"PORCUPINE_BOOTSTRAP_TOKEN" secret:"true"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" env:"PORCUPINE_ALLOWED_ORIGINS"`

@@ -42,7 +42,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 				t.Fatal(err)
 			}
 			participantCalls := 0
-			writer := eventAcceptance{db: s.db, rules: rules, enqueueWebhooks: func(ctx context.Context, tx *sql.Tx, events []eventapi.Event) error {
+			writer := durableAcceptance{db: s.db, rules: rules, enqueueWebhooks: func(ctx context.Context, tx *sql.Tx, events []eventapi.Event) error {
 				participantCalls++
 				if len(events) != 1 || events[0].Event != "$pageview" || !strings.HasPrefix(events[0].DistinctID, "cookieless_") {
 					t.Fatal("participant did not receive the accepted ordinary event")
@@ -58,7 +58,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 			}}
 			result, err := writer.Accept(t.Context(), prepared, ingestionPeer{address: netip.MustParseAddr("192.0.2.1"), userAgent: "browser"}, true)
 			var failure *acceptanceFailure
-			if !errors.As(err, &failure) || failure.message != "webhook queue unavailable" || !failure.retry || participantCalls != 1 || result.accepted != 0 || result.receipts != nil {
+			if !errors.As(err, &failure) || failure.message != "webhook queue unavailable" || !failure.retry || participantCalls != 1 || result != nil {
 				t.Fatalf("failed commit returned an acknowledgment: %+v %v", result, err)
 			}
 			for _, table := range []string{"events", "identity_links", "event_receipts", "acceptance_test_destination", "tenant_usage"} {
@@ -87,7 +87,7 @@ func TestLiveAcceptanceHTTPDoesNotAcknowledgeFailedParticipant(t *testing.T) {
 	t.Parallel()
 	s := service(t, 10)
 	projectID, ingest := project(t, s)
-	s.acceptance.enqueueWebhooks = func(context.Context, *sql.Tx, []eventapi.Event) error { return errors.New("destination failure") }
+	durableAcceptanceForTest(t, s).enqueueWebhooks = func(context.Context, *sql.Tx, []eventapi.Event) error { return errors.New("destination failure") }
 	response := request(t, s, "POST", "/capture/", "", captureBody(ingest, "not-acknowledged"), 503)
 	if response["accepted"] != nil || response["receipts"] != nil || eventCount(t, s) != 0 {
 		t.Fatal("transport acknowledged an uncommitted event", projectID, response)
@@ -107,4 +107,21 @@ func TestLivePreparationPreservesSourceBoundPostHogResponse(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT ingestion_metadata FROM events`).Scan(&metadata); err != nil || !json.Valid([]byte(metadata)) || !strings.Contains(metadata, `"source_id":"web"`) {
 		t.Fatal("authenticated source binding was not persisted", metadata, err)
 	}
+}
+
+func durableAcceptanceForTest(t testing.TB, s *Service) *durableAcceptance {
+	t.Helper()
+	a, ok := s.acceptance.(*durableAcceptance)
+	if !ok {
+		t.Fatal("expected durable acceptance")
+	}
+	return a
+}
+func durableResultForTest(t testing.TB, result liveAcceptanceResult) durableLiveResult {
+	t.Helper()
+	a, ok := result.(durableLiveResult)
+	if !ok {
+		t.Fatal("expected durable result", result)
+	}
+	return a
 }

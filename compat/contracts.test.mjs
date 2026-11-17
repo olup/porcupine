@@ -71,7 +71,7 @@ async function sdkSend(tab, name, operation, argument) {
   assert.equal(await response.finished(), null);
   assert.equal(response.request().failure(), null);
   const payload = decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() });
-  assert.deepEqual(await response.json(), { status: 1, accepted: payload.batch.length, duplicates: 0, identity_ignored: 0 });
+  assert.deepEqual(await response.json(), { status: 1, durability: 'durable', accepted: payload.batch.length, duplicates: 0, identity_ignored: 0 });
   return { value, payload, sent: payload.batch.find(item => item.event === name) };
 }
 const sdkCapture = (tab, name) => sdkSend(tab, name, name => ({ distinct: posthog.get_distinct_id(), uuid: posthog.capture(name, { synthetic: true }, { send_instantly: true }).uuid }), name);
@@ -306,7 +306,7 @@ contract('browser.cookieless-no-storage', async () => {
     assert.equal(await response.headerValue('access-control-allow-origin'), origin);
     assert.equal(await response.finished(), null, 'Chromium completes the CORS fetch');
     assert.equal(response.request().failure(), null);
-    assert.deepEqual(await response.json(), { status: 1, accepted: 1, duplicates: 0, identity_ignored: 0 });
+    assert.deepEqual(await response.json(), { status: 1, durability: 'durable', accepted: 1, duplicates: 0, identity_ignored: 0 });
     const sent = decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() }).batch;
     assert.equal(sent.length, 1);
     assert.equal(sent[0].properties.distinct_id, '$posthog_cookieless', 'the actual SDK request carries the sentinel');
@@ -420,7 +420,7 @@ contract('browser.identify-traits-repeat', async () => {
     assert.equal(person.version, saved.id, 'the profile version points to its durable control receipt');
     const response = await fetch(api + '/e/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(update.payload) });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: 1, accepted: 0, duplicates: 1, identity_ignored: 0 });
+    assert.deepEqual(await response.json(), { status: 1, durability: 'durable', accepted: 0, duplicates: 1, identity_ignored: 0 });
     assert.deepEqual(identities(id), snapshot, 'stable-UUID retry does not apply traits again or advance version');
   });
 });
@@ -483,7 +483,7 @@ contract('browser.identify-batched-controls', async () => {
     assert.equal(person.traits.plan, 'team'); assert.equal(person.traits.first_source, 'batch');
     const replay = await fetch(api + wire.path, { method: 'POST', headers: { 'content-type': wire.headers['content-type'] }, body: wire.body });
     assert.equal(replay.status, 200);
-    assert.deepEqual(await replay.json(), { status: 1, accepted: 0, duplicates: batch.length, identity_ignored: 0 });
+    assert.deepEqual(await replay.json(), { status: 1, durability: 'durable', accepted: 0, duplicates: batch.length, identity_ignored: 0 });
     assert.deepEqual(identities(id), snapshot, 'mixed-batch retry leaves durable identity and trait version unchanged');
   }, true);
 });
