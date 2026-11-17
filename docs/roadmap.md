@@ -20,9 +20,10 @@ Integrated on the stabilization branch, pending final combined validation:
 - Bounded local retry receipts with timestamp-independent historical deduplication, including import retries and refusal during analytical lookup failures.
 - DuckLake schema v2 with monthly partitions, no full duplicated current payload, format checks, and interrupted-upgrade recovery.
 - Smaller authentication, canonical-event, input, import, delivery, and S3 modules while keeping durable transaction ownership in the service.
+- One typed self-host configuration file, private init/check/install commands, and a single Compose entry point. Real image tests cover nonroot setup, file overrides, custom storage paths, configuration replacement, and restart.
 - Focused product guides, detailed references, and separate design records.
 
-Still being completed: one self-host configuration file, setup checks, and a consolidated Compose entry point. Authentication-mode removal remains a proposal rather than part of the extraction.
+Authentication-mode removal remains a proposal rather than part of the extraction. The combined branch still needs its final validation before release.
 
 ## Validate the complete team workflow
 

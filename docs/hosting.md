@@ -43,7 +43,7 @@ The main sections group storage, queue, query, OAuth, email, OIDC, analytical S3
 
 Keep the generated secrets and other required settings when editing. Do not replace the whole configuration with this excerpt.
 
-For Docker development, build the source first, then initialize the private configuration in the persistent volume:
+For Docker development, use a fresh data volume for this unreleased schema. Build the source first, then initialize the private configuration in the persistent volume:
 
 ```sh
 docker compose build porcupine

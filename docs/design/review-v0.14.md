@@ -19,7 +19,7 @@ The review found sound acceptance and SQL-isolation boundaries alongside an over
 | Duplicate analytical payload and missing time partitioning | One current event representation, original snapshot only after correction, monthly partitions | Integrated with format checks and interrupted-upgrade recovery; final combined checks pending |
 | JSON parsing and repeated time representations | Properties remain flexible JSON; source timestamp text is retained for precision alongside query columns. Profile extraction/scan costs before promoting common properties or changing native types | Further optimization is open, not a shipped performance claim |
 | Large authentication surface | Extract code and document simplification options without silently removing login modes | Extraction integrated; mode removal remains a proposal |
-| Many environment variables/Compose overlays | One configuration file, init/check, validated overrides, and consolidated Compose entry point | In progress |
+| Many environment variables/Compose overlays | Typed JSON, init/check/atomic install, validated overrides, and one Compose entry point | Integrated; real nonroot image setup/custom-path/restart tests passed; combined checks pending |
 | Product guides mixed with experiments | Task guides, detailed reference, separate design records, changelog, shorter agent guide | Integrated; strict HTML/Markdown build and link tests passed |
 | Hosted sizing assumption | Shared cells are an option; use measured active-engine/workload limits, not a promised tenants-per-process figure | Architecture to validate |
 
