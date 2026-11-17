@@ -1,0 +1,29 @@
+name: Hosted buffered visibility experiment
+on:
+  push:
+    branches: [ci/hosted-buffered-visibility]
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Measure cross-worker visibility and loss
+        env:
+          PORCUPINE_TEST_HOSTED_BUFFERED_VISIBILITY: "1"
+        shell: bash
+        run: |
+          set -o pipefail
+          aws --version
+          bash scripts/aws-emulator-test.sh '^TestDuckLakeS3SharedPostgresHostedBufferedVisibility$' 2>&1 | tee visibility.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: hosted-buffered-visibility
+          path: visibility.log
