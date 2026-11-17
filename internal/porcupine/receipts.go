@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -31,6 +32,48 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid s
 	_, err := tx.ExecContext(ctx, `INSERT INTO event_receipts(project_id,uuid,event_id,recorded_at_ms) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,uuid) DO UPDATE SET event_id=CASE WHEN event_receipts.event_id=0 THEN excluded.event_id ELSE event_receipts.event_id END`, project, uuid, id, s.clock().UnixMilli())
 	return err
 }
+
+// Receipt lookups and pruning serialize within one project before taking the
+// short instance-wide policy/commit lock. A blocked object store never holds
+// that global lock. Idle gates are removed; the map holds only current callers.
+type receiptProjectGate struct {
+	mutex contextMutex
+	users int
+}
+
+type receiptProjectGates struct {
+	mutex    sync.Mutex
+	projects map[string]*receiptProjectGate
+}
+
+func (g *receiptProjectGates) lock(ctx context.Context, project string) (func(), error) {
+	g.mutex.Lock()
+	if g.projects == nil {
+		g.projects = map[string]*receiptProjectGate{}
+	}
+	gate := g.projects[project]
+	if gate == nil {
+		gate = &receiptProjectGate{}
+		g.projects[project] = gate
+	}
+	gate.users++
+	g.mutex.Unlock()
+	drop := func() {
+		g.mutex.Lock()
+		gate.users--
+		if gate.users == 0 {
+			delete(g.projects, project)
+		}
+		g.mutex.Unlock()
+	}
+	if err := gate.mutex.Lock(ctx); err != nil {
+		drop()
+		return nil, err
+	}
+	return func() { gate.mutex.Unlock(); drop() }, nil
+}
+
+const receiptLookupTimeout = 5 * time.Second
 
 // coldKnown checks UUIDs without trusting producer timestamps. A retry may omit
 // its timestamp or change any payload field while keeping the same message ID.
@@ -67,8 +110,8 @@ func (s *Service) knownEventsForAcceptance(ctx context.Context, project string, 
 }
 
 // pruneReceipts verifies each batch against analytical heads before deleting
-// receipts. Its durable marker and deletion commit together under the same
-// admission lock as ingestion, including when control metadata is PostgreSQL.
+// receipts. Remote reads use only the project gate; the rechecked deletion and
+// durable marker commit together under the short instance admission lock.
 func (s *Service) pruneReceipts(ctx context.Context) error {
 	if s.receiptRetention <= 0 || s.lake == nil {
 		return nil
@@ -86,65 +129,94 @@ func (s *Service) pruneReceipts(ctx context.Context) error {
 	}
 }
 
+type receiptCandidate struct {
+	project, uuid string
+	id            int64
+}
+
 func (s *Service) pruneReceiptBatch(ctx context.Context) (int, error) {
-	if err := s.eventRules.admission.Lock(ctx); err != nil {
-		return 0, err
-	}
-	defer s.eventRules.admission.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
+	defer cancel()
+	cutoff := s.clock().Add(-s.receiptRetention).UnixMilli()
 	rows, err := s.db.QueryContext(ctx, `SELECT r.project_id,r.uuid,r.event_id FROM event_receipts r
  WHERE r.recorded_at_ms<? AND NOT EXISTS(SELECT 1 FROM events e WHERE e.project_id=r.project_id AND e.uuid=r.uuid)
  AND NOT EXISTS(SELECT 1 FROM mutation_outbox m WHERE m.project_id=r.project_id AND m.uuid=r.uuid)
- ORDER BY r.recorded_at_ms,r.project_id,r.uuid LIMIT 2000`, s.clock().Add(-s.receiptRetention).UnixMilli())
+ ORDER BY r.recorded_at_ms,r.project_id,r.uuid LIMIT 2000`, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	type receipt struct {
-		project, uuid string
-		id            int64
-	}
-	var candidates []receipt
-	projects := map[string][]string{}
+	projects := map[string][]receiptCandidate{}
+	count := 0
 	for rows.Next() {
-		var r receipt
+		var r receiptCandidate
 		if err := rows.Scan(&r.project, &r.uuid, &r.id); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		candidates = append(candidates, r)
-		projects[r.project] = append(projects[r.project], r.uuid)
+		projects[r.project] = append(projects[r.project], r)
+		count++
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return 0, err
 	}
-	if len(candidates) == 0 {
-		return 0, nil
-	}
-	known := make(map[string]map[string]int64, len(projects))
-	for project, uuids := range projects {
-		known[project], err = s.lake.KnownEvents(ctx, project, uuids)
-		if err != nil {
+	for project, candidates := range projects {
+		if err := s.pruneProjectReceipts(ctx, project, candidates, cutoff); err != nil {
 			return 0, err
 		}
 	}
+	return count, nil
+}
+
+func (s *Service) pruneProjectReceipts(ctx context.Context, project string, candidates []receiptCandidate, cutoff int64) error {
+	release, err := s.eventRules.receiptGates.lock(ctx, project)
+	if err != nil {
+		return err
+	}
+	defer release()
+	uuids := make([]string, 0, len(candidates))
 	for _, r := range candidates {
-		if known[r.project][r.uuid] != r.id || r.id <= 0 {
-			return 0, errors.New("receipt does not match its analytical event")
+		uuids = append(uuids, r.uuid)
+	}
+	known, err := s.lake.KnownEvents(ctx, project, uuids)
+	if err != nil {
+		return err
+	}
+	for _, r := range candidates {
+		if r.id <= 0 || known[r.uuid] != r.id {
+			return errors.New("receipt does not match its analytical event")
 		}
+	}
+	if s.eventRules.admission != nil {
+		if err := s.eventRules.admission.Lock(ctx); err != nil {
+			return err
+		}
+		defer s.eventRules.admission.Unlock()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer tx.Rollback()
-	for project := range projects {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('receipts_pruned:' || ?,'1') ON CONFLICT(key) DO NOTHING", project); err != nil {
-			return 0, err
-		}
-	}
+	removed := false
 	for _, r := range candidates {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM event_receipts WHERE project_id=? AND uuid=? AND event_id=?", r.project, r.uuid, r.id); err != nil {
-			return 0, err
+		// The remote check ran outside the global lock. A concurrent lifecycle
+		// operation or pending mutation may have changed the candidate since.
+		result, err := tx.ExecContext(ctx, `DELETE FROM event_receipts AS r WHERE project_id=? AND uuid=? AND event_id=? AND recorded_at_ms<?
+ AND NOT EXISTS(SELECT 1 FROM events e WHERE e.project_id=r.project_id AND e.uuid=r.uuid)
+ AND NOT EXISTS(SELECT 1 FROM mutation_outbox m WHERE m.project_id=r.project_id AND m.uuid=r.uuid)`, project, r.uuid, r.id, cutoff)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		removed = removed || count > 0
+	}
+	if removed {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('receipts_pruned:' || ?,'1') ON CONFLICT(key) DO NOTHING", project); err != nil {
+			return err
 		}
 	}
-	return len(candidates), tx.Commit()
+	return tx.Commit()
 }

@@ -30,6 +30,23 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 }
 
 func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor auth.Principal, complete bool) error {
+	release, err := m.rules.receiptGates.lock(ctx, project)
+	if err != nil {
+		return err
+	}
+	defer release()
+	events := make([]eventapi.Event, 0, len(work.rows))
+	for _, row := range work.rows {
+		if row.Kind == "events" {
+			events = append(events, row.Event)
+		}
+	}
+	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
+	known, err := m.rules.coldKnown(lookup, project, events)
+	cancel()
+	if err != nil {
+		return apiError(503, "import storage unavailable; retry the same chunk")
+	}
 	if m.rules.admission != nil {
 		if err := m.rules.admission.Lock(ctx); err != nil {
 			return err
@@ -40,16 +57,6 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		if err := m.rules.prepareAcceptance(ctx, project); err != nil {
 			return apiError(503, "ingestion policy unavailable; retry the same chunk")
 		}
-	}
-	events := make([]eventapi.Event, 0, len(work.rows))
-	for _, row := range work.rows {
-		if row.Kind == "events" {
-			events = append(events, row.Event)
-		}
-	}
-	known, err := m.rules.coldKnown(ctx, project, events)
-	if err != nil {
-		return apiError(503, "import storage unavailable; retry the same chunk")
 	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {

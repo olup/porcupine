@@ -18,6 +18,7 @@ import (
 // eventRules is the shared policy for live and historical acceptance. Its clock
 // and budgets have one owner even when several entry points write the journal.
 type eventRules struct {
+	receiptGates      receiptProjectGates
 	admission         *contextMutex
 	clock             func() time.Time
 	queueMax          int
@@ -136,6 +137,19 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 }
 
 func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, peer ingestionPeer, withReceipts bool) (liveAcceptanceResult, error) {
+	// Project exclusion covers the lookup through commit, including the first
+	// receipt prune. Only local policy and the transaction take the global lock.
+	release, err := a.rules.receiptGates.lock(ctx, batch.projectID)
+	if err != nil {
+		return liveAcceptanceResult{}, err
+	}
+	defer release()
+	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
+	known, err := a.rules.coldKnown(lookup, batch.projectID, batch.events)
+	cancel()
+	if err != nil {
+		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable", retry: true}
+	}
 	if a.rules.admission != nil {
 		if err := a.rules.admission.Lock(ctx); err != nil {
 			return liveAcceptanceResult{}, err
@@ -146,10 +160,6 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 		if err := a.rules.prepareAcceptance(ctx, batch.projectID); err != nil {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "ingestion policy unavailable", retry: true}
 		}
-	}
-	known, err := a.rules.coldKnown(ctx, batch.projectID, batch.events)
-	if err != nil {
-		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable", retry: true}
 	}
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -14,7 +14,7 @@ A duplicate cannot change properties, update traits a second time, enqueue anoth
 
 ## Bounded receipts
 
-The maintenance worker checks each candidate against the project's DuckLake heads before pruning it. Pending queue payloads and mutations keep their receipts. The batch's durable project marker and receipt deletion commit in the same SQLite transaction, serialized with ingestion.
+The maintenance worker checks each candidate against the project's DuckLake heads before pruning it. Pending queue payloads and mutations keep their receipts. Each project's durable marker and receipt deletion commit in the same SQLite transaction. The worker rechecks candidates after the analytical lookup. Project gates serialize lookups and pruning within one project; remote reads never hold the instance-wide policy/commit lock. Each maintenance batch has a five-second deadline.
 
 Once a project has pruned any receipts, live ingestion and historical import chunks check producer IDs against DuckLake before acceptance. Producer timestamps cannot select this check: a retry may omit or change its timestamp while keeping its message ID. The marker survives restart and setting retention to `0`; that setting stops future pruning but cannot recreate old local receipts. A failed analytical lookup rejects the whole batch or import chunk for retry. Projects that have never pruned receipts retain the SQLite-only acceptance path. Without DuckLake, receipts are never pruned.
 
