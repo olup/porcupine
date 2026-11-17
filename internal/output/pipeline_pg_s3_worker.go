@@ -53,18 +53,43 @@ func (s *PipelineJobs) withHostedScheduledRun(ctx context.Context, w *hostedSche
 	if err = call(tx); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_runs SET lease_until=`+exportLeaseExtension+` WHERE id=$1`, w.id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *PipelineJobs) renewHostedScheduled(ctx context.Context, w *hostedScheduledWork) error {
-	return s.pg.transaction(ctx, w.pipeline.ProjectID, func(ctx context.Context, tx *sql.Tx) error {
-		if err := s.authorizeHostedScheduledTx(ctx, tx, w); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.authorizeHostedScheduledTx(ctx, tx, w); err != nil {
+		return err
+	}
+	// An upload checkpoint can hold the row lock during S3 I/O and renews
+	// its own lease on completion. Never serialize the monitor behind it.
+	const claimed = ` FROM hosted_s3_pipeline_runs WHERE id=$1 AND state='running' AND claim_id=$2`
+	result, err := tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_runs SET lease_until=`+exportLeaseExtension+`
+WHERE id IN (SELECT id`+claimed+` FOR UPDATE SKIP LOCKED)`, w.id, w.claimID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var current bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1`+claimed+`)`, w.id, w.claimID).Scan(&current); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_runs SET lease_until=`+exportLeaseExtension+`
-WHERE id=$1 AND state='running' AND claim_id=$2`+exportLiveLease, w.id, w.claimID)
-		return pipelineCheckpoint(result, err)
-	})
+		if !current {
+			return ErrPipelineConflict
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *PipelineJobs) runHostedScheduledAttempt(ctx context.Context, w *hostedScheduledWork) error {

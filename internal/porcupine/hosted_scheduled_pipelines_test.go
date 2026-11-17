@@ -2,7 +2,9 @@ package porcupine
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -54,6 +56,10 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 	other, _ := project(t, a)
 	host := httptest.NewServer(a.Handler())
 	t.Cleanup(host.Close)
+	status := sharedJourneyHTTP(t, host.URL, "GET", "/api/v1/status", adminToken, nil, nil, 200)
+	if status["configuration"].(map[string]any)["s3_query_pipelines"] != true {
+		t.Fatal("guarded hosted worker did not advertise scheduled S3")
+	}
 	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "scheduled creator", Projects: []string{scope}, Permissions: []string{"pipelines:write", "events:read"}})
 	account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
 	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "scheduled key", Audience: "api", Projects: []string{scope}, Permissions: []string{"pipelines:write", "events:read"}})
@@ -74,7 +80,7 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 	flush(a, scope, "exclusive end", start.Add(24*time.Hour))
 	flush(b, other, "other project", start)
 	request := output.PipelineRequest{Name: "Daily report", Kind: "s3", S3: &output.S3PipelineSpec{
-		SQL:     "SELECT event FROM events WHERE received_at_ms >= CAST($window_start AS BIGINT) AND received_at_ms < CAST($window_end AS BIGINT)",
+		SQL:     "SELECT event FROM events WHERE received_at_ms >= CAST($window_start AS BIGINT) AND received_at_ms < CAST($window_end AS BIGINT) ORDER BY event",
 		StartAt: start.Format(time.RFC3339), IntervalSeconds: 86400,
 		Destination: output.S3PipelineDestination{Bucket: "reports", Region: "us-east-1", Endpoint: remote.URL}},
 		Credentials: output.PipelineCredentials{AccessKeyID: "key-before", SecretAccessKey: "secret-before"}}
@@ -131,15 +137,35 @@ UPDATE hosted_s3_pipeline_runs SET state='running',lease_until=clock_timestamp()
 	if err != nil || run.State != "succeeded" || run.Rows != 2 || run.Bytes <= 0 || run.Attempts != 2 {
 		t.Fatalf("wrong retained result: %+v %v", run, err)
 	}
-	var bytes, activities, reserved int64
+	var usedBytes, activities, reserved int64
 	if err = a.control.QueryRowContext(ctx, `
 SELECT (SELECT COALESCE(sum(pipeline_bytes),0) FROM usage_rollups WHERE project_id=$1),
 (SELECT count(*) FROM hosted_project_activity WHERE project_id=$1),
 (SELECT used_artifacts FROM pipeline_capacity WHERE scope_kind='project' AND scope_id=$1)`, scope).
-		Scan(&bytes, &activities, &reserved); err != nil || bytes != run.Bytes || activities != 0 || reserved != 0 {
-		t.Fatalf("usage=%d activities=%d reserved=%d err=%v", bytes, activities, reserved, err)
+		Scan(&usedBytes, &activities, &reserved); err != nil || usedBytes != run.Bytes || activities != 0 || reserved != 0 {
+		t.Fatalf("usage=%d activities=%d reserved=%d err=%v", usedBytes, activities, reserved, err)
 	}
-	if destination.markerPuts != 1 {
+	destination.mu.Lock()
+	markerPuts := destination.markerPuts
+	destination.mu.Unlock()
+	if markerPuts != 1 {
 		t.Fatal("takeover rewrote the immutable manifest")
 	}
+	destination.data.mu.Lock()
+	var compressed []byte
+	for _, object := range destination.data.objects {
+		compressed = object
+	}
+	objectCount := len(destination.data.objects)
+	destination.data.mu.Unlock()
+	decoded, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil || objectCount != 1 {
+		t.Fatalf("destination objects=%d, gzip error=%v", objectCount, err)
+	}
+	body, err := io.ReadAll(decoded)
+	decoded.Close()
+	if err != nil || string(body) != `{"event":"inside"}`+"\n"+`{"event":"inside two"}`+"\n" {
+		t.Fatalf("unexpected published rows %q: %v", body, err)
+	}
+
 }
