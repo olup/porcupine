@@ -58,7 +58,6 @@ type Service struct {
 	control                     *sql.DB
 	localAdmission              contextMutex
 	shared                      *sharedRuntime
-	sharedIngestion             *sharedIngestionState
 	lakeS3Storage               bool
 	lakeS3RequestTimeoutSeconds int
 	lakeMetadataTimeoutSeconds  int
@@ -194,16 +193,14 @@ func Open(c Config) (*Service, error) {
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
 	}
-	if c.Shared == nil {
-		if c.ControlDBPath == "" {
-			c.ControlDBPath = localControlPath(c.DBPath)
-		}
-		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
-			return nil, err
-		}
-		if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
-			return nil, err
-		}
+	if c.ControlDBPath == "" {
+		c.ControlDBPath = localControlPath(c.DBPath)
+	}
+	if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+		return nil, err
+	}
+	if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
+		return nil, err
 	}
 	if err := checkNativeRestoreMarker(c.DBPath); err != nil {
 		return nil, err
@@ -237,29 +234,17 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	var control *sql.DB
-	if c.Shared == nil {
-		control, err = openLocalSQLite(c.ControlDBPath)
-	} else {
-		control, err = openSharedControl(context.Background(), *c.Shared)
-	}
+	control, err := openLocalSQLite(c.ControlDBPath)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	if c.Shared == nil {
-		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
-			control.Close()
-			db.Close()
-			return nil, err
-		}
+	if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+		control.Close()
+		db.Close()
+		return nil, err
 	}
 	s.db, s.control, s.backups = db, control, backups
-	if c.Shared != nil {
-		copyConfig := *c.Shared
-		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
-		s.shared = &sharedRuntime{config: copyConfig}
-	}
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	durable := &durableAcceptance{db: db, rules: s.eventRules}
 	s.acceptance = durable
@@ -273,18 +258,12 @@ func Open(c Config) (*Service, error) {
 		}
 		db.Close()
 		if s.control != nil && s.control != db {
-			s.closeSharedRouting()
 			s.control.Close()
 		}
 		s.projectionGuard.close()
 		return nil, err
 	}
-	if c.Shared == nil {
-		err = initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
-	} else {
-		err = initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
-	}
-	if err != nil {
+	if err := initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled()); err != nil {
 		return fail(err)
 	}
 	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
@@ -316,11 +295,11 @@ func Open(c Config) (*Service, error) {
 		return fail(err)
 	}
 	var lakeBound, sharedBound bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key='shared_worker_id')`).Scan(&lakeBound, &sharedBound); err != nil {
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key IN ('shared_worker_id','shared_control_source_id','shared_worker_volume_id'))`).Scan(&lakeBound, &sharedBound); err != nil {
 		return txFail(err)
 	}
-	if sharedBound && s.shared == nil {
-		return txFail(errors.New("this worker journal requires its shared control configuration"))
+	if sharedBound {
+		return txFail(errors.New("this SQLite journal belongs to an unsupported owner-routed deployment"))
 	}
 	if lakeBound && c.DuckLake == nil {
 		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))
@@ -342,31 +321,11 @@ func Open(c Config) (*Service, error) {
 	if err = tx.Commit(); err != nil {
 		return txFail(err)
 	}
-	if s.shared == nil {
-		if err := s.bindLocalControl(context.Background()); err != nil {
-			return fail(err)
-		}
-		s.eventRules.admission = &s.localAdmission
-		s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
+	if err := s.bindLocalControl(context.Background()); err != nil {
+		return fail(err)
 	}
-	if s.shared != nil {
-		if err := s.bindSharedControl(context.Background()); err != nil {
-			return fail(err)
-		}
-		if err := s.initializeSharedRouting(context.Background()); err != nil {
-			return fail(err)
-		}
-		if err := s.initializeSharedIngestion(context.Background()); err != nil {
-			return fail(err)
-		}
-		if c.DuckLake != nil {
-			lakeConfig := *c.DuckLake
-			if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='shared_source_id'`).Scan(&lakeConfig.SharedSourceID); err != nil {
-				return fail(errors.New("shared analytical source identity unavailable"))
-			}
-			c.DuckLake = &lakeConfig
-		}
-	}
+	s.eventRules.admission = &s.localAdmission
+	s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
 	if c.DuckLake != nil {
 		if err := s.initializeDuckLake(*c.DuckLake); err != nil {
 			return fail(err)
@@ -408,7 +367,6 @@ func Open(c Config) (*Service, error) {
 	if err := s.startNativeBackups(); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
-	s.startSharedIngestion()
 	s.startUsage()
 	return s, nil
 }
@@ -417,13 +375,6 @@ func (s *Service) Close() error {
 	if s.hosted != nil {
 		return s.closeHosted()
 	}
-	if s.shared != nil {
-		s.BeginQueryDrain()
-		if s.sharedQueries.status().Active != 0 {
-			return errors.New("shared analytics execution is still active; permit renewal continues until it returns")
-		}
-	}
-	s.stopSharedIngestion()
 	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
 		s.lakeMaintenanceCancel()
@@ -444,7 +395,6 @@ func (s *Service) Close() error {
 	if s.lake != nil {
 		lakeErr = s.lake.Close()
 	}
-	s.closeSharedRouting()
 	var controlErr error
 	if s.control != s.db {
 		controlErr = s.control.Close()
@@ -533,7 +483,6 @@ func readBody(w http.ResponseWriter, r *http.Request, ingestion bool) ([]byte, b
 			return nil, false
 		}
 	}
-	*r = *sharedReplayRequest(r, raw)
 	return raw, true
 }
 
@@ -620,13 +569,13 @@ func (s *Service) Handler() http.Handler {
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
-	return s.sharedRoutingMiddleware(s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/oauth/") {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
 		}
 		m.ServeHTTP(w, r)
-	})))
+	}))
 }
 
 type eventInput struct {
@@ -761,10 +710,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	projectID := a.Projects[0]
 	if err := s.requireProjectActive(r.Context(), projectID); err != nil {
-		writeSharedRouteProblem(w, err)
-		return
-	}
-	if s.forwardSharedProject(w, r, projectID) {
+		writeManagementProblem(w, err)
 		return
 	}
 	ctx, finish, active := s.activity.begin(r.Context(), projectID)
@@ -774,9 +720,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	defer finish()
 	r = r.WithContext(ctx)
-	if err := s.ensureProjectLocal(ctx, projectID, a); err != nil {
-		writeSharedRouteProblem(w, err)
-		return
+	if s.hosted == nil {
+		if err := s.ensureProjectLocal(ctx, projectID, a); err != nil {
+			writeManagementProblem(w, err)
+			return
+		}
 	}
 	mode, policyErr := s.projectIngestionMode(r.Context(), projectID)
 	if policyErr != nil {
@@ -809,7 +757,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	if s.hosted != nil {
 		tenant, err := s.projectTenant(ctx, projectID)
 		if err != nil {
-			writeSharedRouteProblem(w, err)
+			writeManagementProblem(w, err)
 			return
 		}
 		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID); err != nil {

@@ -86,7 +86,7 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedE
 			return auth.Principal{}, sql.ErrNoRows
 		}
 		return fixtureActor(), err
-	}, RequireActive: func(context.Context, string) error { return nil }, RequireOwner: func(context.Context, string) error { return nil }, BeginActivity: func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true }, Acquire: func(context.Context) (func(), bool) { return func() {}, true }}
+	}, RequireActive: func(context.Context, string) error { return nil }, BeginActivity: func(ctx context.Context, _ string) (context.Context, func(), bool) { return ctx, func() {}, true }, Acquire: func(context.Context) (func(), bool) { return func() {}, true }}
 
 	s, err := NewSQLiteExports(d, &config)
 	if err != nil {

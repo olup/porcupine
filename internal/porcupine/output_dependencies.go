@@ -27,7 +27,7 @@ func (s *Service) exportDependencies() output.ExportDependencies {
 		CurrentActor: func(ctx context.Context, caller auth.Principal) (auth.Principal, error) {
 			return s.currentAuthority(ctx, s.control, caller)
 		},
-		RequireActive: s.requireProjectActive, RequireOwner: s.requireSharedProjectOwner, BeginActivity: s.activity.begin, Acquire: s.acquirePipelineExport}
+		RequireActive: s.requireProjectActive, BeginActivity: s.activity.begin, Acquire: s.acquirePipelineExport}
 	d.ValidateSQL = func(ctx context.Context, project, raw string, parameters map[string]string) (string, error) {
 		return s.lake.ValidateExport(ctx, project, raw, parameters, false)
 	}

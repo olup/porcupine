@@ -40,7 +40,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	}
 	h := &hostedRuntime{recoveryFloor: c.HostedRecoveryFloor}
 	s.hosted = h
-	s.shared = &sharedRuntime{config: SharedConfig{WorkerID: eventapi.NewID()}}
+	s.shared = &sharedRuntime{workerID: eventapi.NewID()}
 	control, err := openSharedControl(ctx, *c.Shared)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 			err = errors.Join(err, s.closeHosted())
 		}
 	}()
-	if err := initializeSharedControlProfile(ctx, control, c.BootstrapToken, config, s.externalAuthEnabled(), ProfileHosted); err != nil {
+	if err := initializeSharedControl(ctx, control, c.BootstrapToken, config, s.externalAuthEnabled()); err != nil {
 		return nil, err
 	}
 	lakeConfig := *c.DuckLake

@@ -67,7 +67,7 @@ func postingSQL(scoped, finish bool) string {
 		guards = append(guards, "usage_rollups."+c+"<=9223372036854775807-excluded."+c)
 	}
 	// Ordinary domain postings resolve the journal anchor; queries carry their
-	// already authorized scope because reads can run on a non-owner worker.
+	// already authorized scope so reads need no local project metadata.
 	selector := `SELECT $1,tenant_id,id,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11 FROM projects WHERE id=$12`
 	if scoped {
 		selector = `VALUES($1,$13,$12,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,$11)`

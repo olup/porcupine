@@ -90,7 +90,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 	}
 	token := eventapi.NewID()
 	lifetimeMS := sharedQueryPermitLifetime.Milliseconds()
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.config.WorkerID, lifetimeMS)
+	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.workerID, lifetimeMS)
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
@@ -112,7 +112,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 		}
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
-	return limits, &sharedQueryPermit{id: token, worker: s.shared.config.WorkerID, project: project, control: s.control, hosted: hosted}, nil
+	return limits, &sharedQueryPermit{id: token, worker: s.shared.workerID, project: project, control: s.control, hosted: hosted}, nil
 }
 
 func sharedQueryPermitError(ctx context.Context, err error) error {

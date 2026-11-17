@@ -71,10 +71,6 @@ func openSharedControl(ctx context.Context, config SharedConfig) (*sql.DB, error
 // Serialize schema installation and initial credentials across all processes.
 // The lock is transactional, so a failed bootstrap leaves no partial authority.
 func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, external bool) error {
-	return initializeSharedControlProfile(ctx, db, bootstrapToken, queries, external, "")
-}
-
-func initializeSharedControlProfile(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, external bool, profile DeploymentProfile) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -93,19 +89,15 @@ func initializeSharedControlProfile(ctx context.Context, db *sql.DB, bootstrapTo
 	if profileErr != nil && !errors.Is(profileErr, sql.ErrNoRows) {
 		return profileErr
 	}
-	if profile == ProfileHosted {
-		if errors.Is(profileErr, sql.ErrNoRows) {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return errors.New("hosted profile requires a fresh PostgreSQL control database")
-			}
-			if _, profileErr := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('deployment_profile','hosted')"); profileErr != nil {
-				return profileErr
-			}
-		} else if storedProfile != string(ProfileHosted) {
-			return errors.New("PostgreSQL control database belongs to another deployment profile")
+	if errors.Is(profileErr, sql.ErrNoRows) {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return errors.New("hosted profile requires a fresh PostgreSQL control database")
 		}
-	} else if profileErr == nil {
-		return errors.New("PostgreSQL control database belongs to the hosted profile")
+		if _, profileErr := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('deployment_profile','hosted')"); profileErr != nil {
+			return profileErr
+		}
+	} else if storedProfile != string(ProfileHosted) {
+		return errors.New("PostgreSQL control database belongs to another deployment profile")
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if external {

@@ -32,7 +32,7 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 	}
 	s, err := NewSQLitePipelines(PipelineDependencies{Journal: q.db, Clock: time.Now, Usage: usage.NewRecorder(q.db, "history-test", time.Now), LoadActor: func(context.Context, string) (auth.Principal, error) {
 		return auth.Principal{ID: "actor", Permissions: []string{"events:read", "pipelines:write"}, Projects: []string{"project"}}, nil
-	}, RequireActive: func(context.Context, string) error { return nil }, RequireOwner: func(context.Context, string) error { return nil }}, &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}})
+	}, RequireActive: func(context.Context, string) error { return nil }}, &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}

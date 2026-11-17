@@ -12,6 +12,8 @@ import (
 	"github.com/olup/porcupine/internal/usage"
 )
 
+const hostedPolicyRefreshInterval = 10 * time.Second
+
 type hostedLiveFlusher struct {
 	native             *lakeapi.DuckLakeStore
 	coordinator        *lakeapi.PostgresProjectCoordinator
@@ -324,7 +326,7 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 	now := time.Now().UTC()
 	start, end := tenantMonth(now)
 	month := start.Format(time.RFC3339)
-	if p.month != month || time.Since(p.refreshed) >= sharedIngestionRefreshInterval {
+	if p.month != month || time.Since(p.refreshed) >= hostedPolicyRefreshInterval {
 		// One grouped shared read, never a per-event control call or escrow.
 		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(sum(u.live_events+u.import_events),0) FROM tenants t LEFT JOIN usage_rollups u ON u.tenant_id=t.id AND u.day_start >= $1 AND u.day_start < $2 GROUP BY t.id,t.ingestion_allowed,t.ingestion_monthly_events`, month, end.Format(time.RFC3339))
 		if err != nil {

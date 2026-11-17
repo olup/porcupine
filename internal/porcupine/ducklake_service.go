@@ -80,9 +80,6 @@ func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []
 			if err := s.requireProjectActive(ctx, projection.ProjectID); err != nil {
 				return err
 			}
-			if err := s.requireSharedProjectOwner(ctx, projection.ProjectID); err != nil {
-				return err
-			}
 			checked[projection.ProjectID] = true
 		}
 	}
