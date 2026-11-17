@@ -92,4 +92,4 @@ These deployment settings belong to the unreleased tenant implementation. A tena
 
 An unset value uses its default. The concurrency pool also retains the background export safety slot. These settings do not change per-engine memory budgets or provide process isolation. Configure them within the host's measured resource capacity. Query readers discover their effective limits through `get-event-schema`. [Tenant budgets](tenants.md#interactive-query-limits)
 
-Shared PostgreSQL also has [metadata timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision). Those I/O allowances can extend native execution beyond a SQL deadline; the shared watchdog can terminate the whole worker. Local mode has no shared watchdog.
+Shared PostgreSQL also has [metadata timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision). Those I/O allowances can extend native execution beyond a SQL deadline. Shared workers retain execution-scoped reservations and quarantine affected interactive engines; automatic expiry can allow physical concurrency overshoot during a partition. Local mode has no shared reservation keeper.

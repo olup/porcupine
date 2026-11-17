@@ -347,7 +347,7 @@ func TestDuckLakeStorageRegistryReplacementFailsClosed(t *testing.T) {
 }
 
 func TestDuckLakeStorageDeadlineWhileCatalogOpening(t *testing.T) {
-	t.Parallel()
+	// Run this wall-clock cancellation probe before the parallel native fixtures.
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := s.Mu.Lock(context.Background()); err != nil {
 		t.Fatal(err)

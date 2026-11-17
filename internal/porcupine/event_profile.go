@@ -21,13 +21,17 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	ctx, limits, release, err := s.beginInteractiveQuery(ctx, input.ID)
+	native, limits, finish, err := s.beginInteractiveQuery(ctx, input.ID)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	defer finish()
+	deadline, _ := native.Deadline()
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	asOf := s.clock().UTC().Truncate(time.Millisecond)
-	read, err := s.lake.Profile(ctx, input.ID, options, asOf)
+	read, err := s.lake.Profile(native, input.ID, options, asOf)
+	err = interactiveQueryResultError(native, finish(), err)
 	if err != nil {
 		return nil, err
 	}

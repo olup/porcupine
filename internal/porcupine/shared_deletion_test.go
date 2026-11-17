@@ -204,15 +204,15 @@ func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
-		release()
+		release.release()
 		t.Fatal(err)
 	}
 	if _, unexpectedRelease, err := s.acquireSharedQueryPermit(ctx, "removed", defaultTenantID); err == nil {
-		unexpectedRelease()
-		release()
+		unexpectedRelease.release()
+		release.release()
 		t.Fatal("new query crossed durable deletion fence")
 	}
-	release()
+	release.release()
 	if err := s.waitSharedProjectQueries(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 	if _, release, err := s.acquireSharedQueryPermit(ctx, "kept", defaultTenantID); err != nil {
 		t.Fatal("deletion blocked unrelated project", err)
 	} else {
-		release()
+		release.release()
 	}
 }
 

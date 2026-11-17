@@ -242,7 +242,7 @@
             "type": "string"
           },
           "metadata_request_timeout_seconds": {
-            "description": "Configured native PostgreSQL metadata I/O allowance. Shared workers enforce a fail-stop watchdog before an abandoned query permit can be reused.",
+            "description": "Configured native PostgreSQL metadata I/O allowance. Shared execution permits renew until the call returns; failed renewal quarantines the project on this worker. Automatic expiry can overlap native work during a network partition.",
             "format": "int64",
             "type": "integer"
           },
@@ -2016,6 +2016,14 @@
             ],
             "type": "string"
           },
+          "query_execution": {
+            "description": "Shared analytical execution health on this worker, without a native query probe. Unavailable when draining or a project is quarantined; omitted in local mode.",
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "type": "string"
+          },
           "shared_control": {
             "description": "Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation.",
             "enum": [
@@ -2122,8 +2130,12 @@
             "$ref": "#/components/schemas/NativeBackupStatus",
             "description": "Configured native backup schedule and progress. Visible only to instance administrators."
           },
+          "query_execution": {
+            "$ref": "#/components/schemas/QueryExecutionStatus",
+            "description": "Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."
+          },
           "status": {
-            "description": "Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance.",
+            "description": "Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance.",
             "enum": [
               "ok",
               "degraded"
@@ -3272,6 +3284,62 @@
           "events",
           "limit",
           "after_event_id"
+        ],
+        "type": "object"
+      },
+      "QueryExecutionFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "native_query_unresponsive",
+              "query_permit_uncertain"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "QueryExecutionStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "description": "Interactive scopes that have not returned, including canceled native calls. Their worker slots remain occupied.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "draining": {
+            "description": "New shared analytical work is refused while this worker shuts down.",
+            "type": "boolean"
+          },
+          "uncertain_permits": {
+            "description": "Active scopes whose latest PostgreSQL renewal failed or whose permit was lost. An expired permit may already have been reassigned.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "unhealthy_projects": {
+            "description": "Worker-local query quarantine, retained until worker restart. These projects receive no new interactive SQL, catalog, or profile executions on this worker.",
+            "items": {
+              "$ref": "#/components/schemas/QueryExecutionFailure"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "active",
+          "uncertain_permits",
+          "draining",
+          "unhealthy_projects"
         ],
         "type": "object"
       },

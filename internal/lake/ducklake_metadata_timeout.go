@@ -10,8 +10,8 @@ import (
 const defaultDuckLakeMetadataTimeoutSeconds = 10
 
 // This bounds ordinary native metadata connection, statement and dead-peer
-// waits. Socket options are platform-dependent; the query watchdog remains
-// necessary when a live proxy acknowledges TCP but withholds PostgreSQL replies.
+// waits. Socket options are platform-dependent; cancellation cannot guarantee
+// return when a live proxy acknowledges TCP but withholds PostgreSQL replies.
 func nativePostgresMetadataURL(raw string, seconds int) (string, error) {
 	if seconds < 2 || seconds > 60 {
 		return "", errors.New("DuckLake metadata timeout must be between 2 and 60 seconds")
