@@ -89,4 +89,6 @@ Use the human and membership APIs to revoke an account or its access to one tena
 
 Pending browser sessions use the deployment's control database in shared mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
 
+Instance operators can [list and unlink upstream identities](identity-recovery.md) for account recovery. Unlinking revokes that human's existing interactive connections and pending local sign-in proofs, while keeping their account and memberships. A fresh verified login can relink.
+
 The automated tests use a signed mock provider to cover the browser code flow and rejection cases. A real Google login still requires operator-provided Google credentials and a correctly registered callback.

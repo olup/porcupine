@@ -182,7 +182,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		hash(requestID), authorization.ClientID, authorization.RedirectURI, authorization.Scope, authorization.Resource, authorization.State, authorization.CodeChallenge, authorization.ExpiresAtMS); err != nil {
 		t.Fatal(err)
 	}
-	callback, err := a.issueOAuthAuthorizationCode(ctx, authorization, human.ID, actor{ID: human.ID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}})
+	callback, err := a.issueOAuthAuthorizationCode(ctx, authorization, human.ID, humanLoginProof{Verified: true}, actor{ID: human.ID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}})
 	if err != nil {
 		t.Fatal(err)
 	}

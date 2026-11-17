@@ -17,6 +17,7 @@ const oidcSessionLifetime = 10 * time.Minute
 const oidcSessionCapacity = 1024
 
 type oidcBrowserSession struct {
+	proof          humanLoginProof
 	emailChallenge emailChallenge
 	requestID      string
 	state          string
@@ -218,6 +219,7 @@ func (s *Service) oauthOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.humanID = human.ID
+	session.proof = human.proof
 	session.csrf = oidcRandom()
 	session.state = ""
 	session.nonce = ""

@@ -237,7 +237,7 @@ func clientName(ctx context.Context, query oauthQueryer, id string) string {
 	return name
 }
 
-func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, approved actor) (string, error) {
+func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof humanLoginProof, approved actor) (string, error) {
 	if !s.interactiveOAuthEnabled() {
 		return "", errors.New("interactive OAuth unavailable")
 	}
@@ -247,6 +247,9 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return "", err
+	}
+	if err := checkHumanLoginProof(ctx, tx, humanID, proof); err != nil {
 		return "", err
 	}
 	current, err := s.loadOAuthRequest(ctx, tx, request.ID)

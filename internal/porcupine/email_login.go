@@ -22,6 +22,7 @@ const (
 
 // An OTP is valid only for one browser's outstanding OAuth authorization request.
 type emailChallenge struct {
+	loginVersion int64
 	digest       [32]byte
 	principal    string
 	attemptsLeft int
@@ -155,7 +156,11 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 		id, lookupErr := s.lookupActiveEmailID(r.Context(), email)
 		if lookupErr == nil && id != "" {
 			challenge.principal = id
-			send = true
+			lookupErr = s.control.QueryRowContext(r.Context(), `SELECT login_version FROM email_humans WHERE principal_id=$1`, id).Scan(&challenge.loginVersion)
+			send = lookupErr == nil
+			if !send {
+				finishDelivery()
+			}
 		} else {
 			finishDelivery()
 		}
@@ -211,7 +216,7 @@ func (o *oauthBrowser) redeemEmailCode(key, code string, now time.Time) (*oidcBr
 		return nil, false
 	}
 	delete(o.sessions, key)
-	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, csrf: oidcRandom()}, true
+	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, proof: humanLoginProof{Version: challenge.loginVersion, Verified: true}, csrf: oidcRandom()}, true
 }
 
 func (s *Service) verifyEmailCode(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +236,10 @@ func (s *Service) verifyEmailCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.loadOAuthHuman(r.Context(), s.control, verified.humanID); err != nil {
 		http.Error(w, "Access revoked", 403)
+		return
+	}
+	if err := checkHumanLoginProof(r.Context(), s.control, verified.humanID, verified.proof); err != nil {
+		http.Error(w, "Sign-in invalidated; restart sign-in", 403)
 		return
 	}
 	raw, ok := browser.save(verified)

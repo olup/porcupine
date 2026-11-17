@@ -72,7 +72,7 @@ func (s *Service) oauthTenantConsent(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 	approved := actor{ID: human.ID, Permissions: []string{tenantAdminScope}, Projects: []string{}, tenantAdmins: []string{tenant}}
-	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, approved)
+	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.proof, approved)
 	if err != nil {
 		http.Error(w, "Authorization could not be completed", http.StatusForbidden)
 		return

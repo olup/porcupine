@@ -307,6 +307,7 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	s.registerOAuthClients(api, op)
 	s.registerServiceKeys(api, op)
 	s.registerEmailAccounts(api, op)
+	s.registerOIDCIdentityManagement(api, op)
 	s.registerPipelines(api, op)
 	return api
 }

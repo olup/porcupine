@@ -138,7 +138,7 @@ func (s *Service) oauthOIDCConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approved := actor{ID: human.ID, Permissions: permissions, Projects: projects}
-	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, approved)
+	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.proof, approved)
 	if err != nil {
 		http.Error(w, "Authorization could not be completed", 403)
 		return

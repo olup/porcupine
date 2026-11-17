@@ -14,7 +14,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
+func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]atomic.Uint32) {
+	t.Helper()
 	dsn := sharedPostgresDSN(t)
 	ctx := t.Context()
 	first, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
@@ -102,6 +103,14 @@ func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
 	client := &http.Client{Jar: jar, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	t.Cleanup(client.CloseIdleConnections)
 	fixture := &oidcFixture{s: a, host: host, provider: provider, client: client, clientID: "porcupine-local", callback: localOAuthCallback, verifier: oauth2.GenerateVerifier(), humanID: human.ID, mail: mail, resource: issuer + "/mcp", scope: "events:read management:read"}
+	return fixture, a, b, &hits
+}
+
+func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
+	fixture, a, b, hits := newSharedOIDCFixture(t)
+	first, ctx := a.control, t.Context()
+	human := EmailHuman{ID: fixture.humanID, Email: "operator@example.test"}
+	issuer := fixture.host.URL
 	access := fixture.issueToken(t, "project-a")
 	for _, worker := range []*Service{a, b} {
 		principal, err := worker.authenticateResource(ctx, access, issuer+"/mcp")

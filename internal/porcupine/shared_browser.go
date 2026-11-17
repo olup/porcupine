@@ -15,21 +15,23 @@ const sharedBrowserTimeout = 3 * time.Second
 // Browser state contains only temporary OAuth verifier material and OTP hashes.
 // The cookie itself and the emailed code are never persisted.
 type sharedBrowserSession struct {
-	RequestID          string    `json:"request_id"`
-	State              string    `json:"state,omitempty"`
-	Nonce              string    `json:"nonce,omitempty"`
-	Verifier           string    `json:"verifier,omitempty"`
-	CSRF               string    `json:"csrf"`
-	HumanID            string    `json:"human_id,omitempty"`
-	Expires            time.Time `json:"expires"`
-	ChallengeDigest    [32]byte  `json:"challenge_digest"`
-	ChallengePrincipal string    `json:"challenge_principal,omitempty"`
-	ChallengeAttempts  int       `json:"challenge_attempts"`
-	ChallengeExpires   time.Time `json:"challenge_expires"`
+	Proof              humanLoginProof `json:"proof"`
+	ChallengeVersion   int64           `json:"challenge_version"`
+	RequestID          string          `json:"request_id"`
+	State              string          `json:"state,omitempty"`
+	Nonce              string          `json:"nonce,omitempty"`
+	Verifier           string          `json:"verifier,omitempty"`
+	CSRF               string          `json:"csrf"`
+	HumanID            string          `json:"human_id,omitempty"`
+	Expires            time.Time       `json:"expires"`
+	ChallengeDigest    [32]byte        `json:"challenge_digest"`
+	ChallengePrincipal string          `json:"challenge_principal,omitempty"`
+	ChallengeAttempts  int             `json:"challenge_attempts"`
+	ChallengeExpires   time.Time       `json:"challenge_expires"`
 }
 
 func encodeBrowserSession(s *oidcBrowserSession) ([]byte, error) {
-	return json.Marshal(sharedBrowserSession{RequestID: s.requestID, State: s.state, Nonce: s.nonce, Verifier: s.verifier, CSRF: s.csrf, HumanID: s.humanID, Expires: s.expires,
+	return json.Marshal(sharedBrowserSession{Proof: s.proof, ChallengeVersion: s.emailChallenge.loginVersion, RequestID: s.requestID, State: s.state, Nonce: s.nonce, Verifier: s.verifier, CSRF: s.csrf, HumanID: s.humanID, Expires: s.expires,
 		ChallengeDigest: s.emailChallenge.digest, ChallengePrincipal: s.emailChallenge.principal, ChallengeAttempts: s.emailChallenge.attemptsLeft, ChallengeExpires: s.emailChallenge.expires})
 }
 
@@ -38,8 +40,8 @@ func decodeBrowserSession(raw string) (*oidcBrowserSession, error) {
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return nil, err
 	}
-	return &oidcBrowserSession{requestID: s.RequestID, state: s.State, nonce: s.Nonce, verifier: s.Verifier, csrf: s.CSRF, humanID: s.HumanID, expires: s.Expires,
-		emailChallenge: emailChallenge{digest: s.ChallengeDigest, principal: s.ChallengePrincipal, attemptsLeft: s.ChallengeAttempts, expires: s.ChallengeExpires}}, nil
+	return &oidcBrowserSession{proof: s.Proof, requestID: s.RequestID, state: s.State, nonce: s.Nonce, verifier: s.Verifier, csrf: s.CSRF, humanID: s.HumanID, expires: s.Expires,
+		emailChallenge: emailChallenge{loginVersion: s.ChallengeVersion, digest: s.ChallengeDigest, principal: s.ChallengePrincipal, attemptsLeft: s.ChallengeAttempts, expires: s.ChallengeExpires}}, nil
 }
 
 func (s *Service) initializeSharedBrowser(ctx context.Context) error {
@@ -169,7 +171,7 @@ func (o *oauthBrowser) redeemSharedEmailCode(key, code string, now time.Time) (*
 	if tx.Commit() != nil {
 		return nil, false
 	}
-	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, csrf: oidcRandom()}, true
+	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, proof: humanLoginProof{Version: challenge.loginVersion, Verified: true}, csrf: oidcRandom()}, true
 }
 
 func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) (func(), bool) {

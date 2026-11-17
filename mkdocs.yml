@@ -49,6 +49,7 @@ nav:
       - Remote backups and restore: native-backup-recovery.md
       - Set up team sign-in: connect-your-team.md
       - Configure email delivery: email-transport.md
+      - Recover sign-in identities (unreleased): identity-recovery.md
       - Storage options: storage.md
       - Analytical S3 storage: ducklake-s3.md
       - Backup consistency: online-backup.md

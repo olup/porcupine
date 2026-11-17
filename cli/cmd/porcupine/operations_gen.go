@@ -375,6 +375,15 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "list-human-identities", Method: "GET", Path: "/api/v1/humans/{id}/identities",
+		Summary: "List upstream sign-in identity bindings for a human; deployment operator only",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Durable human account ID.", Required: true},
+			{Name: "cursor", In: "query", Type: "string", Description: "Continue after the binding ID returned as next_cursor.", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},
+		},
+	},
+	{
 		ID: "list-humans", Method: "GET", Path: "/api/v1/humans",
 		Summary: "List human accounts and project permissions",
 		Params: []parameter{
@@ -604,6 +613,14 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "key_id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "unlink-human-identity", Method: "DELETE", Path: "/api/v1/humans/{id}/identities/{identity_id}",
+		Summary: "Unlink one upstream identity and revoke this human's interactive connections; deployment operator only",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Durable human account ID.", Required: true},
+			{Name: "identity_id", In: "path", Type: "string", Description: "The binding ID returned by list-human-identities.", Required: true},
 		},
 	},
 	{

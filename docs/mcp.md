@@ -108,7 +108,7 @@ An agent can discover `rename-project` or `delete-project` with `porcupine_docs`
 {"operation_id":"rename-project","path":{"id":"PROJECT_ID"},"body":{"name":"Research"}}
 ```
 
-Renaming requires `management:write` on that project. Permanent deletion requires `instance:admin`. Call `{"operation_id":"delete-project","path":{"id":"PROJECT_ID"}}` and check for HTTP `204`. See [project cleanup scope](management-api.md#operations).
+Renaming requires `management:write` on that project. Permanent deletion requires `instance:admin` in v0.14.0. **Unreleased:** administrators of the project's tenant can also delete it through `tenant:admin` consent. Call `{"operation_id":"delete-project","path":{"id":"PROJECT_ID"}}` and check for HTTP `204`. See [project cleanup scope](management-api.md#operations).
 
 Mutating operations are available to suitably scoped access tokens. Project and key
 creation return one-time secrets, just as their HTTP counterparts do. Event

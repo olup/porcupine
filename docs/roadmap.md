@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Tenant ownership for projects, with one default tenant on fresh installations. Explicit project grants may span tenants; there is no new tenant administrator role. Tenant operations, aggregate usage reads, and project creation require `instance:admin`. [Tenant guide](tenants.md)
+- Tenant ownership for projects, with one default tenant on fresh installations. Tenant administrators manage their team's projects, memberships, and independent service credentials. Members can receive read-only or finer grants on selected projects, or tenant-local access including future projects. Instance operators retain hard budgets and deployment controls. [Team access](tenant-access.md), [tenant guide](tenants.md)
+- Email OTP and optional trusted Google/OIDC sign-in authenticate the same invited humans. Operator-only identity recovery lists and unlinks provider bindings while revoking prior interactive connections and browser proofs. [Identity recovery](identity-recovery.md)
 - Monthly ingestion allowances shared by a tenant's projects. Counts commit atomically with newly accepted canonical rows, including imports and identity controls. Duplicate, invalid, ignored, and rolled-back rows consume nothing; deletion does not refund usage. Periods are UTC calendar months, with preserved history and no manual reset endpoint.
 - Shared tenant limits for interactive query concurrency, execution time, result rows, and result bytes. Effective limits cannot exceed deployment ceilings and are discoverable through the project schema. [Query limits](analytics.md#query-limits)
 - Operator ingestion suspension and resumable import checkpoints when an allowance is exhausted. These technical controls contain no pricing or billing logic.

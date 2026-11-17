@@ -51,7 +51,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 	projectID, ingest := project(t, s)
 	readerID, oldReader := key(t, s, []string{"events:read"}, []string{projectID})
 	ctx := context.Background()
-	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);INSERT INTO oidc_identities(issuer,subject,principal_id,linked_email,created_at) SELECT 'https://identity.example.test','restored-subject',principal_id,email,'now' FROM email_humans WHERE email='revoked@example.test';UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);INSERT INTO oidc_identities(id,issuer,subject,principal_id,linked_email,created_at) SELECT 'restored-link','https://identity.example.test','restored-subject',principal_id,email,'now' FROM email_humans WHERE email='revoked@example.test';UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
 		t.Fatal(err)
 	}
 	permissions := tenantTestBody(t, projectPermissionNames)
