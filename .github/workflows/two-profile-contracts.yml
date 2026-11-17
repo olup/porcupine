@@ -1,0 +1,25 @@
+name: Generate two-profile API contracts
+on:
+  push:
+    branches: [ci/two-profile-contracts]
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: make cli-generate
+      - run: git diff --check
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: two-profile-contracts
+          path: |
+            internal/apischema/management.openapi.json
+            cli/cmd/porcupine/operations_gen.go
+          if-no-files-found: error
