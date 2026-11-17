@@ -42,8 +42,7 @@ jobs:
         run: make test-core
       - run: make check-full
       - run: make build
-      - run: python3 scripts/standalone_cli_check.py --server bin/porcupine
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: CGO_ENABLED=0 go run ./internal/cmd/standalone-cli-check --server bin/porcupine
   security:
     # Vulnerability scan and fuzzing run on main, releases and nightly, not on every PR push.
     if: github.event_name != 'pull_request'
