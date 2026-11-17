@@ -235,3 +235,11 @@ WHERE source_id=$1 AND project_id=$2 AND tenant_id=$3 AND catalog_id=$4 AND stre
 AND state='staging' AND created_at<$6`, scope.Key.SourceID, scope.Key.ProjectID, tenant, scope.CatalogID, scope.StreamID, createdBefore)
 	return err
 }
+
+func hostedReadyDelete(ctx context.Context, tx *sql.Tx, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {
+	var ready bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM hosted_mutation_intents
+WHERE source_id=$1 AND project_id=$2 AND catalog_id=$3 AND stream_id=$4 AND tenant_id=$5
+AND state='ready' AND operation='delete')`, scope.Key.SourceID, scope.Key.ProjectID, scope.CatalogID, scope.StreamID, tenant).Scan(&ready)
+	return ready, err
+}

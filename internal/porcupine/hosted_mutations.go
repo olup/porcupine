@@ -352,10 +352,7 @@ func (f *hostedLiveFlusher) withHostedMutationCut(ctx context.Context, project s
 		if err := f.native.AdvanceWriteFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := f.reconcile(ctx, session, scope, fence, tenant); err != nil {
-			return err
-		}
-		if err := f.settleReadyHostedMutation(ctx, session, scope, fence, tenant); err != nil {
+		if err := f.reconcileHostedWrites(ctx, session, scope, fence, tenant); err != nil {
 			return err
 		}
 		var accepted, settled int64
