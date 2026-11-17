@@ -346,6 +346,10 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 }
 
 func (s *DuckLakeStore) openProjectMode(ctx context.Context, project string, initialize func(context.Context, *sql.DB) error, existingOnly bool) (*ProjectLake, error) {
+	return s.openProjectEngine(ctx, project, initialize, existingOnly, false)
+}
+
+func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, initialize func(context.Context, *sql.DB) error, existingOnly, maintenanceOnly bool) (*ProjectLake, error) {
 	directory := s.ProjectDirectory(project)
 	var catalogID string
 	var ready bool
@@ -389,6 +393,9 @@ func (s *DuckLakeStore) openProjectMode(ctx context.Context, project string, ini
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
+	if maintenanceOnly {
+		db.SetMaxOpenConns(1)
+	}
 	fail := func(err error) (*ProjectLake, error) {
 		db.Close()
 		if s.Remote != nil {
@@ -403,6 +410,11 @@ func (s *DuckLakeStore) openProjectMode(ctx context.Context, project string, ini
 	if _, err = db.ExecContext(ctx, "LOAD ducklake"); err != nil {
 		if _, err = db.ExecContext(ctx, "INSTALL ducklake; LOAD ducklake"); err != nil {
 			return fail(errors.New("DuckLake extension is unavailable"))
+		}
+	}
+	if maintenanceOnly {
+		if _, err = db.ExecContext(ctx, "SET ducklake_max_retry_count=0"); err != nil {
+			return fail(err)
 		}
 	}
 	if s.SharedCatalog != nil {
