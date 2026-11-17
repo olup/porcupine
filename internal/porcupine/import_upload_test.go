@@ -63,6 +63,7 @@ func importTestPut(t *testing.T, s *Service, project string, job ImportUploadJob
 }
 
 func TestImportUploadRestartChunkIdempotencyCompletionAndMarker(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "imports.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -128,6 +129,7 @@ func TestImportUploadRestartChunkIdempotencyCompletionAndMarker(t *testing.T) {
 }
 
 func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 1)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
@@ -164,6 +166,7 @@ func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
 }
 
 func TestImportUploadOrderCancellationAndBoundedSamples(t *testing.T) {
+	t.Parallel()
 	s := service(t, 2000)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
@@ -201,6 +204,7 @@ func TestImportUploadOrderCancellationAndBoundedSamples(t *testing.T) {
 }
 
 func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	other, _ := project(t, s)
 	project, public := project(t, s)
@@ -238,6 +242,7 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 }
 
 func TestImportUploadOAuthRequiresAPIAudience(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
 	project, _ := f.project(t, admin.AccessToken)
@@ -259,6 +264,7 @@ func TestImportUploadOAuthRequiresAPIAudience(t *testing.T) {
 }
 
 func TestImportUploadOversizedRowsRemainBoundedAndResume(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
@@ -293,6 +299,7 @@ func (b *importBlockingBody) Read(p []byte) (int, error) {
 func (*importBlockingBody) Close() error { return nil }
 
 func TestImportUploadRevocationAndCancellationDuringBodyRead(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"revoke", "cancel"} {
 		t.Run(action, func(t *testing.T) {
 			s := service(t, 20)
@@ -347,6 +354,7 @@ func TestImportUploadRevocationAndCancellationDuringBodyRead(t *testing.T) {
 }
 
 func TestImportUploadConcurrentChunksCommitExactlyOnce(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
@@ -382,6 +390,7 @@ func TestImportUploadConcurrentChunksCommitExactlyOnce(t *testing.T) {
 }
 
 func TestImportUploadFreezesBoundSourceAcrossAdminResumeAndLiveReplay(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	project, _ := project(t, s)
 	createWriter := func(source string) string {
@@ -431,6 +440,7 @@ func TestImportUploadFreezesBoundSourceAcrossAdminResumeAndLiveReplay(t *testing
 }
 
 func TestImportUploadInvalidBoundMetadataDoesNotPoisonFile(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	project, _ := project(t, s)
 	payload, _ := json.Marshal(map[string]any{"name": "bound", "permissions": []string{"imports:write", "events:write"}, "projects": []string{project}, "source_id": "warehouse"})

@@ -12,6 +12,7 @@ import (
 )
 
 func TestNativeRestoreRequiresFreshTargetsAndPrivateReset(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	valid := NativeRestoreRequest{BackupID: "pc_backup_test", TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("fresh-private-bootstrap", 2)}
 	if err := validateNativeRestoreRequest(valid); err != nil {
@@ -47,6 +48,7 @@ func TestNativeRestoreRequiresFreshTargetsAndPrivateReset(t *testing.T) {
 }
 
 func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, ingest := project(t, s)
 	readerID, oldReader := key(t, s, []string{"events:read"}, []string{projectID})
@@ -119,6 +121,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 }
 
 func TestNativeRestoreRejectsSQLiteSchemaChanges(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	if err := verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err != nil {
 		t.Fatal(err)
@@ -132,6 +135,7 @@ func TestNativeRestoreRejectsSQLiteSchemaChanges(t *testing.T) {
 }
 
 func TestNativeRestoreOAuthCredentialsAndRevokedHumanOTPStayInvalid(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	oldAdmin := oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {j.issuer + "/api/v1"}}, 200)["access_token"].(string)
@@ -194,6 +198,7 @@ func TestNativeRestoreOAuthCredentialsAndRevokedHumanOTPStayInvalid(t *testing.T
 }
 
 func TestNativeRestoreCancelsOutboundWorkAndSourceObjectReferences(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	projectID, _ := project(t, s)
 	var actorID string

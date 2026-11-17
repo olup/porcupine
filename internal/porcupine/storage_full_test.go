@@ -9,6 +9,7 @@ import (
 
 // Exercise SQLite's real SQLITE_FULL path without consuming the operator's disk.
 func TestCaptureRecoversFromSQLiteFull(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, key := project(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(key, "acknowledged"), 200)

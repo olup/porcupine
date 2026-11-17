@@ -11,6 +11,7 @@ import (
 )
 
 func TestNativeMutationsHTTPAndMCPJourney(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	attachCoreLake(t, s)
 	oldReceipt := time.Now().UTC().Add(-45 * 24 * time.Hour)

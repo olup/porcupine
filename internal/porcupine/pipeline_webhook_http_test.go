@@ -10,6 +10,7 @@ import (
 )
 
 func TestWebhookEndpointPublicHTTPSOnly(t *testing.T) {
+	t.Parallel()
 	for _, endpoint := range []string{"http://example.com", "https://127.0.0.1", "https://169.254.169.254/latest", "https://10.1.2.3", "https://100.100.100.200", "https://[::ffff:127.0.0.1]", "https://[64:ff9b::a9fe:a9fe]", "https://[2001:db8::1]", "https://[fec0::1]", "https://[3fff::2]", "https://[::a9fe:a9fe]", "https://metadata.google.internal", "https://localhost", "https://user:password@example.com", "https://example.com/#fragment", "https://example.com:0", "https://example.com:65536"} {
 		if validateWebhookEndpoint(endpoint) == nil {
 			t.Fatal("unsafe endpoint accepted")
@@ -28,6 +29,7 @@ func TestWebhookEndpointPublicHTTPSOnly(t *testing.T) {
 	}
 }
 func TestWebhookDNSPinnedAndMixedAnswersBlocked(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	dial := func(_ context.Context, network, address string) (net.Conn, error) {
 		calls++
@@ -53,6 +55,7 @@ func TestWebhookDNSPinnedAndMixedAnswersBlocked(t *testing.T) {
 	}
 }
 func TestWebhookHeadersRejectRoutingAndSmuggling(t *testing.T) {
+	t.Parallel()
 	for _, headers := range []map[string]string{{"Host": "example.com"}, {"X-Forwarded-Host": "internal"}, {"Authorization": "Basic synthetic"}, {"X-Key": "one\r\ntwo"}, {"X-Key": "one", "x-key": "two"}, {"X-Porcupine-Delivery-ID": "override"}, {"Idempotency-Key": "override"}} {
 		if validateWebhookHeaders(headers) == nil {
 			t.Fatal("unsafe headers accepted")

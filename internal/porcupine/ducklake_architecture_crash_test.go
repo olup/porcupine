@@ -82,6 +82,7 @@ func architectureCrash(t *testing.T) {
 }
 
 func TestArchitectureCrashHelper(t *testing.T) {
+	t.Parallel()
 	root := os.Getenv("PORCUPINE_ARCH_CRASH_ROOT")
 	if root == "" {
 		t.Skip("subprocess helper")

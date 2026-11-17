@@ -51,6 +51,7 @@ func interactiveEndpoint(t *testing.T, s *Service, path string, form url.Values,
 }
 
 func TestOAuthAuthorizationRejectsCallbackForgeryAndPKCEDowngrade(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	for _, test := range []struct {
 		name   string
@@ -85,6 +86,7 @@ func TestOAuthAuthorizationRejectsCallbackForgeryAndPKCEDowngrade(t *testing.T) 
 }
 
 func TestOAuthAuthorizationCodePKCEOnceOnlyAndHashedStorage(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	code := interactiveCode(t, f)
 	wrong := interactiveTokenForm(f, code)
@@ -110,6 +112,7 @@ func TestOAuthAuthorizationCodePKCEOnceOnlyAndHashedStorage(t *testing.T) {
 }
 
 func TestOAuthRefreshRotationReplayRevokesFamilyAndCannotExpand(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	first := tokens["refresh_token"].(string)
@@ -129,6 +132,7 @@ func TestOAuthRefreshRotationReplayRevokesFamilyAndCannotExpand(t *testing.T) {
 }
 
 func TestOAuthInteractiveCredentialsAndRedirectAreClientBound(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"client_secret_basic", "client_secret_post"} {
 		t.Run(method, func(t *testing.T) {
 			f := newOIDCFixture(t)
@@ -159,6 +163,7 @@ func TestOAuthInteractiveCredentialsAndRedirectAreClientBound(t *testing.T) {
 }
 
 func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	access := tokens["access_token"].(string)
@@ -186,6 +191,7 @@ func TestOAuthInteractiveGrantExpiryAppliesToWorkerReadAndTransaction(t *testing
 }
 
 func TestOAuthInteractiveRevocationAndAdminGrantManagement(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	access := tokens["access_token"].(string)
@@ -210,6 +216,7 @@ func TestOAuthInteractiveRevocationAndAdminGrantManagement(t *testing.T) {
 }
 
 func TestOAuthInteractiveTokenRevocationEndpointAndAudienceIsolation(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	access := tokens["access_token"].(string)
@@ -228,6 +235,7 @@ func TestOAuthInteractiveTokenRevocationEndpointAndAudienceIsolation(t *testing.
 }
 
 func TestOAuthInteractiveDiscoveryRequiresOIDCAndPKCES256(t *testing.T) {
+	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	machine := request(t, s, "GET", "/.well-known/oauth-authorization-server", "", "", 200)
 	if machine["authorization_endpoint"] != nil || machine["code_challenge_methods_supported"] != nil {
@@ -245,6 +253,7 @@ func TestOAuthInteractiveDiscoveryRequiresOIDCAndPKCES256(t *testing.T) {
 }
 
 func TestOAuthInteractiveMetadataRecommendsOnlyReadScopes(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	for _, path := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp"} {
 		result := request(t, f.s, "GET", path, "", "", 200)
@@ -276,6 +285,7 @@ func TestOAuthInteractiveMetadataRecommendsOnlyReadScopes(t *testing.T) {
 }
 
 func TestOAuthInteractiveMissingAuxiliaryMappingCannotBroadenAuthority(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	raw := tokens["access_token"].(string)
@@ -297,6 +307,7 @@ func TestOAuthInteractiveMissingAuxiliaryMappingCannotBroadenAuthority(t *testin
 }
 
 func TestOAuthAuthorizationStartAdmissionIsIndependentAndBounded(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.s.oauth.limiter = rate.NewLimiter(0, 1)
 	accepted, rejected := 0, 0
@@ -327,6 +338,7 @@ func TestOAuthAuthorizationStartAdmissionIsIndependentAndBounded(t *testing.T) {
 }
 
 func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	code := interactiveCode(t, f)
 	other, _ := oauthProtocolClient(t, f.s, []string{"events:read"}, []string{"*"})
@@ -359,6 +371,7 @@ func TestOAuthInteractiveCrossClientProofsCannotRedeemOrRevoke(t *testing.T) {
 }
 
 func TestOAuthInteractiveUnusedCodeExpires(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	code := interactiveCode(t, f)
 	later := f.s.clock().Add(oauthCodeTTL + time.Second)

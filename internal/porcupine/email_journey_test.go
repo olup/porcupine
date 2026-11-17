@@ -224,6 +224,7 @@ func (j *emailJourney) checkRefresh(t *testing.T, app *oauth2.Config, token *oau
 }
 
 func TestEmailHumanAuthorizesTwoToolsAndRevokesAccess(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	// An empty deployment has no operator-created clients. Start with its fixed loopback client.
@@ -303,6 +304,7 @@ func TestEmailHumanAuthorizesTwoToolsAndRevokesAccess(t *testing.T) {
 
 // A real browser supplies Origin and enforces CSP, cookie attributes and form actions.
 func TestEmailLoginChromium(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("PORCUPINE_OIDC_BROWSER") != "1" {
 		t.Skip("set PORCUPINE_OIDC_BROWSER=1 with Playwright installed in compat")
 	}
@@ -386,6 +388,7 @@ func TestEmailLoginChromium(t *testing.T) {
 }
 
 func TestEmailConsentRestrictsWriteToItsGrantedProject(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	admin := oauthProtocolRequest(t, j.service, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {j.issuer + "/api/v1"}}, 200)["access_token"].(string)
 	makeProject := func(name string) string {
@@ -417,6 +420,7 @@ func TestEmailConsentRestrictsWriteToItsGrantedProject(t *testing.T) {
 }
 
 func TestEmailInvitedInstanceAdmin(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	app := j.client("porcupine-local-admin", localOAuthCallback, []string{"instance:admin"})
 	owner := j.browserLogin(t, app, "operator@example.test", "/api/v1", "*", "", 200)

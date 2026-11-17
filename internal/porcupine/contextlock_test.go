@@ -9,6 +9,7 @@ import (
 )
 
 func TestContextMutexZeroValueAndCanceledWaiter(t *testing.T) {
+	t.Parallel()
 	var gate contextMutex
 	if err := gate.Lock(context.Background()); err != nil {
 		t.Fatal(err)
@@ -41,6 +42,7 @@ func TestContextMutexZeroValueAndCanceledWaiter(t *testing.T) {
 }
 
 func TestContextMutexSerializesConcurrentCallers(t *testing.T) {
+	t.Parallel()
 	var gate contextMutex
 	var workers sync.WaitGroup
 	counter := 0

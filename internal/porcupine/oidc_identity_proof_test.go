@@ -84,6 +84,7 @@ func mustRecoveryURL(t *testing.T, raw string) *url.URL {
 }
 
 func TestOIDCRecoveryInvalidatesDelayedAuthenticatedSession(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	assertLateSavedProofCannotIssue(t, f, f.s, f.s)
 	// Unlink is recovery rather than a ban: a fresh signed provider journey works.
@@ -117,11 +118,13 @@ func assertPendingOTPInvalidated(t *testing.T, f *oidcFixture, worker *Service) 
 }
 
 func TestOIDCRecoveryInvalidatesPendingEmailChallenge(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixtureWithOTP(t, true)
 	assertPendingOTPInvalidated(t, f, f.s)
 }
 
 func TestSharedOIDCRecoveryFencesProofsAcrossWorkers(t *testing.T) {
+	t.Parallel()
 	t.Run("late-session-save", func(t *testing.T) {
 		f, a, b, _ := newSharedOIDCFixture(t)
 		tokens := identityRecoveryIssue(t, f, "project-a")
@@ -143,6 +146,7 @@ func TestSharedOIDCRecoveryFencesProofsAcrossWorkers(t *testing.T) {
 }
 
 func TestOIDCRecoveryInvalidatesPendingTenantConsent(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	tenant := request(t, f.s, "POST", "/api/v1/tenants", operator, `{"name":"Recovery team"}`, 201)["tenant"].(map[string]any)["id"].(string)

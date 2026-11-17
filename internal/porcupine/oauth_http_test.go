@@ -6,6 +6,7 @@ import (
 )
 
 func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, issuer := range []string{"http://public.example.test", "https://user:secret@example.test", "https://example.test/path", "https://example.test?query=1", "https://example.test#fragment", "https://example.test//"} {
 		if _, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer}); err == nil {
 			t.Fatalf("accepted unsafe issuer %s", issuer)
@@ -27,6 +28,7 @@ func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
 }
 
 func TestOAuthOpenAPIAndPublicKeyCreation(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
 	project, _ := f.project(t, admin)

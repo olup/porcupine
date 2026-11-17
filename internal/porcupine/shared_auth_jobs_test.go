@@ -13,6 +13,7 @@ import (
 )
 
 func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
+	t.Parallel()
 	s, project, ingest, expiredPipeline := webhookTestService(t, "event")
 	now := s.clock()
 	s.clock = func() time.Time { return now }

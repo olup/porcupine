@@ -11,6 +11,7 @@ import (
 )
 
 func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
 	s.runExport(context.Background(), job)
@@ -28,6 +29,7 @@ func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
 }
 
 func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
 		fake := &exportTestS3{}
 		s, job := nativeExportWorkerFixture(t, fake)
@@ -59,6 +61,7 @@ func TestExportWorkerCancellationAndRevocationWinPublication(t *testing.T) {
 }
 
 func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{failComplete: true, failDelete: true}
 	s, job := nativeExportWorkerFixture(t, fake)
 	s.runExport(context.Background(), job)
@@ -91,6 +94,7 @@ func TestExportCleanupDeletesObjectAfterUnknownCompletionAndRetriesFailures(t *t
 }
 
 func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
+	t.Parallel()
 	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
 	request(t, s, "POST", "/capture/", "", captureBody(func() string { _, token := project(t, s); return token }(), "other-project-pressure"), 200)
 	ready, err := s.exportAdmission(context.Background(), job)
@@ -125,6 +129,7 @@ func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 }
 
 func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
 	sink := newExportSink(context.Background(), s, job)
@@ -162,12 +167,14 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 }
 
 func TestExportWorkerStopWithoutStartedRuntime(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
 	s.stopExports()
 }
 
 func TestExportWorkerRevalidatesPersistedSQL(t *testing.T) {
+	t.Parallel()
 	s, job := nativeExportWorkerFixture(t, &exportTestS3{})
 	job.SQL = "SELECT password FROM system.users"
 	if _, err := s.db.Exec(`UPDATE export_jobs SET sql=? WHERE id=?`, job.SQL, job.ID); err != nil {
@@ -184,6 +191,7 @@ func TestExportWorkerRevalidatesPersistedSQL(t *testing.T) {
 }
 
 func TestExportWorkerNativeRowFailureCleansCompletedChunks(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
 	_, writer := key(t, s, []string{"events:write"}, []string{job.ProjectID})
@@ -213,6 +221,7 @@ func TestExportWorkerNativeRowFailureCleansCompletedChunks(t *testing.T) {
 }
 
 func TestExportWorkerShutdownRequeuesWithoutPublishing(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
 	ctx, cancel := context.WithCancel(context.Background())

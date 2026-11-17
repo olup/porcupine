@@ -12,6 +12,7 @@ import (
 // are independent. A general analytics tool never acquires a wildcard grant
 // from the operator's email login.
 func TestEmailOAuthExplicitScopeCeilings(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	admin := oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {j.issuer + "/api/v1"}}, 200)["access_token"].(string)
@@ -57,6 +58,7 @@ func TestEmailOAuthExplicitScopeCeilings(t *testing.T) {
 }
 
 func TestEmailProjectManagementGrantCannotMintIndependentClient(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	admin := oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {j.issuer + "/api/v1"}}, 200)["access_token"].(string)
@@ -76,6 +78,7 @@ func TestEmailProjectManagementGrantCannotMintIndependentClient(t *testing.T) {
 }
 
 func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {
+	t.Parallel()
 	human := actor{emailHuman: true, Permissions: []string{"events:read", "events:write"}, Projects: []string{"a", "b"}, projectPermissions: map[string][]string{
 		"a": {"events:read"}, "b": {"events:read", "events:write"},
 	}}
@@ -97,6 +100,7 @@ func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {
 }
 
 func TestEmailReadScopeDiscoveryForRestrictedClient(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s := j.service
 	metadata := request(t, s, "GET", "/.well-known/oauth-authorization-server", "", "", 200)

@@ -107,6 +107,7 @@ func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]a
 }
 
 func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
+	t.Parallel()
 	fixture, a, b, hits := newSharedOIDCFixture(t)
 	first, ctx := a.control, t.Context()
 	human := EmailHuman{ID: fixture.humanID, Email: "operator@example.test"}

@@ -23,6 +23,7 @@ func sharedControlFixture(t *testing.T) (*sql.DB, string) {
 }
 
 func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
+	t.Parallel()
 	db, dsn := sharedControlFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -82,6 +83,7 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 }
 
 func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
+	t.Parallel()
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
 	config, _ := normalizeInteractiveQueries(nil)
@@ -153,6 +155,7 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 }
 
 func TestSharedControlRevokesDependentCredentials(t *testing.T) {
+	t.Parallel()
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
 	config, _ := normalizeInteractiveQueries(nil)

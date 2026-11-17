@@ -16,6 +16,7 @@ import (
 )
 
 func TestDuckLakeCLIRestoreDrill(t *testing.T) {
+	t.Parallel()
 	image, binary := os.Getenv("PORCUPINE_RESTORE_DOCKER_IMAGE"), os.Getenv("PORCUPINE_RESTORE_CLI")
 	if image == "" || binary == "" {
 		t.Skip("set restore image and standalone CLI paths, or run make ducklake-restore-drill")

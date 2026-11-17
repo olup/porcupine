@@ -14,6 +14,8 @@ import (
 )
 
 func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	for _, scenario := range []string{"matching_commit", "absent_commit", "unavailable_commit", "conflicting_commit", "running"} {
 		t.Run(scenario, func(t *testing.T) {
 			var deletes, gets atomic.Int32

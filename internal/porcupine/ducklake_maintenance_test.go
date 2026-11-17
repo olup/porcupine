@@ -404,6 +404,8 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 }
 
 func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s, a, ingest := nativeBenchmarkServiceMemory(t, 256)
 	s.deliveryMaxEvents = 1000
 	s.queueMax = 10000
@@ -489,6 +491,8 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 }
 
 func TestDuckLakeMaintenanceDoesNotTakeProjectionLock(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	for batch := 0; batch < 20; batch++ {
 		var projections []eventProjection
@@ -554,6 +558,7 @@ func (s *delayedMaintenanceStore) Maintain(ctx context.Context) error {
 }
 
 func TestDuckLakeMaintenanceWaitsBetweenCompletedPasses(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir()})
 	if err != nil {

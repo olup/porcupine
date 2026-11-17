@@ -12,6 +12,7 @@ import (
 )
 
 func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1})
 	if err != nil {

@@ -13,6 +13,7 @@ func profileRequestPath(project, event string) string {
 }
 
 func TestEventProfileHTTPAuthorizationAndDisabledStorage(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingest := project(t, s)
 	b, _ := project(t, s)
@@ -28,6 +29,7 @@ func TestEventProfileHTTPAuthorizationAndDisabledStorage(t *testing.T) {
 }
 
 func TestEventProfileHTTPRejectsUnboundedInputs(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	_, reader := key(t, s, []string{"events:read"}, []string{a})

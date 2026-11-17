@@ -122,6 +122,7 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExpo
 }
 
 func TestExportSinkGzipChunksTypedJSONAndChecksums(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := exportWorkerFixture(t, fake)
 	s.exports.config.FileBytes = 42
@@ -169,6 +170,7 @@ func TestExportSinkGzipChunksTypedJSONAndChecksums(t *testing.T) {
 }
 
 func TestExportSinkCSVHeaderEveryChunkAndEmptyResults(t *testing.T) {
+	t.Parallel()
 	fake := &exportTestS3{}
 	s, job := exportWorkerFixture(t, fake)
 	job.Format = "csv"
@@ -216,6 +218,7 @@ func TestExportSinkCSVHeaderEveryChunkAndEmptyResults(t *testing.T) {
 }
 
 func TestExportSinkRejectsOutputAndColumnAmbiguity(t *testing.T) {
+	t.Parallel()
 	s, job := exportWorkerFixture(t, &exportTestS3{})
 	sink := newExportSink(context.Background(), s, job)
 	if err := sink.setColumns([]AnalyticsResultColumn{{Name: "duplicate"}, {Name: "duplicate"}}); err == nil {

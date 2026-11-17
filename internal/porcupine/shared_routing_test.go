@@ -18,6 +18,7 @@ import (
 )
 
 func TestSharedRouteOriginValidation(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"https://worker.internal", "https://worker.internal:8443/", "http://127.0.0.1:1234", "http://[::1]:1234", "http://localhost:1234"} {
 		if _, err := validateSharedRouteURL(raw); err != nil {
 			t.Fatal(raw, err)
@@ -31,6 +32,7 @@ func TestSharedRouteOriginValidation(t *testing.T) {
 }
 
 func TestSharedRouteBodyLimitIncludesLargeImportManifests(t *testing.T) {
+	t.Parallel()
 	for _, cached := range []bool{false, true} {
 		for _, size := range []int{maxBodyBytes + 1, sharedRouteMaxBodyBytes, sharedRouteMaxBodyBytes + 1} {
 			body := bytes.Repeat([]byte{'x'}, size)
@@ -53,6 +55,7 @@ func TestSharedRouteBodyLimitIncludesLargeImportManifests(t *testing.T) {
 }
 
 func TestSharedRouteLargeImportManifestForwarding(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	var owner *Service
 	var calls atomic.Int32
@@ -150,6 +153,7 @@ func sharedRoutingProject(t *testing.T, owner *Service, project string) {
 }
 
 func TestSharedRouteProxyBodyPeerAndMCPResource(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	var owner *Service
 	var calls atomic.Int32
@@ -274,6 +278,7 @@ func TestSharedRouteProxyBodyPeerAndMCPResource(t *testing.T) {
 }
 
 func TestSharedRouteRejectsTamperingExpiryAndStaleEpoch(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	owner := sharedRoutingTestService(t, dsn, "owner", "http://127.0.0.1:1")
 	edge := sharedRoutingTestService(t, dsn, "edge", "http://127.0.0.1:2")
@@ -335,6 +340,7 @@ func TestSharedRouteRejectsTamperingExpiryAndStaleEpoch(t *testing.T) {
 }
 
 func TestSharedRouteWorkerIdentityAndOwnerUnavailable(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	owner := sharedRoutingTestService(t, dsn, "owner", "http://127.0.0.1:1")
 	edge := sharedRoutingTestService(t, dsn, "edge", "http://127.0.0.1:2")
@@ -377,6 +383,7 @@ func TestSharedRouteWorkerIdentityAndOwnerUnavailable(t *testing.T) {
 }
 
 func TestSharedRouteStripsUntrustedContextHeaders(t *testing.T) {
+	t.Parallel()
 	for _, shared := range []bool{false, true} {
 		s := &Service{}
 		if shared {

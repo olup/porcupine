@@ -10,6 +10,7 @@ import (
 )
 
 func TestDuckLakeCopyFIFOProbe(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	p, release, err := store.leaseProject(context.Background(), "fifo-probe")
 	if err != nil {
@@ -32,6 +33,7 @@ func TestDuckLakeCopyFIFOProbe(t *testing.T) {
 }
 
 func TestDuckLakeCopyFIFOBlockedWriterCancellationProbe(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	p, release, err := store.leaseProject(context.Background(), "fifo-cancel")
 	if err != nil {

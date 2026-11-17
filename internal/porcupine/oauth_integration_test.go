@@ -121,6 +121,7 @@ func (f *oauthIntegration) createClient(t *testing.T, admin string, permissions,
 }
 
 func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	apiResource, mcpResource := f.host.URL+"/api/v1", f.host.URL+"/mcp"
 	admin := f.token(t, "bootstrap", adminToken, apiResource)
@@ -277,6 +278,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 }
 
 func TestOAuthIntegrationExpiryAndDiscovery(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	resource := f.host.URL + "/api/v1"
 	admin := f.token(t, "bootstrap", adminToken, resource)

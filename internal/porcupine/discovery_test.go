@@ -7,6 +7,7 @@ import (
 )
 
 func TestEventCatalogInputAndDisabledStorage(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	for _, input := range []*EventCatalogInput{{ID: id, Limit: 101}, {ID: id, Limit: -1}, {ID: id, Offset: -1}, {ID: id, Offset: 10001}, {ID: id, Event: strings.Repeat("e", 501)}} {
@@ -22,6 +23,7 @@ func TestEventCatalogInputAndDisabledStorage(t *testing.T) {
 	}
 }
 func TestEventCatalogHTTPProjectAuthorization(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, ingest := project(t, s)
 	b, _ := project(t, s)

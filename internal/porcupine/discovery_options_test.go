@@ -6,6 +6,7 @@ import (
 )
 
 func TestCatalogPropertyOptionValidation(t *testing.T) {
+	t.Parallel()
 	for _, input := range []EventCatalogInput{
 		{Event: "page", PropertyLimit: 101}, {Event: "page", PropertyLimit: -1},
 		{Event: "page", PropertyKind: "unknown"}, {PropertyKind: "custom"},
@@ -21,6 +22,7 @@ func TestCatalogPropertyOptionValidation(t *testing.T) {
 }
 
 func TestCatalogPropertyCursorRoundTripEscapedNamesAndFilters(t *testing.T) {
+	t.Parallel()
 	input, err := normalizeCatalogInput(EventCatalogInput{ID: "a", Event: strings.Repeat("<", 500), PropertyPrefix: strings.Repeat("<", 199), PropertyLimit: 1})
 	if err != nil {
 		t.Fatal(err)

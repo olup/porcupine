@@ -40,6 +40,7 @@ func webhookTestService(t *testing.T, mode string) (*Service, string, string, st
 	return s, p, token, id
 }
 func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
+	t.Parallel()
 	s, p, _, id := webhookTestService(t, "batch")
 	now := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -66,6 +67,7 @@ func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
 	}
 }
 func TestWebhookEventRetryAndCapacity(t *testing.T) {
+	t.Parallel()
 	s, p, token, id := webhookTestService(t, "event")
 	_ = p
 	s.pipelines.config.WebhookProjectMaxQueuedEvents = 1
@@ -111,6 +113,7 @@ func TestWebhookEventRetryAndCapacity(t *testing.T) {
 }
 
 func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
+	t.Parallel()
 	s, p, _, _ := webhookTestService(t, "batch")
 	now := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -167,6 +170,7 @@ func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
 }
 
 func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T) {
+	t.Parallel()
 	s, p, _, pipeline := webhookTestService(t, "batch")
 	now := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -229,6 +233,7 @@ func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T)
 }
 
 func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
+	t.Parallel()
 	s, _, token, id := webhookTestService(t, "event")
 	calls := 0
 	status := 400
@@ -287,6 +292,7 @@ func TestWebhookPauseRevocationTerminalRetryAndRecovery(t *testing.T) {
 }
 
 func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
+	t.Parallel()
 	s, p, _, _ := webhookTestService(t, "batch")
 	received := time.Date(2026, 11, 8, 12, 0, 1, 0, time.UTC)
 	now := received
@@ -338,6 +344,7 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 }
 
 func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
+	t.Parallel()
 	s, p, token, bad := webhookTestService(t, "event")
 	now := s.clock()
 	s.clock = func() time.Time { return now }

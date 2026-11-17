@@ -26,6 +26,7 @@ func nativeRequest(t *testing.T, s *Service, key, raw string, status int) map[st
 }
 
 func TestNativeJourneyReceiptsAndBusinessProperties(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	projectID, key := project(t, s)
 	const messages = `[
@@ -66,6 +67,7 @@ func TestNativeJourneyReceiptsAndBusinessProperties(t *testing.T) {
 }
 
 func TestNativeRejectsForgedOrAmbiguousMessagesAtomically(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	p, k := project(t, s)
 	good := `{"type":"track","name":"ping","message_id":"one"}`
@@ -100,6 +102,7 @@ func TestNativeRejectsForgedOrAmbiguousMessagesAtomically(t *testing.T) {
 }
 
 func TestNativeNoMessageIDCreatesDistinctReceipts(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	_, k := project(t, s)
 	const raw = `{"type":"track","name":"inventory_restocked"}`
@@ -111,6 +114,7 @@ func TestNativeNoMessageIDCreatesDistinctReceipts(t *testing.T) {
 }
 
 func TestNativeReceiptIsAddressableOverMCP(t *testing.T) {
+	t.Parallel()
 	s := service(t, 5)
 	p, k := project(t, s)
 	response := nativeRequest(t, s, k, `{"type":"track","name":"inventory_restocked","message_id":"inventory-1"}`, 200)

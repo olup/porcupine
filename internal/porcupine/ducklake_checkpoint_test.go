@@ -11,6 +11,7 @@ import (
 )
 
 func TestDuckLakeCheckpointStageRestore(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	live := filepath.Join(root, "live")
 	backup := filepath.Join(root, "backup")
@@ -111,6 +112,7 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 }
 
 func TestDuckLakeCheckpointWaitsForReadersAndCleansFailedStage(t *testing.T) {
+	t.Parallel()
 	lake := openLakeStorageTest(t, t.TempDir(), 1)
 	ctx := context.Background()
 	_, release, err := lake.leaseProject(ctx, "a")
@@ -140,6 +142,7 @@ func TestDuckLakeCheckpointWaitsForReadersAndCleansFailedStage(t *testing.T) {
 }
 
 func TestDuckLakeCheckpointAbandonedStagesRemovedOnRestart(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	s := openLakeStorageTest(t, directory, 1)
 	if err := s.Close(); err != nil {
@@ -166,6 +169,7 @@ func TestDuckLakeCheckpointAbandonedStagesRemovedOnRestart(t *testing.T) {
 }
 
 func TestDuckLakeCheckpointKeepsWriterOpenDuringAcceptanceCapture(t *testing.T) {
+	t.Parallel()
 	lake := openLakeStorageTest(t, t.TempDir(), 1)
 	entered, resume := make(chan struct{}), make(chan struct{})
 	injected := errors.New("acceptance snapshot interrupted")
@@ -193,6 +197,7 @@ func TestDuckLakeCheckpointKeepsWriterOpenDuringAcceptanceCapture(t *testing.T) 
 }
 
 func TestDuckLakeCheckpointRejectsPendingPartialDeletion(t *testing.T) {
+	t.Parallel()
 	lake := openLakeStorageTest(t, t.TempDir(), 1)
 	ctx := context.Background()
 	if _, err := lake.Query(ctx, "a", "SELECT count(*) FROM events", nil, defaultQueryExecutionLimits()); err != nil {

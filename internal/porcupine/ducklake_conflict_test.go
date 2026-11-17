@@ -10,6 +10,7 @@ import (
 // Observe the pinned engine's own transaction behavior without Porcupine's
 // application write mutex. A conflict may abort a transaction, never half-apply it.
 func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
+	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	p, release, err := store.leaseProject(context.Background(), "native-conflicts")
 	if err != nil {

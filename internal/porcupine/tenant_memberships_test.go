@@ -11,6 +11,7 @@ import (
 )
 
 func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) {
+	t.Parallel()
 	f, operator, a, b, projectA, projectB := tenantServiceFixture(t)
 	invite := func(tenant, body string) string {
 		t.Helper()
@@ -66,6 +67,7 @@ func TestTenantMembershipPerProjectPermissionsAndIndependentTeams(t *testing.T) 
 }
 
 func TestTenantMembershipInputValidationAndAtomicInvitation(t *testing.T) {
+	t.Parallel()
 	f, operator, tenant, _, project, otherProject := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/members"
 	for _, body := range []map[string]any{
@@ -116,6 +118,7 @@ func TestTenantMembershipInputValidationAndAtomicInvitation(t *testing.T) {
 }
 
 func TestTenantMembershipConcurrentLastAdminProtectionAndScopeAttenuation(t *testing.T) {
+	t.Parallel()
 	f, operator, tenant, _, _, _ := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/members"
 	ids := []string{}
@@ -166,6 +169,7 @@ func TestTenantMembershipConcurrentLastAdminProtectionAndScopeAttenuation(t *tes
 }
 
 func TestTenantAdministratorPublicIngestionKeyLifecycle(t *testing.T) {
+	t.Parallel()
 	j, operator, tenant, otherTenant, _, _ := tenantOAuthSetup(t)
 	app := j.client("porcupine-local-tenant-admin", localOAuthCallback, []string{tenantAdminScope})
 	admin := j.browserLoginSelection(t, app, "lea@example.test", "/api/v1", "tenant", tenant, otherTenant, 200).AccessToken

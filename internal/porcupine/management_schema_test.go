@@ -14,6 +14,7 @@ import (
 )
 
 func TestServedOpenAPIMatchesGeneratedSnapshot(t *testing.T) {
+	t.Parallel()
 	service, err := Open(Config{
 		DBPath: filepath.Join(t.TempDir(), "schema.db"), BootstrapToken: rand.Text(),
 		OAuth: &OAuthConfig{Issuer: "https://porcupine.example", Email: &EmailConfig{SendCode: func(context.Context, string, string) error {

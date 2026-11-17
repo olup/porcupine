@@ -46,6 +46,7 @@ func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind str
 	return results
 }
 func TestImportRowsActualPostHogJSONLines(t *testing.T) {
+	t.Parallel()
 	for _, properties := range []string{`{"large":9007199254740993,"$current_url":"https://example.test/"}`, `"{\"large\":9007199254740993,\"$current_url\":\"https://example.test/\"}"`} {
 		raw := fmt.Sprintf(`{"uuid":"archive-1","event":"$autocapture","distinct_id":"anon","timestamp":"2024-01-02T03:04:05.123456Z","properties":%s,"person_id":"internal-not-app","person_properties":{"stale":true},"elements_chain":"button.example","created_at":"2024-01-03T01:00:00Z"}`, properties)
 		row, err := parsePostHogImportRow([]byte(raw), "events")
@@ -64,6 +65,7 @@ func TestImportRowsActualPostHogJSONLines(t *testing.T) {
 	}
 }
 func TestImportRowsDedupBothDirectionsAndNoDestinations(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, key := project(t, s)
 	live := `{"api_key":%q,"uuid":"same","event":"live","distinct_id":"u"}`
@@ -91,6 +93,7 @@ func TestImportRowsDedupBothDirectionsAndNoDestinations(t *testing.T) {
 	}
 }
 func TestImportPersonsProfilesWithoutInventedLinksOrFreshOverwrite(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, key := project(t, s)
 	person := func(version int, name string) string {
@@ -126,6 +129,7 @@ func TestImportPersonsProfilesWithoutInventedLinksOrFreshOverwrite(t *testing.T)
 	}
 }
 func TestImportIdentityNeedsExplicitEvidenceAndPreservesLiveProfiles(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, key := project(t, s)
 	rows := importRowsForTest(t, s, p, "events", `{"uuid":"import-link","event":"$identify","distinct_id":"account","timestamp":"2024-01-01T00:00:00Z","properties":{"$anon_distinct_id":"anon","$set":{"stale":"ignored"}}}`)
@@ -159,6 +163,7 @@ func TestImportIdentityNeedsExplicitEvidenceAndPreservesLiveProfiles(t *testing.
 }
 
 func TestImportPersonDeletionCannotResurrectOlderOrEraseLive(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, key := project(t, s)
 	importRowsForTest(t, s, p, "persons", `{"person_id":"internal","distinct_id":"u","person_version":10,"person_distinct_id_version":1,"properties":{"old":true}}`)
@@ -181,6 +186,7 @@ func TestImportPersonDeletionCannotResurrectOlderOrEraseLive(t *testing.T) {
 }
 
 func TestImportDeletedPersonCannotBeRevivedByOlderIdentify(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, _ := project(t, s)
 	importRowsForTest(t, s, p, "persons", `{"person_id":"internal-deleted","distinct_id":"deleted-account","person_version":20,"person_distinct_id_version":1,"properties":null,"is_deleted":true}`)
@@ -194,6 +200,7 @@ func TestImportDeletedPersonCannotBeRevivedByOlderIdentify(t *testing.T) {
 }
 
 func TestImportPersonVersionsCannotCrossSourceNamespaces(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, _ := project(t, s)
 	first := importRowsForSourceTest(t, s, p, "archive-a", "persons", `{"person_id":"internal-a","distinct_id":"shared-id","person_version":1,"person_distinct_id_version":1,"properties":{"name":"source a"}}`)[0]
@@ -205,6 +212,7 @@ func TestImportPersonVersionsCannotCrossSourceNamespaces(t *testing.T) {
 }
 
 func TestImportExplicitTargetOnlyIdentifyDoesNotInventLink(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, _ := project(t, s)
 	result := importRowsForTest(t, s, p, "events", `{"uuid":"node-identify-history","event":"$identify","distinct_id":"explicit-user","timestamp":"2020-01-01T00:00:00Z","properties":{}}`)[0]

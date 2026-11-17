@@ -18,6 +18,7 @@ func sharedStatusRead(t *testing.T, s *Service) InstanceStatus {
 }
 
 func TestSharedInstanceStatusControlRegistrationAndPrivacy(t *testing.T) {
+	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
 	healthy := sharedStatusRead(t, a.service)
 	if healthy.Status != "ok" || healthy.Checks.SharedControl != dependencyOK || healthy.Checks.WorkerRegistration != dependencyOK || !healthy.Configuration.SharedControl || !healthy.Configuration.OwnerRouting {
@@ -42,6 +43,7 @@ func TestSharedInstanceStatusControlRegistrationAndPrivacy(t *testing.T) {
 }
 
 func TestSharedInstanceStatusDetectsLostRegistrationSession(t *testing.T) {
+	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
 	if _, err := a.service.control.Exec(`SELECT pg_terminate_backend($1)`, a.service.shared.routing.backendPID); err != nil {
 		t.Fatal(err)
@@ -53,6 +55,7 @@ func TestSharedInstanceStatusDetectsLostRegistrationSession(t *testing.T) {
 }
 
 func TestSharedInstanceStatusMandatoryControlFailure(t *testing.T) {
+	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
 	// Invoke the handler with an already authenticated reader context: when the
 	// database fails after authentication, status must still report that failure.
@@ -66,6 +69,7 @@ func TestSharedInstanceStatusMandatoryControlFailure(t *testing.T) {
 }
 
 func TestSharedInstanceStatusControlProbeIsBounded(t *testing.T) {
+	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
 	// The dedicated registration session occupies the only connection. Pool
 	// admission must honor the one-second status deadline rather than hanging.
@@ -86,6 +90,7 @@ func TestSharedInstanceStatusControlProbeIsBounded(t *testing.T) {
 }
 
 func TestSharedInstanceStatusAnalyticalMetadataFailure(t *testing.T) {
+	t.Parallel()
 	dsn := sharedPostgresDSN(t)
 	s := service(t, 20)
 	native := instanceStatusNativeStore(t, s)

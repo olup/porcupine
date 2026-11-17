@@ -48,6 +48,7 @@ func fixture(t *testing.T, name, key string) []byte {
 	return bytes.ReplaceAll(b, []byte("{{KEY}}"), []byte(key))
 }
 func TestTransportFixturesAndStableRetries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, path, distinct string }{
 		{"capture.json", "/capture/", "root-user"},
 		{"batch.json", "/batch/", "node-user"},
@@ -92,6 +93,7 @@ func TestTransportFixturesAndStableRetries(t *testing.T) {
 	}
 }
 func TestIngestionGzipAndBodyLimits(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	_, ingest := project(t, s)
 	valid := fixture(t, "browser-array.json", ingest)
@@ -125,6 +127,7 @@ func TestIngestionGzipAndBodyLimits(t *testing.T) {
 	}
 }
 func TestTokenLocationsAndAtomicCredentials(t *testing.T) {
+	t.Parallel()
 	s := service(t, 30)
 	a, ingestA := project(t, s)
 	_, ingestB := project(t, s)
@@ -156,6 +159,7 @@ func TestTokenLocationsAndAtomicCredentials(t *testing.T) {
 	}
 }
 func TestIngestionCORS(t *testing.T) {
+	t.Parallel()
 	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, AllowedOrigins: []string{"https://app.example.test"}})
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +194,7 @@ func TestIngestionCORS(t *testing.T) {
 	transportRequest(t, off, "OPTIONS", "/capture/", nil, allowed, 403)
 }
 func TestAllowedOriginValidation(t *testing.T) {
+	t.Parallel()
 	for _, origin := range []string{"*", "https://*.example.test", "null", "https://app.example.test/", "https://user:pass@app.example.test", "https://app.example.test?x=1", "https://app.example.test#x"} {
 		s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, AllowedOrigins: []string{origin}})
 		if s != nil {
@@ -201,6 +206,7 @@ func TestAllowedOriginValidation(t *testing.T) {
 	}
 }
 func TestReplacementConnectionRetainsSQLitePragmas(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	s.db.SetMaxIdleConns(0)
 	conn, err := s.db.Conn(context.Background())
@@ -231,6 +237,7 @@ func TestReplacementConnectionRetainsSQLitePragmas(t *testing.T) {
 
 // Ensure bounded readers reject a read failure instead of acknowledging partial JSON.
 func TestIngestionReadFailure(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	_, ingest := project(t, s)
 	r := httptest.NewRequest("POST", "/capture/", nil)
@@ -254,6 +261,7 @@ func (e errorBody) Read(p []byte) (int, error) {
 func (errorBody) Close() error { return nil }
 
 func TestExactBodyLimit(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	_, ingest := project(t, s)
 	payload := []byte(captureBody(ingest, "exact-limit"))
@@ -266,6 +274,7 @@ func TestExactBodyLimit(t *testing.T) {
 }
 
 func TestRecordedSDKFixtures(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"node-batch.json", "browser-capture.json", "browser-batch-gzip.json"} {
 		t.Run(name, func(t *testing.T) {
 			// These fixtures carry SDK/version and wire metadata from the real SDK suite.
@@ -358,6 +367,7 @@ func TestRecordedSDKFixtures(t *testing.T) {
 }
 
 func TestCookielessSentinelIsNotAVisitor(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, key := project(t, s)
 	body, _ := json.Marshal(map[string]any{"api_key": key, "batch": []map[string]any{

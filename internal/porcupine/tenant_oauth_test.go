@@ -40,6 +40,7 @@ func tenantOAuthSetup(t *testing.T) (*emailJourney, string, string, string, stri
 }
 
 func TestTenantAdminEmailOAuthEmptyTenantAndRoleBounds(t *testing.T) {
+	t.Parallel()
 	j, operator, a, b, projectB, human := tenantOAuthSetup(t)
 	s := j.service
 	app := j.client("porcupine-local-tenant-admin", localOAuthCallback, []string{tenantAdminScope})
@@ -103,6 +104,7 @@ func mustTenantOAuthClient(t *testing.T, s *Service) *oauthClient {
 }
 
 func TestTenantAdminEmailOAuthMCPIsolationAndRevocation(t *testing.T) {
+	t.Parallel()
 	j, operator, a, b, _, human := tenantOAuthSetup(t)
 	app := j.client("porcupine-local-tenant-admin", localOAuthCallback, []string{tenantAdminScope})
 	token := j.browserLoginSelection(t, app, "lea@example.test", "/mcp", "tenant", a, b, 200)
@@ -132,6 +134,7 @@ func TestTenantAdminEmailOAuthMCPIsolationAndRevocation(t *testing.T) {
 }
 
 func TestTenantAdminInteractiveScopeRequiresExplicitDedicatedClient(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	for _, tc := range []struct{ client, scope string }{
 		{"porcupine-local-tenant-admin", ""},
@@ -155,6 +158,7 @@ func TestTenantAdminInteractiveScopeRequiresExplicitDedicatedClient(t *testing.T
 }
 
 func TestTenantMemberLocalOAuthExplicitWriteScopes(t *testing.T) {
+	t.Parallel()
 	j := newEmailJourney(t)
 	s, operator := j.service, accountTestToken(t, j.service)
 	project := func(name string) string {
@@ -188,6 +192,7 @@ func TestTenantMemberLocalOAuthExplicitWriteScopes(t *testing.T) {
 }
 
 func TestTenantAdminOAuthRevocationKeepsOtherTenantGrant(t *testing.T) {
+	t.Parallel()
 	j, operator, a, b, _, human := tenantOAuthSetup(t)
 	s := j.service
 	request(t, s, "PUT", "/api/v1/tenants/"+b+"/members/"+human, operator, `{"role":"admin"}`, 200)
@@ -217,6 +222,7 @@ func TestTenantAdminOAuthRevocationKeepsOtherTenantGrant(t *testing.T) {
 }
 
 func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
+	t.Parallel()
 	control, dsn := sharedControlFixture(t)
 	ctx := context.Background()
 	queries, err := normalizeInteractiveQueries(nil)

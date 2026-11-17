@@ -15,6 +15,7 @@ import (
 )
 
 func TestExportHTTPAndMCPShareAuthorizationIdempotencyAndContracts(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
 	projectID, ingest := project(t, s)
@@ -65,6 +66,7 @@ func TestExportHTTPAndMCPShareAuthorizationIdempotencyAndContracts(t *testing.T)
 }
 
 func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
 	ctx := exportContext(t, s, adminToken)
@@ -147,6 +149,7 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 }
 
 func TestExportListLimitsDoNotExposeOperatorSecretsAndRemainProjectScoped(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	enableTestExports(t, s, 100)
 	s.exports.config.S3 = exportstore.Config{Bucket: "secret-bucket", Endpoint: "https://private.example", AccessKeyID: "private-access", SecretAccessKey: "private-secret"}

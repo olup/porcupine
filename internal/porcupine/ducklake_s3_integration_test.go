@@ -165,6 +165,7 @@ func nativeS3Service(t *testing.T, fixture duckLakeS3Fixture) (*Service, Config)
 }
 
 func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	s, config := nativeS3Service(t, fixture)
 	defer func() {
@@ -278,6 +279,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 }
 
 func TestDuckLakeS3CleanupPreservesReaderThenReclaimsPayload(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	config := DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
 	lake, err := newDuckLake(config)
@@ -369,6 +371,7 @@ func containsS3Key(keys []string, wanted string) bool {
 }
 
 func TestDuckLakeS3RejectsIncompleteLocalBackups(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "acceptance.db"), BootstrapToken: adminToken,
@@ -413,6 +416,7 @@ func (c *pausedS3HTTPClient) Do(request *http.Request) (*http.Response, error) {
 }
 
 func TestDuckLakeS3SlowProjectDeletionLeavesOtherProjectsAvailable(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
 	s3FixtureError(t, fixture, "open slow-delete fixture", err)
@@ -453,6 +457,7 @@ func TestDuckLakeS3SlowProjectDeletionLeavesOtherProjectsAvailable(t *testing.T)
 }
 
 func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
@@ -513,6 +518,7 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 }
 
 func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
@@ -621,6 +627,7 @@ func TestDuckLakeS3CredentialChainUsesOnlyIsolatedEnvironment(t *testing.T) {
 }
 
 func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	if !strings.HasPrefix(fixture.storage.Endpoint, "https://") {
 		t.Skip("negative certificate assertion uses the private TLS fixture")

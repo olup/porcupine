@@ -8,6 +8,7 @@ import (
 )
 
 func TestDuckLakeStoppedVolumeRestore(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	live, backup := filepath.Join(root, "live"), filepath.Join(root, "backup")
 	config := Config{DBPath: filepath.Join(live, "queue.db"), BootstrapToken: adminToken,

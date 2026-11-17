@@ -20,6 +20,7 @@ func (s *slowUpload) Read(p []byte) (int, error) {
 	return s.Reader.Read(p)
 }
 func TestCapturePressureLeavesTokenExchangeAvailable(t *testing.T) {
+	t.Parallel()
 	f := newOAuthIntegration(t)
 	f.s.captureSlots = make(chan struct{}, 1)
 	h := f.s.Handler()
@@ -43,6 +44,7 @@ func TestCapturePressureLeavesTokenExchangeAvailable(t *testing.T) {
 	f.token(t, "bootstrap", adminToken, f.host.URL+"/api/v1")
 }
 func TestCaptureBatchLimit(t *testing.T) {
+	t.Parallel()
 	s := service(t, 2000)
 	_, key := project(t, s)
 	event := `{"event":"sample","distinct_id":"alice","api_key":"` + key + `"}`
@@ -78,6 +80,7 @@ func FuzzCaptureBatch(f *testing.F) {
 }
 
 func TestCaptureRejectsEmptyAuthEvenWithAValidPublicKey(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	_, key := project(t, s)
 	for _, headers := range [][]string{{""}, {"", "Bearer invalid"}} {

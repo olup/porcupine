@@ -51,6 +51,7 @@ func lakeStorageCount(t *testing.T, s *duckLakeStore, project, table string) int
 }
 
 func TestDuckLakeStorageRevisionsRestartAndIsolation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	directory := t.TempDir()
 	s := openLakeStorageTest(t, directory, 2)
@@ -134,6 +135,7 @@ func TestDuckLakeStorageRevisionsRestartAndIsolation(t *testing.T) {
 }
 
 func TestDuckLakeStorageIdentityVersioning(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	page := lakeStorageProjection(t, "project-a", "page", 1)
@@ -175,6 +177,7 @@ func TestDuckLakeStorageIdentityVersioning(t *testing.T) {
 }
 
 func TestDuckLakeStorageCatalogContinuityAndWorkingSet(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	directory := t.TempDir()
 	s := openLakeStorageTest(t, directory, 1)
@@ -215,6 +218,7 @@ func TestDuckLakeStorageCatalogContinuityAndWorkingSet(t *testing.T) {
 }
 
 func TestDuckLakeStorageChangedOpenCatalogAndLockdown(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	a := lakeStorageProjection(t, "a", "a", 1)
@@ -245,6 +249,7 @@ func TestDuckLakeStorageChangedOpenCatalogAndLockdown(t *testing.T) {
 }
 
 func TestDuckLakeStorageCatalogMarkerAndAtomicBatch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	a := lakeStorageProjection(t, "a", "same", 1)
@@ -277,6 +282,7 @@ func TestDuckLakeStorageCatalogMarkerAndAtomicBatch(t *testing.T) {
 }
 
 func TestDuckLakeStorageConcurrentLoadAndApply(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	original := lakeStorageProjection(t, "a", "same", 1)
@@ -311,6 +317,7 @@ func TestDuckLakeStorageConcurrentLoadAndApply(t *testing.T) {
 }
 
 func TestDuckLakeStorageRegistryReplacementFailsClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	a := lakeStorageProjection(t, "a", "a", 1)
@@ -339,6 +346,7 @@ func TestDuckLakeStorageRegistryReplacementFailsClosed(t *testing.T) {
 }
 
 func TestDuckLakeStorageDeadlineWhileCatalogOpening(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	if err := s.mu.Lock(context.Background()); err != nil {
 		t.Fatal(err)

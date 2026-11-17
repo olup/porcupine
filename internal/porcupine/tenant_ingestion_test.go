@@ -33,6 +33,7 @@ func tenantTestProject(t *testing.T, s *Service, tenant string) (string, string)
 }
 
 func TestTenantIngestionSharedProjectsAndIndependentTenant(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	tenantAllowance(t, s, defaultTenantID, 2)
 	_, a := project(t, s)
@@ -61,6 +62,7 @@ func TestTenantIngestionSharedProjectsAndIndependentTenant(t *testing.T) {
 }
 
 func TestTenantIngestionAtomicBatchAndResponseContracts(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	tenantAllowance(t, s, defaultTenantID, 2)
 	_, token := project(t, s)
@@ -90,6 +92,7 @@ func TestTenantIngestionAtomicBatchAndResponseContracts(t *testing.T) {
 }
 
 func TestTenantIngestionSuspensionDoesNotBlockDeliveryOrRetry(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	_, token := project(t, s)
 	body := `{"type":"track","message_id":"stable","actor_id":"u","name":"Original"}`
@@ -119,6 +122,7 @@ func TestTenantIngestionSuspensionDoesNotBlockDeliveryOrRetry(t *testing.T) {
 }
 
 func TestTenantIngestionMonthBoundaryAndRestart(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "budget.db")
 	now := time.Date(2026, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken, Clock: func() time.Time { return now }})
@@ -153,6 +157,7 @@ func TestTenantIngestionMonthBoundaryAndRestart(t *testing.T) {
 }
 
 func TestTenantIngestionConcurrentExactLimit(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	tenantAllowance(t, s, defaultTenantID, 7)
 	_, token := project(t, s)
@@ -185,6 +190,7 @@ func TestTenantIngestionConcurrentExactLimit(t *testing.T) {
 }
 
 func TestTenantIngestionImportQuotaRetainsCheckpointAndDates(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	now := time.Date(2026, 11, 30, 23, 59, 59, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -228,6 +234,7 @@ func TestTenantIngestionImportQuotaRetainsCheckpointAndDates(t *testing.T) {
 }
 
 func TestTenantIngestionCountsCanonicalIdentityAndPersonRows(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	p, token := project(t, s)
 	period, _ := tenantMonth(s.clock())
@@ -259,6 +266,7 @@ func TestTenantIngestionCountsCanonicalIdentityAndPersonRows(t *testing.T) {
 }
 
 func TestTenantIngestionEveryHistoricalAdapterSharesQuota(t *testing.T) {
+	t.Parallel()
 	for _, format := range []string{"native", "posthog", "segment"} {
 		t.Run(format, func(t *testing.T) {
 			s := service(t, 100)
@@ -290,6 +298,7 @@ func TestTenantIngestionEveryHistoricalAdapterSharesQuota(t *testing.T) {
 }
 
 func TestTenantIngestionAcceptanceClockAndNoProjectRefund(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	p, token := project(t, s)
 	before := time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC)
@@ -322,6 +331,7 @@ func TestTenantIngestionAcceptanceClockAndNoProjectRefund(t *testing.T) {
 }
 
 func TestTenantIngestionInvalidAndQueueRejectedRowsNotCharged(t *testing.T) {
+	t.Parallel()
 	s := service(t, 1)
 	_, token := project(t, s)
 	tenantAllowance(t, s, defaultTenantID, 0)

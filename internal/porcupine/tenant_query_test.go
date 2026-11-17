@@ -10,6 +10,7 @@ import (
 )
 
 func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	b, _ := project(t, s)
@@ -100,6 +101,7 @@ func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testin
 }
 
 func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	id, _ := project(t, s)
 	batch := make([]eventProjection, 40)
@@ -193,6 +195,7 @@ func (s *recordingQueryLimits) Query(ctx context.Context, project, sql string, p
 }
 
 func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	s.interactiveConfig = InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 6000, MaxRows: 2000, MaxResultBytes: 4 << 20}
 	spy := &recordingQueryLimits{lakeStore: s.lake}
@@ -228,6 +231,7 @@ func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) 
 }
 
 func TestInteractiveQueryConfigurationCeilings(t *testing.T) {
+	t.Parallel()
 	for _, c := range []InteractiveQueryConfig{{MaxConcurrent: 1}, {TimeoutMS: -1}, {TimeoutMS: 60001}, {MaxRows: 100001}, {MaxResultBytes: 255}} {
 		if _, err := normalizeInteractiveQueries(&c); err == nil {
 			t.Fatal("unsafe config accepted", c)

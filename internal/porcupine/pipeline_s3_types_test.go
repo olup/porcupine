@@ -8,6 +8,7 @@ func testS3Spec() S3PipelineSpec {
 	return S3PipelineSpec{SQL: "SELECT event, count() AS n FROM events GROUP BY event", Format: "jsonl", IntervalSeconds: 60, StartAt: "2026-11-08T12:00:00Z", Destination: S3PipelineDestination{Bucket: "client-bucket", Region: "us-east-1", Prefix: "private/exports"}}
 }
 func TestPipelineS3SpecValidation(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	projectID, _ := project(t, s)
 	good := testS3Spec()

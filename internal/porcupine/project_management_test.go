@@ -7,6 +7,7 @@ import (
 )
 
 func TestProjectRenamePermissionsAndIdentity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	created := request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"Original"}`, 201)
 	original := created["project"].(map[string]any)
@@ -37,6 +38,7 @@ func TestProjectRenamePermissionsAndIdentity(t *testing.T) {
 }
 
 func TestMCPProjectLifecycleAndDiscovery(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	other, _ := project(t, s)

@@ -21,6 +21,7 @@ func quarantineCount(t *testing.T, s *Service) int {
 // Persisted quarantine remains repairable; native storage failures themselves
 // do not infer that a row is invalid or discard a previously accepted record.
 func TestDeliveryQuarantineRetainsPayloadDedupCapacityAndOperatorRetry(t *testing.T) {
+	t.Parallel()
 	s, config := nativeCoreService(t)
 	s.queueMax = 1
 	projectID, ingest := project(t, s)
@@ -71,6 +72,7 @@ func TestDeliveryQuarantineRetainsPayloadDedupCapacityAndOperatorRetry(t *testin
 }
 
 func TestQuarantinedOriginalMutationAckAndLateReplay(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"edit", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			s, _ := nativeCoreService(t)

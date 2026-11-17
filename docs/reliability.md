@@ -50,6 +50,6 @@ Scheduled S3 queries publish a conditional manifest after every output file succ
 
 ## Verification
 
-`make ducklake-test` exercises real native storage, query restrictions, HTTP and MCP journeys, identity, revisions, retries, project isolation, cancellation, and restart under the race detector. The stopped-volume restore test covers matching paths and queued work. `make ducklake-smoke` runs the compiled native server and standalone CLI. Capacity measurements and their limits are linked from the [DuckLake validation report](ducklake-validation.md).
+`make test-race` exercises real native storage, query restrictions, HTTP and MCP journeys, identity, revisions, retries, project isolation, cancellation, and restart under the race detector. The stopped-volume restore test covers matching paths and queued work. `make ducklake-smoke` runs the compiled native server and standalone CLI. Capacity measurements and their limits are linked from the [DuckLake validation report](ducklake-validation.md).
 
 `make check` exercises the native Go contracts. Native race, S3, compiled CLI, SDK compatibility, and restore checks cover their respective boundaries. The server requires a C/C++ toolchain for DuckDB; the standalone CLI remains CGO-free.

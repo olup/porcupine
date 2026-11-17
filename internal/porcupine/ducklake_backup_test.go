@@ -25,6 +25,7 @@ func nativeBackupService(t *testing.T) (*Service, Config) {
 }
 
 func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	a, ingest := project(t, s)
 	b, _ := project(t, s)
@@ -119,6 +120,7 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 }
 
 func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	a, _ := project(t, s)
 	ctx := context.Background()
@@ -173,6 +175,7 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 }
 
 func TestDuckLakeBackupAutomaticScheduleAndShutdown(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 128, Threads: 1}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
 	s, err := Open(config)
@@ -232,6 +235,7 @@ func (s *pausedCheckpointStore) stageCheckpoint(ctx context.Context, acceptance 
 }
 
 func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	s.deliveryCancel()
 	<-s.deliveryDone
@@ -306,6 +310,7 @@ func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
 }
 
 func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
+	t.Parallel()
 	s, config := nativeBackupService(t)
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"reuse-parquet","actor_id":"user","name":"kept"}`, 200)

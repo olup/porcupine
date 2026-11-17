@@ -13,6 +13,7 @@ import (
 )
 
 func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -85,6 +86,7 @@ func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
 }
 
 func TestDuckLakeProjectAdmissionIsResourceLimit(t *testing.T) {
+	t.Parallel()
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	ctx := context.Background()
 	_, release, err := s.leaseProject(ctx, "hot")
@@ -111,6 +113,8 @@ func TestDuckLakeProjectAdmissionIsResourceLimit(t *testing.T) {
 }
 
 func TestDuckLakeProjectsReopenDuringMaintenance(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -158,6 +162,7 @@ func TestDuckLakeProjectsReopenDuringMaintenance(t *testing.T) {
 }
 
 func TestDuckLakeProjectErrorsKeepStorageFailuresPrivate(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []error{
 		errors.New("private catalog path"),
 		&duckdb.Error{Type: duckdb.ErrorTypeBinder, Msg: "private catalog column"},

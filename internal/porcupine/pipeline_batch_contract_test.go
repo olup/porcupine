@@ -20,6 +20,8 @@ func (transport pipelineBatchContractTransport) RoundTrip(request *http.Request)
 }
 
 func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	start := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	var clockMS atomic.Int64
 	clockMS.Store(start.UnixMilli())

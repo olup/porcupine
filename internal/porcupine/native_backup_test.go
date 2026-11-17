@@ -12,6 +12,7 @@ import (
 )
 
 func TestNativeBackupConfigurationRequiresNativeFiles(t *testing.T) {
+	t.Parallel()
 	for _, config := range []Config{
 		{NativeBackup: &NativeBackupConfig{Directory: t.TempDir()}},
 		{DBPath: ":memory:", DuckLake: &DuckLakeConfig{Directory: t.TempDir()}, NativeBackup: &NativeBackupConfig{Directory: t.TempDir()}},
@@ -31,6 +32,7 @@ func TestNativeBackupConfigurationRequiresNativeFiles(t *testing.T) {
 }
 
 func TestSQLiteCheckpointIntegrityCancellationAndImmutableDestination(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source, err := sql.Open("sqlite", filepath.Join(root, "source.db"))
 	if err != nil {
@@ -61,6 +63,7 @@ func TestSQLiteCheckpointIntegrityCancellationAndImmutableDestination(t *testing
 }
 
 func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	for _, item := range []struct{ id, source, created string }{{"pc_backup_old", "source", "2026-11-14T00:00:00.1Z"}, {"pc_backup_new", "source", "2026-11-14T00:00:00.11Z"}, {"pc_backup_foreign", "other", "2026-11-14T00:00:00.01Z"}} {
 		path := filepath.Join(root, item.id)
@@ -137,6 +140,7 @@ func minimalNativeBackupBundle(t *testing.T) string {
 }
 
 func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"valid", "legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "control-mismatch", "missing-control", "legacy-format", "missing-catalog"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := minimalNativeBackupBundle(t)
@@ -223,6 +227,7 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 }
 
 func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	for _, item := range []struct{ id, created string }{{"pc_backup_previous", "2030-01-01T00:00:00Z"}, {"pc_backup_published", "2026-11-14T00:00:00Z"}} {
 		directory := filepath.Join(root, item.id)
@@ -245,6 +250,7 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 }
 
 func TestNativeBackupIndependentS3Configuration(t *testing.T) {
+	t.Parallel()
 	localRoot := t.TempDir()
 	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), localControlPath(filepath.Join(localRoot, "backups", "queue.db")), &DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
 		t.Fatal("backup destination containing live SQLite accepted")
@@ -277,6 +283,7 @@ func TestNativeBackupIndependentS3Configuration(t *testing.T) {
 }
 
 func TestNativeBackupLocalOwnerExcludesRestoredWriter(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	source := "00000000-0000-0000-0000-000000000000"
 	if err := claimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
@@ -291,6 +298,7 @@ func TestNativeBackupLocalOwnerExcludesRestoredWriter(t *testing.T) {
 }
 
 func TestNativeBackupNormalizesSourceBeforeS3OverlapCheck(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	for _, prefix := range []string{"analytics/", "/analytics/"} {
 		lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: prefix, Region: "us-east-1"}}
@@ -305,6 +313,7 @@ func TestNativeBackupNormalizesSourceBeforeS3OverlapCheck(t *testing.T) {
 	}
 }
 func TestNativeBackupStorageIdentityValidation(t *testing.T) {
+	t.Parallel()
 	valid := []nativeBackupStorageIdentity{{Mode: "local"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "http://127.0.0.1:9000"}}
 	for _, identity := range valid {
 		if err := validateNativeBackupStorageIdentity(identity, false); err != nil {

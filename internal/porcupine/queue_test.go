@@ -38,6 +38,7 @@ func fixedQueueClock(s *Service) {
 }
 
 func TestQueueByteCapacityAndDuplicateRetry(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	fixedQueueClock(s)
 	id, ingest := project(t, s)
@@ -63,6 +64,7 @@ func TestQueueByteCapacityAndDuplicateRetry(t *testing.T) {
 }
 
 func TestQueueByteBatchRollbackAndGlobalScope(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	fixedQueueClock(s)
 	a, ingestA := project(t, s)
@@ -90,6 +92,7 @@ func TestQueueByteBatchRollbackAndGlobalScope(t *testing.T) {
 }
 
 func TestQueueByteAccountingUpdatesDeletesAndRollback(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
@@ -138,6 +141,7 @@ func TestQueueByteAccountingUpdatesDeletesAndRollback(t *testing.T) {
 }
 
 func TestQueueByteCapacityReleasedByDeliveryAndMutation(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"delivery", "mutation"} {
 		t.Run(mode, func(t *testing.T) {
 			s := service(t, 100)
@@ -170,6 +174,7 @@ func TestQueueByteCapacityReleasedByDeliveryAndMutation(t *testing.T) {
 }
 
 func TestQueueByteAccountingMigrationAndRestart(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
 	if err != nil {
@@ -204,6 +209,7 @@ func TestQueueByteAccountingMigrationAndRestart(t *testing.T) {
 }
 
 func TestConcurrentQueueByteCapacity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	fixedQueueClock(s)
 	_, ingest := project(t, s)
@@ -239,6 +245,7 @@ func TestConcurrentQueueByteCapacity(t *testing.T) {
 }
 
 func TestQueueByteConfigurationDefaultAndInvalid(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	if s.queueMaxBytes != DefaultQueueMaxBytes {
 		t.Fatal("default queue byte budget changed")
@@ -250,6 +257,7 @@ func TestQueueByteConfigurationDefaultAndInvalid(t *testing.T) {
 }
 
 func TestQueueByteAccountingDeliveryAcknowledgementRollback(t *testing.T) {
+	t.Parallel()
 	s := service(t, 100)
 	_, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
@@ -276,6 +284,7 @@ func TestQueueByteAccountingDeliveryAcknowledgementRollback(t *testing.T) {
 }
 
 func TestQueueByteCapacityAcrossServiceInstances(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "shared.db")
 	first, err := Open(Config{DBPath: path, BootstrapToken: adminToken, QueueMaxEvents: 100})
 	if err != nil {

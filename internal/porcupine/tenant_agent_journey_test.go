@@ -7,6 +7,7 @@ import (
 )
 
 func TestTenantMCPDiscoveryOperatorJourneyAndRevocation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()

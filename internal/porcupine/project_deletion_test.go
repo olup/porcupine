@@ -9,6 +9,7 @@ import (
 )
 
 func TestProjectDeletionDrainsOnlyTarget(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	other, _ := project(t, s)
@@ -53,6 +54,7 @@ func TestProjectDeletionDrainsOnlyTarget(t *testing.T) {
 }
 
 func TestProjectDeletionRecoveryAfterRestart(t *testing.T) {
+	t.Parallel()
 	c := Config{DBPath: filepath.Join(t.TempDir(), "resume.db"), BootstrapToken: adminToken}
 	s, err := Open(c)
 	if err != nil {
@@ -108,6 +110,7 @@ func TestProjectDeletionRecoveryAfterRestart(t *testing.T) {
 }
 
 func TestInterruptedProjectDrainReopensAdmission(t *testing.T) {
+	t.Parallel()
 	var a projectActivity
 	ctx, cancel := context.WithCancel(context.Background())
 	_, finish, _ := a.begin(ctx, "p")

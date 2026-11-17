@@ -8,6 +8,7 @@ import (
 )
 
 func TestManagementKeyListingAndLifecycle(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectA, _ := project(t, s)
 	projectB, _ := project(t, s)
@@ -48,6 +49,7 @@ func TestManagementKeyListingAndLifecycle(t *testing.T) {
 }
 
 func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
 	_, manager := key(t, s, []string{"management:write", "events:read"}, []string{"*"})
@@ -69,6 +71,7 @@ func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
 }
 
 func TestManagementJournalAnchorsDoNotAuthorizeRequests(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	projectID, _ := project(t, s)
 	journalGrant := func(id, raw string) {
@@ -93,6 +96,7 @@ ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,permissions=exclude
 }
 
 func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	api := request(t, s, "GET", "/openapi.json", "", "", 200)
 	paths := api["paths"].(map[string]any)
@@ -157,6 +161,7 @@ func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 }
 
 func TestManagementBodyBoundaries(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	body := `{"name":"small"}` + strings.Repeat(" ", maxBodyBytes)
 	request(t, s, "POST", "/api/v1/projects", adminToken, body, 413)

@@ -308,6 +308,7 @@ func (f *oidcFixture) login(t *testing.T) string {
 }
 
 func TestInteractiveOIDCSameInvitedHumanThroughOTPAndProvider(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixtureWithOTP(t, true)
 	f.login(t)
 	if got := f.browserHuman(t); got != f.humanID {
@@ -336,6 +337,7 @@ func TestInteractiveOIDCSameInvitedHumanThroughOTPAndProvider(t *testing.T) {
 }
 
 func TestInteractiveOIDCRejectsIdentityRelinking(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []string{"subject", "email"} {
 		t.Run(changed, func(t *testing.T) {
 			f := newOIDCFixture(t)
@@ -355,6 +357,7 @@ func TestInteractiveOIDCRejectsIdentityRelinking(t *testing.T) {
 }
 
 func TestInteractiveOIDCUpstreamTokensAreNotPorcupineCredentials(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.login(t)
 	f.provider.mu.Lock()
@@ -370,6 +373,7 @@ func TestInteractiveOIDCUpstreamTokensAreNotPorcupineCredentials(t *testing.T) {
 }
 
 func TestInteractiveOIDCCallbackIsSingleUse(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	upstream := f.beginOIDC(t)
 	callback, _ := f.get(t, upstream, http.StatusSeeOther)
@@ -378,6 +382,7 @@ func TestInteractiveOIDCCallbackIsSingleUse(t *testing.T) {
 }
 
 func TestInteractiveOIDCStartRequiresSessionCSRFAndOrigin(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixtureWithOTP(t, true)
 	_, page := f.get(t, f.authorizeURL(f.callback), http.StatusOK)
 	csrf := csrfFromJourneyForm(t, page)
@@ -405,6 +410,7 @@ func (f *oidcFixture) submit(t *testing.T, form url.Values, origin string, statu
 }
 
 func TestInteractiveOIDCConsentProjectIsolationAndRevocation(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	csrf := f.login(t)
 	form := url.Values{"csrf": {csrf}, "decision": {"approve"}, "project": {"project-a"}}
@@ -452,6 +458,7 @@ func TestInteractiveOIDCConsentProjectIsolationAndRevocation(t *testing.T) {
 	}
 }
 func TestInteractiveOIDCRejectsInvalidIdentityAndState(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"nonce", "audience", "authorized-party", "multiple-audience", "issuer", "signature", "expired", "unverified", "missing-email", "uninvited", "state", "cookie"} {
 		t.Run(which, func(t *testing.T) {
 			f := newOIDCFixture(t)
@@ -499,6 +506,7 @@ func TestInteractiveOIDCRejectsInvalidIdentityAndState(t *testing.T) {
 	}
 }
 func TestInteractiveOIDCDenialAndExpiry(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	csrf := f.login(t)
 	location := f.submit(t, url.Values{"csrf": {csrf}, "decision": {"deny"}}, f.host.URL, 303)
@@ -516,6 +524,7 @@ func TestInteractiveOIDCDenialAndExpiry(t *testing.T) {
 	f.get(t, f.host.URL+"/oauth/consent", 401)
 }
 func TestInteractiveOIDCRealBrowser(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("PORCUPINE_OIDC_BROWSER") != "1" {
 		t.Skip("set PORCUPINE_OIDC_BROWSER=1 after npm ci in compat for Chromium consent test")
 	}
@@ -544,6 +553,7 @@ if(unexpected.length)throw Error('unexpected network origin');
 }
 
 func TestInteractiveOIDCLinkedIdentityCannotReviveRevokedHuman(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.login(t)
 	human, err := f.s.oidcHuman(t.Context(), "operator-subject", "operator@example.test")
@@ -562,6 +572,7 @@ func TestInteractiveOIDCLinkedIdentityCannotReviveRevokedHuman(t *testing.T) {
 }
 
 func TestInteractiveOIDCClientProjectIntersection(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects='["project-b"]' WHERE id=?`, f.clientID); err != nil {
 		t.Fatal(err)
@@ -574,6 +585,7 @@ func TestInteractiveOIDCClientProjectIntersection(t *testing.T) {
 	}
 }
 func TestInteractiveOIDCRegisteredExternalCallbacks(t *testing.T) {
+	t.Parallel()
 	for _, callback := range []string{"https://chatgpt.com/connector_platform_oauth_redirect", "https://claude.ai/api/mcp/auth_callback"} {
 		t.Run(callback, func(t *testing.T) {
 			f := newOIDCFixture(t)
@@ -589,6 +601,7 @@ func TestInteractiveOIDCRegisteredExternalCallbacks(t *testing.T) {
 	}
 }
 func TestInteractiveOIDCSessionBoundAndSecureCookie(t *testing.T) {
+	t.Parallel()
 	o := newOAuthBrowser(true)
 	recorder := httptest.NewRecorder()
 	o.cookie(recorder, "opaque", 600)
@@ -607,6 +620,7 @@ func TestInteractiveOIDCSessionBoundAndSecureCookie(t *testing.T) {
 }
 
 func TestInteractiveOIDCRejectsIncompleteOrInsecureProvider(t *testing.T) {
+	t.Parallel()
 	for _, cfg := range []*OIDCConfig{
 		{Issuer: "http://login.example", ClientID: "client", ClientSecret: "secret"},
 		{Issuer: "https://login.example", ClientSecret: "secret"},
@@ -619,6 +633,7 @@ func TestInteractiveOIDCRejectsIncompleteOrInsecureProvider(t *testing.T) {
 }
 
 func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
+	t.Parallel()
 	for _, issuer := range []string{"HTTPS://analytics.example.test", "https://ANALYTICS.example.test", "https://analytics.example.test:443", "http://localhost:80", "http://localhost:080", "https://analytics.example.test:0443", "https://analytics.example.test:65536"} {
 		t.Run(issuer, func(t *testing.T) {
 			if _, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer, OIDC: &OIDCConfig{}}); err == nil {
@@ -647,6 +662,7 @@ func TestInteractiveOIDCCanonicalIssuerCookies(t *testing.T) {
 }
 
 func TestLegacyOAuthPreservesIssuerSpelling(t *testing.T) {
+	t.Parallel()
 	const issuer = "https://analytics.example.test:443"
 	runtime, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer})
 	if err != nil || runtime.issuer != issuer || runtime.mcpResource != issuer+"/mcp" {
@@ -685,6 +701,7 @@ func (f *oidcFixture) issueSelectionToken(t *testing.T, field string, selected .
 }
 
 func TestInteractiveOIDCTenantAdminIsolationAndMembershipRevocation(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	operator := accountTestToken(t, f.s)
 	create := func(name string) string {
@@ -716,6 +733,7 @@ func TestInteractiveOIDCTenantAdminIsolationAndMembershipRevocation(t *testing.T
 }
 
 func TestInteractiveOIDCAPIResourceUsesInvitedPermissions(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.resource = f.host.URL + "/api/v1"
 	access := f.issueToken(t, "project-a")
@@ -729,6 +747,7 @@ func TestInteractiveOIDCAPIResourceUsesInvitedPermissions(t *testing.T) {
 }
 
 func TestInteractiveOIDCAdministratorUsesSameDurableAccount(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET permissions='["instance:admin"]', projects='["*"]' WHERE id IN (?,?)`, f.humanID, f.clientID); err != nil {
 		t.Fatal(err)
@@ -752,12 +771,14 @@ func TestInteractiveOIDCAdministratorUsesSameDurableAccount(t *testing.T) {
 }
 
 func TestInteractiveOIDCOnlyDoesNotExposeEmailOTP(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixture(t)
 	f.postLogin(t, "/oauth/email/request", url.Values{"csrf": {"anything"}, "email": {"operator@example.test"}}, f.host.URL, http.StatusNotFound)
 	f.login(t)
 }
 
 func TestInteractiveOIDCCallbackRequiresStartedProviderLogin(t *testing.T) {
+	t.Parallel()
 	f := newOIDCFixtureWithOTP(t, true)
 	_, body := f.get(t, f.authorizeURL(f.callback), http.StatusOK)
 	match := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
@@ -772,6 +793,7 @@ func TestInteractiveOIDCCallbackRequiresStartedProviderLogin(t *testing.T) {
 }
 
 func TestInteractiveOIDCStatusTracksConfiguredLoginMethods(t *testing.T) {
+	t.Parallel()
 	for _, otp := range []bool{false, true} {
 		f := newOIDCFixtureWithOTP(t, otp)
 		ctx := context.WithValue(t.Context(), actorContextKey{}, actor{Permissions: []string{"management:read"}})
@@ -786,6 +808,7 @@ func TestInteractiveOIDCStatusTracksConfiguredLoginMethods(t *testing.T) {
 }
 
 func TestInteractiveOIDCConfiguredAdministratorWithoutSMTP(t *testing.T) {
+	t.Parallel()
 	provider := newOIDCMock(t)
 	s, err := Open(Config{
 		DBPath: filepath.Join(t.TempDir(), "oidc-admin.db"), BootstrapToken: adminToken,
@@ -809,6 +832,7 @@ func TestInteractiveOIDCConfiguredAdministratorWithoutSMTP(t *testing.T) {
 }
 
 func TestOIDCVerifiedEmailAuthority(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, issuer, email, domain string
 		verified, allowed           bool

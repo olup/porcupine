@@ -3,6 +3,7 @@ package porcupine
 import "testing"
 
 func TestExportDeploymentBudgets(t *testing.T) {
+	t.Parallel()
 	c, err := normalizeExportConfig(ExportConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -23,6 +24,7 @@ func TestExportDeploymentBudgets(t *testing.T) {
 }
 
 func TestExportsRequireAnalyticalStorage(t *testing.T) {
+	t.Parallel()
 	if s, err := Open(Config{DBPath: ":memory:", BootstrapToken: "test-bootstrap-token", Exports: &ExportConfig{}}); err == nil {
 		s.Close()
 		t.Fatal("exports enabled without analytical storage")

@@ -56,6 +56,7 @@ func awaitSharedDeletionHTTP(t *testing.T, done <-chan sharedDeletionHTTPResult,
 }
 
 func TestSharedProjectDeletionCancelsBlockedMaterialization(t *testing.T) {
+	t.Parallel()
 	owner, edge := sharedJourneyPair(t, nil)
 	project, _ := sharedJourneyProject(t, owner.host.URL, defaultTenantID, "Deletion race owner")
 	kept, _ := sharedJourneyProject(t, edge.host.URL, defaultTenantID, "Unrelated project")

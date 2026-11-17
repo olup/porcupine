@@ -7,6 +7,7 @@ import (
 )
 
 func TestMutationDeliveryAckRetryRestartAndPayloadCleanup(t *testing.T) {
+	t.Parallel()
 	s, config := nativeCoreService(t)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -76,6 +77,7 @@ func TestMutationDeliveryAckRetryRestartAndPayloadCleanup(t *testing.T) {
 }
 
 func TestMutationDeliveryAckCleanupIsAtomic(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -103,6 +105,7 @@ func TestMutationDeliveryAckCleanupIsAtomic(t *testing.T) {
 }
 
 func TestMutationDeleteWinsAgainstLateOriginalAndCannotResurrect(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -136,6 +139,7 @@ func TestMutationDeleteWinsAgainstLateOriginalAndCannotResurrect(t *testing.T) {
 }
 
 func TestMutationRestoredSQLiteAdvancesAboveNativeRevision(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)
@@ -177,6 +181,7 @@ func TestMutationRestoredSQLiteAdvancesAboveNativeRevision(t *testing.T) {
 }
 
 func TestMutationRepeatedEditsPreserveFirstPrivateOriginal(t *testing.T) {
+	t.Parallel()
 	s, _ := nativeCoreService(t)
 	ctx := mutationContext("actor")
 	projectID, ingest := project(t, s)

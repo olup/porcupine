@@ -20,6 +20,7 @@ import (
 )
 
 func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
@@ -162,6 +163,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 }
 
 func TestDuckLakeS3BackupLocalSourceStreamsOffhost(t *testing.T) {
+	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	s, _ := nativeBackupService(t)
 	projectID, ingest := project(t, s)

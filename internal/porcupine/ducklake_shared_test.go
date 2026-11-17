@@ -13,6 +13,7 @@ import (
 )
 
 func TestSharedNativeConfiguration(t *testing.T) {
+	t.Parallel()
 	source := newID()
 	for _, config := range []DuckLakeConfig{
 		{PostgresURL: "postgres://localhost/lake"},
@@ -64,6 +65,7 @@ func sharedNativeStores(t *testing.T) (context.Context, *duckLakeStore, *duckLak
 }
 
 func TestDuckLakeS3SharedPostgresIndependentEngines(t *testing.T) {
+	t.Parallel()
 	ctx, a, b, config := sharedNativeStores(t)
 	duplicate := lakeStorageProjection(t, "project-a", "duplicate", 1)
 	var wait sync.WaitGroup
@@ -191,6 +193,7 @@ func TestDuckLakeS3SharedPostgresIndependentEngines(t *testing.T) {
 }
 
 func TestDuckLakeS3SharedPostgresGuardAndDeletion(t *testing.T) {
+	t.Parallel()
 	ctx, a, b, _ := sharedNativeStores(t)
 	event := lakeStorageProjection(t, "project", "event", 1)
 	if err := a.Apply(ctx, []eventProjection{event}); err != nil {
@@ -250,6 +253,7 @@ func TestDuckLakeS3SharedPostgresGuardAndDeletion(t *testing.T) {
 }
 
 func TestDuckLakeS3SharedPostgresStorageIdentity(t *testing.T) {
+	t.Parallel()
 	ctx, a, _, config := sharedNativeStores(t)
 	if _, err := a.SourceID(ctx); err != nil {
 		t.Fatal(err)

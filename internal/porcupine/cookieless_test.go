@@ -63,6 +63,7 @@ func cookielessKey(t *testing.T, s *Service) (string, []byte) {
 }
 
 func TestCookielessDailyIdentityAndRestart(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "events.db")
 	receipt := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
 	config := Config{DBPath: path, BootstrapToken: adminToken, Clock: func() time.Time { return receipt }}
@@ -128,6 +129,7 @@ func TestCookielessDailyIdentityAndRestart(t *testing.T) {
 }
 
 func TestCookielessProxyTrust(t *testing.T) {
+	t.Parallel()
 	for _, trusted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "trusted"}[trusted], func(t *testing.T) {
 			config := Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken}
@@ -170,6 +172,7 @@ func TestCookielessProxyTrust(t *testing.T) {
 }
 
 func TestCookielessInvalidPeerCannotCreateIdentity(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	_, ingest := project(t, s)
 	for _, peer := range []string{"", "not-an-ip:80", "192.0.2.73", "[fe80::1%en0]:1234"} {
@@ -183,6 +186,7 @@ func TestCookielessInvalidPeerCannotCreateIdentity(t *testing.T) {
 }
 
 func TestCookielessAtomicQueueAndRotation(t *testing.T) {
+	t.Parallel()
 	s := service(t, 2)
 	receipt := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
 	s.clock = func() time.Time { return receipt }
@@ -210,6 +214,7 @@ func TestCookielessAtomicQueueAndRotation(t *testing.T) {
 }
 
 func TestCookielessKnownIdentityAndIPPropertiesNeverPersist(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, ingest := project(t, s)
 	props := map[string]any{"distinct_id": cookielessSentinel, "business": "retained", "$browser": "Firefox"}
@@ -271,6 +276,7 @@ func (s *Service) dbPathForTest(t *testing.T) string {
 }
 
 func TestCookielessDelayedRequestUsesDayUnderWriteLock(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	dayOne := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
 	dayTwo := dayOne.Add(time.Second)
@@ -321,6 +327,7 @@ func TestCookielessDelayedRequestUsesDayUnderWriteLock(t *testing.T) {
 }
 
 func TestCookielessClockRollbackRejectsExpiredDay(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	receipt := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
 	s.clock = func() time.Time { return receipt }
@@ -338,6 +345,7 @@ func TestCookielessClockRollbackRejectsExpiredDay(t *testing.T) {
 }
 
 func TestCookielessBatchUsesOneProcessingDay(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	dayOne := time.Date(2026, 11, 6, 23, 59, 59, 0, time.UTC)
 	calls := 0

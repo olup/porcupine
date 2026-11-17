@@ -6,6 +6,7 @@ import (
 )
 
 func TestDuckLakeUnsupportedConfigurationFailsBeforeOpeningStorage(t *testing.T) {
+	t.Parallel()
 	for _, c := range []Config{
 		{DuckLake: &DuckLakeConfig{}, Exports: &ExportConfig{}},
 		{DuckLake: &DuckLakeConfig{MaintenanceInterval: -time.Second}},

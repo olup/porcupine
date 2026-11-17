@@ -17,6 +17,7 @@ func (s *Service) dbPathForReceiptTest(t *testing.T) string {
 }
 
 func TestPermanentReceiptsKeepNativeIDsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
 	s, err := Open(config)
@@ -54,6 +55,7 @@ func TestPermanentReceiptsKeepNativeIDsAcrossRestart(t *testing.T) {
 }
 
 func TestReceiptAndHeadNumericIDRemainAtomic(t *testing.T) {
+	t.Parallel()
 	s := service(t, 10)
 	projectID, writer := project(t, s)
 	first := nativeRequest(t, s, writer, `{"type":"track","message_id":"one","name":"one"}`, 200)

@@ -130,6 +130,8 @@ func largeEventAssertIDs(t *testing.T, host *httptest.Server, state largeEventCr
 }
 
 func TestDuckLakeLargeEventsHTTPJourney(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
 	root := t.TempDir()
 	executable, err := os.Executable()
 	if err != nil {
@@ -178,6 +180,7 @@ func TestDuckLakeLargeEventsHTTPJourney(t *testing.T) {
 }
 
 func TestDuckLakeLargeEventsCrashHelper(t *testing.T) {
+	t.Parallel()
 	root := os.Getenv("PORCUPINE_LARGE_EVENT_ROOT")
 	if root == "" {
 		t.Skip("subprocess helper")

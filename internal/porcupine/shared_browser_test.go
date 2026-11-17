@@ -37,6 +37,7 @@ func sharedBrowserPair(t *testing.T) (*oauthBrowser, *oauthBrowser) {
 }
 
 func TestSharedBrowserSessionTransferAndConsume(t *testing.T) {
+	t.Parallel()
 	a, b := sharedBrowserPair(t)
 	want := &oidcBrowserSession{requestID: "request-a", state: "state-a", nonce: "nonce-a", verifier: "verifier-a", csrf: "csrf-a", expires: time.Now().Add(time.Minute)}
 	raw, ok := a.save(want)
@@ -80,6 +81,7 @@ func TestSharedBrowserSessionTransferAndConsume(t *testing.T) {
 }
 
 func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
+	t.Parallel()
 	a, b := sharedBrowserPair(t)
 	now := time.Now()
 	const code = "82345678"
@@ -144,6 +146,7 @@ func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
 }
 
 func TestSharedBrowserEmailDeliveryBudgetsAndCrashExpiry(t *testing.T) {
+	t.Parallel()
 	a, b := sharedBrowserPair(t)
 	now := time.Now()
 	for i := 0; i < 3; i++ {

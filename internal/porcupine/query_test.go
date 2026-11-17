@@ -19,6 +19,7 @@ func queryStatus(err error) int {
 	return 0
 }
 func TestAnalyticsValidationSchemaAndDisabledStorage(t *testing.T) {
+	t.Parallel()
 	s := service(t, 20)
 	id, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "pending"), 200)
@@ -49,6 +50,7 @@ func TestAnalyticsValidationSchemaAndDisabledStorage(t *testing.T) {
 	}
 }
 func TestAnalyticsScalarParameterBudgets(t *testing.T) {
+	t.Parallel()
 	for _, parameters := range []map[string]string{
 		{"bad-name": "unsafe"}, {"name": strings.Repeat("x", 4097)}, {strings.Repeat("x", 65): "value"},
 	} {

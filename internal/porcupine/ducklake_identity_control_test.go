@@ -6,6 +6,7 @@ import (
 )
 
 func TestDuckLakeIdentityControlRemainsPrivateAfterDelivery(t *testing.T) {
+	t.Parallel()
 	s := duckLakeJourneyService(t)
 	project, ingest := project(t, s)
 	receipt := receiptFrom(t, nativeRequest(t, s, ingest, `{"type":"identify","message_id":"private-control","anonymous_id":"browser","user_id":"account","set":{"plan":"private"}}`, 200), 0)
