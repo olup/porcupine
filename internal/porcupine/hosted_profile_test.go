@@ -88,6 +88,20 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 			t.Fatal("PostHog endpoint did not use buffered admission")
 		}
 	}
+	segment, err := json.Marshal(map[string]string{
+		"writeKey": ingest, "messageId": "buffered-segment", "event": "segment visit", "userId": "visitor", "timestamp": "2020-01-02T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	segmentAck := sharedJourneyHTTP(t, a.origin, "POST", "/v1/track", "", segment, nil, 200)
+	if segmentAck["status"] != float64(1) || segmentAck["durability"] != "buffered" || segmentAck["received"] != float64(1) {
+		t.Fatalf("Segment endpoint did not accept buffered input: %v", segmentAck)
+	}
+	segmentReceipt := segmentAck["receipts"].([]any)[0].(map[string]any)
+	if len(segmentReceipt) != 2 || segmentReceipt["message_id"] != "buffered-segment" || segmentReceipt["uuid"] == "" {
+		t.Fatalf("invalid Segment receipt: %v", segmentReceipt)
+	}
 	sharedJourneyQuery(t, b.origin, project, restricted, "select count(*) from events", 403)
 	a.stopProcess(t, false)
 	b.stopProcess(t, false)
@@ -115,7 +129,7 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 		t.Fatalf("buffered retry retained more than one event: %v", observed)
 	}
 	listed := sharedJourneyHTTP(t, cold.origin, "GET", "/api/v1/projects/"+project+"/events", reader, nil, nil, 200)
-	if len(listed["events"].([]any)) != 3 {
+	if len(listed["events"].([]any)) != 4 {
 		t.Fatalf("recent event discovery did not read the hosted catalog: %v", listed)
 	}
 	control, err := sql.Open("pgx", dsn)
@@ -125,7 +139,7 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 	defer control.Close()
 	var owners, workers, live int
 	err = control.QueryRow("SELECT (SELECT count(*) FROM shared_project_owners),(SELECT count(*) FROM shared_workers),(SELECT coalesce(sum(live_events),0) FROM usage_rollups WHERE project_id=$1)", project).Scan(&owners, &workers, &live)
-	if err != nil || owners != 0 || workers != 0 || live != 3 {
+	if err != nil || owners != 0 || workers != 0 || live != 4 {
 		t.Fatalf("shared control state owners=%d registrations=%d live=%d: %v", owners, workers, live, err)
 	}
 }
