@@ -1,5 +1,7 @@
 # Scope and roadmap
 
+> Hosted direction superseded on 17 November 2026: use the [stateless hosted architecture](hosted-architecture.md) for new work. The owner-local queue proposal below records the previous design and the current unreleased implementation; it is not the hosted target. Published v0.14.0 capabilities remain identified separately.
+
 ## Unreleased
 
 - Tenant ownership for projects, with one default tenant on fresh installations. Tenant administrators manage their team's projects, memberships, and independent service credentials. Members can receive read-only or finer grants on selected projects, or tenant-local access including future projects. Instance operators retain hard budgets and deployment controls. [Team access](../reference/tenant-access.md), [tenant guide](../reference/tenants.md)

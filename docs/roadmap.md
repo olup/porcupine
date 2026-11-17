@@ -40,22 +40,24 @@ Audit management coverage at the same time. No step should require SSH or databa
 
 ## Next operational protections
 
-- [ ] Limit pending queue occupancy per project so one producer cannot fill the whole worker queue. Tenant monthly budgets do not provide this protection.
+- [ ] Validate noisy-tenant behavior and bounded memory admission in the [hosted target](design/hosted-architecture.md). The SQLite project-counter experiment is stopped and unshipped; its measured admission overhead is not a hosted prerequisite.
 - [ ] Evaluate tenant-wide rate limiting across workers, separately from monthly allowances.
 - [ ] Measure sustained ingestion, freshness, memory, disk growth, maintenance, and recovery with many quiet tenants and one noisy tenant.
 - [x] Validate receipt pruning and retries after edits/deletes, storage failure, and restart, including person snapshots and two-project concurrency.
-- [ ] Reduce and measure the admission cost after receipt pruning, particularly single-event sends and S3 lookup failures. Preserve stable IDs and atomic side effects; do not infer freshness from producer timestamps. See the [lookup benchmark](design/stabilization-validation.md#cost-of-historical-id-lookup).
+- [x] Default standalone receipt retention to zero and document opt-in pruning's historical lookup dependency, merged on main and unreleased. Hosted ingestion will deduplicate at durable flush, without receipt storage. Compact-receipt experiments remain unshipped; see the [hosted decisions](design/hosted-architecture.md) and prior [lookup measurements](design/stabilization-validation.md#cost-of-historical-id-lookup).
 - [ ] Measure DuckLake schema savings and query behavior on representative payloads and larger data sets. Profile JSON extraction before promoting common properties to typed columns. Source timestamp text remains for precision; a small fixture is not a capacity benchmark.
 
 ## Hosted architecture to evaluate
 
 Reuse the published open-source server without private patches. A separate commercial service owns subscriptions, prices, invoices, and spending-cap calculations. It reads usage and changes technical budgets through an authenticated operator API, without direct database writes.
 
-A possible hosting unit is a worker and its durable volume serving several tenants. Shared PostgreSQL holds control and DuckLake catalog metadata, S3 holds Parquet, and owner-local SQLite holds accepted work. Cells are a sizing option, not a decision to run one instance per customer. Capacity depends on resident engines and workload, not just tenant count.
+The target is stateless hosted workers behind a load balancer, PostgreSQL control/catalog metadata and S3 event storage. Live hosted acceptance uses bounded memory with an explicit best-effort response; standalone keeps durable SQLite acceptance. The [architecture decision and complete journal inventory](design/hosted-architecture.md) define the phases and guarantees. Role-specific deployment remains deferred.
 
-Before offering availability guarantees, test queue-volume loss, ownership transfer, PostgreSQL and S3 outages, backup consistency, query-slot recovery, and tenant fairness. There is no automatic owner failover today. See the [shared deployment reference](reference/shared-deployment.md) and [SaaS/compute design notes](design/saas-and-compute-plans.md).
+Before hosted guarantees, test crash-loss volume/age, graceful replacement, PostgreSQL and S3 outages, restore-window consistency, query-slot recovery and tenant fairness. Current [shared deployment](reference/shared-deployment.md) still has owner-local journals and no automatic failover; the stateless design is not implemented yet.
 
 ## Product work after stabilization
+
+The [control-plane contract work](design/control-plane-contracts.md) adds operator tenant deletion, optional external JWT authentication, and precise paginated usage, in that order. Integrated self-hosted identity and service credentials remain available; commercial pricing and UI stay outside Porcupine.
 
 - Optional editable documentation for event definitions and property meanings, through API, CLI, MCP, and discovery. Record author and modification time; never gate capture on documentation.
 - Expand import adapter coverage from actual export files. The native event contract stays the common format. A plugin framework and additional SDK adapters remain undecided.

@@ -15,7 +15,9 @@ Agents connecting to a running instance should start with the
   DDL to startup code. The schema tests compare startup with the steps.
 - Keep instance administration separate from project-scoped event permissions.
 - Resolve project scope from credentials, never trust an ingestion payload's project ID.
-- Preserve durable acceptance: acknowledge only after the bounded SQLite queue commits.
+- Preserve durable acceptance in standalone mode and all currently implemented journal-backed paths: acknowledge only after the bounded SQLite queue commits. The planned hosted buffered mode has an explicit best-effort acknowledgment contract; follow [the hosted architecture](docs/design/hosted-architecture.md) and its phase gates before implementing it. Never apply buffered acknowledgment to standalone implicitly or describe the hosted target as shipped.
+- Hosted target: durable state in PostgreSQL metadata and S3, without fixed project owners or persistent worker volumes. Do not stage event payloads in PostgreSQL or enable DuckLake data inlining there. Deduplication and identity/usage/output effects need a replay-safe flush protocol. Keep imports resumable and explicit mutations durable; do not infer a hard loss bound from a flush timer.
+- Keep complete replaceable subsystems: provide an integrated self-hosted implementation and a documented contract for an external replacement, with the built-in component disabled when replaced. Porcupine remains the data service; the commercial control plane owns customers, external identity, payments and provisioning outside this repository and uses the same authenticated operator API. No private SaaS-only hook or restricted feature may weaken self-hosting. See [control-plane contracts](docs/design/control-plane-contracts.md); external authentication, tenant deletion and expanded usage are targets, not shipped capabilities.
 - Keep one-time credential secrets out of logs and source control. Store server-side
   access secrets as hashes and encrypt recoverable pipeline credentials.
 - Keep PostHog compatibility explicit: supported payloads, SDK versions, and control
