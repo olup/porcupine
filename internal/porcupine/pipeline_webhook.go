@@ -5,10 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/delivery"
 )
 
 var errWebhookCapacity = errors.New("webhook queue is full")
@@ -18,7 +17,7 @@ var errWebhookDeliveryMissing = errors.New("webhook delivery unavailable")
 // interrupted by a previous process.
 func (s *Service) initializeWebhook(ctx context.Context) error {
 	if s.pipelines != nil && s.pipelines.webhookClient == nil {
-		s.pipelines.webhookClient = newWebhookHTTPClient()
+		s.pipelines.webhookClient = delivery.NewWebhookHTTPClient()
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO metadata(key,value) VALUES('webhook_history_changes','0'),('webhook_history_pruned_ms','0');
 INSERT OR IGNORE INTO webhook_queue_usage VALUES('instance',0,0);
@@ -230,7 +229,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	defer finish()
 	secret, err := s.openPipelineSecret(d.projectID, d.pipelineID, d.secret)
 	var destination WebhookPipelineSecret
-	if err != nil || json.Unmarshal(secret, &destination) != nil || validateWebhookEndpoint(destination.Endpoint) != nil || validateWebhookHeaders(destination.Headers) != nil {
+	if err != nil || json.Unmarshal(secret, &destination) != nil || delivery.ValidateWebhookEndpoint(destination.Endpoint) != nil || delivery.ValidateWebhookHeaders(destination.Headers) != nil {
 		return true, s.finishWebhook(ctx, d, 0, "invalid_destination", false)
 	}
 	allowed, err := s.pipelineCreatorAuthorized(ctx, d.actorID, d.projectID)
@@ -257,7 +256,7 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	}
 	attempt, cancel := context.WithTimeout(ctx, time.Duration(s.pipelines.config.WebhookTimeoutSeconds)*time.Second)
 	defer cancel()
-	status, code := s.sendWebhook(attempt, d, destination)
+	status, code := delivery.SendWebhook(attempt, s.pipelines.webhookClient, delivery.WebhookMessage{Endpoint: destination.Endpoint, Headers: destination.Headers, DeliveryID: d.id, Payload: d.payload})
 	if ctx.Err() != nil {
 		cleanup, stop := context.WithTimeout(context.Background(), time.Second)
 		defer stop()
@@ -266,38 +265,6 @@ func (s *Service) stepWebhook(ctx context.Context) (progress bool, resultErr err
 	}
 	retry := code != "" && (status == 0 || status == 408 || status == 425 || status == 429 || status >= 500)
 	return true, s.finishWebhook(ctx, d, status, code, retry)
-}
-
-func (s *Service) sendWebhook(ctx context.Context, d *webhookDelivery, destination WebhookPipelineSecret) (int, string) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, destination.Endpoint, strings.NewReader(d.payload))
-	if err != nil {
-		return 0, "invalid_destination"
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "Porcupine-Webhooks/1")
-	request.Header.Set("X-Porcupine-Delivery-ID", d.id)
-	request.Header.Set("Idempotency-Key", d.id)
-	for key, value := range destination.Headers {
-		request.Header.Set(key, value)
-	}
-	client := s.pipelines.webhookClient
-	if client == nil {
-		client = newWebhookHTTPClient()
-		defer client.CloseIdleConnections()
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return 0, "request_failed"
-	}
-	defer response.Body.Close()
-	n, err := io.Copy(io.Discard, io.LimitReader(response.Body, (64<<10)+1))
-	if err != nil || n > 64<<10 {
-		return response.StatusCode, "invalid_response"
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return response.StatusCode, "http_rejected"
-	}
-	return response.StatusCode, ""
 }
 
 func (s *Service) finishWebhook(ctx context.Context, d *webhookDelivery, status int, code string, retry bool) error {

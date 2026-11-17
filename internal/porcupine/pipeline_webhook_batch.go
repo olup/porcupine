@@ -1,13 +1,14 @@
 package porcupine
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/delivery"
 )
 
 const webhookChunkEvents = 100
@@ -23,15 +24,8 @@ type webhookPayload struct {
 	Events        []Event `json:"events,omitempty"`
 }
 
-func encodeWebhookPayload(payload webhookPayload) ([]byte, error) { return encodeWebhookJSON(payload) }
-func encodeWebhookJSON(payload any) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(payload); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'}), nil
+func encodeWebhookPayload(payload webhookPayload) ([]byte, error) {
+	return delivery.EncodeJSON(payload)
 }
 
 type webhookOpenChunk struct {
@@ -140,7 +134,7 @@ func enqueueWebhookDestinationGroup(ctx context.Context, tx *sql.Tx, events []Ev
 				return 0, 0, err
 			}
 		}
-		encoded, err := encodeWebhookJSON(event)
+		encoded, err := delivery.EncodeJSON(event)
 		if err != nil {
 			return 0, 0, err
 		}

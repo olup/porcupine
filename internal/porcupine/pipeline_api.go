@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/delivery"
 )
 
 type PipelineCreateBody struct {
@@ -139,7 +140,7 @@ func (s *Service) encodePipelineDestination(ctx context.Context, projectID, pipe
 			}
 			webhook.StartAt = start.UTC().Format(time.RFC3339)
 		}
-		if validateWebhookEndpoint(webhook.Endpoint) != nil {
+		if delivery.ValidateWebhookEndpoint(webhook.Endpoint) != nil {
 			return nil, nil, apiError(400, "invalid webhook endpoint")
 		}
 		for _, events := range [][]string{webhook.IncludeEvents, webhook.ExcludeEvents} {
@@ -164,7 +165,7 @@ func (s *Service) encodePipelineDestination(ctx context.Context, projectID, pipe
 			}
 			headers["Authorization"] = "Bearer " + credentials.BearerToken
 		}
-		if validateWebhookHeaders(headers) != nil {
+		if delivery.ValidateWebhookHeaders(headers) != nil {
 			return nil, nil, apiError(400, "invalid webhook credentials")
 		}
 		filters := *webhook

@@ -1,4 +1,4 @@
-package porcupine
+package delivery
 
 import (
 	"context"
@@ -12,16 +12,16 @@ import (
 func TestWebhookEndpointPublicHTTPSOnly(t *testing.T) {
 	t.Parallel()
 	for _, endpoint := range []string{"http://example.com", "https://127.0.0.1", "https://169.254.169.254/latest", "https://10.1.2.3", "https://100.100.100.200", "https://[::ffff:127.0.0.1]", "https://[64:ff9b::a9fe:a9fe]", "https://[2001:db8::1]", "https://[fec0::1]", "https://[3fff::2]", "https://[::a9fe:a9fe]", "https://metadata.google.internal", "https://localhost", "https://user:password@example.com", "https://example.com/#fragment", "https://example.com:0", "https://example.com:65536"} {
-		if validateWebhookEndpoint(endpoint) == nil {
+		if ValidateWebhookEndpoint(endpoint) == nil {
 			t.Fatal("unsafe endpoint accepted")
 		}
 	}
 	for _, endpoint := range []string{"https://example.com/path?secret=synthetic", "https://8.8.8.8/hook", "https://[2606:4700:4700::1111]/hook"} {
-		if err := validateWebhookEndpoint(endpoint); err != nil {
+		if err := ValidateWebhookEndpoint(endpoint); err != nil {
 			t.Fatal("public HTTPS rejected", err)
 		}
 	}
-	client := newWebhookHTTPClient()
+	client := NewWebhookHTTPClient()
 	defer client.CloseIdleConnections()
 	transport := client.Transport.(*http.Transport)
 	if transport.Proxy != nil || !transport.DisableKeepAlives || client.CheckRedirect(&http.Request{}, nil) != http.ErrUseLastResponse {
@@ -57,11 +57,11 @@ func TestWebhookDNSPinnedAndMixedAnswersBlocked(t *testing.T) {
 func TestWebhookHeadersRejectRoutingAndSmuggling(t *testing.T) {
 	t.Parallel()
 	for _, headers := range []map[string]string{{"Host": "example.com"}, {"X-Forwarded-Host": "internal"}, {"Authorization": "Basic synthetic"}, {"X-Key": "one\r\ntwo"}, {"X-Key": "one", "x-key": "two"}, {"X-Porcupine-Delivery-ID": "override"}, {"Idempotency-Key": "override"}} {
-		if validateWebhookHeaders(headers) == nil {
+		if ValidateWebhookHeaders(headers) == nil {
 			t.Fatal("unsafe headers accepted")
 		}
 	}
-	if err := validateWebhookHeaders(map[string]string{"Authorization": "Bearer synthetic", "X-Api-Key": "synthetic"}); err != nil {
+	if err := ValidateWebhookHeaders(map[string]string{"Authorization": "Bearer synthetic", "X-Api-Key": "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
 }

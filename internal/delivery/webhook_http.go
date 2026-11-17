@@ -1,4 +1,4 @@
-package porcupine
+package delivery
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func webhookPublicIP(ip netip.Addr) bool {
 	}
 	return true
 }
-func validateWebhookEndpoint(raw string) error {
+func ValidateWebhookEndpoint(raw string) error {
 	if len(raw) == 0 || len(raw) > 4096 || strings.TrimSpace(raw) != raw {
 		return errWebhookEndpoint
 	}
@@ -76,7 +76,7 @@ func validateWebhookEndpoint(raw string) error {
 	}
 	return nil
 }
-func validateWebhookHeaders(headers map[string]string) error {
+func ValidateWebhookHeaders(headers map[string]string) error {
 	if len(headers) > 16 {
 		return errors.New("too many webhook headers")
 	}
@@ -138,7 +138,7 @@ func dialWebhook(ctx context.Context, network, address string, lookup webhookLoo
 	}
 	return nil, errors.New("webhook connection failed")
 }
-func newWebhookHTTPClient() *http.Client {
+func NewWebhookHTTPClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: -1}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ForceAttemptHTTP2: false, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 2 * time.Minute, MaxResponseHeaderBytes: 16 << 10, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return dialWebhook(ctx, network, address, net.DefaultResolver.LookupNetIP, dialer.DialContext)
