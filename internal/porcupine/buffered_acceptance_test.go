@@ -276,16 +276,16 @@ func TestBufferedAcceptanceOwnsCommandsAndPayload(t *testing.T) {
 	}
 	batch.events[0].event.Properties[0] = '!'
 	batch.events[0].event.Context[0] = '!'
-	batch.events[1].identity.set[0] = '!'
+	batch.events[1].identity.Set[0] = '!'
 	if err := b.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	flushed := nextFlush(t, calls)
-	if !json.Valid(flushed.events[0].input.event.Properties) || !json.Valid(flushed.events[0].input.event.Context) || string(flushed.events[1].input.identity.set) != `{"plan":"new"}` {
+	if !json.Valid(flushed.events[0].input.event.Properties) || !json.Valid(flushed.events[0].input.event.Context) || string(flushed.events[1].input.identity.Set) != `{"plan":"new"}` {
 		t.Fatal("caller mutated retained data")
 	}
 	identity := flushed.events[1].input
-	if identity.event.DistinctID != "" || string(identity.event.Properties) != `{}` || identity.event.IdentitySnapshot != "" || identity.identity.target != "person" || identity.identity.anonymous != "browser" {
+	if identity.event.DistinctID != "" || string(identity.event.Properties) != `{}` || identity.event.IdentitySnapshot != "" || identity.identity.Target != "person" || identity.identity.Anonymous != "browser" {
 		t.Fatal("identity command mixed with committed event", identity)
 	}
 }

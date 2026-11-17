@@ -6,18 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
-	"strings"
 
 	eventapi "github.com/olup/porcupine/internal/event"
+	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
 
-func validIdentityID(id string) bool {
-	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != ingestfmt.CookielessSentinel && !strings.HasPrefix(id, "cookieless_")
-}
+func validIdentityID(id string) bool { return identityapi.ValidID(id) }
 
 func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[string]any, bool, error) {
 	var raw string
@@ -72,131 +70,39 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, s
 	return applyParsedIdentityState(ctx, tx, event, control, snapshot)
 }
 
-type identityControlKind uint8
+type identityControl = identityapi.Command
 
-const (
-	identityControlIgnored identityControlKind = iota
-	identityControlIdentify
-	identityControlSet
-)
-
-type identityControl struct {
-	kind              identityControlKind
-	target, anonymous string
-	set, setOnce      json.RawMessage
-}
+const identityControlIgnored = identityapi.Ignored
 
 func parseIdentityControl(event eventapi.Event) (identityControl, error) {
-	if !validIdentityID(event.DistinctID) {
-		return identityControl{}, nil
-	}
-	var properties map[string]any
-	if err := ingestfmt.DecodeJSON(event.Properties, &properties); err != nil {
-		return identityControl{}, err
-	}
-	for _, key := range []string{"$set", "$set_once"} {
-		if value, exists := properties[key]; exists && value == nil {
-			return identityControl{}, nil
-		}
-	}
-	set, validSet := ingestfmt.Traits(properties["$set"])
-	once, validOnce := ingestfmt.Traits(properties["$set_once"])
-	if !validSet || !validOnce {
-		return identityControl{}, nil
-	}
-	control := identityControl{kind: identityControlSet, target: event.DistinctID}
-	if event.Event == "$identify" {
-		control.kind = identityControlIdentify
-		if raw, exists := properties["$anon_distinct_id"]; exists {
-			anonymous, ok := raw.(string)
-			if !ok || !validIdentityID(anonymous) {
-				return identityControl{}, nil
-			}
-			control.anonymous = anonymous
-		}
-	}
-	control.set, _ = json.Marshal(set)
-	control.setOnce, _ = json.Marshal(once)
-	return control, nil
+	return identityapi.Parse(event.Event, event.DistinctID, event.Properties)
 }
+
 func applyParsedIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, control identityControl, snapshot *lakeapi.IdentitySnapshot) (bool, error) {
-	if control.kind == identityControlIgnored {
+	decision, err := identityapi.Evaluate(ctx, control, sqliteIdentityReader{tx: tx, project: event.ProjectID})
+	if err != nil {
+		return false, err
+	}
+	if decision.Ignored {
 		return true, nil
 	}
-	var set, once map[string]any
-	if err := ingestfmt.DecodeJSON(control.set, &set); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,identified_id) DO UPDATE SET is_identified=excluded.is_identified,traits=excluded.traits,version=excluded.version`, event.ProjectID, decision.Target, decision.Identified, string(decision.Traits), event.ID); err != nil {
 		return false, err
 	}
-	if err := ingestfmt.DecodeJSON(control.setOnce, &once); err != nil {
-		return false, err
-	}
-	target := control.target
-	boundTarget, _, err := identityLink(ctx, tx, event.ProjectID, target)
-	if err != nil {
-		return false, err
-	}
-	if boundTarget != "" {
-		if control.kind == identityControlIdentify {
-			return true, nil
-		}
-		target = boundTarget
-	}
-	traits, identified, err := identityProfile(ctx, tx, event.ProjectID, target)
-	if err != nil {
-		return false, err
-	}
-	var anonymous string
-	var linkVersion int64
-	if control.kind == identityControlIdentify {
-		anonymous = control.anonymous
-		if anonymous != "" && anonymous != target {
-			anonymousTraits, sourceIdentified, err := identityProfile(ctx, tx, event.ProjectID, anonymous)
-			if err != nil {
-				return false, err
-			}
-			bound, version, err := identityLink(ctx, tx, event.ProjectID, anonymous)
-			if err != nil {
-				return false, err
-			}
-			if sourceIdentified || bound != "" && bound != target {
-				return true, nil
-			}
-			linkVersion = version
-			for key, value := range anonymousTraits {
-				if _, exists := traits[key]; !exists {
-					traits[key] = value
-				}
-			}
-		}
-		identified = true
-	}
-	for key, value := range once {
-		if _, exists := traits[key]; !exists {
-			traits[key] = value
-		}
-	}
-	for key, value := range set {
-		traits[key] = value
-	}
-	if _, valid := ingestfmt.Traits(traits); !valid {
-		return true, nil
-	}
-	encoded, err := json.Marshal(traits)
-	if err != nil {
-		return false, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_profiles(project_id,identified_id,is_identified,traits,version) VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,identified_id) DO UPDATE SET is_identified=excluded.is_identified,traits=excluded.traits,version=excluded.version`, event.ProjectID, target, identified, string(encoded), event.ID); err != nil {
-		return false, err
-	}
-	if anonymous != "" && anonymous != target {
-		if linkVersion == 0 {
-			linkVersion = event.ID
-			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_links(project_id,anonymous_id,identified_id,version) VALUES($1,$2,$3,$4)`, event.ProjectID, anonymous, target, linkVersion); err != nil {
+	if link := decision.Link; link != nil {
+		version := link.Version
+		if link.Create {
+			version = uint64(event.ID)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_links(project_id,anonymous_id,identified_id,version) VALUES($1,$2,$3,$4)`, event.ProjectID, link.Anonymous, link.Target, version); err != nil {
 				return false, err
 			}
 		}
-		snapshot.Links = append(snapshot.Links, lakeapi.IdentityLinkSnapshot{AnonymousID: anonymous, IdentifiedID: target, Version: strconv.FormatInt(linkVersion, 10)})
+		snapshot.Links = append(snapshot.Links, lakeapi.IdentityLinkSnapshot{AnonymousID: link.Anonymous, IdentifiedID: link.Target, Version: strconv.FormatUint(version, 10)})
 	}
-	snapshot.IdentifiedID, snapshot.Traits = target, traits
+	var traits map[string]any
+	if err := ingestfmt.DecodeJSON(decision.Traits, &traits); err != nil {
+		return false, err
+	}
+	snapshot.IdentifiedID, snapshot.Traits = decision.Target, traits
 	return false, nil
 }

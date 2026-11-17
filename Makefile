@@ -7,7 +7,7 @@ RUN ?= .
 # Keep generators, tests and artifacts on the same reproducible build cache.
 GOFLAGS ?= -trimpath
 export GOFLAGS
-CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx ./internal/docsite ./internal/cmd/docsite ./internal/cmd/package-cli ./internal/cmd/standalone-cli-check ./internal/cmd/sqlite-identities ./internal/cmd/test-shard
+CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/identity ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx ./internal/docsite ./internal/cmd/docsite ./internal/cmd/package-cli ./internal/cmd/standalone-cli-check ./internal/cmd/sqlite-identities ./internal/cmd/test-shard
 
 build:
 	CGO_ENABLED=1 go build -trimpath -o bin/porcupine ./cmd/porcupine
