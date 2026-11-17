@@ -39,8 +39,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make check-full
-      - run: python3 scripts/standalone_cli_check.py
       - run: make build
+      - run: python3 scripts/standalone_cli_check.py --server bin/porcupine
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
   security:
     # Vulnerability scan and fuzzing run on main, releases and nightly, not on every PR push.
@@ -65,9 +65,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: make ducklake-smoke
-      - run: make ducklake-s3-test
-      - run: make ducklake-restore-drill
+      # One make graph builds the standalone CLI once for both journeys.
+      - run: make ducklake-smoke ducklake-s3-test ducklake-restore-drill
   shared-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20

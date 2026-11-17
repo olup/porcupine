@@ -1,4 +1,5 @@
 """Build the standalone CLI and exercise it against an isolated local Porcupine."""
+import argparse
 import contextlib
 import hashlib
 import json
@@ -19,9 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextlib.contextmanager
-def local_server(directory, bootstrap):
-    server = directory / "server"
-    subprocess.run(["go", "build", "-o", server, "./cmd/porcupine"], cwd=ROOT, check=True, env={**os.environ, "CGO_ENABLED": "1"})
+def local_server(directory, bootstrap, server=None):
+    if server is None:
+        server = directory / "server"
+        subprocess.run(["go", "build", "-o", server, "./cmd/porcupine"], cwd=ROOT, check=True, env={**os.environ, "CGO_ENABLED": "1"})
+    else:
+        server = Path(server).resolve(strict=True)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         address = f"127.0.0.1:{sock.getsockname()[1]}"
@@ -165,6 +169,9 @@ def check(directory, binary, origin, bootstrap):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server", type=Path, help="test an already built server instead of rebuilding it")
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="porcupine-cli-check-") as tmp:
         directory = Path(tmp)
         binary = directory / "bin" / "porcupine"
@@ -172,7 +179,7 @@ def main():
         subprocess.run(["go", "build", "-o", binary, "./cmd/porcupine"], cwd=ROOT / "cli",
                        check=True, env={**os.environ, "CGO_ENABLED": "0"})
         bootstrap = secrets.token_urlsafe(32)
-        with local_server(directory, bootstrap) as origin:
+        with local_server(directory, bootstrap, args.server) as origin:
             check(directory, binary, origin, bootstrap)
     print("Standalone CLI passed readiness and instance status, API errors, project rename and deletion, isolation, binary upload/retry, and key revocation.")
 
