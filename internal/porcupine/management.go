@@ -227,7 +227,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if s.hosted == nil {
+			if s.hosted == nil && needsJournalAnchor(ctx.Operation().OperationID) {
 				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
 					writeManagementProblem(w, err)
 					return

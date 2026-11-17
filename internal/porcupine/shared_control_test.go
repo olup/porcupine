@@ -270,3 +270,32 @@ func TestSharedControlRevokesDependentCredentials(t *testing.T) {
 		t.Fatal("revocation triggers are not idempotent", err)
 	}
 }
+
+func TestHostedControlRejectsLegacyOwnerRoutedDatabaseWithoutMigrating(t *testing.T) {
+	t.Parallel()
+	db, _ := sharedControlFixture(t)
+	ctx := t.Context()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, sharedControlSteps[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('schema_version','1'),('initialized','1')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	queries, _ := normalizeInteractiveQueries(nil)
+	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err == nil || !strings.Contains(err.Error(), "requires a fresh PostgreSQL control database") {
+		t.Fatal("previous deployment was not rejected", err)
+	}
+	var version string
+	var tablesRetained bool
+	if err := db.QueryRowContext(ctx, `SELECT value,to_regclass('shared_workers') IS NOT NULL FROM metadata WHERE key='schema_version'`).Scan(&version, &tablesRetained); err != nil || version != "1" || !tablesRetained {
+		t.Fatal("rejected database was modified", version, tablesRetained, err)
+	}
+}

@@ -25,9 +25,6 @@ type eventRules struct {
 	clock             func() time.Time
 	queueMax          int
 	queueMaxBytes     int64
-	allocateID        func(context.Context, *sql.Tx) (int64, error)
-	consumeTenant     func(context.Context, *sql.Tx, string, time.Time, int64) error
-	cookielessKey     func(context.Context, *sql.Tx, string) ([]byte, error)
 	prepareAcceptance func(context.Context, string) error
 	// receiptRetention bounds local receipts; knownEvents finds older events.
 	receiptRetention time.Duration
@@ -173,7 +170,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		return nil, &acceptanceFailure{message: "storage unavailable"}
 	}
 	defer tx.Rollback()
-	// Serialize the owner's local receipt, identity and capacity checks.
+	// Serialize the journal's receipt, identity and capacity checks.
 	if _, err = tx.Exec(`UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, &acceptanceFailure{message: "storage unavailable"}
 	}
@@ -188,13 +185,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		// Choose the identity day under the SQLite write lock so delayed requests
 		// cannot recreate an expired key after another request rotates it.
 		day = acceptedAt.Format("2006-01-02")
-		var secret []byte
-		var err error
-		if a.rules.cookielessKey != nil {
-			secret, err = a.rules.cookielessKey(ctx, tx, day)
-		} else {
-			secret, err = dailyCookielessKey(tx, day)
-		}
+		secret, err := dailyCookielessKey(tx, day)
 		if err != nil {
 			return nil, &acceptanceFailure{message: "storage unavailable"}
 		}
@@ -256,7 +247,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
 			return nil, &acceptanceFailure{message: "queue is full", retry: true}
 		}
-		e.ID, err = a.rules.insertAcceptedEvent(ctx, tx, e)
+		e.ID, err = insertAcceptedEvent(ctx, tx, e)
 		if err != nil {
 			return nil, &acceptanceFailure{message: "storage unavailable"}
 		}
@@ -284,7 +275,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		accepted++
 		acceptedBytes += size
 	}
-	if err = a.rules.consumeAcceptedEvents(ctx, tx, batch.projectID, acceptedAt, int64(accepted)); err != nil {
+	if err = consumeTenantEventsTx(ctx, tx, batch.projectID, acceptedAt, int64(accepted)); err != nil {
 		var budget *tenantIngestionError
 		if errors.As(err, &budget) {
 			return nil, err
@@ -307,25 +298,10 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 	return durableLiveResult{accepted: accepted, duplicates: duplicates, identityIgnored: identityIgnored, receipts: receipts}, nil
 }
 
-func (r *eventRules) insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event eventapi.Event) (int64, error) {
+func insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event eventapi.Event) (int64, error) {
 	args := []any{event.ProjectID, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event), event.Imported}
 	query := `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`
-	if r.allocateID != nil {
-		id, err := r.allocateID(ctx, tx)
-		if err != nil {
-			return 0, err
-		}
-		args = append(args, id)
-		query = `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported,id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`
-	}
 	var id int64
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&id)
 	return id, err
-}
-
-func (r *eventRules) consumeAcceptedEvents(ctx context.Context, tx *sql.Tx, project string, at time.Time, count int64) error {
-	if r.consumeTenant != nil {
-		return r.consumeTenant(ctx, tx, project, at, count)
-	}
-	return consumeTenantEventsTx(ctx, tx, project, at, count)
 }
