@@ -74,8 +74,9 @@ As the [compaction documentation](https://ducklake.select/docs/stable/duckdb/mai
 explains, candidate-group limits do not bound the number of input files or the
 operation's duration.
 
-Each hosted worker polls every five seconds and claims at most one ready
-catalog per poll. PostgreSQL orders due projects by last attempt and project ID.
+Each hosted worker claims at most one ready catalog per poll. The worker
+polls every five seconds by default. A longer configured maintenance interval
+also applies to this poll. PostgreSQL orders due projects by last attempt and project ID.
 Claims are shared across workers and expire after two minutes. An attempt ID
 guards completion against a successor claim. Project coordinator ownership
 and the native fence still decide who may write.

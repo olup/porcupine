@@ -14,13 +14,13 @@ type hostedMaintenance struct {
 	done chan struct{}
 }
 
-func (s *Service) startHostedMaintenance() *hostedMaintenance {
+func (s *Service) startHostedMaintenance(interval time.Duration) *hostedMaintenance {
 	h := s.hosted
 	ctx, stop := context.WithCancel(context.Background())
 	worker := &hostedMaintenance{stop: stop, done: make(chan struct{})}
 	go func() {
 		defer close(worker.done)
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(max(interval, 5*time.Second))
 		defer ticker.Stop()
 		for {
 			select {

@@ -127,7 +127,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	s.acceptance = h.buffer
 	s.startDeletionRecovery()
 	s.startHostedRecovery(lakeConfig.MaintenanceInterval)
-	h.maintenance = s.startHostedMaintenance()
+	h.maintenance = s.startHostedMaintenance(lakeConfig.MaintenanceInterval)
 	s.pipelines.Start()
 	s.exports.Start()
 	s.startUsage()
