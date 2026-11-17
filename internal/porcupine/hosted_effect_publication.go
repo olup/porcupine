@@ -254,11 +254,11 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	return staged, nil
 }
 
-func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.LiveCommitEvidence) (output.PipelinePublication, error) {
+func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) (output.PipelinePublication, error) {
 	fail := func() (output.PipelinePublication, error) {
 		return output.PipelinePublication{}, output.ErrPipelineConflict
 	}
-	if b.Scope != pipelineScope(e.Scope) || b.TenantID != e.TenantID || b.BatchID != e.BatchID || b.Epoch != e.FenceEpoch || b.PlanID != e.Effects.PlanID {
+	if e.Kind != lakeapi.NativeCommitLive || b.Scope != pipelineScope(e.Scope) || b.TenantID != e.TenantID || b.BatchID != e.OperationID || b.Epoch != e.FenceEpoch || b.PlanID != e.Effects.PlanID {
 		return fail()
 	}
 	owned := func(r output.PipelineRef) bool {
@@ -322,21 +322,37 @@ func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBin
 	}
 	return output.PipelinePublication{Manifest: pipelineRef(e.Effects.Manifest), Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint, Outputs: outputs}, nil
 }
-func nativeUsageReports(e lakeapi.LiveCommitEvidence) ([]usage.SourceTotals, error) {
+func nativeUsageReports(e lakeapi.NativeCommitEvidence) ([]usage.SourceTotals, error) {
 	if e.AccountedAt.IsZero() || len(e.Totals) == 0 || len(e.Totals) > 1000 {
 		return nil, output.ErrPipelineConflict
 	}
 	reports := make([]usage.SourceTotals, 0, len(e.Totals))
 	for _, t := range e.Totals {
-		if t.Day != usage.Day(e.AccountedAt) || t.Revision != e.Sequence || t.Live < e.AcceptedLive || t.Import < 0 {
+		if t.Day != usage.Day(e.AccountedAt) || t.Revision != e.Sequence || t.Live < e.AcceptedLive || t.Import < e.AcceptedImport {
 			return nil, output.ErrPipelineConflict
 		}
 		reports = append(reports, usage.SourceTotals{SourceID: e.Scope.StreamID, TenantID: e.TenantID, ProjectID: e.Scope.Key.ProjectID, Day: t.Day, Revision: t.Revision, Counters: usage.Counters{Live: t.Live, Import: t.Import}})
 	}
 	return reports, nil
 }
-func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.LiveCommitEvidence) error {
-	v, err := p.verify(ctx, b, e)
+func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) error {
+	if err := lakeapi.ValidateNativeCommitEvidence(e); err != nil {
+		return err
+	}
+	var v output.PipelinePublication
+	var err error
+	switch e.Kind {
+	case lakeapi.NativeCommitLive:
+		v, err = p.verify(ctx, b, e)
+	case lakeapi.NativeCommitImport:
+		if b != (output.PipelineBinding{}) {
+			return output.ErrPipelineConflict
+		}
+		_, err = p.objects.ReadImmutableImportCheckpoint(ctx, e.Scope, e.Import.Key.JobID, e.Import.Key.FileID, e.Import.Next.Parser)
+		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
+	default:
+		return output.ErrPipelineConflict
+	}
 	if err != nil {
 		return err
 	}
@@ -345,8 +361,17 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 		return err
 	}
 	err = p.transaction(ctx, func(tx *sql.Tx) error {
-		if _, e := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); e != nil {
-			return e
+		switch e.Kind {
+		case lakeapi.NativeCommitLive:
+			if _, err := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); err != nil {
+				return err
+			}
+		case lakeapi.NativeCommitImport:
+			if _, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v); err != nil {
+				return err
+			}
+		default:
+			return output.ErrPipelineConflict
 		}
 		return p.usage.PublishSourceTotalsTx(ctx, tx, reports)
 	})

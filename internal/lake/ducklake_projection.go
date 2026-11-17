@@ -523,11 +523,27 @@ func applicationCatalogVersion(ctx context.Context, db *sql.DB, catalog string, 
 			return 0, errors.New("hosted native write guard is missing")
 		}
 	}
-	if version >= hostedLakeSchemaVersion {
+	if version >= 4 {
 		expected["hosted_write_guard"]["tenant_id"] = "VARCHAR"
 		expected["live_commit_proofs"] = map[string]string{"proof_version": "INTEGER", "effect_seq": "BIGINT", "batch_id": "VARCHAR", "batch_fingerprint": "VARCHAR", "proof_fingerprint": "VARCHAR", "tenant_id": "VARCHAR", "fence_epoch": "BIGINT", "accounted_at": "VARCHAR", "accepted_live": "BIGINT", "plan_id": "VARCHAR", "manifest_key": "VARCHAR", "manifest_version": "VARCHAR", "manifest_sha256": "VARCHAR", "manifest_bytes": "BIGINT", "output_count": "BIGINT", "totals_json": "VARCHAR"}
 		expected["live_usage_totals"] = map[string]string{"day": "VARCHAR", "revision": "BIGINT", "accepted_live": "BIGINT", "accepted_import": "BIGINT"}
 		for _, table := range []string{"live_commit_proofs", "live_usage_totals"} {
+			if version >= 5 {
+				continue
+			}
+			if tables[table] == nil {
+				return 0, fmt.Errorf("hosted native %s is missing", table)
+			}
+		}
+	}
+	if version >= 5 {
+		delete(expected, "live_commit_proofs")
+		delete(expected, "live_usage_totals")
+		expected["native_usage_totals"] = map[string]string{"day": "VARCHAR", "revision": "BIGINT", "accepted_live": "BIGINT", "accepted_import": "BIGINT"}
+		expected["native_commit_proofs"] = map[string]string{"proof_version": "INTEGER", "effect_seq": "BIGINT", "operation_id": "VARCHAR", "input_fingerprint": "VARCHAR", "proof_fingerprint": "VARCHAR", "kind": "VARCHAR", "evidence_json": "VARCHAR"}
+		expected["import_file_heads"] = map[string]string{"job_id": "VARCHAR", "file_id": "VARCHAR", "manifest_sha256": "VARCHAR", "source_id": "VARCHAR", "format": "VARCHAR", "effect_seq": "BIGINT", "checkpoint_json": "VARCHAR"}
+		expected["import_person_state"] = map[string]string{"distinct_id": "VARCHAR", "person_id": "VARCHAR", "person_version": "UBIGINT", "mapping_version": "UBIGINT", "profile_version": "UBIGINT", "deleted": "BOOLEAN", "source_id": "VARCHAR"}
+		for _, table := range []string{"native_usage_totals", "native_commit_proofs", "import_file_heads", "import_person_state"} {
 			if tables[table] == nil {
 				return 0, fmt.Errorf("hosted native %s is missing", table)
 			}

@@ -43,20 +43,20 @@ func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence,
 			return err
 		}
 		defer tx.Rollback()
-		sequence, err := p.beginHostedLiveWrite(ctx, tx, fence, batch.TenantID)
-		if err != nil {
-			return err
-		}
-		prior, found, err := readLiveCommitProof(ctx, tx, batch.Scope, batch.ID)
+		prior, found, err := readNativeCommitProof(ctx, tx, batch.Scope, batch.ID)
 		if err != nil {
 			return err
 		}
 		if found {
-			if prior.BatchFingerprint != fingerprint || prior.TenantID != batch.TenantID {
+			if prior.Kind != NativeCommitLive || prior.InputFingerprint != fingerprint || prior.TenantID != batch.TenantID {
 				return errors.New("native batch identity was reused with different validated input")
 			}
 			result = CommittedLiveBatch{Evidence: prior}
 			return nil
+		}
+		sequence, err := p.beginHostedIngestionWrite(ctx, tx, fence, batch.TenantID)
+		if err != nil {
+			return err
 		}
 		known, err := liveHeads(ctx, tx, batch.Inputs)
 		if err != nil {
@@ -98,19 +98,19 @@ func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence,
 			return err
 		}
 		accountedAt := s.liveCommitTime()
-		totals, err := updateNativeLiveTotals(ctx, tx, sequence, accountedAt, int64(len(selected)))
+		totals, err := updateNativeSourceTotals(ctx, tx, sequence, accountedAt, int64(len(selected)), 0)
 		if err != nil {
 			return err
 		}
-		if err := insertLiveCanonicalEvents(ctx, tx, selected); err != nil {
+		if err := insertCanonicalEvents(ctx, tx, selected); err != nil {
 			return err
 		}
-		evidence := LiveCommitEvidence{Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, BatchID: batch.ID, BatchFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), Effects: effects, Totals: totals}
-		evidence.ProofFingerprint, err = liveEvidenceFingerprint(evidence)
+		evidence := NativeCommitEvidence{Kind: NativeCommitLive, Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, OperationID: batch.ID, InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), Effects: effects, Totals: totals}
+		evidence.ProofFingerprint, err = nativeEvidenceFingerprint(evidence)
 		if err != nil {
 			return err
 		}
-		if err := insertLiveCommitProof(ctx, tx, evidence); err != nil {
+		if err := insertNativeCommitProof(ctx, tx, evidence); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -137,7 +137,7 @@ func validateLiveCommitBatch(fence ProjectWriteFence, batch LiveCommitBatch, res
 	for _, input := range batch.Inputs {
 		e := input.Event
 		control := e.Event == "$identify" || e.Event == "$set"
-		if e.ID != 0 || e.ProjectID != fence.Key.ProjectID || !ValidStoredEventUUID(e.UUID) || e.Imported || e.Delivered || e.IdentitySnapshot != "" || control != (input.Identity != nil) {
+		if e.ID != 0 || e.ProjectID != fence.Key.ProjectID || !validLiveEventUUID(e.UUID) || e.Imported || e.Delivered || e.IdentitySnapshot != "" || control != (input.Identity != nil) {
 			return "", errors.New("invalid validated live event state")
 		}
 		if control && (e.DistinctID != "" || string(e.Properties) != "{}") {
@@ -158,12 +158,15 @@ func validateLiveCommitBatch(fence ProjectWriteFence, batch LiveCommitBatch, res
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:]), nil
 }
-func (p *ProjectLake) beginHostedLiveWrite(ctx context.Context, tx *sql.Tx, fence ProjectWriteFence, tenant string) (int64, error) {
+func (p *ProjectLake) beginHostedIngestionWrite(ctx context.Context, tx *sql.Tx, fence ProjectWriteFence, tenant string) (int64, error) {
 	var previous int64
 	if err := tx.QueryRowContext(ctx, `SELECT CAST(next_effect_seq AS BIGINT) FROM lake.hosted_write_guard WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND identity_ready AND state='open' AND fence_epoch=? AND fence_nonce=? AND (tenant_id IS NULL OR tenant_id=?)`, fence.Key.SourceID, fence.Key.ProjectID, fence.StreamID, fence.Epoch, fence.AcquisitionID, tenant).Scan(&previous); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrProjectWriteFenceStale
 		}
+		return 0, err
+	}
+	if err := validateNativeEffectHistory(ctx, tx, previous); err != nil {
 		return 0, err
 	}
 	if previous == math.MaxInt64 {
@@ -260,11 +263,21 @@ func (p *ProjectLake) applyHostedIdentity(ctx context.Context, tx *sql.Tx, e eve
 	e.IdentitySnapshot, err = encodeNativeLiveSnapshot(snapshot)
 	return e, err
 }
-func insertLiveCanonicalEvents(ctx context.Context, tx *sql.Tx, events []PreparedLakeProjection) error {
+func boolToUint8(value bool) uint8 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func insertCanonicalEvents(ctx context.Context, tx *sql.Tx, events []PreparedLakeProjection) error {
+	if len(events) == 0 {
+		return nil
+	}
 	rows := make([]lakeProjectionRow, 0, len(events))
 	for _, prepared := range events {
 		e := prepared.projection.Event
-		rows = append(rows, lakeProjectionRow{UUID: e.UUID, ID: e.ID, ProjectID: e.ProjectID, Event: e.Event, DistinctID: e.DistinctID, Properties: string(e.Properties), Timestamp: e.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano), ReceivedAt: e.ReceivedAt, ReceivedAtMS: prepared.received.UnixMilli(), SourceID: e.SourceID, MessageID: e.MessageID, EventType: e.EventType, Context: string(e.Context), Identity: e.IdentitySnapshot})
+		rows = append(rows, lakeProjectionRow{UUID: e.UUID, ID: e.ID, ProjectID: e.ProjectID, Event: e.Event, DistinctID: e.DistinctID, Properties: string(e.Properties), Timestamp: e.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano), ReceivedAt: e.ReceivedAt, ReceivedAtMS: prepared.received.UnixMilli(), SourceID: e.SourceID, MessageID: e.MessageID, EventType: e.EventType, Context: string(e.Context), Imported: boolToUint8(e.Imported), Identity: e.IdentitySnapshot})
 	}
 	encoded, err := json.Marshal(rows)
 	if err != nil {
@@ -275,25 +288,26 @@ func insertLiveCanonicalEvents(ctx context.Context, tx *sql.Tx, events []Prepare
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO lake.heads (uuid,event_id,revision,is_deleted,received_at) SELECT uuid,id,0,false,received_at FROM _pc_incoming;
 INSERT INTO lake.current_events (id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot)
- SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,0,source_id,message_id,event_type,context,0,identity_snapshot,'' FROM _pc_incoming;
+ SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,timestamp_ms,event_time,received_at,received_at_ms,0,source_id,message_id,event_type,context,is_imported,identity_snapshot,'' FROM _pc_incoming;
 DROP TABLE _pc_incoming`)
 	return err
 }
-func updateNativeLiveTotals(ctx context.Context, tx *sql.Tx, sequence int64, at time.Time, count int64) ([]NativeSourceTotals, error) {
+func updateNativeSourceTotals(ctx context.Context, tx *sql.Tx, sequence int64, at time.Time, live, imported int64) ([]NativeSourceTotals, error) {
 	day := at.UTC().Format("2006-01-02T00:00:00Z")
 	total := NativeSourceTotals{Day: day, Revision: sequence}
-	err := tx.QueryRowContext(ctx, "SELECT accepted_live,accepted_import FROM lake.live_usage_totals WHERE day=?", day).Scan(&total.Live, &total.Import)
+	err := tx.QueryRowContext(ctx, "SELECT accepted_live,accepted_import FROM lake.native_usage_totals WHERE day=?", day).Scan(&total.Live, &total.Import)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if total.Live > math.MaxInt64-count {
-		return nil, errors.New("native live usage counter exhausted")
+	if live < 0 || imported < 0 || total.Live > math.MaxInt64-live || total.Import > math.MaxInt64-imported {
+		return nil, errors.New("native usage counter exhausted")
 	}
-	total.Live += count
-	if _, err := tx.ExecContext(ctx, `DELETE FROM lake.live_usage_totals WHERE day=?`, day); err != nil {
+	total.Live += live
+	total.Import += imported
+	if _, err := tx.ExecContext(ctx, `DELETE FROM lake.native_usage_totals WHERE day=?`, day); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO lake.live_usage_totals (day,revision,accepted_live,accepted_import) VALUES(?,?,?,?)`, day, sequence, total.Live, total.Import); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO lake.native_usage_totals (day,revision,accepted_live,accepted_import) VALUES(?,?,?,?)`, day, sequence, total.Live, total.Import); err != nil {
 		return nil, err
 	}
 	return []NativeSourceTotals{total}, nil

@@ -47,24 +47,8 @@ type SelectedLiveEffects struct {
 type LiveEffectStager interface {
 	StageLiveEffects(context.Context, SelectedLiveEffects) (StagedLiveEffects, error)
 }
-type NativeSourceTotals struct {
-	Day          string `json:"day"`
-	Revision     int64  `json:"revision"`
-	Live, Import int64
-}
-type LiveCommitEvidence struct {
-	Scope                                       HostedProjectScope
-	TenantID                                    string
-	Sequence                                    int64
-	BatchID, BatchFingerprint, ProofFingerprint string
-	FenceEpoch                                  int64
-	AccountedAt                                 time.Time
-	AcceptedLive                                int64
-	Effects                                     StagedLiveEffects
-	Totals                                      []NativeSourceTotals
-}
 type LiveCommitResult interface{ liveCommitResult() }
-type CommittedLiveBatch struct{ Evidence LiveCommitEvidence }
+type CommittedLiveBatch struct{ Evidence NativeCommitEvidence }
 
 func (CommittedLiveBatch) liveCommitResult() {}
 
