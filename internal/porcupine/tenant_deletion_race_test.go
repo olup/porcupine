@@ -11,7 +11,7 @@ func TestHumanGrantTransactionsRejectDeletionAfterValidation(t *testing.T) {
 	j := newEmailJourney(t)
 	s := j.service
 	operator := accountTestToken(t, s)
-	actor, err := s.authenticateResource(t.Context(), operator, s.oauth.apiResource)
+	actor, err := s.authenticateResource(t.Context(), operator, s.resources.apiResource)
 	if err != nil {
 		t.Fatal(err)
 	}

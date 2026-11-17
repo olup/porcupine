@@ -233,12 +233,12 @@ func TestSegmentSharedContextAmplificationIsAtomic(t *testing.T) {
 func TestSegmentTargetOnlyIdentifyAndOAuthPolicy(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource)
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
 	var created map[string]any
 	f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]string{"name": "Segment confidential", "ingestion_mode": "server_only"}, 201, &created)
 	id := created["project"].(map[string]any)["id"].(string)
 	writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id})
-	access := f.token(t, writer.ClientID, writer.ClientSecret, f.s.oauth.apiResource)
+	access := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.apiResource)
 	headers := segmentHeaders("")
 	headers["Authorization"] = "Bearer " + access.AccessToken
 	transportRequest(t, f.s, "POST", "/v1/identify", []byte(`{"messageId":"target-only","userId":"backend-user","traits":{"plan":"server"}}`), headers, 200)

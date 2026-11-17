@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -210,6 +211,9 @@ func (s *Service) encodePipelineDestination(ctx context.Context, projectID, pipe
 }
 
 func (s *Service) createPipeline(ctx context.Context, input *PipelineCreateInput) (*PipelineOutput, error) {
+	if s.externalAuthEnabled() && (!principal(ctx).ServiceKey || principal(ctx).External != nil) {
+		return nil, apierr.Detailed(403, "execution_credential_required", "permanent pipelines require a native machine key in external authentication mode", "Authenticate this request with a team machine key that has pipelines:write and events:read on the project.", "")
+	}
 	if err := s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}

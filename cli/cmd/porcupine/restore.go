@@ -100,6 +100,9 @@ func restoreNativeDiagnostic(err error, token string, env, args []string) string
 	// Redact before trimming the message so truncation cannot expose a token prefix.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
 		message = strings.ReplaceAll(message, secret, "[redacted]")
 		encoded, _ := json.Marshal(secret)
 		message = strings.ReplaceAll(message, string(encoded[1:len(encoded)-1]), "[redacted]")
@@ -128,7 +131,8 @@ func restoreCommandWithRunner(run restoreDockerRunner) *cli.Command {
 			&cli.StringFlag{Name: "source-id", Usage: "S3 backup source ID"},
 			&cli.StringFlag{Name: "volume", Usage: "New Docker volume name; defaults to a unique generated name"},
 			&cli.StringFlag{Name: "image", Usage: "Matching native server image; required for development CLI builds"},
-			&cli.StringFlag{Name: "bootstrap-token-file", Required: true, Usage: "Private file containing a fresh recovery token of at least 32 characters; restrict access with file permissions or Windows ACLs"},
+			&cli.StringFlag{Name: "auth-mode", Value: "builtin", Usage: "Destination authentication mode: builtin or external", Sources: cli.EnvVars("PORCUPINE_AUTH_MODE")},
+			&cli.StringFlag{Name: "bootstrap-token-file", Usage: "Required for builtin authentication: private file containing a fresh recovery token of at least 32 characters"},
 			&cli.BoolFlag{Name: "reset-access", Usage: "Acknowledge revocation of archived credentials and cancellation of outbound work"},
 			&cli.StringFlag{Name: "memory", Value: "2g", Usage: "Docker memory limit"},
 			&cli.StringFlag{Name: "cpus", Value: "2", Usage: "Docker CPU limit"},
@@ -146,7 +150,8 @@ type offlineRestoreRequest struct {
 	TargetControlDBPath          string `json:"target_control_db_path"`
 	TargetDuckLakeDirectory      string `json:"target_ducklake_directory"`
 	ResetCredentialsAcknowledged bool   `json:"reset_credentials_acknowledged"`
-	BootstrapToken               string `json:"bootstrap_token"`
+	AuthMode                     string `json:"auth_mode"`
+	BootstrapToken               string `json:"bootstrap_token,omitempty"`
 	ChownToNonroot               bool   `json:"chown_to_nonroot"`
 }
 
@@ -160,6 +165,13 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 	if c.Duration("timeout") <= 0 {
 		return errors.New("--timeout must be positive")
 	}
+	mode := c.String("auth-mode")
+	if mode != "builtin" && mode != "external" {
+		return errors.New("--auth-mode must be builtin or external")
+	}
+	if mode == "external" && c.String("bootstrap-token-file") != "" {
+		return errors.New("external restore uses an external JWT operator; omit --bootstrap-token-file")
+	}
 	ctx, cancel := context.WithTimeout(parent, c.Duration("timeout"))
 	defer cancel()
 	image := c.String("image")
@@ -172,7 +184,7 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 	if strings.HasPrefix(image, "-") || strings.ContainsAny(image, " \t\r\n") {
 		return errors.New("invalid --image")
 	}
-	request := offlineRestoreRequest{BackupID: c.String("backup-id"), SourceID: c.String("source-id"), TargetDBPath: "/data/porcupine.db", TargetControlDBPath: "/data/porcupine.db.control", TargetDuckLakeDirectory: "/data/ducklake", ResetCredentialsAcknowledged: true, ChownToNonroot: true}
+	request := offlineRestoreRequest{BackupID: c.String("backup-id"), SourceID: c.String("source-id"), TargetDBPath: "/data/porcupine.db", TargetControlDBPath: "/data/porcupine.db.control", TargetDuckLakeDirectory: "/data/ducklake", ResetCredentialsAcknowledged: true, AuthMode: mode, ChownToNonroot: true}
 	bundle := c.String("bundle")
 	if bundle != "" {
 		if c.IsSet("backup-id") || c.IsSet("source-id") {
@@ -187,9 +199,13 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 	} else if !strings.HasPrefix(request.BackupID, "pc_backup_") || len(request.BackupID) <= len("pc_backup_") || !restoreSegment.MatchString(request.BackupID) || !restoreSegment.MatchString(request.SourceID) {
 		return errors.New("provide --bundle or both valid --backup-id and --source-id")
 	}
-	token, err := restoreBootstrapToken(c.String("bootstrap-token-file"))
-	if err != nil {
-		return err
+	var token string
+	if mode == "builtin" {
+		var err error
+		token, err = restoreBootstrapToken(c.String("bootstrap-token-file"))
+		if err != nil {
+			return err
+		}
 	}
 	request.BootstrapToken = token
 	privateInput, err := json.Marshal(request)
@@ -212,6 +228,9 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 	if err != nil {
 		return err
 	}
+	env = slices.DeleteFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "PORCUPINE_AUTH_MODE=") })
+	env = append(env, "PORCUPINE_AUTH_MODE="+mode)
+	envArgs = append(envArgs, "--env", "PORCUPINE_AUTH_MODE")
 	args := []string{"run", "--rm", "--interactive", "--name", container, "--user", "0:0", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev", "--memory", c.String("memory"), "--cpus", c.String("cpus"), "--mount", restoreMount("type=volume", "src="+volume, "dst=/data")}
 	if bundle != "" {
 		args = append(args, "--mount", restoreMount("type=bind", "src="+bundle, "dst="+request.LocalBundlePath, "readonly"))
@@ -251,7 +270,7 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 		}
 		return restoreDockerError(ctx, "native restore failed; new volume "+volume+" retained for inspection")
 	}
-	if !json.Valid(result.Bytes()) || bytes.Contains(result.Bytes(), []byte(token)) {
+	if !json.Valid(result.Bytes()) || token != "" && bytes.Contains(result.Bytes(), []byte(token)) {
 		return errors.New("native restore returned an invalid result; new volume " + volume + " retained for inspection")
 	}
 	fmt.Fprintf(c.Root().ErrWriter, "Restore completed in Docker volume %s. Save the private JSON result securely.\n", volume)

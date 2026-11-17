@@ -9,7 +9,7 @@ import (
 func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	a, public := f.project(t, admin)
 	b, _ := f.project(t, admin)
 	rights := []string{"events:read", "events:write", "management:read", "management:write", "imports:write"}
@@ -38,7 +38,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 	for _, wrong := range []string{adminToken, public, client.ClientSecret} {
 		f.call(t, "GET", eventPath, wrong, nil, 401, nil)
 	}
-	if _, err := f.s.authenticateResource(f.ctx, api.Token, f.s.oauth.mcpResource); err == nil {
+	if _, err := f.s.authenticateResource(f.ctx, api.Token, f.s.resources.mcpResource); err == nil {
 		t.Fatal("API service key accepted at MCP audience")
 	}
 	ctx, session := mcpTestSession(t, f.host.URL, mcp.Token, "2025-11-25")
@@ -77,7 +77,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 	}
 	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": a}}, 200)
 	f.call(t, "DELETE", "/api/v1/oauth-clients/"+client.ClientID, admin, nil, 204, nil)
-	if _, err := f.s.authenticateResource(f.ctx, mcp.Token, f.s.oauth.mcpResource); err == nil {
+	if _, err := f.s.authenticateResource(f.ctx, mcp.Token, f.s.resources.mcpResource); err == nil {
 		t.Fatal("revoked account still accepts service key")
 	}
 	if _, err := f.s.exportActor(f.ctx, mcp.ID); err == nil {
@@ -88,7 +88,7 @@ func TestServiceKeysAuthenticateByResourceAndProject(t *testing.T) {
 func TestServiceKeyServerOnlyAndParentChange(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	var project ProjectCreated
 	f.call(t, "POST", "/api/v1/projects", admin, map[string]string{"name": "private", "ingestion_mode": "server_only"}, 201, &project)
 	id := project.Project.ID

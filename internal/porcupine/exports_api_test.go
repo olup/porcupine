@@ -7,12 +7,27 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
 )
+
+func assertSignedExportExpiry(t *testing.T, file ExportFile, bound time.Time) {
+	t.Helper()
+	u, err := url.Parse(file.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	date, err := time.Parse("20060102T150405Z", u.Query().Get("X-Amz-Date"))
+	seconds, durationErr := strconv.Atoi(u.Query().Get("X-Amz-Expires"))
+	expiry := date.Add(time.Duration(seconds) * time.Second)
+	if err != nil || durationErr != nil || seconds < 1 || expiry.After(bound) || file.ExpiresAt != expiry.Format(time.RFC3339Nano) {
+		t.Fatal("reported signed expiry differs from actual URL or exceeds authority", file.ExpiresAt, expiry, bound)
+	}
+}
 
 func TestExportHTTPAndMCPShareAuthorizationIdempotencyAndContracts(t *testing.T) {
 	t.Parallel()
@@ -103,9 +118,10 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 	}
 	first := page.Body.Files[0]
 	parsed, err := url.Parse(first.URL)
-	if err != nil || parsed.Query().Get("X-Amz-Expires") != "300" || parsed.Query().Get("X-Amz-Signature") == "" || first.Name != "part-000000.jsonl.gz" || first.ExpiresAt != clock.Add(5*time.Minute).Format(time.RFC3339Nano) {
+	if err != nil || parsed.Query().Get("X-Amz-Expires") != "300" || parsed.Query().Get("X-Amz-Signature") == "" || first.Name != "part-000000.jsonl.gz" {
 		t.Fatalf("download URL was not freshly presigned for five minutes: %+v %v", first, err)
 	}
+	assertSignedExportExpiry(t, first, expires)
 	encoded, _ := json.Marshal(page.Body)
 	for _, private := range []string{"object_key", "upload_id", "test-secret", "must-not-be-exposed"} {
 		if strings.Contains(string(encoded), private) {
@@ -118,9 +134,10 @@ func TestExportFilesPaginationFreshLinksAttemptIsolationAndIntegerExpiry(t *test
 	}
 	clock = clock.Add(4 * time.Minute)
 	fresh, err := s.eventExportFiles(ctx, &ExportFilesInput{ID: projectID, ExportID: jobID, Limit: 1})
-	if err != nil || fresh.Body.Files[0].ExpiresAt != clock.Add(5*time.Minute).Format(time.RFC3339Nano) {
+	if err != nil {
 		t.Fatal("file page reused an old expiration", err)
 	}
+	assertSignedExportExpiry(t, fresh.Body.Files[0], expires)
 	// The integer expiry is authoritative even if the RFC3339 text sorts later.
 	if _, err := s.db.Exec(`UPDATE export_jobs SET expires_at='2099-01-01T00:00:00Z',expires_at_ms=? WHERE id=?`, clock.UnixMilli(), jobID); err != nil {
 		t.Fatal(err)

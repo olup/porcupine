@@ -21,7 +21,7 @@ func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
 	}
 	issued := oauthProtocolRequest(t, s, "bootstrap", adminToken, oauthGrantForm(), 200)
 	raw := issued["access_token"].(string)
-	principal, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
+	principal, err := s.authenticateOAuthToken(context.Background(), raw, s.resources.apiResource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	loaded, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
+	loaded, err := s.authenticateOAuthToken(context.Background(), raw, s.resources.apiResource)
 	if err != nil || loaded.ID != principal.ID || !loaded.Admin() {
 		t.Fatal("OAuth persistence lost original principal or grants", err)
 	}
@@ -115,7 +115,7 @@ func TestOAuthGlobalTokenCapAndExpiryPruning(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := range oauthMaxTokens {
-		_, err = statement.Exec(hash(fmt.Sprintf("synthetic-token-%d", index)), ids[index/64], s.oauth.apiResource, clock.Load(), clock.Load()+900000)
+		_, err = statement.Exec(hash(fmt.Sprintf("synthetic-token-%d", index)), ids[index/64], s.resources.apiResource, clock.Load(), clock.Load()+900000)
 		if err != nil {
 			statement.Close()
 			tx.Rollback()

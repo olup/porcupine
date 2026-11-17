@@ -13,7 +13,7 @@ func sharedDeletionFixture(t *testing.T) *Service {
 	t.Helper()
 	db, _ := sharedControlFixture(t)
 	queries, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(t.Context(), db, adminToken, queries); err != nil {
+	if err := initializeSharedControl(t.Context(), db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	s := &Service{control: db, shared: &sharedRuntime{config: SharedConfig{WorkerID: "deletion-test"}}, interactiveConfig: queries}

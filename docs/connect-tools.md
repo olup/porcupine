@@ -4,6 +4,8 @@ Use this guide when your team already runs Porcupine. Ask its administrator for 
 
 If you are setting up the instance, start with [hosting](hosting.md) and [team sign-in](reference/connect-your-team.md).
 
+**Unreleased external mode:** if your administrator uses an [external identity provider](reference/external-auth.md), follow its invitation and authorization flow. Use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT` for the CLI. The email steps below apply to builtin mode.
+
 **Unreleased:** tenant members can use the instance's configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and explicitly select their team. These features require matching development builds; follow [tenant access](reference/tenant-access.md) and [sign-in configuration](reference/mcp-interactive-oauth.md). The email steps below also apply to v0.14.0.
 
 ## Connect an agent through MCP

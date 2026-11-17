@@ -73,7 +73,12 @@ func (f *fakeRestoreDocker) run(ctx context.Context, args, env []string, input i
 			_, _ = output.Write(body)
 			return errors.New(string(body))
 		}
-		_, _ = io.WriteString(output, `{"backup_id":"pc_backup_test","recovery_admin_id":"new-admin","ingestion_keys":[]}`+"\n")
+		var request offlineRestoreRequest
+		if json.Unmarshal(body, &request) == nil && request.AuthMode == "external" {
+			_, _ = io.WriteString(output, `{"backup_id":"pc_backup_test","ingestion_keys":[]}`+"\n")
+		} else {
+			_, _ = io.WriteString(output, `{"backup_id":"pc_backup_test","recovery_admin_id":"new-admin","ingestion_keys":[]}`+"\n")
+		}
 	case args[0] == "rm":
 		deadline, ok := ctx.Deadline()
 		f.cleanupIndependent = ctx.Err() == nil && ok && time.Until(deadline) > 0 && time.Until(deadline) <= 10*time.Second
@@ -149,6 +154,39 @@ func TestRestoreOfflineCreatesOwnedRootVolume(t *testing.T) {
 	}
 	if docker.owner == "" {
 		t.Fatal("volume missing unique ownership marker")
+	}
+}
+
+func TestRestoreExternalOmitsBuiltinRecoveryCredential(t *testing.T) {
+	t.Parallel()
+	docker := &fakeRestoreDocker{t: t}
+	var out, progress bytes.Buffer
+	app := &cli.Command{Name: "porcupine", Writer: &out, ErrWriter: &progress, Commands: []*cli.Command{restoreCommandWithRunner(docker.run)}}
+	args := append([]string{"porcupine", "restore", "--image", "test-native-image", "--auth-mode", "external", "--reset-access"}, remoteRestoreFlags()...)
+	if err := app.Run(t.Context(), args); err != nil {
+		t.Fatal(err)
+	}
+	call := restoreRunCall(t, docker)
+	var request map[string]any
+	if json.Unmarshal([]byte(call.input), &request) != nil || request["auth_mode"] != "external" || request["bootstrap_token"] != nil {
+		t.Fatal("external restore supplied builtin recovery credentials", call.input)
+	}
+	if !slices.Contains(call.env, "PORCUPINE_AUTH_MODE=external") || !strings.Contains(strings.Join(call.args, "\n"), "--env\nPORCUPINE_AUTH_MODE") {
+		t.Fatal("external restore did not configure the offline destination mode")
+	}
+	if !json.Valid(out.Bytes()) || strings.Contains(out.String(), "recovery_admin_id") {
+		t.Fatal("external result was rejected or contained a local recovery administrator", out.String())
+	}
+}
+
+func TestRestoreExternalRejectsBootstrapAndUnknownModes(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"--auth-mode", "external"}, {"--auth-mode", "unknown"}} {
+		docker := &fakeRestoreDocker{t: t}
+		_, _, err := invokeRestore(t, t.Context(), docker, append(remoteRestoreFlags(), args...)...)
+		if err == nil || len(docker.calls) != 0 {
+			t.Fatal("invalid restore mode invoked Docker", err)
+		}
 	}
 }
 

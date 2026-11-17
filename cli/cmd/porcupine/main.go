@@ -34,6 +34,7 @@ func newApp() *cli.Command {
 				&cli.BoolFlag{Name: "admin", Usage: "Request instance administrator access"},
 				&cli.BoolFlag{Name: "tenant-admin", Usage: "Request administration of one tenant selected in your browser"},
 				&cli.StringFlag{Name: "scopes", Usage: "Project scopes to request, separated by spaces or commas; defaults to read-only"},
+				&cli.StringFlag{Name: "client-id", Usage: "Registered public OAuth client ID for an external identity provider", Sources: cli.EnvVars("PORCUPINE_OAUTH_CLIENT_ID")},
 			}, Action: func(ctx context.Context, c *cli.Command) error {
 				origin, err := instanceOrigin(c)
 				if err != nil {
@@ -43,7 +44,7 @@ func newApp() *cli.Command {
 				if err != nil {
 					return err
 				}
-				return login(ctx, origin, clientID, scopes)
+				return login(ctx, origin, clientID, scopes, c.String("client-id"))
 			}},
 			{Name: "status", Usage: "Check instance readiness", Action: func(ctx context.Context, c *cli.Command) error {
 				return runOperation(ctx, c, operation{Method: "GET", Path: "/readyz"}, false)

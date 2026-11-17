@@ -32,9 +32,19 @@ type storedImportUploadFile struct {
 	LastSHA256 string
 }
 
-func importCheckAuthority(ctx context.Context, query oauthQueryer, actorID, project string) error {
+func importCheckAuthority(ctx context.Context, query oauthQueryer, actor auth.Principal, project string, clock time.Time) error {
+	if actor.External != nil {
+		current, err := externalPrincipal(ctx, query, actor.External, clock)
+		if err != nil {
+			return err
+		}
+		if !auth.Authorize(current, "imports:write", project) || !auth.Authorize(current, "events:write", project) {
+			return apiError(403, "import credential is no longer authorized")
+		}
+		return nil
+	}
 	var permissions, projects string
-	err := query.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, actorID).Scan(&permissions, &projects)
+	err := query.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, actor.ID).Scan(&permissions, &projects)
 	if err != nil {
 		return apiError(403, "import credential is no longer authorized")
 	}

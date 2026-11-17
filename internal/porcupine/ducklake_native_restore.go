@@ -21,6 +21,10 @@ import (
 // by normal store creation, never by changing private DuckLake catalog metadata.
 func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result NativeRestoreResult, err error) {
 	r := c.Request
+	r.AuthMode, err = nativeRestoreAuthMode(r, c.Auth)
+	if err != nil {
+		return result, err
+	}
 	if err = normalizeNativeRestorePaths(&r); err != nil {
 		return result, err
 	}
@@ -133,7 +137,7 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = verifyNativeRestoreRegistry(ctx, stage, manifest); err != nil {
 		return result, err
 	}
-	result, err = resetNativeRestoreCredentials(ctx, db, control, r.BootstrapToken)
+	result, err = resetNativeRestoreCredentials(ctx, db, control, r.BootstrapToken, r.AuthMode)
 	if err != nil {
 		return result, err
 	}

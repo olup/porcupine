@@ -40,6 +40,9 @@ type OAuthGrantRevokeInput struct {
 }
 
 func (s *Service) registerInteractiveOAuthManagement(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	if s.externalAuthEnabled() {
+		return
+	}
 	access := auth.OperationAccess{Permission: "instance:admin"}
 	huma.Register(api, op("list-oauth-grants", "GET", "/api/v1/oauth-grants", "Inspect interactive human consent grants and their revocation identities", access, 200), s.managementListOAuthGrants)
 	huma.Register(api, op("revoke-oauth-grant", "DELETE", "/api/v1/oauth-grants/{id}", "Revoke a human consent grant, its tokens and background creator authority", access, 204), s.managementRevokeOAuthGrant)
