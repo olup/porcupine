@@ -19,6 +19,7 @@ type DuckLakeStore struct {
 	Root             string
 	Config           DuckLakeConfig
 	Registry         *sql.DB
+	registry         nativeRegistry
 	registryInfo     os.FileInfo
 	owner            *os.File
 	Mu               contextMutex
@@ -102,14 +103,7 @@ func NewDuckLake(config DuckLakeConfig) (LakeStore, error) {
 		owner.Close()
 		return nil, errors.New("DuckLake directory already has a writer")
 	}
-	registryPath := filepath.Join(root, "registry.sqlite")
-	registry, err := sql.Open("sqlite", registryPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
-	if err != nil {
-		owner.Close()
-		return nil, err
-	}
-	registry.SetMaxOpenConns(1)
-	s := &DuckLakeStore{Root: root, Config: config, Registry: registry, owner: owner, Projects: make(map[string]*ProjectLake), opening: make(map[string]*projectOpening)}
+	s := &DuckLakeStore{Root: root, Config: config, owner: owner, Projects: make(map[string]*ProjectLake), opening: make(map[string]*projectOpening)}
 	fail := func(err error) (LakeStore, error) {
 		if s.SharedCatalog != nil {
 			s.SharedCatalog.Close()
@@ -117,58 +111,74 @@ func NewDuckLake(config DuckLakeConfig) (LakeStore, error) {
 		if s.Remote != nil {
 			s.Remote.transport.CloseIdleConnections()
 		}
-		registry.Close()
+		if s.Registry != nil {
+			s.Registry.Close()
+		}
 		owner.Close()
 		return nil, err
 	}
-	if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS deleting_projects (project_id TEXT PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_attempt INTEGER NOT NULL, last_attempt INTEGER NOT NULL, last_success INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0 CHECK(failed IN (0,1)));`); err != nil {
-		return fail(err)
-	}
-	if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
-		return fail(err)
-	}
-	var count int
-	if err = registry.QueryRow("SELECT count(*) FROM source").Scan(&count); err != nil || count > 1 {
-		return fail(errors.New("invalid DuckLake source registry"))
-	}
-	if count == 0 {
-		source := config.SharedSourceID
-		if source == "" {
-			source = event.NewID()
-		}
-		if _, err = registry.Exec("INSERT INTO source(id) VALUES(?)", source); err != nil {
-			return fail(err)
-		}
-	}
 	if config.PostgresURL != "" {
+		// An old owner-local registry can hide the only pending cleanup or
+		// journal inventory. It requires an explicit offline cutover.
+		if _, err := os.Lstat(filepath.Join(root, "registry.sqlite")); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return fail(errors.New("owner-local native registry requires explicit offline inventory and cutover"))
+		}
 		if err := s.initializeSharedNative(context.Background()); err != nil {
 			return fail(err)
 		}
-	}
-	if err := PinDuckLakeStorage(context.Background(), registry, root, config.S3); err != nil {
-		return fail(err)
+	} else {
+		registryPath := filepath.Join(root, "registry.sqlite")
+		registry, err := sql.Open("sqlite", registryPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return fail(err)
+		}
+		registry.SetMaxOpenConns(1)
+		s.Registry = registry
+		s.registry = &sqliteNativeRegistry{db: registry}
+		if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS deleting_projects (project_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_attempt INTEGER NOT NULL, last_attempt INTEGER NOT NULL, last_success INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0 CHECK(failed IN (0,1)));`); err != nil {
+			return fail(err)
+		}
+		if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
+			return fail(err)
+		}
+		var count int
+		if err = registry.QueryRow("SELECT count(*) FROM source").Scan(&count); err != nil || count > 1 {
+			return fail(errors.New("invalid DuckLake source registry"))
+		}
+		if count == 0 {
+			source := config.SharedSourceID
+			if source == "" {
+				source = event.NewID()
+			}
+			if _, err = registry.Exec("INSERT INTO source(id) VALUES(?)", source); err != nil {
+				return fail(err)
+			}
+		}
+		if err := PinDuckLakeStorage(context.Background(), registry, root, config.S3); err != nil {
+			return fail(err)
+		}
+		if err = os.Chmod(registryPath, 0600); err != nil {
+			return fail(err)
+		}
+		s.registryInfo, err = os.Stat(registryPath)
+		if err != nil {
+			return fail(err)
+		}
+		if err := removeAbandonedCheckpoints(root); err != nil {
+			return fail(err)
+		}
 	}
 	if config.S3 != nil {
-		var source string
-		if err := registry.QueryRow("SELECT id FROM source").Scan(&source); err != nil {
+		source, err := s.registry.sourceID(context.Background())
+		if err != nil {
 			return fail(err)
 		}
 		s.Remote, err = newDuckLakeObjectStore(context.Background(), *config.S3, source)
 		if err != nil {
 			return fail(err)
 		}
-	}
-	if err = os.Chmod(registryPath, 0600); err != nil {
-		return fail(err)
-	}
-	s.registryInfo, err = os.Stat(registryPath)
-	if err != nil {
-		return fail(err)
-	}
-	if err := removeAbandonedCheckpoints(root); err != nil {
-		return fail(err)
 	}
 	return s, nil
 }
@@ -182,17 +192,6 @@ func (s *DuckLakeStore) SourceID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if s.SharedCatalog != nil {
-		seconds := s.Config.MetadataTimeoutSeconds
-		if seconds == 0 {
-			seconds = defaultDuckLakeMetadataTimeoutSeconds
-		}
-		probe, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
-		defer cancel()
-		if err := s.SharedCatalog.PingContext(probe); err != nil {
-			return "", errors.New("shared analytical metadata unavailable")
-		}
-	}
 	return id, nil
 }
 
@@ -200,12 +199,14 @@ func (s *DuckLakeStore) sourceIDLocked(ctx context.Context) (string, error) {
 	if s.closed {
 		return "", errors.New("DuckLake is closed")
 	}
-	info, err := os.Stat(filepath.Join(s.Root, "registry.sqlite"))
-	if err != nil || !os.SameFile(info, s.registryInfo) {
-		return "", errors.New("DuckLake source registry changed")
+	if s.SharedCatalog == nil {
+		info, err := os.Stat(filepath.Join(s.Root, "registry.sqlite"))
+		if err != nil || !os.SameFile(info, s.registryInfo) {
+			return "", errors.New("DuckLake source registry changed")
+		}
 	}
-	var id string
-	if err := s.Registry.QueryRowContext(ctx, "SELECT id FROM source").Scan(&id); err != nil || id == "" {
+	id, err := s.registry.sourceID(ctx)
+	if err != nil || id == "" {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -243,8 +244,8 @@ func (s *DuckLakeStore) leaseProjectLocked(ctx context.Context, project string) 
 			return nil, nil, err
 		}
 	}
-	var deleting bool
-	if err := s.Registry.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM deleting_projects WHERE project_id=?)", project).Scan(&deleting); err != nil {
+	deleting, err := s.registry.deleting(ctx, project)
+	if err != nil {
 		return nil, nil, err
 	}
 	if deleting {
@@ -347,14 +348,11 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		defer finish()
 		catalogID, ready, err = s.sharedNativeProject(ctx, project)
 	} else {
-		err = s.Registry.QueryRowContext(ctx, "SELECT id,ready FROM catalogs WHERE project_id=?", project).Scan(&catalogID, &ready)
+		var record nativeProjectRecord
+		record, err = s.registry.ensure(ctx, project)
+		catalogID, ready = record.CatalogID, record.Ready
 	}
-	if errors.Is(err, sql.ErrNoRows) {
-		catalogID = event.NewID()
-		if _, err = s.Registry.ExecContext(ctx, "INSERT INTO catalogs(project_id,id) VALUES(?,?)", project, catalogID); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	if err != nil {
 		return nil, err
 	}
 	if ready && initialize != nil {
@@ -513,13 +511,10 @@ func (s *DuckLakeStore) openProjectInitialized(ctx context.Context, project stri
 		}
 	}
 
-	if _, err = s.Registry.ExecContext(ctx, "UPDATE catalogs SET ready=1 WHERE project_id=?", project); err != nil {
+	if err = s.registry.markReady(ctx, project); err != nil {
 		return fail(err)
 	}
 	if s.SharedCatalog != nil {
-		if _, err := s.SharedCatalog.ExecContext(ctx, "UPDATE pc_native_projects SET ready=1 WHERE source_id=$1 AND project_id=$2 AND deleted=0", s.Config.SharedSourceID, project); err != nil {
-			return fail(errors.New("shared analytical registry unavailable"))
-		}
 		return &ProjectLake{DB: db, directory: directory, leases: make(map[*projectLease]struct{}), lastUsed: time.Now(), shared: true, sharedStore: s, projectID: project}, nil
 	}
 	info, err := os.Stat(catalog)
@@ -859,6 +854,9 @@ func (s *DuckLakeStore) Close() error {
 	if s.SharedCatalog != nil {
 		err = errors.Join(err, s.SharedCatalog.Close())
 	}
-	err = errors.Join(err, s.Registry.Close(), s.owner.Close())
+	if s.Registry != nil {
+		err = errors.Join(err, s.Registry.Close())
+	}
+	err = errors.Join(err, s.owner.Close())
 	return err
 }
