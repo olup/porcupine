@@ -70,7 +70,7 @@ func openSharedControl(ctx context.Context, config SharedConfig) (*sql.DB, error
 
 // Serialize schema installation and initial credentials across all processes.
 // The lock is transactional, so a failed bootstrap leaves no partial authority.
-func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, externalMode ...bool) error {
+func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, external bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
 	if errors.Is(err, sql.ErrNoRows) {
-		if len(externalMode) > 0 && externalMode[0] {
+		if external {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('auth_mode','external')`); err != nil {
 				return err
 			}
@@ -104,7 +104,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	} else if err != nil {
 		return err
 	}
-	if err := checkControlAuthMode(ctx, tx, len(externalMode) > 0 && externalMode[0]); err != nil {
+	if err := checkControlAuthMode(ctx, tx, external); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT $1,'Default',$2,1,$3,$4,$5,$6 WHERE NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=$1) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {

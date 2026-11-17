@@ -118,7 +118,7 @@ func sharedRoutingTestService(t *testing.T, dsn, worker, origin string) *Service
 		t.Fatal(err)
 	}
 	queryConfig, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(ctx, control, adminToken, queryConfig); err != nil {
+	if err := initializeSharedControl(ctx, control, adminToken, queryConfig, false); err != nil {
 		control.Close()
 		t.Fatal(err)
 	}

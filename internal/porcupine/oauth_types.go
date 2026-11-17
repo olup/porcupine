@@ -52,6 +52,10 @@ type resourceRuntime struct {
 	external    *auth.ExternalVerifier
 }
 
+func newResourceRuntime(publicURL string) *resourceRuntime {
+	return &resourceRuntime{publicURL: publicURL, apiResource: publicURL + "/api/v1", mcpResource: publicURL + "/mcp"}
+}
+
 func normalizeExternalRuntime(c AuthConfig) (*resourceRuntime, error) {
 	public, err := auth.NormalizeIssuer(c.PublicURL, false)
 	if err != nil {
@@ -61,7 +65,9 @@ func normalizeExternalRuntime(c AuthConfig) (*resourceRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &resourceRuntime{publicURL: public, apiResource: public + "/api/v1", mcpResource: public + "/mcp", external: verifier}, nil
+	resources := newResourceRuntime(public)
+	resources.external = verifier
+	return resources, nil
 }
 
 func (s *Service) externalAuthEnabled() bool {

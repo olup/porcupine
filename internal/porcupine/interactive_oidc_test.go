@@ -654,7 +654,7 @@ func TestLegacyOAuthPreservesIssuerSpelling(t *testing.T) {
 	t.Parallel()
 	const issuer = "https://analytics.example.test:443"
 	runtime, err := normalizeOAuthConfig(OAuthConfig{Issuer: issuer})
-	if err != nil || runtime.issuer != issuer || runtime.issuer+"/mcp" != issuer+"/mcp" {
+	if err != nil || runtime.issuer != issuer || newResourceRuntime(runtime.issuer).mcpResource != issuer+"/mcp" {
 		t.Fatal("machine client audience changed on upgrade", err)
 	}
 }

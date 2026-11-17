@@ -24,7 +24,7 @@ func runProjectPurge(t *testing.T, s *Service, project string, commit bool) {
 		t.Fatal(err)
 	}
 	defer journal.Rollback()
-	if err := purgeProjectGrants(t.Context(), control, project); err != nil {
+	if err := purgeProjectGrants(t.Context(), control, project, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := control.ExecContext(t.Context(), "DELETE FROM projects WHERE id=?", project); err != nil {

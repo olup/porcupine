@@ -20,15 +20,11 @@ func externalPrincipal(ctx context.Context, query oauthQueryer, grant *auth.Exte
 	if grant.Operator() {
 		return actor, nil
 	}
-	var exists bool
-	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1)`, grant.Tenant()).Scan(&exists); err != nil {
-		return auth.Principal{}, apiError(503, "tenant authority unavailable")
-	}
-	if !exists {
-		return auth.Principal{}, apiError(403, "tenant authority unavailable")
+	if err := requireTenantActive(ctx, query, grant.Tenant()); err != nil {
+		return auth.Principal{}, err
 	}
 	if grant.AllProjects() {
-		rows, err := query.QueryContext(ctx, `SELECT id FROM projects WHERE tenant_id=$1 ORDER BY id`, grant.Tenant())
+		rows, err := query.QueryContext(ctx, `SELECT id FROM projects p WHERE tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) ORDER BY id`, grant.Tenant())
 		if err != nil {
 			return auth.Principal{}, err
 		}
@@ -45,6 +41,9 @@ func externalPrincipal(ctx context.Context, query oauthQueryer, grant *auth.Exte
 			return auth.Principal{}, err
 		}
 	} else {
+		if err := requireActiveProjectSet(ctx, query, actor.Projects); err != nil {
+			return auth.Principal{}, err
+		}
 		for _, project := range actor.Projects {
 			var tenant string
 			if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&tenant); err != nil || tenant != grant.Tenant() {
@@ -81,4 +80,13 @@ func checkControlAuthMode(ctx context.Context, query oauthQueryer, external bool
 		return errors.New("control database authentication mode differs; start a fresh control database instead of adopting identities")
 	}
 	return nil
+}
+
+func (s *Service) requireExternalCurrent(ctx context.Context, query oauthQueryer) error {
+	actor := principal(ctx)
+	if actor.External == nil {
+		return nil
+	}
+	_, err := s.currentAuthority(ctx, query, actor)
+	return err
 }

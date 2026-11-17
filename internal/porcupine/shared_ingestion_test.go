@@ -34,7 +34,7 @@ func sharedIngestionTestService(t *testing.T, dsn, worker string) *Service {
 		t.Fatal(err)
 	}
 	s.shared = &sharedRuntime{config: SharedConfig{DatabaseURL: dsn, WorkerID: worker}}
-	if err = initializeSharedControl(t.Context(), s.control, adminToken, s.interactiveConfig); err != nil {
+	if err = initializeSharedControl(t.Context(), s.control, adminToken, s.interactiveConfig, false); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.initializeSharedIngestion(t.Context()); err != nil {

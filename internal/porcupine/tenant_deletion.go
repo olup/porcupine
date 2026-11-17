@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -25,9 +26,16 @@ type TenantDeletionOutput struct{ Body TenantDeletion }
 
 var errRestoredArtifactsPending = errors.New("restored artifact ownership requires reconciliation")
 
-const tenantOwnedPrincipals = `(SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
-UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1)
-UNION SELECT g.principal_id FROM oauth_grant_tenants t JOIN oauth_interactive_grants g ON g.id=t.grant_id WHERE t.tenant_id=$1)`
+const tenantNativeOwnedPrincipals = `SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
+UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1)`
+
+func (s *Service) tenantOwnedPrincipals() string {
+	query := tenantNativeOwnedPrincipals
+	if !s.externalAuthEnabled() {
+		query += ` UNION SELECT g.principal_id FROM oauth_grant_tenants t JOIN oauth_interactive_grants g ON g.id=t.grant_id WHERE t.tenant_id=$1`
+	}
+	return "(" + query + ")"
+}
 
 func (s *Service) registerTenantDeletion(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	operator := auth.OperationAccess{Permission: "instance:admin"}
@@ -97,6 +105,9 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 		return apiError(503, "tenant deletion unavailable")
 	}
 	defer tx.Rollback()
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return err
 	}
@@ -130,19 +141,21 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) DO NOTHING`, tenant); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$1) WHERE id IN
-(SELECT principal_id FROM tenant_credentials WHERE tenant_id=$2 UNION SELECT g.principal_id FROM oauth_grant_tenants t JOIN oauth_interactive_grants g ON g.id=t.grant_id WHERE t.tenant_id=$2)`, at, tenant); err != nil {
+	owned := strings.ReplaceAll(s.tenantOwnedPrincipals(), "$1", "$2")
+	if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$1) WHERE id IN `+owned, at, tenant); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tenant_memberships SET revoked_at=coalesce(revoked_at,$1),updated_at=$1 WHERE tenant_id=$2`, at, tenant); err != nil {
-		return err
+	if !s.externalAuthEnabled() {
+		if _, err := tx.ExecContext(ctx, `UPDATE tenant_memberships SET revoked_at=coalesce(revoked_at,$1),updated_at=$1 WHERE tenant_id=$2`, at, tenant); err != nil {
+			return err
+		}
 	}
 	projects, err := tenantProjectIDs(ctx, tx, tenant)
 	if err != nil {
 		return err
 	}
 	for _, project := range projects {
-		if err := purgeProjectGrants(ctx, tx, project); err != nil {
+		if err := s.purgeProjectGrants(ctx, tx, project); err != nil {
 			return err
 		}
 	}
@@ -222,7 +235,7 @@ func (s *Service) finishTenantDeletion(ctx context.Context, tenant string) error
 	if err := s.publishLocalUsage(ctx); err != nil {
 		return err
 	}
-	owned, err := s.control.QueryContext(ctx, `SELECT id FROM access_keys WHERE id IN `+tenantOwnedPrincipals, tenant)
+	owned, err := s.control.QueryContext(ctx, `SELECT id FROM access_keys WHERE id IN `+s.tenantOwnedPrincipals(), tenant)
 	if err != nil {
 		return err
 	}
@@ -279,18 +292,20 @@ ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CAS
 	}
 	// These predicates follow explicit credential ownership and tenant-admin
 	// consent ownership. Shared humans, OAuth apps and mixed project grants remain.
-	owned := tenantOwnedPrincipals
+	owned := s.tenantOwnedPrincipals()
 	grants := `(SELECT id FROM oauth_interactive_grants WHERE principal_id IN ` + owned + ` OR client_id IN ` + owned + `)`
-	for _, statement := range []string{
-		`DELETE FROM oauth_authorization_requests WHERE client_id IN ` + owned,
-		`DELETE FROM oauth_authorization_codes WHERE grant_id IN ` + grants,
-		`DELETE FROM oauth_refresh_tokens WHERE grant_id IN ` + grants,
-		`DELETE FROM oauth_tokens WHERE client_id IN ` + owned + ` OR interactive_grant_id IN ` + grants,
-		`DELETE FROM oauth_interactive_access WHERE grant_id IN ` + grants,
-		`DELETE FROM oauth_grant_tenants WHERE grant_id IN ` + grants + ` AND tenant_id<>$1`,
-	} {
-		if _, err := tx.ExecContext(ctx, statement, tenant); err != nil {
-			return err
+	if !s.externalAuthEnabled() {
+		for _, statement := range []string{
+			`DELETE FROM oauth_authorization_requests WHERE client_id IN ` + owned,
+			`DELETE FROM oauth_authorization_codes WHERE grant_id IN ` + grants,
+			`DELETE FROM oauth_refresh_tokens WHERE grant_id IN ` + grants,
+			`DELETE FROM oauth_tokens WHERE client_id IN ` + owned + ` OR interactive_grant_id IN ` + grants,
+			`DELETE FROM oauth_interactive_access WHERE grant_id IN ` + grants,
+			`DELETE FROM oauth_grant_tenants WHERE grant_id IN ` + grants + ` AND tenant_id<>$1`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement, tenant); err != nil {
+				return err
+			}
 		}
 	}
 	// Save owned principal IDs before removing the records used to select them.
@@ -310,15 +325,18 @@ ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CAS
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
-	for _, statement := range []string{
-		`DELETE FROM oauth_interactive_grants WHERE id IN ` + grants,
+	statements := []string{}
+	if !s.externalAuthEnabled() {
+		statements = append(statements, `DELETE FROM oauth_interactive_grants WHERE id IN `+grants, `DELETE FROM tenant_memberships WHERE tenant_id=$1`)
+	}
+	statements = append(statements, []string{
 		`DELETE FROM service_api_keys WHERE principal_id IN ` + owned + ` OR client_id IN ` + owned,
 		`DELETE FROM oauth_clients WHERE client_id IN ` + owned,
 		`DELETE FROM tenant_credentials WHERE tenant_id=$1`,
-		`DELETE FROM tenant_memberships WHERE tenant_id=$1`,
 		`DELETE FROM tenant_usage WHERE tenant_id=$1`,
 		`DELETE FROM tenants WHERE id=$1`,
-	} {
+	}...)
+	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement, tenant); err != nil {
 			return err
 		}

@@ -173,6 +173,16 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	}
 	job := ExportJob{ID: eventapi.NewID(), ProjectID: input.ID, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
 	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
+	if err == nil && principal(ctx).External != nil {
+		actor, authorityErr := s.currentAuthority(ctx, s.control, principal(ctx))
+		if authorityErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
+			return nil, apiError(403, "external export authorization expired or changed")
+		}
+		var tenant string
+		if err = s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO export_external_authority(job_id,tenant_id,expires_at_ms) VALUES($1,$2,$3)`, job.ID, tenant, actor.External.Expires().UnixMilli())
+		}
+	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "export storage unavailable")
 	}
@@ -336,6 +346,9 @@ func (s *Service) eventExportFiles(ctx context.Context, input *ExportFilesInput)
 		artifacts = artifacts[:input.Limit]
 	}
 	ttl := exportLinkTTL
+	if principal(ctx).External != nil {
+		ttl = min(ttl, principal(ctx).External.Expires().Sub(now))
+	}
 	if job.ExpiresAtMS > 0 {
 		ttl = min(ttl, time.UnixMilli(job.ExpiresAtMS).Sub(now))
 	}

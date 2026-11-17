@@ -34,7 +34,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := initializeSharedControl(ctx, first, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, first, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	second, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
@@ -66,7 +66,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := &Service{db: local, control: control, shared: &sharedRuntime{}, oauth: oauth, eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
+		s := &Service{db: local, control: control, shared: &sharedRuntime{}, oauth: oauth, resources: newResourceRuntime(oauth.issuer), eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
 		if err := s.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}

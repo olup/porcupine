@@ -195,6 +195,11 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 			return nil, apiError(503, "import manifest unavailable")
 		}
 	}
+	if a.External != nil {
+		if err := importCheckAuthority(ctx, m.authorityQuery(tx), a, input.ID, m.rules.clock()); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "import manifest unavailable")
 	}
@@ -437,6 +442,11 @@ func (m *importManager) finishImportUpload(ctx context.Context, input *ImportUpl
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0 WHERE job_id=$1`, job.ID); err != nil {
 		return nil, apiError(503, "import cleanup unavailable")
+	}
+	if a.External != nil {
+		if err := importCheckAuthority(ctx, m.authorityQuery(tx), a, input.ID, m.rules.clock()); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "import checkpoint unavailable")

@@ -24,6 +24,7 @@ type externalAuthFixture struct {
 	issuer string
 	broken atomic.Bool
 	clock  time.Time
+	now    atomic.Int64
 }
 
 func newExternalAuthFixture(t *testing.T) *externalAuthFixture {
@@ -33,6 +34,7 @@ func newExternalAuthFixture(t *testing.T) *externalAuthFixture {
 		t.Fatal(e)
 	}
 	f := &externalAuthFixture{key: key, clock: time.Now().UTC().Truncate(time.Second)}
+	f.now.Store(f.clock.UnixMilli())
 	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if f.broken.Load() {
 			w.WriteHeader(503)
@@ -42,7 +44,7 @@ func newExternalAuthFixture(t *testing.T) *externalAuthFixture {
 	}))
 	t.Cleanup(issuer.Close)
 	f.issuer = issuer.URL + "/realm"
-	f.s, e = Open(Config{DBPath: filepath.Join(t.TempDir(), "journal.db"), Clock: func() time.Time { return f.clock }, Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: auth.ExternalConfig{Issuer: f.issuer, JWKSURL: issuer.URL + "/keys", APIAudience: "https://data.test/api/v1", MCPAudience: "https://data.test/mcp"}}})
+	f.s, e = Open(Config{DBPath: filepath.Join(t.TempDir(), "journal.db"), Clock: func() time.Time { return time.UnixMilli(f.now.Load()) }, Auth: &AuthConfig{Mode: "external", PublicURL: "https://data.test", External: auth.ExternalConfig{Issuer: f.issuer, JWKSURL: issuer.URL + "/keys", APIAudience: "https://data.test/api/v1", MCPAudience: "https://data.test/mcp"}}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -57,7 +59,8 @@ func (f *externalAuthFixture) token(t *testing.T, subject, tenant, scope, audien
 	} else if projects == nil {
 		authority = map[string]any{"tenant_id": tenant, "project_scope": "all"}
 	}
-	c := jwt.MapClaims{"iss": f.issuer, "sub": subject, "aud": audience, "iat": f.clock.Unix(), "exp": f.clock.Add(5 * time.Minute).Unix(), "scope": scope, "porcupine": authority}
+	now := time.UnixMilli(f.now.Load())
+	c := jwt.MapClaims{"iss": f.issuer, "sub": subject, "aud": audience, "iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "scope": scope, "porcupine": authority}
 	j := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
 	j.Header["typ"] = "at+jwt"
 	j.Header["kid"] = "one"
@@ -174,4 +177,40 @@ func TestExternalAuthConfigIsOfflineAndCannotAdoptBuiltin(t *testing.T) {
 	if e := checkControlAuthMode(t.Context(), builtin.control, true); e == nil {
 		t.Fatal("builtin identities adopted by external")
 	}
+}
+
+func TestExternalMCPReauthenticatesEveryRequest(t *testing.T) {
+	t.Parallel()
+	f := newExternalAuthFixture(t)
+	s := f.s
+	p := request(t, s, "POST", "/api/v1/projects", f.operator(t), `{"name":"MCP"}`, 201)
+	id := p["project"].(map[string]any)["id"].(string)
+	host := httptest.NewServer(s.Handler())
+	defer host.Close()
+	token := f.token(t, "reader", defaultTenantID, "management:read events:read", s.resources.mcpResource, id)
+	ctx, session := mcpTestSession(t, host.URL, token, "")
+	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": id}}, 200)
+	docs := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20}, false)
+	for _, op := range docs["operations"].([]any) {
+		id := op.(map[string]any)["operation_id"].(string)
+		if strings.Contains(id, "human") || strings.Contains(id, "oauth-grant") || strings.Contains(id, "tenant-member") {
+			t.Fatal("MCP exposed disabled builtin authority", id)
+		}
+	}
+	f.now.Store(f.clock.Add(6 * time.Minute).UnixMilli())
+	if _, err := session.ListTools(ctx, nil); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatal("MCP session retained expired external authority", err)
+	}
+	f.broken.Store(true)
+	fresh := f.token(t, "reader", defaultTenantID, "management:read events:read", s.resources.mcpResource, id)
+	r := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1"},"capabilities":{}}}`))
+	r.Header.Set("Authorization", "Bearer "+fresh)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json, text/event-stream")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 503 {
+		t.Fatalf("external outage should be retryable: %d %s", w.Code, w.Body.String())
+	}
+	request(t, s, "POST", "/capture/", "", captureBody(p["ingest_token"].(string), "public-during-outage"), 200)
 }

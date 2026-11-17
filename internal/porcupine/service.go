@@ -157,7 +157,7 @@ func Open(c Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		resources = &resourceRuntime{publicURL: oauth.issuer, apiResource: oauth.issuer + "/api/v1", mcpResource: oauth.issuer + "/mcp"}
+		resources = newResourceRuntime(oauth.issuer)
 	}
 	pipelines, err := newPipelineRuntime(c.Pipelines)
 	if err != nil {
@@ -715,6 +715,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		a, err = s.authenticate(r.Context(), rawKey)
 	}
 	if err != nil {
+		if errors.Is(err, auth.ErrExternalKeysUnavailable) {
+			w.Header().Set("Retry-After", "3")
+			problem(w, 503, "external authentication signing keys unavailable")
+			return
+		}
 		problem(w, 401, "invalid ingestion credential")
 		return
 	}

@@ -116,8 +116,8 @@ func NormalizeExternalConfig(c ExternalConfig) (ExternalConfig, error) {
 	if c.MaxTokenLifetime < time.Minute || c.MaxTokenLifetime > time.Hour {
 		return c, errors.New("external token lifetime must be one minute to one hour")
 	}
-	c.Algorithms=slices.Clone(c.Algorithms)
-	c.TokenTypes=slices.Clone(c.TokenTypes)
+	c.Algorithms = slices.Clone(c.Algorithms)
+	c.TokenTypes = slices.Clone(c.TokenTypes)
 	return c, nil
 }
 func NewExternalVerifier(c ExternalConfig) (*ExternalVerifier, error) {
@@ -132,6 +132,13 @@ func (v *ExternalVerifier) Config() ExternalConfig {
 	c.Algorithms = slices.Clone(c.Algorithms)
 	c.TokenTypes = slices.Clone(c.TokenTypes)
 	return c
+}
+
+// SigningKeysAvailable reports cache health without fetching keys or exposing them.
+func (v *ExternalVerifier) SigningKeysAvailable(now time.Time) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return now.Before(v.validUntil) && len(v.keys) > 0
 }
 
 // Verify checks access-token provenance before interpreting authorization claims.

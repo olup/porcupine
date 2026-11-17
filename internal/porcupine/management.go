@@ -564,6 +564,9 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		return nil, apiError(503, "credential storage unavailable")
 	}
 	defer tx.Rollback()
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(503, "credential storage unavailable")
 	}
@@ -596,6 +599,9 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
+	}
 	// Serialize administrator counts and revocation, including concurrent requests.
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(500, "storage error")

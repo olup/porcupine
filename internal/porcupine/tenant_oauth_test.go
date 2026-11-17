@@ -230,7 +230,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := initializeSharedControl(ctx, control, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, control, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	other, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
@@ -265,7 +265,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := &Service{db: local, control: database, shared: &sharedRuntime{}, oauth: oauth, eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
+		s := &Service{db: local, control: database, shared: &sharedRuntime{}, oauth: oauth, resources: newResourceRuntime(oauth.issuer), eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
 		if err := s.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}

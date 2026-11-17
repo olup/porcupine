@@ -191,6 +191,9 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
 		return nil, err
 	}
+	if err := s.requireExternalCurrent(ctx, tx); err != nil {
+		return nil, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
