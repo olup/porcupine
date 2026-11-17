@@ -222,11 +222,19 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 	if err := validateTenantBudgets(b); err != nil {
 		return nil, err
 	}
-	t, err := scanTenant(s.control.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5 WHERE id=$6 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
+	tx, err := s.beginTenantAdministration(ctx, input.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5 WHERE id=$6 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "tenant not found")
 	}
 	if err != nil {
+		return nil, apiError(503, "tenant storage unavailable")
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "tenant storage unavailable")
 	}
 	out := &TenantOutput{}

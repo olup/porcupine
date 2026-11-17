@@ -4,6 +4,8 @@ package exportstore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -47,6 +49,7 @@ type Store struct {
 	client         *s3.Client
 	presigner      *s3.PresignClient
 	bucket, prefix string
+	ownershipID    string
 	transport      *http.Transport
 }
 
@@ -91,8 +94,13 @@ func New(ctx context.Context, c Config) (*Store, error) {
 		return nil, storageError(ctx)
 	}
 
-	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", transport: transport}, nil
+	identity := sha256.Sum256([]byte(strings.Join([]string{c.Endpoint, c.Region, c.Bucket, prefix}, "\x00")))
+	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", ownershipID: hex.EncodeToString(identity[:]), transport: transport}, nil
 }
+
+// OwnershipID identifies the object namespace without retaining its identifying
+// labels or access credentials in a deletion inventory.
+func (s *Store) OwnershipID() string { return s.ownershipID }
 
 // Close releases idle connections after callers have stopped all uploads.
 func (s *Store) Close() { s.transport.CloseIdleConnections() }
