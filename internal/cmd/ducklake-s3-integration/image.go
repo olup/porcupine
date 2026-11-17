@@ -108,7 +108,6 @@ func runImage(ctx context.Context, image, expectedVersion string, credentialChai
 	}
 	storageCreated = true
 	variables := map[string]string{
-		"PORCUPINE_ADDR":            "0.0.0.0:8080",
 		"PORCUPINE_BOOTSTRAP_TOKEN": bootstrap, "PORCUPINE_DUCKLAKE_MEMORY_MB": "256", "PORCUPINE_DUCKLAKE_THREADS": "1",
 		"PORCUPINE_DUCKLAKE_S3_BUCKET": bucket, "PORCUPINE_DUCKLAKE_S3_PREFIX": prefix, "PORCUPINE_DUCKLAKE_S3_REGION": "us-east-1", "PORCUPINE_DUCKLAKE_S3_PATH_STYLE": "true",
 		"PORCUPINE_DUCKLAKE_S3_ENDPOINT": "https://" + storageName + ":9000", "PORCUPINE_DUCKLAKE_S3_ACCESS_KEY_ID": access, "PORCUPINE_DUCKLAKE_S3_SECRET_ACCESS_KEY": secret,

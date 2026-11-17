@@ -16,6 +16,9 @@ import (
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
+// Container builds set this at link time; explicit settings always take priority.
+var defaultListenAddress = "127.0.0.1:8080"
+
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -50,7 +53,7 @@ func serve(config porcupine.Config, addr string) error {
 func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	addr := s.get("PORCUPINE_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:8080"
+		addr = defaultListenAddress
 	}
 	queueMax := 100000
 	if raw := s.get("PORCUPINE_QUEUE_MAX_EVENTS"); raw != "" {

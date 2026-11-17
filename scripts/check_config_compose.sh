@@ -9,6 +9,7 @@ compose() {
   docker compose -p "$project" -f compose.yaml -f "$work/ports.yaml" "$@"
 }
 cleanup() {
+  docker rm -fv "$project-env-only" >/dev/null 2>&1 || true
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
@@ -59,7 +60,7 @@ until curl --fail --silent "http://$address/readyz" > /dev/null; do
 done
 compose stop porcupine >/dev/null
 compose cp porcupine:/data/porcupine.json "$work/edited.json"
-sed 's/0.0.0.0:8080/0.0.0.0:8081/' "$work/edited.json" > "$work/custom.json"
+sed -e 's/0.0.0.0:8080/0.0.0.0:8081/' -e 's|/data/porcupine.db|/data/custom/ingestion.db|g' -e 's|/data/ducklake|/data/custom/lake|g' "$work/edited.json" > "$work/custom.json"
 compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$work/custom.json"
 compose --profile tools run --rm --no-deps config-check > "$work/reinstalled.json"
 grep -q '\[redacted\]' "$work/reinstalled.json"
@@ -77,4 +78,19 @@ until curl --fail --silent "http://$address/readyz" > /dev/null; do
   if [ "$attempt" -ge 100 ]; then compose logs porcupine >&2; exit 1; fi
   sleep 0.2
 done
-printf 'Private initialization, masked config check, nonroot startup, restart and atomic config install passed.\n'
+compose cp porcupine:/data/custom/ingestion.db "$work/custom-journal.db"
+compose cp porcupine:/data/custom/ingestion.db.control "$work/custom-control.db"
+compose cp porcupine:/data/custom/lake/registry.sqlite "$work/custom-registry.sqlite"
+printf 'Private initialization, masked config check, nonroot startup, restart, atomic config install and custom storage paths passed.\n'
+
+docker run -d --name "$project-env-only" -p "127.0.0.1::8080" \
+  -e PORCUPINE_BOOTSTRAP_TOKEN=config-smoke-bootstrap-not-a-production-secret \
+  "$PORCUPINE_IMAGE" >/dev/null
+address=$(docker port "$project-env-only" 8080)
+attempt=0
+until curl --fail --silent "http://$address/readyz" > /dev/null; do
+  attempt=$((attempt+1))
+  if [ "$attempt" -ge 100 ]; then docker logs "$project-env-only" >&2; exit 1; fi
+  sleep 0.2
+done
+printf 'Environment-only container startup also passed without an explicit listen address.\n'

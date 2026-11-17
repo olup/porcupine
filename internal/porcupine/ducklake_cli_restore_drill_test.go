@@ -92,7 +92,7 @@ func TestDuckLakeCLIRestoreDrill(t *testing.T) {
 	}
 	docker("run", "-d", "--name", container, "--read-only", "--memory=2g", "--cpus=2",
 		"--tmpfs", "/tmp:rw,nosuid,nodev,size=256m", "--mount", "type=volume,src="+volume+",dst=/data",
-		"-p", "127.0.0.1::8080", "-e", "PORCUPINE_ADDR=0.0.0.0:8080", image)
+		"-p", "127.0.0.1::8080", image)
 	if user := docker("inspect", "--format", "{{.Config.User}}", container); user != "65532:65532" {
 		t.Fatalf("recovered server is not nonroot: %s", user)
 	}

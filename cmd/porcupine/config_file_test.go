@@ -298,3 +298,33 @@ func TestConfigInitConcurrentWritersKeepOneCompleteFile(t *testing.T) {
 		t.Fatal("initialization left temporary files")
 	}
 }
+
+func TestListenDefaultFileAndEnvironmentPrecedence(t *testing.T) {
+	// This test changes a link-time default, so it runs before parallel tests.
+	nativeDefault := defaultListenAddress
+	if nativeDefault != "127.0.0.1:8080" {
+		t.Fatalf("native default is %q", nativeDefault)
+	}
+	t.Cleanup(func() { defaultListenAddress = nativeDefault })
+	defaultListenAddress = "0.0.0.0:8080"
+	for _, tc := range []struct {
+		name     string
+		settings settings
+		want     string
+	}{
+		{"container fallback", settings{}, "0.0.0.0:8080"},
+		{"file wins", settings{"PORCUPINE_ADDR": "127.0.0.1:9090"}, "127.0.0.1:9090"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address, _, err := tc.settings.serviceConfig()
+			if err != nil || address != tc.want {
+				t.Fatalf("address=%q err=%v", address, err)
+			}
+		})
+	}
+	t.Setenv("PORCUPINE_ADDR", "0.0.0.0:9191")
+	address, _, err := (settings{"PORCUPINE_ADDR": "127.0.0.1:9090"}).serviceConfig()
+	if err != nil || address != "0.0.0.0:9191" {
+		t.Fatalf("environment did not win: %q %v", address, err)
+	}
+}

@@ -8,7 +8,7 @@ ARG VERSION=dev
 RUN --mount=type=cache,id=porcupine-analytics-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=porcupine-analytics-go-build,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -trimpath \
-    -ldflags="-s -w -X github.com/olup/porcupine/internal/porcupine.Version=$VERSION" \
+    -ldflags="-s -w -X github.com/olup/porcupine/internal/porcupine.Version=$VERSION -X main.defaultListenAddress=0.0.0.0:8080" \
     -o /porcupine ./cmd/porcupine && mkdir /data
 RUN --mount=type=cache,id=porcupine-analytics-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=porcupine-analytics-go-build,target=/root/.cache/go-build <<'EOF'
