@@ -418,6 +418,7 @@ type sharedJourneyProcessConfig struct {
 	DatabaseURL string
 	DBPath      string
 	WorkerID    string
+	OAuthIssuer string
 	ReadyFile   string
 }
 
@@ -436,8 +437,12 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	origin := "http://" + listener.Addr().String()
-	s, err := Open(Config{DBPath: input.DBPath, BootstrapToken: adminToken,
-		Shared: &SharedConfig{DatabaseURL: input.DatabaseURL, WorkerID: input.WorkerID, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)}})
+	serverConfig := Config{DBPath: input.DBPath, BootstrapToken: adminToken,
+		Shared: &SharedConfig{DatabaseURL: input.DatabaseURL, WorkerID: input.WorkerID, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)}}
+	if input.OAuthIssuer != "" {
+		serverConfig.OAuth = &OAuthConfig{Issuer: input.OAuthIssuer}
+	}
+	s, err := Open(serverConfig)
 	if err != nil {
 		listener.Close()
 		t.Fatal("start shared subprocess", err)

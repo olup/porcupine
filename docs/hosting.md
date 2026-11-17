@@ -80,6 +80,18 @@ The same binary supports both modes. Keep the default local mode for one server.
 
 A fresh development installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
 
+## Provision a tenant from a private service
+
+For one team, keep the built-in `default` tenant and use [team setup](reference/tenant-access.md). If you manage several teams from your own application, the matching development server exposes the same operator API used by the standalone CLI. Configure the OAuth issuer or [external authentication](reference/external-auth.md) first.
+
+1. As the instance operator, use `create-oauth-client` to create a machine account with `permissions: ["instance:admin"]` and `projects: ["*"]`. Issue its key with `create-service-api-key`, the same grant, and `audience: "api"`. Store the returned one-time token in the private service's secret store. Send it as an API bearer credential. [Machine credentials](reference/service-keys.md)
+2. From the service, call `POST /api/v1/tenants` with the team's name. Save the returned `tenant.id` in your application's customer record. If the team needs limits, send the complete policy to `PUT /api/v1/tenants/{tenant_id}/budgets`. [Tenant budgets](reference/tenants.md)
+3. Call `POST /api/v1/projects` with the project name and `tenant_id`. Give producers the project's ingestion credential, or issue a scoped team service key for a private producer. Give dashboards a separate project-scoped reader key. [Project ingestion modes](reference/projects.md)
+4. Read the month's allowance through `GET /api/v1/tenants/{tenant_id}/usage`. Use `GET /api/v1/usage` for the operator's paginated numerical report. Keep customer records and billing in your application. [Numerical usage and its limits](reference/usage.md)
+5. To remove access, revoke the relevant key through its management API. Rotate a provisioner key by deploying a replacement before revoking the old key with `revoke-access-key`. [Credential rotation](reference/service-keys.md)
+
+Inspect the running instance's `/openapi.json` for request and response schemas. To exercise provisioning, tenant isolation, and restart recovery in a disposable shared deployment, run the [two-worker check](reference/shared-deployment.md#exercise-provisioning-and-owner-restart).
+
 ## Keep data and resources safe
 
 Run one server process per local data directory. Preserve both SQLite databases and their auxiliary files with DuckLake and private configuration. Do not share local catalogs or SQLite files between writers or use a network filesystem for them. The container runs as user 65532; a bind mount must let that user read private configuration and write data.
