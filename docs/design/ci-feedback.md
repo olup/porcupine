@@ -5,6 +5,7 @@ This change reorganizes test execution after `a34027a`. It changes no production
 ## What changed
 
 - Generators, tests and server builds use `-trimpath`, so the final reproducible server build can reuse compilation performed by earlier non-race commands. Race and non-race builds still have separate cache entries.
+- Go cache identities include the Makefile and the relevant existing entrypoint. The old immutable `go.sum`-only cache could never retain compilation for the new flags, and the fastest documentation job could populate the shared cache without native/race objects. These component identities keep that work separate without adding a rolling cache service.
 - Two backend race jobs discover the executable suite with `go test -race -list .`. Stable hashing assigns every Test, Example and Fuzz entry to exactly one job. New tests are included automatically.
 - Each shard records terminal results, including subtests and fuzz seeds. The final `go` check rejects missing shards, mismatched inventories, duplicate assignments and missing or unsuccessful top-level results.
 - Other packages run with the race detector alongside the backend jobs. Local `make check` and `make check-full` retain their existing short/full meanings.
