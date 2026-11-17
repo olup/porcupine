@@ -58,12 +58,13 @@ consumption. This allows the agreed small overshoot across owners. Expired polic
 fails closed. Authentication and revocation do not use that quota cache.
 
 Interactive SQL, catalog and profile requests reserve a shared tenant place as
-well as worker capacity. The permit covers the SQL deadline, S3 and PostgreSQL
-metadata I/O allowances, then a thirty-second margin. Release is fenced by its
-random token. A native call that still has not returned fifteen seconds after its
-deadline and I/O allowances triggers worker exit 70, before permit reuse. Normal
-cancellation interrupts execution and releases the place. Local mode has no
-shared fail-stop watchdog.
+well as worker capacity. An execution keeper renews a thirty-second permit every
+five seconds until the call returns. Renewal and release use its random token.
+Failed renewal or unresponsive native work quarantines the project's interactive
+engine without terminating the worker. Automatic expiry can reassign a place
+while a partitioned worker still runs native work. Local mode has no shared
+keeper. The [runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
+owns the current timing, shutdown, and failure semantics.
 
 Project deletion fences all workers before cleanup. Local work registers before
 materializing foreign-key anchors, so deletion cancels and drains it before

@@ -35,8 +35,11 @@ func serve(config porcupine.Config, addr string) error {
 	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(config.DuckLake) + time.Duration(config.InteractiveQueries.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
+		s.BeginQueryDrain()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {
@@ -47,6 +50,7 @@ func serve(config porcupine.Config, addr string) error {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
+	<-drained
 	return nil
 }
 
