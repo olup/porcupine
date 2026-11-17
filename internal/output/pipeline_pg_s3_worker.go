@@ -134,7 +134,7 @@ func (s *PipelineJobs) runHostedScheduledAttempt(ctx context.Context, w *hostedS
 		code = "interrupted"
 	}
 	_, err = s.db.ExecContext(record, `UPDATE hosted_s3_pipeline_runs SET state=$3,error_code=$4,lease_until=NULL,
-next_attempt=clock_timestamp()+$5::double precision*interval '1 second',completed_at_ms=CASE WHEN $3='failed' THEN $6 ELSE 0 END
+next_attempt=clock_timestamp()+$5::double precision*interval '1 second',completed_at_ms=CASE WHEN $3='failed' THEN $6::bigint ELSE 0 END
 WHERE id=$1 AND claim_id=$2 AND state='running'`, w.id, w.claimID, state, code, 1<<w.attempts, s.clock().UnixMilli())
 	return err
 }
