@@ -79,7 +79,7 @@ Shared workers publish cumulative counters to PostgreSQL and refresh cached budg
 
 Several owners serving one tenant can exceed an allowance during that publication and cache delay. There is no strict cross-worker event-quota bound or hard spending-cap guarantee. An expired policy cache must refresh successfully before accepting new events; unavailable PostgreSQL does not permit unlimited use of stale policy. Already accepted delivery continues. Credential revocation and deletion fences do not use the budget cache.
 
-Interactive query places are reserved immediately in PostgreSQL across workers. Local process capacity remains an additional limit. Each reservation expires after 30 seconds and an independent execution keeper renews active reservations every five seconds. Renewal continues after an HTTP timeout or cancellation until the analytical call actually returns. Only that return releases the reservation and local place.
+Interactive query places are reserved immediately in PostgreSQL across workers. Local process capacity remains an additional limit. Each reservation expires after 30 seconds and an independent execution keeper renews active reservations every five seconds. Renewal continues after an HTTP timeout or cancellation until the analytical call actually returns. That return releases the reservation and local place before profile summarization, delivery-status lookups, or response encoding. Response processing retains the original deadline through a separate context.
 
 ## Native timeouts and worker supervision
 
@@ -88,6 +88,8 @@ The SQL deadline normally interrupts CPU execution. Native database and network 
 If native execution has not returned by the SQL deadline plus both I/O allowances plus 15 seconds, Porcupine quarantines that project's interactive engine on this worker. New SQL, catalog, and profile executions for it return `503` with `analytics_engine_unhealthy`. Other healthy projects can continue while local and tenant capacity remains. The quarantine lasts until worker restart. Porcupine does not terminate the process because of a stuck query.
 
 A failed renewal also cancels the affected project's active requests and quarantines its interactive engine. The keeper continues trying to renew while calls remain alive. Renewal and release are scoped to the original reservation token; neither can revive an expired reservation or change a replacement. A control operation has a two-second deadline.
+
+If reservation loss cancels native work, its result is rejected even when the driver returns no error. The response is `503` with `query_permit_uncertain`, indicating shared-control availability rather than a quota refusal. Ordinary execution deadlines and client cancellation retain their existing error mapping. A failure or delay in delivery-status response processing cannot quarantine an engine whose native call has already returned.
 
 Automatic expiry recovers capacity after a crash or lost heartbeat. It does not prove that native execution stopped. During a PostgreSQL network partition, an uninterruptible call may continue after its reservation expires and another worker receives the place. The tenant's physical concurrency can then exceed its configured limit. This is an accepted failure window, not a strict distributed execution guarantee. Local slots remain occupied until calls return.
 

@@ -83,7 +83,10 @@ func (a *tenantQueryAdmission) acquire(tenant string, limit int) (func(), bool) 
 
 // beginInteractiveQuery reserves tenant and deployment capacity together for
 // SQL and discovery. Existing jobs retain their independent heavy-query policy.
-func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (context.Context, InteractiveQueryConfig, func(), error) {
+// Finish immediately after the lake method returns; its error preserves execution
+// cancellation before cleanup cancels the native context. Response processing
+// needs its own context with the same deadline, derived from the request parent.
+func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (context.Context, InteractiveQueryConfig, func() error, error) {
 	if s.shared != nil {
 		if err := s.sharedQueries.allow(project); err != nil {
 			return nil, InteractiveQueryConfig{}, nil, err
@@ -138,24 +141,27 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 	hardDeadline := started.Add(time.Duration(limits.TimeoutMS) * time.Millisecond)
 	child, cancel := context.WithDeadline(ctx, hardDeadline)
 	var once sync.Once
-	var finishShared func()
-	release := func() {
+	var finishShared func() error
+	var stopped error
+	release := func() error {
 		once.Do(func() {
 			if finishShared != nil {
-				finishShared()
+				stopped = finishShared()
 			} else {
+				stopped = child.Err()
 				releaseTenant()
 			}
 			cancel()
 			<-s.querySlots
 		})
+		return stopped
 	}
 	if child.Err() != nil {
 		release()
 		return nil, InteractiveQueryConfig{}, nil, lakeapi.DuckLakeQueryError(child, child.Err())
 	}
 	if s.shared != nil {
-		finishShared, err = s.sharedQueries.start(permit, project, cancel, sharedQueryUnresponsiveDeadline(hardDeadline, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds))
+		finishShared, err = s.sharedQueries.start(child, permit, project, cancel, sharedQueryUnresponsiveDeadline(hardDeadline, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds))
 		if err != nil {
 			release()
 			return nil, InteractiveQueryConfig{}, nil, err
@@ -166,4 +172,17 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 
 func tenantQueryConcurrencyError() error {
 	return analyticsError(429, "tenant_query_concurrency_limit", "tenant interactive query concurrency limit reached", "Wait for another query in this tenant to finish, then retry.", "")
+}
+
+func interactiveQueryResultError(ctx context.Context, stopped, nativeErr error) error {
+	if errors.Is(stopped, errSharedQueryPermitUncertain) {
+		return analyticsError(503, "query_permit_uncertain", "shared query reservation is unavailable", "Retry on a healthy worker after shared control recovers.", "")
+	}
+	if nativeErr != nil {
+		return nativeErr
+	}
+	if stopped != nil {
+		return lakeapi.DuckLakeQueryError(ctx, stopped)
+	}
+	return nil
 }

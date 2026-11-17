@@ -83,7 +83,7 @@ func TestSharedQueryPermitsAcrossServices(t *testing.T) {
 	// A burst through independent pools must still produce exactly one permit.
 	const contenders = 12
 	start := make(chan struct{})
-	releases := make(chan func(), contenders)
+	releases := make(chan func() error, contenders)
 	var wait sync.WaitGroup
 	for i := range contenders {
 		wait.Add(1)

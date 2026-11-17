@@ -1,13 +1,20 @@
 # Shared interactive execution lifecycle
 
-Unreleased. This changes the shared deployment only. Default local execution and
-its cancellation behavior stay unchanged.
+Unreleased. The renewable permit and quarantine mechanism applies only to shared
+deployments. Local execution keeps its existing cancellation and limit policies.
 
 ## Decision
 
 An HTTP timeout is a cancellation request, not proof that native execution has
 returned. A shared interactive scope owns its worker slot and PostgreSQL permit
-until its caller returns from the lake operation. One keeper per service renews
+until its caller returns from the lake operation. Opening the project, preparing
+SQL, reading native rows, and decoding the lake result are inside that boundary.
+Profile summarization, delivery-status lookups, and response JSON are outside it.
+Their context retains the original request parent and execution deadline; finishing
+native execution cannot cancel it. A canceled execution cannot return a successful
+result even when the driver returns a nil error. Permit loss maps to retryable
+`503 query_permit_uncertain`; deadline and client-cancellation mappings stay
+unchanged. One keeper per service renews
 all its active permits independently of the HTTP context.
 
 The operator chose automatic permit expiry. PostgreSQL connectivity can fail
@@ -21,6 +28,7 @@ fencing during a network partition.
 | Situation | Previous behavior | Current behavior |
 | --- | --- | --- |
 | Healthy query completes | Token-scoped release | Token-scoped release |
+| Lake method returns before response processing | Places and timer retained through handler completion | Native tracking and places released before summary, delivery status, or JSON processing, in both modes |
 | HTTP context expires but native call remains alive | Fixed permit horizon and process watchdog | Local slot retained; independent renewal continues |
 | Native work exceeds deadline and both I/O allowances plus 15 seconds | Exit status 70, affecting the whole worker | Project interactive engine quarantined; process stays alive |
 | Renewal fails or original permit disappears | No heartbeat | Cancel and quarantine affected project; show uncertain permit |
@@ -58,6 +66,14 @@ stand-in ignores cancellation. The permit must remain renewed and occupied.
 During that wait, an unrelated project executes real DuckDB SQL successfully.
 The test checks quarantine, status privacy, liveness/readiness, early-close
 refusal, and release only after the blocked call returns.
+
+A second regression covers all three production HTTP paths. Real native work
+returns while a PostgreSQL table lock blocks only the subsequent delivery-status
+lookup. Native active counts, local slots, and shared permits must already be
+zero. Late timer callbacks and failed renewal cannot quarantine the engine, and
+readiness stays healthy. Releasing the lock lets the response succeed under its
+own original deadline. A nil native error after permit-loss cancellation must
+still produce an error response.
 
 Additional tests cover a killed worker recovering through real TTL expiry,
 failed control renewal, expired-token replacement, batched renewal while

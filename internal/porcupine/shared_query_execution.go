@@ -30,7 +30,10 @@ type sharedQueryExecution struct {
 	cancel    context.CancelFunc
 	timer     *time.Timer
 	uncertain bool
+	stopErr   error
 }
+
+var errSharedQueryPermitUncertain = errors.New("shared query permit is uncertain")
 
 // The keeper belongs to actual execution scopes, not HTTP request contexts.
 // Expiry recovers crashed workers but cannot fence an uninterruptible native
@@ -61,7 +64,7 @@ func (m *sharedQueryExecutions) allow(project string) error {
 	return m.allowLocked(project)
 }
 
-func (m *sharedQueryExecutions) start(permit *sharedQueryPermit, project string, cancel context.CancelFunc, unhealthyAt time.Time) (func(), error) {
+func (m *sharedQueryExecutions) start(ctx context.Context, permit *sharedQueryPermit, project string, cancel context.CancelFunc, unhealthyAt time.Time) (func() error, error) {
 	m.mu.Lock()
 	if err := m.allowLocked(project); err != nil {
 		m.mu.Unlock()
@@ -83,9 +86,14 @@ func (m *sharedQueryExecutions) start(permit *sharedQueryPermit, project string,
 	}
 	m.mu.Unlock()
 	var once sync.Once
-	return func() {
+	var stopped error
+	return func() error {
 		once.Do(func() {
 			m.mu.Lock()
+			stopped = ctx.Err()
+			if errors.Is(e.stopErr, errSharedQueryPermitUncertain) || stopped == nil {
+				stopped = e.stopErr
+			}
 			delete(m.active, permit.id)
 			e.timer.Stop()
 			m.mu.Unlock()
@@ -96,6 +104,7 @@ func (m *sharedQueryExecutions) start(permit *sharedQueryPermit, project string,
 			}
 			permit.release()
 		})
+		return stopped
 	}, nil
 }
 
@@ -179,6 +188,11 @@ func (m *sharedQueryExecutions) quarantine(id, reason string, uncertain bool) {
 	var cancels []context.CancelFunc
 	for _, scope := range m.active {
 		if scope.project == e.project {
+			if uncertain {
+				scope.stopErr = errSharedQueryPermitUncertain
+			} else if scope.stopErr == nil {
+				scope.stopErr = context.Canceled
+			}
 			cancels = append(cancels, scope.cancel)
 		}
 	}
@@ -234,6 +248,9 @@ func (s *Service) BeginQueryDrain() {
 	s.sharedQueries.draining = true
 	cancels := make([]context.CancelFunc, 0, len(s.sharedQueries.active))
 	for _, e := range s.sharedQueries.active {
+		if e.stopErr == nil {
+			e.stopErr = context.Canceled
+		}
 		cancels = append(cancels, e.cancel)
 	}
 	s.sharedQueries.mu.Unlock()
