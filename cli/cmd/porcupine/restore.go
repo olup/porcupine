@@ -143,6 +143,7 @@ type offlineRestoreRequest struct {
 	SourceID                     string `json:"source_id"`
 	LocalBundlePath              string `json:"local_bundle_path,omitempty"`
 	TargetDBPath                 string `json:"target_db_path"`
+	TargetControlDBPath          string `json:"target_control_db_path"`
 	TargetDuckLakeDirectory      string `json:"target_ducklake_directory"`
 	ResetCredentialsAcknowledged bool   `json:"reset_credentials_acknowledged"`
 	BootstrapToken               string `json:"bootstrap_token"`
@@ -171,7 +172,7 @@ func restoreOffline(parent context.Context, c *cli.Command, run restoreDockerRun
 	if strings.HasPrefix(image, "-") || strings.ContainsAny(image, " \t\r\n") {
 		return errors.New("invalid --image")
 	}
-	request := offlineRestoreRequest{BackupID: c.String("backup-id"), SourceID: c.String("source-id"), TargetDBPath: "/data/porcupine.db", TargetDuckLakeDirectory: "/data/ducklake", ResetCredentialsAcknowledged: true, ChownToNonroot: true}
+	request := offlineRestoreRequest{BackupID: c.String("backup-id"), SourceID: c.String("source-id"), TargetDBPath: "/data/porcupine.db", TargetControlDBPath: "/data/porcupine.db.control", TargetDuckLakeDirectory: "/data/ducklake", ResetCredentialsAcknowledged: true, ChownToNonroot: true}
 	bundle := c.String("bundle")
 	if bundle != "" {
 		if c.IsSet("backup-id") || c.IsSet("source-id") {
@@ -333,7 +334,7 @@ func restoreBundleIdentity(path string) (string, string, string, error) {
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, (16<<20)+1))
 	var trailing any
-	if decoder.Decode(&identity) != nil || decoder.Decode(&trailing) != io.EOF || identity.Format != "porcupine-native-v1" || !strings.HasPrefix(identity.ID, "pc_backup_") || len(identity.ID) <= len("pc_backup_") || !restoreSegment.MatchString(identity.ID) || !restoreSegment.MatchString(identity.SourceID) {
+	if decoder.Decode(&identity) != nil || decoder.Decode(&trailing) != io.EOF || identity.Format != "porcupine-native-v2" || !strings.HasPrefix(identity.ID, "pc_backup_") || len(identity.ID) <= len("pc_backup_") || !restoreSegment.MatchString(identity.ID) || !restoreSegment.MatchString(identity.SourceID) {
 		return "", "", "", errors.New("bundle manifest has invalid native backup identity")
 	}
 	return resolved, identity.ID, identity.SourceID, nil

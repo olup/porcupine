@@ -1,6 +1,6 @@
 # Remote backups and offline recovery
 
-Available in v0.14.0 and later. Use matching released server and CLI versions. Local recovery bundles are also supported; see [local backups](native-backups.md).
+**Unreleased storage layout.** This guide describes the two-database `porcupine-native-v2` format in the tenant-enabled development build. Use a server image and standalone CLI built from the same checkout. The published v0.14.0 image and CLI use the earlier single-database format; this development version does not migrate or restore those bundles. Local recovery bundles are also supported; see [local backups](native-backups.md).
 
 ## Choose a backup destination
 
@@ -33,7 +33,7 @@ porcupine get-instance-status
 
 The administrator's `native_backup` report includes state, checkpoint, success, `latest_bundle` and `source_id`. Project-scoped callers do not receive it. This source ID selects the analytical backup namespace; it differs from an event's producer `source_id`.
 
-S3 bundles live beneath `PREFIX/native-backups/SOURCE_ID/BACKUP_ID/`. Each completed bundle contains SQLite, project catalogs, data files and `manifest.json`. The manifest describes the bundle layout and original storage identity. It contains no source credentials or deployment environment files.
+S3 bundles live beneath `PREFIX/native-backups/SOURCE_ID/BACKUP_ID/`. Each completed bundle contains `control.sqlite`, `acceptance.sqlite`, project catalogs, data files, and `manifest.json`. Both SQLite files belong to the same coordinated recovery point. The manifest describes the bundle layout and original storage identity. It contains no source credentials or deployment environment files. Full-instance native backup is unavailable with shared PostgreSQL control or catalogs.
 
 The server briefly coordinates projection and catalog capture. For remote data it then holds cleanup protection and project deletion pins while ingestion and queries resume. It checks current catalog references, streams data into the backup, verifies hashes by reading the destination back, and publishes the manifest last. Missing current references or failed transfers must not replace the previous good backup.
 
@@ -41,7 +41,7 @@ S3 backups are sequential full copies. Account for storage and transfer costs. L
 
 ## Restore a local bundle
 
-Use the same server image version that created the bundle. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
+Use the same server image version that created the bundle. The examples use `porcupine:dev`; replace it with the exact matching image. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
 
 Create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository.
 
@@ -51,10 +51,10 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image ghcr.io/olup/porcupine:0.14.0
+  --image porcupine:dev
 ```
 
-The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container reads the private bundle, then gives installed files to the normal nonroot server user. It does not start an HTTP service. Failed attempts retain the volume for inspection. An incomplete installation carries a marker that normal startup refuses.
+The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container installs the journal at `/data/porcupine.db`, the control database at `/data/porcupine.db.control`, and analytics under `/data/ducklake`, then gives installed files to the normal nonroot server user. It does not start an HTTP service. Failed attempts retain the volume for inspection. The incomplete marker remains until both SQLite files and the reconstructed analytical state are published; normal startup refuses an incomplete installation.
 
 ## Restore an S3 bundle
 
@@ -67,7 +67,7 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image ghcr.io/olup/porcupine:0.14.0
+  --image porcupine:dev
 ```
 
 To recover into S3, also set `PORCUPINE_DUCKLAKE_S3_*` for a fresh analytical bucket or prefix. Original analytical storage and archive storage are forbidden targets, including empty namespaces. Without target S3 settings, recovery uses the new volume's SSD. The CLI mounts custom CA and AWS credential files read-only.
@@ -76,7 +76,7 @@ The restorer verifies the inventory, checks application and DuckLake formats, an
 
 ## Reconnect deliberately
 
-Recovery resets old API keys, OAuth credentials, human sign-ins and invitations. It rotates public ingestion credentials, pauses pipelines and clears old outbound work. The result provides new ingestion credentials; the bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
+Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in the control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials; the bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
 
 When replacing backend credentials, keep the producer's logical `source_id` so retries use the same event namespace.
 

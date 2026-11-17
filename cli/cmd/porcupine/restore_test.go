@@ -128,7 +128,7 @@ func TestRestoreOfflineCreatesOwnedRootVolume(t *testing.T) {
 	if err := json.Unmarshal([]byte(call.input), &request); err != nil {
 		t.Fatal(err)
 	}
-	if request.BootstrapToken != restoreTestToken || !request.ChownToNonroot || !request.ResetCredentialsAcknowledged || request.TargetDBPath != "/data/porcupine.db" || request.TargetDuckLakeDirectory != "/data/ducklake" {
+	if request.BootstrapToken != restoreTestToken || !request.ChownToNonroot || !request.ResetCredentialsAcknowledged || request.TargetDBPath != "/data/porcupine.db" || request.TargetControlDBPath != "/data/porcupine.db.control" || request.TargetDuckLakeDirectory != "/data/ducklake" {
 		t.Fatalf("invalid restore request fields")
 	}
 	for _, pair := range [][2]string{{"--user", "0:0"}, {"--memory", "2g"}, {"--cpus", "2"}, {"--tmpfs", "/tmp:rw,nosuid,nodev"}, {"--env", "PORCUPINE_BACKUP_S3_SECRET_ACCESS_KEY"}} {
@@ -211,7 +211,7 @@ func TestRestoreInfersBoundedLocalManifestAndEscapesMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := filepath.Join(bundle, "manifest.json")
-	if err := os.WriteFile(manifest, []byte(`{"format":"porcupine-native-v1","id":"pc_backup_local","source_id":"local-source"}`), 0600); err != nil {
+	if err := os.WriteFile(manifest, []byte(`{"format":"porcupine-native-v2","id":"pc_backup_local","source_id":"local-source"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	bundle, _ = filepath.EvalSymlinks(bundle)
@@ -257,6 +257,22 @@ func TestRestoreInfersBoundedLocalManifestAndEscapesMount(t *testing.T) {
 	_ = f.Close()
 	if _, _, _, err := restoreBundleIdentity(bundle); err == nil {
 		t.Fatal("accepted oversized manifest")
+	}
+}
+
+func TestRestoreRejectsSingleDatabaseBundle(t *testing.T) {
+	bundle := t.TempDir()
+	manifest := []byte(`{"format":"porcupine-native-v1","id":"pc_backup_old","source_id":"old-source"}`)
+	if err := os.WriteFile(filepath.Join(bundle, "manifest.json"), manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	docker := &fakeRestoreDocker{t: t}
+	_, _, err := invokeRestore(t, context.Background(), docker, "--bundle", bundle)
+	if err == nil || !strings.Contains(err.Error(), "invalid native backup identity") {
+		t.Fatalf("single-database bundle accepted: %v", err)
+	}
+	if len(docker.calls) != 0 {
+		t.Fatal("Docker was invoked before rejecting the unsupported bundle")
 	}
 }
 
