@@ -4,7 +4,7 @@
 #           make test-core RUN=TestGuard
 PKG ?= ./...
 RUN ?= .
-CORE_PKGS := ./internal/nativequery ./internal/apierr ./internal/syncx
+CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx
 
 build:
 	CGO_ENABLED=1 go build -trimpath -o bin/porcupine ./cmd/porcupine

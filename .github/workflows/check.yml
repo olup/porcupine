@@ -38,6 +38,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Test independent modules without the native engine
+        run: make test-core
       - run: make check-full
       - run: make build
       - run: python3 scripts/standalone_cli_check.py --server bin/porcupine
