@@ -4,7 +4,7 @@ The HTTP API, CLI and MCP use the same project grants. The [management API refer
 
 ## Technical access
 
-An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md). **Unreleased:** configured Google or OIDC sign-in authenticates the same invited human accounts and memberships, alongside email verification. See [sign-in configuration](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
+An operator bootstraps the deployment and creates its first technical access. Operators can enable [email accounts](email-accounts.md). Configured Google or OIDC sign-in authenticates the same invited human accounts and memberships, alongside email verification. See [sign-in configuration](mcp-interactive-oauth.md). Each technical credential has an explicit scope, one or more projects, or the whole instance, and a set of permissions.
 
 [OAuth client credentials](oauth.md) authorize machine API and MCP access when
 the operator configures an issuer. Clients exchange an ID and secret through
@@ -28,9 +28,9 @@ The control database stores client credentials, token hashes, memberships, and p
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
 
-## Tenant roles and project permissions (unreleased)
+## Tenant roles and project permissions {#tenant-roles-and-project-permissions-unreleased}
 
-The published v0.14.0 release does not include tenant memberships. In the development model, instance and tenant administration have distinct authority:
+Instance and tenant administrators have distinct authority.
 
 | Assignment | Authority |
 | --- | --- |
@@ -61,7 +61,7 @@ The accepted permission names are:
 | Permission | Intended authority |
 | --- | --- |
 | `instance:admin` | All instance and project operations, including access revocation. Requires `*` project scope. |
-| `tenant:admin` | Unreleased human-only consent scope for administration of one verified tenant. It is never a deployment-wide grant. |
+| `tenant:admin` | Human-only consent scope for administration of one verified tenant. It is never a deployment-wide grant. |
 | `events:read` | Read events and analytics within scope. |
 | `imports:write` | Create and resume historical uploads within a project, together with `events:write`. |
 | `events:write` | Ingest events within scope. |
@@ -133,9 +133,9 @@ Local data paths and engine resource settings belong to deployment configuration
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
-### Unreleased shared deployment boundary
+### Owner-routed shared deployment boundary {#unreleased-shared-deployment-boundary}
 
-Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. DuckLake catalog statistics can contain derived property, context, or trait values, so catalog access and retention belong within the analytical data security boundary. This mode is not included in v0.14.0.
+Optional [shared mode](shared-deployment.md) moves control metadata and DuckLake catalogs to PostgreSQL. Event payloads remain in the project owner's SQLite queue until projection to S3 Parquet; DuckLake data inlining is disabled for PostgreSQL catalogs. Neither PostgreSQL role is an event-payload inbox. DuckLake catalog statistics can contain derived property, context, or trait values, so catalog access and retention belong within the analytical data security boundary. See the [hosted profile](../design/hosted-profile-composition.md) for buffered ingestion without owner-local journals.
 
 Any public worker authenticates against shared control. Owner-dependent work is forwarded to the trusted registered worker URL with a signed, bounded internal request. The receiving worker validates routing identity, project ownership, request integrity, and replay protection, then revalidates the original client credential. Public routing headers cannot select an owner or bypass project authorization. Internal transport requires HTTPS outside loopback; network access and routing secrets belong to the operator.
 

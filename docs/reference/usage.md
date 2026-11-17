@@ -1,6 +1,6 @@
 # Numerical usage
 
-**Unreleased.** `list-usage` exposes technical consumption to the instance operator. It is available through HTTP, the standalone CLI and MCP. Tenant administrators and project readers cannot read this deployment-wide report; `get-tenant-usage` remains their monthly ingestion-budget view.
+`list-usage` exposes technical consumption to the instance operator. It is available through HTTP, the standalone CLI and MCP. Tenant administrators and project readers cannot read this deployment-wide report; `get-tenant-usage` remains their monthly ingestion-budget view.
 
 Porcupine records measurements. It does not define prices, subscriptions, invoices or rules for charging incomplete work. An external control plane reads this authenticated API rather than Porcupine's database.
 

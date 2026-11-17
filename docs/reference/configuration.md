@@ -51,18 +51,17 @@ The initial `email.admin_email` gives that address instance administration throu
 
 ## Container setup
 
-Use a fresh data volume for the unreleased schema. Build and initialize the source checkout:
+Initialize a fresh data volume with the tagged image. Start in the matching Git checkout.
 
 ```sh
-docker compose build porcupine
-docker compose --profile setup run --rm init
-docker compose --profile tools run --rm config-check
-docker compose up -d porcupine
+docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
+docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
+docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
 The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The single Compose file has profiles for setup tools and optional PostgreSQL; providers use the same JSON file.
 
-The published v0.14.0 image lacks these config commands. Do not apply its release overlay to this source-build setup. Use the [tagged release procedure](hosting-options.md) for that image.
+For a source build, run `docker compose build porcupine` first and omit the release overlay. For an existing v0.14.0 volume, use the [fresh-storage cutover procedure](../hosting.md#move-from-v0140).
 
 ## Replace an existing configuration
 
@@ -73,20 +72,20 @@ For a container-owned volume, stop the server and edit a private copy. Install i
 ```sh
 umask 077
 porcupine_config_copy=$(mktemp -d)
-docker compose stop porcupine
-docker compose cp porcupine:/data/porcupine.json "$porcupine_config_copy/porcupine.json"
+docker compose -f compose.yaml -f compose.release.yaml stop porcupine
+docker compose -f compose.yaml -f compose.release.yaml cp porcupine:/data/porcupine.json "$porcupine_config_copy/porcupine.json"
 chmod 600 "$porcupine_config_copy/porcupine.json"
 # Edit $porcupine_config_copy/porcupine.json with your local editor.
-docker compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$porcupine_config_copy/porcupine.json"
-docker compose --profile tools run --rm config-check
-docker compose up -d porcupine
+docker compose -f compose.yaml -f compose.release.yaml run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$porcupine_config_copy/porcupine.json"
+docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
+docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
 A plain host copy can change ownership and make a private file unreadable to UID 65532. `config install` writes as the container user. Keep the copy outside source control, remove it when finished, and preserve the complete private configuration with recovery material.
 
 ## Interactive query ceilings
 
-These deployment settings belong to the unreleased tenant implementation. A tenant budget can lower a ceiling but cannot raise it.
+A tenant budget can lower a deployment ceiling.
 
 | JSON path | Environment equivalent | Default | Accepted range |
 | --- | --- | --- | --- |

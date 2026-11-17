@@ -4,6 +4,8 @@ Porcupine runs ingestion, queries, and management in one Go server. The standalo
 
 ## From an event to a query
 
+In a SQLite-journal deployment, the following steps take an event from ingestion to query.
+
 1. A native, PostHog, or Segment adapter validates and normalizes the input. The credential selects the project.
 2. SQLite commits the event, stable-ID receipt, identity changes, and planned webhook work before capture succeeds.
 3. A background worker projects queued work into DuckLake, then confirms delivery in SQLite. Failures leave durable work to retry.
@@ -15,16 +17,16 @@ Each project has its own catalog and managed data namespace. A bounded number of
 
 ## Storage responsibilities
 
-The published v0.14.0 server uses one operational SQLite database and local DuckLake catalogs, with local SSD or S3 analytical files.
-
-**Unreleased:** local mode separates operational state into two SQLite files:
+Standalone stores analytical data on local SSD or S3 and keeps operational state in two SQLite files.
 
 - **Control** owns humans, credentials, tenant memberships, projects, policies, and reported usage.
 - **Journal** owns accepted payloads, receipts, identity state, acceptance counters, mutations, imports, and delivery jobs.
 
 The two files have matching persistent identities and must be restored together. Optional shared mode replaces control and DuckLake catalog metadata with PostgreSQL and keeps journal SQLite local to each worker. Complete event rows go from that journal directly to S3 Parquet without a PostgreSQL event queue; data inlining is disabled. DuckLake catalog metadata can still hold column statistics containing derived event values.
 
-Each project has a durable owner. Public workers forward owner-bound requests; delivered SQL can run against shared metadata and files. Adding workers does not recover an unavailable owner's queue. See [shared deployment](reference/shared-deployment.md) for supervision, timeout, and failure behavior.
+In owner-routed shared mode, each project has a durable owner. Public workers forward owner-bound requests; delivered SQL can run against shared metadata and files. Adding workers does not recover an unavailable owner's queue. See [shared deployment](reference/shared-deployment.md) for supervision, timeout, and failure behavior.
+
+The opt-in [hosted profile](design/hosted-profile-composition.md) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
 
 ## Boundaries in the code
 
@@ -42,7 +44,7 @@ Each project has a durable owner. Public workers forward owner-bound requests; d
 | `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
 | `internal/exportstore` | Export object storage |
 
-This table describes the unreleased stabilization work. The service owns analytical delivery, exports and S3 pipeline jobs, checkpoint commits, quotas, and the atomic acceptance transaction. The webhook queue owns its attempt and retry transactions. Its enqueuer and event-cancellation function instead use the caller's SQLite transaction, so event acceptance and mutation remain atomic with their webhook effects. A three-method host contract supplies current authorization, destination decryption, and the project activity lease. See the [webhook module record](design/webhook-module.md) for the ownership map and verification.
+The service owns analytical delivery, exports and S3 pipeline jobs, checkpoint commits, quotas, and the atomic acceptance transaction. The webhook queue owns its attempt and retry transactions. Its enqueuer and event-cancellation function instead use the caller's SQLite transaction, so event acceptance and mutation remain atomic with their webhook effects. A three-method host contract supplies current authorization, destination decryption, and the project activity lease. See the [webhook module record](design/webhook-module.md) for the ownership map and verification.
 
 Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
 
@@ -50,7 +52,7 @@ Authentication policy and provider verification live in `internal/auth`; the ser
 
 Resolve tenant/project scope from authenticated access, never an event's claimed project ID. SQL validation rejects writes, external sources, private tables, and configuration changes. Engines are restricted to managed local storage and the configured S3 namespace.
 
-Bound queues, query concurrency, execution time, returned rows, and result bytes. Unreleased tenant budgets subdivide operator ceilings; they cannot raise them. Per-engine memory is not a hard process RSS limit. A worker/container limit provides additional containment.
+Bound queues, query concurrency, execution time, returned rows, and result bytes. Tenant budgets subdivide operator ceilings; they cannot raise them. Per-engine memory is not a hard process RSS limit. A worker/container limit provides additional containment.
 
 Shared usage publication can lag, so monthly quotas permit some overshoot. Concurrent query admission instead reserves a shared place before execution. Auth revocation is checked independently of the usage cache.
 

@@ -1,6 +1,6 @@
 # External authentication
 
-**Unreleased.** External authentication requires matching development server and CLI builds. The default `builtin` mode keeps Porcupine's email OTP, Google/OIDC sign-in, OAuth with PKCE, and consent. External mode replaces that identity provider for the whole instance.
+The default `builtin` mode keeps Porcupine's email OTP, Google/OIDC sign-in, OAuth with PKCE, and consent. External mode replaces that identity provider for the whole instance.
 
 Porcupine remains the resource server. It verifies access tokens, binds each project to its current tenant, and enforces the same API and MCP permissions. Public ingestion keys and revocable native machine keys work in both modes.
 

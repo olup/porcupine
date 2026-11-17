@@ -4,7 +4,7 @@ This guide is for the instance operator. If you have already been invited and wa
 
 A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. For email verification codes, enable [SMTP delivery](email-transport.md). The server sends a notice when an administrator grants access and issues a verification code only when the person starts a login. In an OIDC-only development setup without SMTP, share the instance URL and connection instructions yourself.
 
-For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). **Unreleased:** configured Google or OIDC sign-in can use the same invited human accounts as email verification. Both methods lead to the same tool consent and current permissions. See [sign-in configuration](mcp-interactive-oauth.md).
+For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). Configured Google or OIDC sign-in can use the same invited human accounts as email verification. Both methods lead to the same tool consent and current permissions. See [sign-in configuration](mcp-interactive-oauth.md).
 
 ## Connect the first administrator
 
