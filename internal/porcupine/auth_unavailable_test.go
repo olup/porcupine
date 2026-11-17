@@ -113,6 +113,7 @@ func TestNativeMachineAuthenticationControlOutageIsRetryable(t *testing.T) {
 		{"GET", "/api/v1/projects/" + id + "/events", key, ""},
 		{"POST", "/mcp", mcpKey, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`},
 		{"POST", "/capture/", key, `{"uuid":"11111111-1111-4111-8111-111111111111","event":"retry","distinct_id":"person"}`},
+		{"POST", "/capture/", operator, fmt.Sprintf(`{"api_key":%q,"event":"retry","distinct_id":"person"}`, p["ingest_token"])},
 	} {
 		r := httptest.NewRequest(input.method, input.path, strings.NewReader(input.body))
 		r.Header.Set("Authorization", "Bearer "+input.token)

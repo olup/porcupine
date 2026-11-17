@@ -711,13 +711,15 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		if err == nil && rawKey != "" {
 			var selector auth.Principal
 			selector, err = s.authenticate(r.Context(), rawKey)
-			if err == nil && selector.Can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && auth.Authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
-				a.Projects = []string{selector.Projects[0]}
-				if selector.SourceID != "" {
-					a.SourceID = selector.SourceID
+			if err == nil {
+				if selector.Can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && auth.Authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
+					a.Projects = []string{selector.Projects[0]}
+					if selector.SourceID != "" {
+						a.SourceID = selector.SourceID
+					}
+				} else {
+					err = errors.New("project key outside token scope")
 				}
-			} else {
-				err = errors.New("project key outside token scope")
 			}
 		}
 	} else {
