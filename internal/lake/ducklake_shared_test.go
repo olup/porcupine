@@ -234,7 +234,7 @@ func TestDuckLakeS3SharedPostgresGuardAndDeletion(t *testing.T) {
 	if err := second.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Commit(); !isSharedNativeConflict(err) {
+	if err := first.Commit(); !isNativeTransactionConflict(err) {
 		t.Fatal("stale transaction did not fail its native guard", err)
 	}
 	releaseA()

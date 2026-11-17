@@ -3,6 +3,7 @@ package lake
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,16 +344,59 @@ func TestDuckLakeCleanupCancellationIsRetriable(t *testing.T) {
 	if err := p.maintenance.Lock(ctx); err != nil {
 		t.Fatal(err)
 	}
-	deadline, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
-	defer cancel()
-	err := s.CleanupDue(deadline, time.Now())
+	work, cancel := context.WithCancel(ctx)
+	finished := make(chan struct{})
+	var cleanupErr error
+	locked := true
+	t.Cleanup(func() {
+		cancel()
+		if locked {
+			p.maintenance.Unlock()
+		}
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("cancelled cleanup did not return")
+		}
+	})
+	go func() {
+		cleanupErr = s.CleanupDue(work, time.Now())
+		close(finished)
+	}()
+	// Cancellation before registration is not a failed cleanup pass. Observe
+	// the durable running state before interrupting the blocked maintenance.
+	ready, stop := context.WithTimeout(ctx, 5*time.Second)
+	defer stop()
+	for {
+		status, err := s.CleanupStatus(ready)
+		if err != nil {
+			t.Fatal("cleanup did not register its attempt", err)
+		}
+		if status.RunningCatalogs == 1 {
+			break
+		}
+		select {
+		case <-finished:
+			t.Fatal("cleanup returned before cancellation", cleanupErr)
+		case <-ready.Done():
+			t.Fatal("cleanup did not reach its running state", ready.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-ready.Done():
+		t.Fatal("blocked cleanup ignored cancellation", ready.Err())
+	}
 	p.maintenance.Unlock()
-	if err == nil {
-		t.Fatal("blocked cleanup ignored its deadline")
+	locked = false
+	if !errors.Is(cleanupErr, context.Canceled) {
+		t.Fatal("blocked cleanup did not return cancellation", cleanupErr)
 	}
 	status, err := s.CleanupStatus(ctx)
 	if err != nil || status.FailedCatalogs != 1 || status.RunningCatalogs != 0 {
-		t.Fatal("cancelled pass was marked successful", err)
+		t.Fatal("cancelled pass was marked successful", status, err)
 	}
 	if err := s.CleanupDue(ctx, time.Now().Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
@@ -363,5 +407,23 @@ func TestDuckLakeCleanupCancellationIsRetriable(t *testing.T) {
 	}
 	if lakeStorageCount(t, s, "a", "events") != 1 {
 		t.Fatal("cancelled cleanup lost live data")
+	}
+}
+
+func TestDuckLakeCleanupExpiredBeforeAttemptDoesNotRecordFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openLakeStorageTest(t, t.TempDir(), 1)
+	if err := s.Apply(ctx, []EventProjection{lakeStorageProjection(t, "a", "a", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Millisecond))
+	defer cancel()
+	if err := s.CleanupDue(expired, time.Now()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("cleanup ignored an expired caller deadline", err)
+	}
+	status, err := s.CleanupStatus(ctx)
+	if err != nil || status.RegisteredCatalogs != 1 || status.CompletedCatalogs != 0 || status.RunningCatalogs != 0 || status.FailedCatalogs != 0 || status.LastAttempt != "" {
+		t.Fatal("unstarted pass recorded an attempt", status, err)
 	}
 }
