@@ -102,6 +102,10 @@ func TestDuckLakeS3SharedPostgresHostedProjectCleanup(t *testing.T) {
 	if err := b.finishTenantDeletion(ctx, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
+	var accepted int64
+	if err := b.control.QueryRow(`SELECT coalesce(sum(accepted_events),0) FROM tenant_deletion_usage WHERE tenant_id=$1`, defaultTenantID).Scan(&accepted); err != nil || accepted != 1 {
+		t.Fatalf("archived tenant usage = %d, want 1: %v", accepted, err)
+	}
 	if err := b.cleanHostedProject(ctx, project); err != nil {
 		t.Fatal("completed cleanup did not converge on retry", err)
 	}
