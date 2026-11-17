@@ -33,9 +33,9 @@ The shared PostgreSQL URL also configures DuckLake metadata. An explicit
 `ducklake.postgres_url` must match it. The server checks the configured grace
 against the sum of the three recovery durations. The recovery floor must reflect the earliest PostgreSQL point the deployment can restore. See the [restore drill](hosted-restore-drill.md).
 
-Use a fresh PostgreSQL control database. The recorded deployment profile
-prevents owner-routed workers and stateless workers from sharing the same
-control state. The worker creates disposable analytical scratch space by
+Use a fresh PostgreSQL control database. The server records the deployment
+profile and generates a new analytical source identity. Existing owner
+registries and development catalogs require a separate migration plan. The worker creates disposable analytical scratch space by
 default. `storage.ducklake` can point to a private disposable directory.
 Keep one consistent configuration and pipeline encryption key across
 replicas. The candidate rejects local journal and control paths, receipt

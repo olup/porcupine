@@ -52,8 +52,6 @@ type Config struct {
 	Shared              *SharedConfig
 	Usage               *usage.Config
 	HostedRecoveryFloor HostedRecoveryFloor
-	// Internal integration gate until hosted lifecycle, backup and acceptance are activated together.
-	hostedImports bool
 }
 
 type Service struct {
@@ -392,21 +390,6 @@ func Open(c Config) (*Service, error) {
 	}
 	if err := s.initializeUsage(context.Background(), c.Usage); err != nil {
 		return fail(err)
-	}
-	if c.hostedImports {
-		native, ok := s.lake.(*lakeapi.DuckLakeStore)
-		if c.Shared == nil || !ok || s.usage == nil {
-			return fail(errors.New("hosted imports require shared storage and usage"))
-		}
-		coordinator, err := lakeapi.NewPostgresProjectCoordinator(s.control, lakeapi.DefaultProjectCoordinatorConfig())
-		if err != nil {
-			return fail(err)
-		}
-		flusher, err := newHostedLiveFlusher(s.control, native, coordinator, s.usage.store)
-		if err != nil {
-			return fail(err)
-		}
-		s.imports = newHostedImportManager(s.eventRules, flusher)
 	}
 	if err := s.configurePipelines(c.Pipelines); err != nil {
 		return fail(err)

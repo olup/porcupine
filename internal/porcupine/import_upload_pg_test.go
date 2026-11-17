@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -18,17 +20,40 @@ import (
 func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
-	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t), func(c *Config) { c.hostedImports = true })
+	fixture := nativeS3Fixture(t)
+	dsn := sharedPostgresDSN(t)
+	start := func() *sharedJourneyNode {
+		t.Helper()
+		lake := lakeapi.DuckLakeConfig{
+			Directory: t.TempDir(), PostgresURL: dsn, S3: &fixture.storage, MemoryLimitMB: 128,
+			Threads: 1, MaxOpenProjects: 2, MaintenanceInterval: 24 * time.Hour,
+			CleanupGrace: 10 * 24 * time.Hour, RestoreWindow: 24 * time.Hour,
+			RestoreMaxReaderTime: time.Hour, RestoreSafetyMargin: time.Hour,
+		}
+		s, err := Open(Config{
+			Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
+			Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake, allowUnreleasedHostedFixture: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		host := httptest.NewServer(s.Handler())
+		t.Cleanup(func() {
+			host.Close()
+			if err := s.Close(); err != nil {
+				t.Error("hosted import worker close:", err)
+			}
+		})
+		return &sharedJourneyNode{service: s, host: host}
+	}
+	a, b := start(), start()
 	db := a.service.control
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "historical upload")
 	other, _ := sharedJourneyProject(t, b.host.URL, defaultTenantID, "other project")
-	native := a.service.lake.(*lakeapi.DuckLakeStore)
+	native := a.service.hosted.native
 	key := lakeapi.ProjectWriteKey{SourceID: native.Config.SharedSourceID, ProjectID: project}
-	scope, err := native.InitializeHostedProject(t.Context(), key)
+	scope, err := native.LookupHostedProjectExisting(t.Context(), key)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = native.InitializeHostedProject(t.Context(), lakeapi.ProjectWriteKey{SourceID: key.SourceID, ProjectID: other}); err != nil {
 		t.Fatal(err)
 	}
 	f := a.service.imports.hosted
@@ -141,6 +166,9 @@ CREATE TRIGGER reject_upload_checkpoint BEFORE UPDATE ON import_upload_files FOR
 			}
 			if _, err := db.Exec(`DROP TRIGGER reject_upload_checkpoint ON import_upload_files; DROP FUNCTION reject_upload_checkpoint()`); err != nil {
 				t.Fatal(err)
+			}
+			if err := b.service.hosted.flusher.RecoverProject(t.Context(), key); err != nil {
+				t.Fatal("cold reconciliation could not publish the upload checkpoint", err)
 			}
 			recovered := request(b.host.URL, "GET", path, token, nil, nil, 200)
 			replayed := upload(b.host.URL, file, 0, chunk, 200)
