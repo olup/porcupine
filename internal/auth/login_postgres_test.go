@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/olup/porcupine/internal/testfixtures"
 	"net/url"
 	"os"
 	"testing"
@@ -18,6 +19,9 @@ func sharedPostgresDSN(t *testing.T) string {
 	t.Helper()
 	raw := os.Getenv("PORCUPINE_TEST_POSTGRES_DSN")
 	if raw == "" {
+		if err := testfixtures.CheckSelection(t.Name(), testfixtures.Postgres); err != nil {
+			t.Fatal(err)
+		}
 		t.Skip("set PORCUPINE_TEST_POSTGRES_DSN or run make shared-postgres-test")
 	}
 	dsn, err := url.Parse(raw)
