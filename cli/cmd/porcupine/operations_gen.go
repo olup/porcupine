@@ -167,7 +167,7 @@ var operations = []operation{
 	},
 	{
 		ID: "delete-event", Method: "DELETE", Path: "/api/v1/projects/{id}/events/{uuid}",
-		Summary: "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous",
+		Summary: "Queue a deletion tombstone. Analytical visibility changes after projection. Previously started queries or sends can still complete, and published customer outputs are outside this operation.",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "uuid", In: "path", Type: "string", Description: "", Required: true},
@@ -253,7 +253,7 @@ var operations = []operation{
 	},
 	{
 		ID: "get-event-mutation", Method: "GET", Path: "/api/v1/projects/{id}/event-mutations/{mutation_id}",
-		Summary: "Read whether an event correction or deletion is pending or applied",
+		Summary: "Read whether an event correction or deletion is pending, applied, or failed",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "mutation_id", In: "path", Type: "string", Description: "", Required: true},

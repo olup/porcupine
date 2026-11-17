@@ -230,6 +230,28 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 		t.Fatal("revoked upload lost ownership or became accepted", held, order, err)
 	}
 
+	external := newExternalAuthFixture(t)
+	audience := external.s.resources.apiResource
+	signed := external.token(t, "hosted-producer", defaultTenantID, "events:edit", audience, project)
+	grant, err := external.s.resources.external.Verify(ctx, signed, audience, external.s.clock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := context.WithValue(ctx, actorContextKey{}, grant.Principal())
+	checks = 0
+	keyHash = hash("expired-during-put")
+	_, err = fa.acceptHostedMutation(outside, project, laterUUID, "edit", keyHash, hash("external request"), 0, &normalized, func(ctx context.Context, tx *sql.Tx, project, tenant, operation string) error {
+		checks++
+		if checks == 2 {
+			external.now.Store(external.clock.Add(6 * time.Minute).UnixMilli())
+		}
+		return external.s.authorizeHostedMutation(ctx, tx, project, tenant, operation)
+	})
+	mutationErrorStatus(t, err, 401)
+	if _, err := hostedMutationBy(ctx, fa.publisher.control, scope, defaultTenantID, "key_hash", keyHash); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("expired external intent became accepted", err)
+	}
+
 	_, err = b.service.editEvent(actorContext, edit)
 	mutationErrorStatus(t, err, 403)
 }
