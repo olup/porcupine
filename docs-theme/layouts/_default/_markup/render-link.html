@@ -1,0 +1,14 @@
+{{- $url := urls.Parse .Destination -}}
+{{- $destination := .Destination -}}
+{{- if and (not $url.IsAbs) (not (strings.HasPrefix $url.Path "/")) (strings.HasSuffix $url.Path ".md") -}}
+  {{- $path := path.Clean (path.Join (path.Dir .Page.Params.source_uri) $url.Path) -}}
+  {{- if eq (path.Base $path) "README.md" -}}
+    {{- $path = strings.TrimPrefix "./" (printf "%s/" (path.Dir $path)) -}}
+  {{- else -}}
+    {{- $path = printf "%s/" (strings.TrimSuffix ".md" $path) -}}
+  {{- end -}}
+  {{- $destination = printf "/porcupine/docs/%s" $path -}}
+  {{- with $url.RawQuery -}}{{- $destination = printf "%s?%s" $destination . -}}{{- end -}}
+  {{- with $url.Fragment -}}{{- $destination = printf "%s#%s" $destination . -}}{{- end -}}
+{{- end -}}
+<a href="{{ $destination | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>

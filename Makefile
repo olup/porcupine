@@ -4,7 +4,7 @@
 #           make test-core RUN=TestGuard
 PKG ?= ./...
 RUN ?= .
-CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx
+CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx ./internal/docsite
 
 build:
 	CGO_ENABLED=1 go build -trimpath -o bin/porcupine ./cmd/porcupine
@@ -83,10 +83,10 @@ cli-check:
 
 .PHONY: docs docs-preview
 docs:
-	python3 scripts/build_docs.py
+	CGO_ENABLED=0 go run ./internal/cmd/docsite build
 
 docs-preview: docs
-	python3 scripts/serve_docs.py
+	CGO_ENABLED=0 go run ./internal/cmd/docsite preview
 
 .PHONY: ducklake-build ducklake-test ducklake-smoke ducklake-bench ducklake-batching-bench ducklake-architecture-test
 ducklake-build: build

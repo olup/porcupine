@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f4ea">
+  <meta name="description" content="{{ .Title }} — Porcupine documentation">
+  <title>{{ .Title }} · Porcupine</title>
+  <link rel="icon" href="/porcupine/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/porcupine/docs/docs.css">
+  <script src="/porcupine/docs/docs.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/porcupine/"><img src="/porcupine/assets/favicon.svg" width="28" height="28" alt="">porcupine</a>
+      <span class="header-label">Documentation</span>
+      <a class="repo" href="https://github.com/olup/porcupine">GitHub ↗</a>
+    </header>
+    <div class="layout">
+      <aside class="sidebar">
+        <details class="navigation" open>
+          <summary>Browse guides</summary>
+          <nav aria-label="Documentation">
+            {{ $current := .Params.nav_uri }}
+            {{ range $index, $group := .Site.Params.navigation }}
+            {{ $active := false }}{{ range $group.items }}{{ if eq .page $current }}{{ $active = true }}{{ end }}{{ end }}
+            <details class="nav-group"{{ if or $active (eq $index 0) }} open{{ end }}>
+              <summary>{{ .title }}</summary>
+              <div class="nav-links">
+              {{ range .items }}
+              <a href="{{ .url }}"{{ if eq .page $current }} aria-current="page"{{ end }}>{{ .title }}</a>
+              {{ end }}
+              </div>
+            </details>
+            {{ end }}
+          </nav>
+        </details>
+      </aside>
+      <main id="content" tabindex="-1">
+        <div class="page-tools">
+          <span>Porcupine v{{ .Site.Params.release_version }}</span>
+          <a href="{{ .Params.raw_url }}">View Markdown ↗</a>
+        </div>
+        <article>{{ block "main" . }}{{ .Content }}{{ end }}</article>
+        <div class="page-bottom">
+          {{ with .Params.previous }}<a href="{{ .url }}">← {{ .title }}</a>{{ else }}<span></span>{{ end }}
+          {{ with .Params.next }}<a href="{{ .url }}">{{ .title }} →</a>{{ end }}
+        </div>
+      </main>
+      <aside class="contents">
+        <p class="nav-title">On this page</p>
+        {{ .TableOfContents }}
+      </aside>
+    </div>
+    <footer><a href="/porcupine/">Home</a><a href="/porcupine/llms.txt">Agent guide</a><span>HTML and Markdown from the same source.</span></footer>
+  </div>
+</body>
+</html>

@@ -1,14 +1,14 @@
 # Publish a release
 
-`VERSION` is the source for the landing release link and documentation badge. The website build generates both mentions. Do not hardcode versions in `site/index.html` or `docs-theme/main.html`.
+`VERSION` is the source for the landing release link and documentation badge. The website build generates both mentions. Do not hardcode versions in `site/index.html` or `docs-theme/layouts/_default/baseof.html`.
 
 ## Prepare the release
 
 1. Set `VERSION` to the next stable version, without the `v` prefix.
 2. Update the current release links and installation examples in `README.md`, `site/llms.txt`, `docs/hosting.md`, and `compose.release.yaml`.
 3. Review the feature descriptions, supported inputs, storage limitations, permissions, and migration instructions. Update the relevant guides. Version checks cannot verify these claims.
-4. Run `python3 scripts/release_version.py --tag v$(cat VERSION)`.
-5. Install `docs-requirements.txt` in your documentation environment. Run `python3 -m unittest discover -s scripts -p 'test_release_version.py'` and `make docs` there.
+4. Run `CGO_ENABLED=0 go run ./internal/cmd/docsite check-release --tag v$(cat VERSION)`.
+5. Run `CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite` and `make docs`. The build uses a pinned Hugo binary, downloaded once and verified against its SHA256 checksum. It checks local links and anchors as well as release labels.
 6. Merge the reviewed changes and push the matching `vX.Y.Z` tag.
 
 The release workflow rejects a tag that differs from `VERSION` or current installation pointers. It builds the documentation before building release artifacts. The build also checks the generated landing and each HTML guide for the expected version.

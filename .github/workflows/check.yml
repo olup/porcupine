@@ -16,12 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          python-version: '3.12'
-      - run: python -m pip install -r docs-requirements.txt
-      - run: python -m unittest discover -s scripts -p 'test_release_version.py'
-      - run: python scripts/build_docs.py
+          go-version-file: go.mod
+          cache: true
+      - run: CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite
+      - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: ~/.cache/porcupine/hugo
+          key: docs-hugo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('internal/docsite/hugo.go') }}
+      - run: make docs
   cli:
     if: github.ref_type != 'tag'
     uses: ./.github/workflows/cli.yml
