@@ -12,10 +12,12 @@ import (
 
 const hostedMutationSchemaV1 = `
 CREATE TABLE hosted_mutation_capacity (
-	id INTEGER PRIMARY KEY CHECK(id=1),
-	retained_bytes BIGINT NOT NULL CHECK(retained_bytes>=0)
+	scope_kind TEXT NOT NULL CHECK(scope_kind IN ('instance','tenant')),
+	scope_id TEXT NOT NULL,
+	retained_bytes BIGINT NOT NULL CHECK(retained_bytes>=0),
+	PRIMARY KEY(scope_kind,scope_id)
 );
-INSERT INTO hosted_mutation_capacity (id,retained_bytes) VALUES (1,0);
+INSERT INTO hosted_mutation_capacity (scope_kind,scope_id,retained_bytes) VALUES ('instance','',0);
 CREATE TABLE hosted_mutation_projects (
 	source_id TEXT NOT NULL, project_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
 	catalog_id TEXT NOT NULL, stream_id TEXT NOT NULL,
@@ -50,6 +52,7 @@ CREATE UNIQUE INDEX hosted_mutation_one_unresolved
 
 const hostedMutationProjectCapacity int64 = 128 << 20
 const hostedMutationInstanceCapacity int64 = 8 << 30
+const hostedMutationTenantCapacity int64 = 1 << 30
 
 var errHostedMutationBusy = errors.New("a project mutation is unresolved")
 var errHostedMutationCapacity = errors.New("hosted mutation storage capacity exhausted")
@@ -97,12 +100,11 @@ AND catalog_id=$3 AND stream_id=$4 AND tenant_id=$5`, scope.Key.SourceID, scope.
 // reserveHostedMutationTx records exact ownership before PUT. The project
 // session serializes staging with mutation application and ordering cuts.
 func reserveHostedMutationTx(ctx context.Context, tx *sql.Tx, i hostedMutationIntent) error {
-	var retained int64
-	if err := tx.QueryRowContext(ctx, `SELECT retained_bytes FROM hosted_mutation_capacity WHERE id=1 FOR UPDATE`).Scan(&retained); err != nil {
-		return err
-	}
-	if i.body.Bytes <= 0 || i.body.Bytes > lakeapi.MaxImmutableEffectObjectBytes || retained > hostedMutationInstanceCapacity-i.body.Bytes {
+	if i.body.Bytes <= 0 || i.body.Bytes > lakeapi.MaxImmutableEffectObjectBytes {
 		return errHostedMutationCapacity
+	}
+	if err := chargeHostedMutationTx(ctx, tx, i.tenant, i.body.Bytes); err != nil {
+		return err
 	}
 	if err := lockActiveHostedMutationProject(ctx, tx, i.scope.Key.ProjectID, i.tenant); err != nil {
 		return err
@@ -138,11 +140,27 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'staging',$13,$14,$15,$16,$17)`,
 		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, i.id, i.keyHash, i.requestHash, i.actorHash, i.operation, i.expected, i.revision, i.body.Key, i.body.SHA256, i.body.Bytes, i.prefix, i.createdAt); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE hosted_mutation_projects SET revision=$3,retained_bytes=retained_bytes+$4
-WHERE source_id=$1 AND project_id=$2`, i.scope.Key.SourceID, i.scope.Key.ProjectID, i.revision, i.body.Bytes); err != nil {
+	_, err = tx.ExecContext(ctx, `UPDATE hosted_mutation_projects SET revision=$3,retained_bytes=retained_bytes+$4
+WHERE source_id=$1 AND project_id=$2`, i.scope.Key.SourceID, i.scope.Key.ProjectID, i.revision, i.body.Bytes)
+	return err
+}
+
+func chargeHostedMutationTx(ctx context.Context, tx *sql.Tx, tenant string, bytes int64) error {
+	var used int64
+	err := tx.QueryRowContext(ctx, `UPDATE hosted_mutation_capacity SET retained_bytes=retained_bytes+$1
+WHERE scope_kind='instance' AND scope_id='' AND retained_bytes<=$2 RETURNING retained_bytes`, bytes, hostedMutationInstanceCapacity-bytes).Scan(&used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errHostedMutationCapacity
+	}
+	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE hosted_mutation_capacity SET retained_bytes=retained_bytes+$1 WHERE id=1`, i.body.Bytes)
+	err = tx.QueryRowContext(ctx, `INSERT INTO hosted_mutation_capacity(scope_kind,scope_id,retained_bytes) VALUES('tenant',$1,$2)
+ON CONFLICT(scope_kind,scope_id) DO UPDATE SET retained_bytes=hosted_mutation_capacity.retained_bytes+excluded.retained_bytes
+WHERE hosted_mutation_capacity.retained_bytes<=$3 RETURNING retained_bytes`, tenant, bytes, hostedMutationTenantCapacity-bytes).Scan(&used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errHostedMutationCapacity
+	}
 	return err
 }
 

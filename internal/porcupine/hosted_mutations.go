@@ -177,7 +177,7 @@ func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, u
 			return err
 		}
 		objects := f.publisher.objects
-		described, prefix, err := objects.DescribeImmutableEffectObject(scope, i.id, raw)
+		described, prefix, err := objects.DescribeImmutableMutationObject(scope, i.id, raw)
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, u
 		} else if i.body != described || i.prefix != prefix {
 			return errHostedMutationConflict
 		}
-		ref, err := objects.PutImmutableEffectObject(ctx, scope, i.id, raw)
+		ref, err := objects.PutImmutableMutationObject(ctx, scope, i.id, raw)
 		if err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='staging'`, sc
 
 func (p *hostedEffectPublisher) readHostedMutation(ctx context.Context, i hostedMutationIntent) (lakeapi.HostedMutationInput, error) {
 	var input lakeapi.HostedMutationInput
-	raw, err := p.objects.ReadImmutableEffectObject(ctx, i.scope, i.body)
+	raw, err := p.objects.ReadImmutableMutationObject(ctx, i.scope, i.body)
 	if err != nil {
 		return input, err
 	}
@@ -248,7 +248,7 @@ func (p *hostedEffectPublisher) readHostedMutation(ctx context.Context, i hosted
 	if err != nil {
 		return input, err
 	}
-	described, prefix, err := p.objects.DescribeImmutableEffectObject(i.scope, i.id, raw)
+	described, prefix, err := p.objects.DescribeImmutableMutationObject(i.scope, i.id, raw)
 	if err != nil || described.Key != i.body.Key || prefix != i.prefix || fingerprint != i.body.SHA256 ||
 		input.Scope != i.scope || input.TenantID != i.tenant || input.MutationID != i.id || input.ExpectedRevision != uint64(i.expected) ||
 		input.Projection.ProjectID != i.scope.Key.ProjectID || input.Projection.Revision != uint64(i.revision) ||

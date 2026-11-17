@@ -35,7 +35,8 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	fa, fb := a.service.hostedMutations, b.service.hostedMutations
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "mutations A")
-	other, _ := sharedJourneyProject(t, b.host.URL, defaultTenantID, "mutations B")
+	otherTenant := sharedJourneyHTTP(t, b.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"Mutation tenant B"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
+	other, _ := sharedJourneyProject(t, b.host.URL, otherTenant, "mutations B")
 	actor, token := sharedJourneyKey(t, a.host.URL, project, []string{"events:read", "events:edit", "events:delete"})
 	actorContext := context.WithValue(t.Context(), actorContextKey{}, auth.Principal{ID: actor, Projects: []string{project}, Permissions: []string{"events:read", "events:edit", "events:delete"}})
 	ctx := t.Context()
@@ -49,7 +50,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	limits := output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}
 	if err := fa.publisher.transaction(ctx, func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}, {"project", other}} {
+		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"tenant", otherTenant}, {"project", project}, {"project", other}} {
 			if err := fa.publisher.effects.ConfigureCapacityTx(ctx, tx, v[0], v[1], limits); err != nil {
 				return err
 			}
@@ -109,6 +110,12 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	body, err := fa.publisher.readHostedMutation(ctx, i)
 	if err != nil || body.Projection.OriginalSnapshot == "" || body.Projection.ID != before.ID {
 		t.Fatal(body, err)
+	}
+	if _, err := fa.publisher.objects.ReadImmutableEffectObject(ctx, scope, i.body); err == nil {
+		t.Fatal("effect storage accepted a mutation object")
+	}
+	if _, err := fa.publisher.objects.ReadImmutableMutationObject(ctx, otherScope, i.body); err == nil {
+		t.Fatal("mutation storage accepted the other project's object")
 	}
 	var rawProof lakeapi.NativeCommitEvidence
 	var commitFence lakeapi.ProjectWriteFence
@@ -190,6 +197,10 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	body.Projection.DistinctID = "altered"
 	if _, err := fb.native.CommitHostedMutation(ctx, commitFence, body); !errors.Is(err, lakeapi.ErrHostedMutationConflict) {
 		t.Fatal("changed native input bypassed the original fingerprint", err)
+	}
+	body.MutationID = eventapi.NewID()
+	if _, err := fb.native.CommitHostedMutation(ctx, commitFence, body); !errors.Is(err, lakeapi.ErrProjectWriteFenceStale) {
+		t.Fatal("stale fence authorized a new mutation", err)
 	}
 	if err := fa.FlushLive(ctx, live(project, uuid)); err != nil {
 		t.Fatal(err)
