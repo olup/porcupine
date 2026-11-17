@@ -311,7 +311,7 @@ func TestTenantDeletionStartRollsBackEveryFenceAndRevocation(t *testing.T) {
 func TestSharedTenantDeletionFencesAndReportsLocalCleanupPending(t *testing.T) {
 	t.Parallel()
 	s := sharedDeletionFixture(t)
-	s.clock = time.Now
+	s.eventRules = &eventRules{clock: time.Now}
 	if _, err := s.control.Exec(`INSERT INTO tenants SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default'; UPDATE projects SET tenant_id='B' WHERE id='kept'`); err != nil {
 		t.Fatal(err)
 	}
