@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -233,5 +234,62 @@ func TestPrunedReceiptLookupFailureRollsBackWholeBatch(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow("SELECT count(*) FROM events").Scan(&n); err != nil || n != 0 {
 		t.Fatal("unverified batch accepted", n, err)
+	}
+}
+
+func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"native", "posthog", "segment"} {
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			s := duckLakeJourneyService(t)
+			var clock atomic.Int64
+			clock.Store(time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC).UnixMilli())
+			s.eventRules.clock = func() time.Time { return time.UnixMilli(clock.Load()).UTC() }
+			s.receiptRetention = 48 * time.Hour
+			projectID, _ := project(t, s)
+			_, writer := key(t, s, []string{"imports:write", "events:write"}, []string{projectID})
+			bindIngestionSource(t, s, writer, "checkout")
+			data := historicalJourney(t, format)
+			job := createFormatImport(t, s, projectID, writer, format, "initial", data)
+			completed := finishFormatImport(t, s, projectID, writer, job, data)
+			if completed.Counts.Accepted != 3 {
+				t.Fatal(completed.Counts)
+			}
+			duckLakeJourneyDrain(t, s)
+			clock.Add((72 * time.Hour).Milliseconds())
+			if err := s.pruneReceipts(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if receiptCount(t, s) != 0 {
+				t.Fatal("historical receipts not pruned")
+			}
+			// Even a changed occurrence time cannot reuse an accepted producer ID.
+			retryData := bytes.ReplaceAll(data, []byte("2026-01-10"), []byte("2026-11-04"))
+			retryJob := createFormatImport(t, s, projectID, writer, format, "new-job", retryData)
+			retry := finishFormatImport(t, s, projectID, writer, retryJob, retryData)
+			if retry.Counts.Duplicates != 3 || retry.Counts.Accepted != 0 {
+				t.Fatal("pruned import was reaccepted", retry.Counts)
+			}
+			blocked := createFormatImport(t, s, projectID, writer, format, "blocked-job", retryData)
+			store := s.lake.(*duckLakeStore)
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			importTestPut(t, s, projectID, blocked, blocked.Files[0], writer, 0, retryData, 503)
+			var offset int64
+			if err := s.db.QueryRow("SELECT offset_bytes FROM import_upload_files WHERE id=?", blocked.Files[0].ID).Scan(&offset); err != nil || offset != 0 {
+				t.Fatal("failed lookup advanced import", offset, err)
+			}
+			reopened, err := newDuckLake(store.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.lake = reopened
+			resumed := finishFormatImport(t, s, projectID, writer, blocked, retryData)
+			if resumed.Counts.Duplicates != 3 || resumed.Counts.Accepted != 0 {
+				t.Fatal("retry after lake recovery changed counts", resumed.Counts)
+			}
+		})
 	}
 }
