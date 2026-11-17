@@ -72,7 +72,7 @@ func architectureHTTP(handler http.Handler, method, path, token string, body []b
 }
 
 func architectureRunQuery(handler http.Handler, token, project, sql string) (int, AnalyticsResult, time.Duration) {
-	body, _ := json.Marshal(map[string]any{"sql": sql, "use_cache": false})
+	body, _ := json.Marshal(map[string]any{"sql": sql})
 	status, raw, elapsed := architectureHTTP(handler, "POST", "/api/v1/projects/"+project+"/query", token, body, false)
 	var response AnalyticsQuery
 	if status == 200 && json.Unmarshal(raw, &response) != nil {

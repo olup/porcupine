@@ -69,7 +69,7 @@ func largeEventHTTP(t *testing.T, host *httptest.Server, method, path, credentia
 
 func largeEventQuery(t *testing.T, host *httptest.Server, project, sql string) []any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"sql": sql, "use_cache": false})
+	body, _ := json.Marshal(map[string]any{"sql": sql})
 	result := largeEventHTTP(t, host, "POST", "/api/v1/projects/"+project+"/query", adminToken, body, 200)
 	return result["result"].(map[string]any)["data"].([]any)
 }

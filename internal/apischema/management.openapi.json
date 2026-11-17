@@ -225,16 +225,6 @@
             "format": "int64",
             "type": "integer"
           },
-          "max_read_bytes": {
-            "description": "Physical byte scan quota; zero means unavailable for this engine.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "max_read_rows": {
-            "description": "Physical row scan quota; zero means unavailable for this engine.",
-            "format": "int64",
-            "type": "integer"
-          },
           "max_result_bytes": {
             "format": "int64",
             "type": "integer"
@@ -276,8 +266,6 @@
           "request_timeout_seconds",
           "max_memory_bytes",
           "memory_scope",
-          "max_read_rows",
-          "max_read_bytes",
           "max_concurrent_queries"
         ],
         "type": "object"
@@ -310,14 +298,10 @@
             "type": "object"
           },
           "sql": {
-            "description": "One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden.",
+            "description": "One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden.",
             "maxLength": 16384,
             "minLength": 1,
             "type": "string"
-          },
-          "use_cache": {
-            "description": "DuckDB always executes fresh queries. This preference has no effect while get-event-schema reports result_cache=false.",
-            "type": "boolean"
           }
         },
         "required": [
@@ -349,11 +333,6 @@
             ]
           },
           "rows": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "rows_before_limit_at_least": {
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -411,10 +390,6 @@
               "null"
             ]
           },
-          "result_cache": {
-            "description": "Whether this engine supports the documented result cache.",
-            "type": "boolean"
-          },
           "unsupported": {
             "items": {
               "type": "string"
@@ -426,7 +401,6 @@
           }
         },
         "required": [
-          "result_cache",
           "functions",
           "features",
           "unsupported"
@@ -1533,11 +1507,6 @@
             "format": "int64",
             "type": "integer"
           },
-          "max_read_bytes": {
-            "description": "Physical scan byte cap; zero because native exports do not enforce one.",
-            "format": "int64",
-            "type": "integer"
-          },
           "max_row_bytes": {
             "format": "int64",
             "type": "integer"
@@ -1558,25 +1527,18 @@
           "retention_hours": {
             "format": "int64",
             "type": "integer"
-          },
-          "temporary_bytes": {
-            "description": "Per-export temporary-disk cap; zero because native exports do not enforce one.",
-            "format": "int64",
-            "type": "integer"
           }
         },
         "required": [
           "max_concurrent_jobs",
           "max_queued_jobs",
           "max_execution_seconds",
-          "max_read_bytes",
           "max_output_bytes",
           "file_bytes",
           "max_row_bytes",
           "memory_scope",
           "memory_bytes",
           "bandwidth_bytes_per_second",
-          "temporary_bytes",
           "queue_threshold",
           "retention_hours"
         ],
@@ -40442,7 +40404,7 @@
     },
     "/api/v1/projects/{id}/query": {
       "post": {
-        "description": "Agents write the SQL. First discover the table, allowed functions, cache support and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. Porcupine uses DuckDB SQL, $name bound parameters and fresh reads.\n\nDuckDB example counting conversations by day and a custom client property:\nSELECT CAST(event_time AS DATE) AS day, json_extract_string(properties,'$.client_id') AS client, count(*) AS conversations FROM events WHERE event=$event GROUP BY day,client ORDER BY day,client\nParameters: {\"event\":\"conversation_started\"}.\n\nExample inspecting the latest event pointer returned by the event catalog:\nSELECT uuid,event,properties,timestamp FROM events WHERE uuid=$uuid LIMIT 1\nParameters: {\"uuid\":\"UUID_FROM_CATALOG\"}.\n\nQueries see only this project's delivered logical events. event_time is a UTC temporal value; timestamp retains the original RFC3339 precision. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. get-event-catalog supports property_prefix, property_kind (all, custom, reserved), property_limit and property_cursor. Read https://olup.github.io/porcupine/docs/duckdb-recipes.md for trends, funnels, sessions, retention and percentiles. Query failures may include code, hint and field to guide a correction; use create-event-export when interactive results exceed limits. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables, system metadata, FORMAT or SETTINGS.",
+        "description": "Agents write the SQL. First discover the table, allowed functions and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. Porcupine uses DuckDB SQL, $name bound parameters and fresh reads.\n\nDuckDB example counting conversations by day and a custom client property:\nSELECT CAST(event_time AS DATE) AS day, json_extract_string(properties,'$.client_id') AS client, count(*) AS conversations FROM events WHERE event=$event GROUP BY day,client ORDER BY day,client\nParameters: {\"event\":\"conversation_started\"}.\n\nExample inspecting the latest event pointer returned by the event catalog:\nSELECT uuid,event,properties,timestamp FROM events WHERE uuid=$uuid LIMIT 1\nParameters: {\"uuid\":\"UUID_FROM_CATALOG\"}.\n\nQueries see only this project's delivered logical events. event_time is a UTC temporal value; timestamp retains the original RFC3339 precision. Counts and other 64-bit integers use decimal strings in JSON. Property discovery is sampled and does not define metrics. get-event-catalog supports property_prefix, property_kind (all, custom, reserved), property_limit and property_cursor. Read https://olup.github.io/porcupine/docs/duckdb-recipes.md for trends, funnels, sessions, retention and percentiles. Query failures may include code, hint and field to guide a correction; use create-event-export when interactive results exceed limits. Results are eventually consistent with ingestion; inspect delivery.pending. No writes, external sources, qualified tables or system metadata.",
         "operationId": "query-events",
         "parameters": [
           {

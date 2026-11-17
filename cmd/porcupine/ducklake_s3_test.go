@@ -28,11 +28,6 @@ func TestDuckLakeS3Environment(t *testing.T) {
 	if err != nil || c == nil || !c.UsePathStyle || c.Bucket != "analytics-tests" || c.SecretAccessKey != "fixture-secret" {
 		t.Fatal("S3 environment not parsed", err)
 	}
-	t.Setenv("PORCUPINE_CLICKHOUSE_URL", "http://localhost:8123")
-	t.Setenv("PORCUPINE_DUCKLAKE_DIR", "")
-	if _, err := analyticsConfiguration(); err == nil {
-		t.Fatal("retired engine settings were silently ignored")
-	}
 	t.Setenv("PORCUPINE_DUCKLAKE_S3_PATH_STYLE", "definitely")
 	if _, err := duckLakeS3Configuration(); err == nil {
 		t.Fatal("invalid path style flag accepted")

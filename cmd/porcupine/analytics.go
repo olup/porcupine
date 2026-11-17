@@ -4,19 +4,12 @@ import (
 	"errors"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
 func analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
-	for _, entry := range os.Environ() {
-		name, value, _ := strings.Cut(entry, "=")
-		if value != "" && (strings.HasPrefix(name, "PORCUPINE_CLICKHOUSE_") || name == "PORCUPINE_HOT_RECEIPT_LIMIT" || name == "PORCUPINE_HOT_STORAGE_DAYS") {
-			return nil, errors.New(name + " is no longer supported; use native DuckLake settings")
-		}
-	}
 	directory := os.Getenv("PORCUPINE_DUCKLAKE_DIR")
 	remote, err := duckLakeS3Configuration()
 	if err != nil {

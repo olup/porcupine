@@ -31,8 +31,7 @@ type queryResponse struct {
 type schemaResponse struct {
 	Enabled bool `json:"enabled"`
 	SQL     struct {
-		Dialect     string `json:"dialect"`
-		ResultCache bool   `json:"result_cache"`
+		Dialect string `json:"dialect"`
 	} `json:"sql"`
 	Delivery struct {
 		Pending int64 `json:"pending"`
@@ -159,7 +158,7 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if len(first.Receipts) != 1 || first.Receipts[0].EventID == "" || first.Receipts[0].UUID == "" {
 		return errors.New("native ingestion omitted its stable receipt")
 	}
-	query := map[string]any{"sql": "SELECT event_id,event FROM events WHERE event=$name", "parameters": map[string]string{"name": "compiled-smoke"}, "use_cache": false}
+	query := map[string]any{"sql": "SELECT event_id,event FROM events WHERE event=$name", "parameters": map[string]string{"name": "compiled-smoke"}}
 	base := "/api/v1/projects/" + created.Project.ID
 	if err := poll(ctx, func() (bool, error) {
 		var schema schemaResponse
@@ -246,7 +245,7 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if err := runCLI(ctx, cliPath, cliEnv, nil, &cliSchema, "get-event-schema", "--id", created.Project.ID); err != nil {
 		return err
 	}
-	if !cliSchema.Enabled || cliSchema.SQL.Dialect != "duckdb" || cliSchema.SQL.ResultCache {
+	if !cliSchema.Enabled || cliSchema.SQL.Dialect != "duckdb" {
 		return errors.New("compiled CLI schema did not describe the DuckDB engine")
 	}
 	var status struct {

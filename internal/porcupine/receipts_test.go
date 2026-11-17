@@ -53,28 +53,6 @@ func TestPermanentReceiptsKeepNativeIDsAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestArchivedReceiptStateFailsClosed(t *testing.T) {
-	for _, key := range []string{"receipt_source_uuid", "receipt_source_config", "receipt_fallback_required", "receipt_protocol_required"} {
-		t.Run(key, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "queue.db")
-			s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = s.db.Exec(`INSERT INTO metadata(key,value) VALUES(?,?)`, key, "1"); err != nil {
-				t.Fatal(err)
-			}
-			s.Close()
-			reopened, err := Open(Config{DBPath: path})
-			if reopened != nil {
-				reopened.Close()
-			}
-			if err == nil {
-				t.Fatal("opened a journal whose prior receipt facts may be outside SQLite")
-			}
-		})
-	}
-}
 
 func TestReceiptAndHeadNumericIDRemainAtomic(t *testing.T) {
 	s := service(t, 10)

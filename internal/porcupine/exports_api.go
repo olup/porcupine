@@ -41,14 +41,12 @@ type ExportLimits struct {
 	MaxConcurrentJobs       int    `json:"max_concurrent_jobs"`
 	MaxQueuedJobs           int    `json:"max_queued_jobs"`
 	MaxExecutionSeconds     int    `json:"max_execution_seconds"`
-	MaxReadBytes            int64  `json:"max_read_bytes" doc:"Physical scan byte cap; zero because native exports do not enforce one."`
 	MaxOutputBytes          int64  `json:"max_output_bytes"`
 	FileBytes               int64  `json:"file_bytes"`
 	MaxRowBytes             int64  `json:"max_row_bytes"`
 	MemoryScope             string `json:"memory_scope" doc:"per_resident_project_engine: shared engine budget, not a per-query quota or process cap."`
 	MemoryBytes             int64  `json:"memory_bytes" doc:"DuckDB shared per-resident-project engine budget. Not an export-specific or hard process RSS limit."`
 	BandwidthBytesPerSecond int64  `json:"bandwidth_bytes_per_second"`
-	TemporaryBytes          int64  `json:"temporary_bytes" doc:"Per-export temporary-disk cap; zero because native exports do not enforce one."`
 	QueueThreshold          int64  `json:"queue_threshold"`
 	RetentionHours          int    `json:"retention_hours"`
 }

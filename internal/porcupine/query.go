@@ -40,8 +40,6 @@ type AnalyticsLimits struct {
 	MetadataRequestTimeoutSeconds      int    `json:"metadata_request_timeout_seconds,omitempty" doc:"Configured native PostgreSQL metadata I/O allowance. Shared workers enforce a fail-stop watchdog before an abandoned query permit can be reused."`
 	MaxMemoryBytes                     int    `json:"max_memory_bytes" doc:"Configured memory budget shared by queries on each resident project engine. DuckDB allocations can exceed this; it is not a per-query limit or hard process RSS ceiling."`
 	MemoryScope                        string `json:"memory_scope" doc:"Memory is configured per resident project engine, shared by its work; it is not an instance-wide or per-query bound."`
-	MaxReadRows                        int    `json:"max_read_rows" doc:"Physical row scan quota; zero means unavailable for this engine."`
-	MaxReadBytes                       int    `json:"max_read_bytes" doc:"Physical byte scan quota; zero means unavailable for this engine."`
 	MaxConcurrentQueries               int    `json:"max_concurrent_queries" doc:"Effective tenant interactive concurrency, shared across its projects and bounded by deployment capacity."`
 }
 
@@ -59,7 +57,6 @@ type AnalyticsSchemaOutput struct{ Body AnalyticsSchema }
 
 type AnalyticsSQL struct {
 	Dialect     string   `json:"dialect,omitempty" doc:"SQL dialect selected by this deployment."`
-	ResultCache bool     `json:"result_cache" doc:"Whether this engine supports the documented result cache."`
 	Functions   []string `json:"functions"`
 	Features    []string `json:"features"`
 	Unsupported []string `json:"unsupported"`
@@ -68,9 +65,8 @@ type AnalyticsSQL struct {
 type AnalyticsQueryInput struct {
 	ID   string `path:"id" doc:"Project identifier"`
 	Body struct {
-		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. FORMAT, SETTINGS, external sources and mutations are forbidden."`
+		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden."`
 		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
-		UseCache   *bool             `json:"use_cache,omitempty" doc:"DuckDB always executes fresh queries. This preference has no effect while get-event-schema reports result_cache=false."`
 	}
 }
 
@@ -84,11 +80,10 @@ type AnalyticsStatistics struct {
 }
 
 type AnalyticsResult struct {
-	Meta                   []AnalyticsResultColumn      `json:"meta"`
-	Data                   []map[string]json.RawMessage `json:"data" doc:"Typed SQL JSON values. 64-bit integers are represented as strings to preserve precision."`
-	Rows                   uint64                       `json:"rows"`
-	Statistics             AnalyticsStatistics          `json:"statistics"`
-	RowsBeforeLimitAtLeast *uint64                      `json:"rows_before_limit_at_least,omitempty"`
+	Meta       []AnalyticsResultColumn      `json:"meta"`
+	Data       []map[string]json.RawMessage `json:"data" doc:"Typed SQL JSON values. 64-bit integers are represented as strings to preserve precision."`
+	Rows       uint64                       `json:"rows"`
+	Statistics AnalyticsStatistics          `json:"statistics"`
 }
 
 type AnalyticsQuery struct {
