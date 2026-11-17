@@ -91,10 +91,14 @@ var localControlSchema = schemaStore{name: "control", steps: []string{controlSch
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
+//go:embed hosted_import_schema.sql
+var hostedImportSchema string
+
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
-// 8: shared pipelines. 9: project catalog descriptions. 10: shared output jobs.
+// 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
+// 11: hosted mutations. 12: hosted historical upload checkpoints. 13: shared output jobs.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -105,6 +109,9 @@ var sharedControlSteps = []string{
 	lakeapi.ProjectCoordinatorSchemaV1,
 	output.PipelineSchemaV1,
 	catalogDescriptionSchema,
+	usage.ExecutionSchema,
+	hostedMutationSchemaV1,
+	hostedImportSchema,
 	output.PipelineJobsPostgresSchemaV1 + output.PipelineDeliverySchemaV1 + output.ExportPostgresSchemaV1,
 }
 

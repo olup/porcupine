@@ -58,12 +58,12 @@ type ImportRowOutcome struct {
 	ReceivedAt time.Time
 }
 type ImportChunkOutcome struct {
-	Key                              ImportChunkKey
-	ManifestSHA256, SourceID, Format string
-	Previous                         ImportFileCheckpoint
-	Next                             ImportFileCheckpoint
-	Delta                            importer.ImportCounts
-	Rows                             []ImportRowOutcome
-	Samples                          []importer.ImportRowSample
-	AccountedAt                      time.Time
+	Key                                           ImportChunkKey
+	ManifestSHA256, SourceID, Format, InputSHA256 string
+	Previous                                      ImportFileCheckpoint
+	Next                                          ImportFileCheckpoint
+	Delta                                         importer.ImportCounts
+	Rows                                          []ImportRowOutcome
+	Samples                                       []importer.ImportRowSample
+	AccountedAt                                   time.Time
 }

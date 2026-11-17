@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS lake.identity_profiles (
 CREATE TABLE IF NOT EXISTS lake.identity_links (
  anonymous_id VARCHAR, identified_id VARCHAR, version UBIGINT
 );
-CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;`
+`
+
+const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;`
 
 const duckLakeEventsSelect = `SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,
@@ -155,15 +157,7 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 	controls := make(map[string]PreparedLakeProjection)
 	for _, prepared := range projections {
 		projection := prepared.projection
-		row := lakeProjectionRow{
-			UUID: projection.UUID, ID: projection.ID, ProjectID: projection.ProjectID,
-			Revision: projection.Revision, Deleted: projection.IsDeleted, ReceivedAt: projection.ReceivedAt,
-			Event: projection.Event.Event, DistinctID: projection.DistinctID, Properties: string(projection.Properties),
-			Timestamp: projection.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano),
-			ReceivedAtMS: prepared.received.UnixMilli(), SourceID: projection.SourceID, MessageID: projection.MessageID,
-			EventType: projection.EventType, Context: string(projection.Context), Imported: boolByte(projection.Imported),
-			Identity: projection.IdentitySnapshot, OriginalSnapshot: projection.OriginalSnapshot,
-		}
+		row := prepared.row()
 		if projection.IsDeleted {
 			row.EventTime, row.TimestampMS = "1970-01-01T00:00:00Z", 0
 		}
@@ -251,6 +245,19 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
 		return err
 	}
 	return tx.Commit()
+}
+
+func (prepared PreparedLakeProjection) row() lakeProjectionRow {
+	projection := prepared.projection
+	return lakeProjectionRow{
+		UUID: projection.UUID, ID: projection.ID, ProjectID: projection.ProjectID,
+		Revision: projection.Revision, Deleted: projection.IsDeleted, ReceivedAt: projection.ReceivedAt,
+		Event: projection.Event.Event, DistinctID: projection.DistinctID, Properties: string(projection.Properties),
+		Timestamp: projection.Timestamp, TimestampMS: prepared.timestamp.UnixMilli(), EventTime: prepared.timestamp.Format(time.RFC3339Nano),
+		ReceivedAtMS: prepared.received.UnixMilli(), SourceID: projection.SourceID, MessageID: projection.MessageID,
+		EventType: projection.EventType, Context: string(projection.Context), Imported: boolByte(projection.Imported),
+		Identity: projection.IdentitySnapshot, OriginalSnapshot: projection.OriginalSnapshot,
+	}
 }
 
 type lakeProjectionRow struct {
@@ -367,11 +374,15 @@ func (s *DuckLakeStore) Load(ctx context.Context, project, uuid string) (EventPr
 		return EventProjection{}, err
 	}
 	defer tx.Rollback()
+	return loadEventProjection(ctx, tx, project, uuid)
+}
+
+func loadEventProjection(ctx context.Context, tx *sql.Tx, project, uuid string) (EventProjection, error) {
 	var revision uint64
 	var id int64
 	var deleted bool
 	var received string
-	err = tx.QueryRowContext(ctx, "SELECT event_id,revision,is_deleted,received_at FROM lake.heads WHERE uuid=?", uuid).Scan(&id, &revision, &deleted, &received)
+	err := tx.QueryRowContext(ctx, "SELECT event_id,revision,is_deleted,received_at FROM lake.heads WHERE uuid=?", uuid).Scan(&id, &revision, &deleted, &received)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EventProjection{}, ErrEventNotFound
 	}

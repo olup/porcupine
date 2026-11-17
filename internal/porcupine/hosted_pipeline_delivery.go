@@ -26,9 +26,7 @@ type hostedPipelineDelivery struct {
 
 func newHostedPipelineDelivery(flusher *hostedLiveFlusher, destination func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error), limits output.HostedWebhookLimits, client *http.Client) *hostedPipelineDelivery {
 	return &hostedPipelineDelivery{flusher: flusher, destination: destination, limits: limits, client: client,
-		reconcile: func(ctx context.Context, _ *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
-			return flusher.reconcile(ctx, scope, fence, tenant)
-		},
+		reconcile: flusher.reconcile,
 	}
 }
 

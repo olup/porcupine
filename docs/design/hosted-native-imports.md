@@ -1,9 +1,10 @@
 # Native historical import outcomes
 
 This internal, disabled component commits historical chunks and reconciles their
-usage through the existing hosted publication cursor. It has no upload HTTP,
-CLI, Service constructor, scheduler, or production acceptance caller. Standalone
-imports continue to use the durable SQLite transaction.
+usage through the existing hosted publication cursor. The
+[hosted upload integration](hosted-import-uploads.md) uses this component behind
+an internal gate. Standalone imports continue to use the durable SQLite
+transaction.
 
 ## Native transaction
 

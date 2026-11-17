@@ -9,7 +9,8 @@ import (
 )
 
 const hostedFenceSchemaVersion = 3
-const hostedLakeSchemaVersion = 5
+const hostedMutationSchemaVersion = 6
+const hostedLakeSchemaVersion = hostedMutationSchemaVersion
 
 // Version 3 is an explicit empty-catalog cutover, never an inferred legacy
 // identity backfill. Published native steps remain unchanged.
@@ -38,6 +39,7 @@ CREATE TABLE lake.native_commit_proofs (proof_version INTEGER,effect_seq BIGINT,
 CREATE TABLE lake.import_file_heads (job_id VARCHAR,file_id VARCHAR,manifest_sha256 VARCHAR,source_id VARCHAR,format VARCHAR,effect_seq BIGINT,checkpoint_json VARCHAR);
 CREATE TABLE lake.import_person_state (distinct_id VARCHAR,person_id VARCHAR,person_version UBIGINT,mapping_version UBIGINT,profile_version UBIGINT,deleted BOOLEAN,source_id VARCHAR)
 `},
+	{6, ""}, // The common proof history can now contain mutation outcomes.
 }
 
 type HostedProjectScope struct {
@@ -69,7 +71,7 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 	if version == hostedLakeSchemaVersion {
 		return readHostedProjectScope(ctx, p.DB, key)
 	}
-	if version != lakeSchemaVersion && version != hostedFenceSchemaVersion && version != 4 {
+	if version != lakeSchemaVersion && version != hostedFenceSchemaVersion && version != 4 && version != 5 {
 		return HostedProjectScope{}, errors.New("hosted cutover requires a supported empty native catalog")
 	}
 	tx, err := p.DB.BeginTx(ctx, nil)
@@ -80,19 +82,21 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 	if err := p.acquireNativeProjectGuard(ctx, tx); err != nil {
 		return HostedProjectScope{}, err
 	}
-	var populated bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.heads UNION ALL SELECT 1 FROM lake.current_events UNION ALL SELECT 1 FROM lake.identity_profiles UNION ALL SELECT 1 FROM lake.identity_links)`).Scan(&populated); err != nil {
-		return HostedProjectScope{}, err
-	}
-	if version == 4 {
-		var prototype bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.live_commit_proofs UNION ALL SELECT 1 FROM lake.live_usage_totals UNION ALL SELECT 1 FROM lake.hosted_write_guard WHERE next_effect_seq<>0 OR ack_effect_seq<>0)`).Scan(&prototype); err != nil {
+	if version < 5 {
+		var populated bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.heads UNION ALL SELECT 1 FROM lake.current_events UNION ALL SELECT 1 FROM lake.identity_profiles UNION ALL SELECT 1 FROM lake.identity_links)`).Scan(&populated); err != nil {
 			return HostedProjectScope{}, err
 		}
-		populated = populated || prototype
-	}
-	if populated {
-		return HostedProjectScope{}, errors.New("populated native prototype requires rebuild from authoritative data before hosted schema5; existing data preserved")
+		if version == 4 {
+			var prototype bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM lake.live_commit_proofs UNION ALL SELECT 1 FROM lake.live_usage_totals UNION ALL SELECT 1 FROM lake.hosted_write_guard WHERE next_effect_seq<>0 OR ack_effect_seq<>0)`).Scan(&prototype); err != nil {
+				return HostedProjectScope{}, err
+			}
+			populated = populated || prototype
+		}
+		if populated {
+			return HostedProjectScope{}, errors.New("populated native prototype requires rebuild from authoritative data before hosted schema5; existing data preserved")
+		}
 	}
 	scope := HostedProjectScope{Key: key, CatalogID: SharedNativeCatalogID(key.SourceID, key.ProjectID), StreamID: event.NewID()}
 	if version >= hostedFenceSchemaVersion {
@@ -105,8 +109,10 @@ func (s *DuckLakeStore) InitializeHostedProject(ctx context.Context, key Project
 		if step.version <= version {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, step.sql); err != nil {
-			return HostedProjectScope{}, err
+		if step.sql != "" {
+			if _, err := tx.ExecContext(ctx, step.sql); err != nil {
+				return HostedProjectScope{}, err
+			}
 		}
 		if step.version == 3 {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO lake.hosted_write_guard (id,source_id,project_id,catalog_id,stream_id,fence_epoch,fence_nonce,generation,state,next_effect_seq,ack_effect_seq,sealed_effect_seq,identity_ready) VALUES(1,?,?,?,?,0,'',0,'open',0,0,NULL,true)`, key.SourceID, key.ProjectID, scope.CatalogID, scope.StreamID); err != nil {

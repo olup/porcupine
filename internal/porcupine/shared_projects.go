@@ -79,6 +79,8 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 
 func (s *Service) projectOperationNeedsOwner(operation string) bool {
 	switch operation {
+	case "get-event-schema":
+		return s.hostedQueries == nil
 	case "query-events", "get-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project":
 		return false
 	case "create-event-export", "list-event-exports", "get-event-export", "cancel-event-export", "list-event-export-files":
