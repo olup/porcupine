@@ -19,10 +19,11 @@ import (
 // This adapter has no production caller. Its only authority is the explicit
 // native credential persisted on the real PG definition, never a producer JWT.
 type hostedEffectPublisher struct {
-	control *sql.DB
-	effects *output.PGPipelineEffects
-	usage   *usage.Store
-	objects *lakeapi.DuckLakeObjectStore
+	control               *sql.DB
+	effects               *output.PGPipelineEffects
+	usage                 *usage.Store
+	objects               *lakeapi.DuckLakeObjectStore
+	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -336,10 +337,16 @@ func nativeUsageReports(e lakeapi.NativeCommitEvidence) ([]usage.SourceTotals, e
 	return reports, nil
 }
 func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) error {
+	return p.publishOn(ctx, b, e, nil)
+}
+
+func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession) error {
 	if err := lakeapi.ValidateNativeCommitEvidence(e); err != nil {
 		return err
 	}
 	var v output.PipelinePublication
+	var mutation hostedMutationIntent
+	var mutationUUID string
 	var err error
 	switch e.Kind {
 	case lakeapi.NativeCommitLive:
@@ -349,6 +356,28 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 			return output.ErrPipelineConflict
 		}
 		_, err = p.objects.ReadImmutableImportCheckpoint(ctx, e.Scope, e.Import.Key.JobID, e.Import.Key.FileID, e.Import.Next.Parser)
+		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
+	case lakeapi.NativeCommitMutation:
+		if b != (output.PipelineBinding{}) || session == nil {
+			return output.ErrPipelineConflict
+		}
+		mutation, err = hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
+		if err != nil {
+			return err
+		}
+		if mutation.body.SHA256 != e.InputFingerprint || mutation.revision != int64(e.Mutation.Revision) || (mutation.operation == "delete") != e.Mutation.Deleted {
+			return output.ErrPipelineConflict
+		}
+		if e.Mutation.Deleted && e.Mutation.ErrorCode == "" {
+			if p.cancelMutationWebhook == nil {
+				return output.ErrPipelineConflict
+			}
+			body, err := p.readHostedMutation(ctx, mutation)
+			if err != nil {
+				return err
+			}
+			mutationUUID = body.Projection.UUID
+		}
 		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
 	default:
 		return output.ErrPipelineConflict
@@ -360,21 +389,37 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 	if err != nil {
 		return err
 	}
-	err = p.transaction(ctx, func(tx *sql.Tx) error {
+	publishTx := func(ctx context.Context, tx *sql.Tx) error {
 		switch e.Kind {
 		case lakeapi.NativeCommitLive:
 			if _, err := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); err != nil {
 				return err
 			}
-		case lakeapi.NativeCommitImport:
-			if _, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v); err != nil {
+		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
+			advanced, err := p.effects.PublishNoOutputEffectsTx(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
+			if err != nil {
 				return err
+			}
+			if advanced && e.Kind == lakeapi.NativeCommitMutation {
+				if mutationUUID != "" {
+					if err := p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUID); err != nil {
+						return err
+					}
+				}
+				if err := finishHostedMutationTx(ctx, tx, mutation, e); err != nil {
+					return err
+				}
 			}
 		default:
 			return output.ErrPipelineConflict
 		}
 		return p.usage.PublishSourceTotalsTx(ctx, tx, reports)
-	})
+	}
+	if session != nil {
+		err = session.RunControlTx(ctx, publishTx)
+	} else {
+		err = p.transaction(ctx, func(tx *sql.Tx) error { return publishTx(ctx, tx) })
+	}
 	if err == nil {
 		return nil
 	}

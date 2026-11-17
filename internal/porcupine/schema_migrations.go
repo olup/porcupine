@@ -84,7 +84,7 @@ var localControlSchema = schemaStore{name: "control", steps: []string{controlSch
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, usage.ControlSchema, lakeapi.ProjectCoordinatorSchemaV1, output.PipelineSchemaV1}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, usage.ControlSchema, lakeapi.ProjectCoordinatorSchemaV1, output.PipelineSchemaV1, hostedMutationSchemaV1}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {

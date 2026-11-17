@@ -89,6 +89,7 @@ type Service struct {
 	tokenSlots            chan struct{}
 	statusSlots           chan struct{}
 	mutationMu            sync.Mutex
+	hostedMutations       *hostedLiveFlusher
 	pipelines             *pipelineRuntime
 	batchSlot             chan struct{}
 	exports               *output.ExportJobs

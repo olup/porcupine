@@ -2280,6 +2280,10 @@
           "created_at": {
             "type": "string"
           },
+          "error_code": {
+            "description": "Stable code for a terminal mutation failure.",
+            "type": "string"
+          },
           "mutation_id": {
             "type": "string"
           },
@@ -2293,7 +2297,7 @@
             "type": "string"
           },
           "state": {
-            "description": "pending means durably queued; applied means DuckLake committed the projection.",
+            "description": "pending means durably queued; applied means DuckLake committed the projection; failed means a terminal error was recorded.",
             "type": "string"
           },
           "uuid": {
@@ -19322,7 +19326,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Read whether an event correction or deletion is pending or applied"
+        "summary": "Read whether an event correction or deletion is pending, applied, or failed"
       }
     },
     "/api/v1/projects/{id}/event-profile": {
@@ -21544,7 +21548,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Queue a deletion tombstone; analytical visibility changes after projection and physical cleanup is asynchronous"
+        "summary": "Queue a deletion tombstone. Analytical visibility changes after projection. Previously started queries or sends can still complete, and published customer outputs are outside this operation."
       },
       "get": {
         "operationId": "get-event",
