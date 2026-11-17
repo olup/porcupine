@@ -103,6 +103,9 @@ func (s *Service) lakeEventCatalog(ctx context.Context, input lakeapi.EventCatal
 	if err != nil {
 		return nil, err
 	}
+	if err := s.describeCatalogPage(ctx, input.ID, input.Event, &result); err != nil {
+		return nil, apiError(503, "catalog descriptions unavailable")
+	}
 	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
