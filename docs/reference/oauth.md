@@ -16,7 +16,7 @@ For interactive applications, Porcupine supports [email sign-in for CLI and MCP]
 
 The issuer is an origin with no path, credentials, query, or fragment. HTTPS is required except for HTTP on localhost or a loopback IP. A trailing slash normalizes away. Set the real external HTTPS origin behind a reverse proxy. Discovery URLs use this pinned issuer, never the request Host header.
 
-[compose.oauth.yaml](../../compose.oauth.yaml) adds these settings to the base deployment. Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
+[compose.oauth.yaml](https://github.com/olup/porcupine/blob/v0.14.0/compose.oauth.yaml) adds these settings to the base deployment. Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
 
 A configured issuer disables legacy API and MCP Bearer keys by default. Leaving OAuth entirely unconfigured retains legacy authentication for offline use and migration; it does not enable OAuth endpoints. Set `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS=true` only for an explicit migration period. Public PostHog ingestion keys remain separate and continue to work without OAuth for `mixed` projects. Projects with `server_only` ingestion require an API-resource OAuth token or a private [service key](service-keys.md).
 

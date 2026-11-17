@@ -152,7 +152,7 @@ After interruption or process restart, incomplete attempt objects are cleaned up
 
 ## Operator configuration
 
-Exports require a configured analytical backend and S3 result storage. Use [compose.exports.yaml](../../compose.exports.yaml) alongside the base Compose file and private environment values. Export credentials go to the Go process and remain separate from analytical storage credentials. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
+Exports require a configured analytical backend and S3 result storage. Use [compose.exports.yaml](https://github.com/olup/porcupine/blob/v0.14.0/compose.exports.yaml) alongside the base Compose file and private environment values. Export credentials go to the Go process and remain separate from analytical storage credentials. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
