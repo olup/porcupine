@@ -17,7 +17,7 @@ func TestSharedPipelineJobsEncryptAndRetireDestination(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	db, effects := pipelineFixture(t)
-	_, err := db.Exec(`CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);` + PipelineJobsPostgresSchemaV1)
+	_, err := db.Exec(`CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);` + PipelineJobsPostgresSchemaV1 + ScheduledPipelinePostgresSchemaV1)
 	if err != nil {
 		t.Fatal(err)
 	}

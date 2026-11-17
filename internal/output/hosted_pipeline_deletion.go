@@ -20,7 +20,8 @@ func HostedPipelineDeletionInventory(ctx context.Context, tx *sql.Tx, tenant str
 		UNION ALL SELECT 1 FROM pipeline_effect_assemblies a WHERE a.project_id=$1 AND NOT EXISTS (
 			SELECT 1 FROM pipeline_effect_cleanup c WHERE c.project_id=a.project_id AND c.tenant_id=a.tenant_id
 			AND c.source_id=a.source_id AND c.catalog_id=a.catalog_id AND c.stream_id=a.stream_id
-			AND c.owner_id=a.generation AND c.generation=a.attempt))`, scope.Key.ProjectID).Scan(&ambiguous)
+			AND c.owner_id=a.generation AND c.generation=a.attempt)
+		UNION ALL SELECT 1 FROM hosted_s3_pipeline_runs WHERE project_id=$1 AND attempt_id<>'' AND state<>'succeeded')`, scope.Key.ProjectID).Scan(&ambiguous)
 	if err != nil {
 		return nil, err
 	}
@@ -40,11 +41,12 @@ func HostedPipelineDeletionInventory(ctx context.Context, tx *sql.Tx, tenant str
 			CASE WHEN target.rule_key='control-rule/'||target.id||'/'||target.rule_revision AND target.rule_version='' THEN '' ELSE target.rule_key END,''
 			FROM pipeline_effect_plans p JOIN pipeline_effect_targets target ON target.plan_id=p.id WHERE p.project_id=$1
 		UNION SELECT tenant_id,$2,$3,$4,
-			CASE WHEN rule_key='control-rule/'||id||'/'||rule_revision AND rule_version='' THEN '' ELSE rule_key END,''
+			CASE WHEN rule_version='' AND rule_key IN ('control-rule/'||id||'/'||rule_revision, $5||'control-rule/'||id||'/'||rule_revision)
+			THEN '' ELSE rule_key END,''
 			FROM pipeline_effect_definitions WHERE project_id=$1
 	)
 	SELECT tenant_id,source_id,catalog_id,stream_id,key,prefix_owner FROM owned`,
-		scope.Key.ProjectID, scope.Key.SourceID, scope.CatalogID, scope.StreamID)
+		scope.Key.ProjectID, scope.Key.SourceID, scope.CatalogID, scope.StreamID, hostedScheduledRulePrefix)
 	if err != nil {
 		return nil, err
 	}

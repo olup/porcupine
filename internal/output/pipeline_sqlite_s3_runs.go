@@ -13,7 +13,11 @@ import (
 )
 
 func (s *PipelineJobs) s3PipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 ORDER BY r.window_start_ms DESC,r.id LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
+	where := ` FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2`
+	if s.pg != nil {
+		where = hostedScheduledRunWhere
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+s3RunColumns+where+` ORDER BY r.window_start_ms DESC,r.id LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -28,12 +32,23 @@ func (s *PipelineJobs) s3PipelineRunPage(ctx context.Context, project, pipeline 
 	}
 	return out, rows.Err()
 }
+
+const s3RunColumns = `r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count`
+const hostedScheduledRunWhere = ` FROM hosted_s3_pipeline_runs r WHERE r.project_id=$1 AND r.pipeline_id=$2`
+
 func (s *PipelineJobs) getS3PipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
 	var r PipelineRun
-	err := s.db.QueryRowContext(ctx, `SELECT r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2 AND r.id=$3`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
+	where := ` FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2`
+	if s.pg != nil {
+		where = hostedScheduledRunWhere
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT `+s3RunColumns+where+` AND r.id=$3`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
 	return r, err
 }
 func (s *PipelineJobs) retryS3PipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
+	if s.pg != nil {
+		return s.retryHostedScheduledRun(ctx, project, pipeline, id)
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',attempts=0,next_attempt_ms=0,error_code='',completed_at_ms=0 WHERE id=$1 AND pipeline_id=$2 AND state='failed' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND project_id=$4)`, id, pipeline, pipeline, project)
 	if err != nil {
 		return false, err
@@ -45,10 +60,13 @@ func (s *PipelineJobs) retryS3PipelineRun(ctx context.Context, project, pipeline
 	return n == 1, err
 }
 func (s *PipelineJobs) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3PipelineSpec) (*exportstore.Store, error) {
+	return s.openPipelineS3Store(ctx, p.ProjectID, p.ID, p.Secret, spec)
+}
+func (s *PipelineJobs) openPipelineS3Store(ctx context.Context, project, binding string, encrypted []byte, spec S3PipelineSpec) (*exportstore.Store, error) {
 	if s.ValidateS3Endpoint(spec.Destination.Endpoint) != nil {
 		return nil, errors.New("destination_disabled")
 	}
-	plaintext, err := s.OpenSecret(p.ProjectID, p.ID, p.Secret)
+	plaintext, err := s.OpenSecret(project, binding, encrypted)
 	if err != nil {
 		return nil, errors.New("credentials_unavailable")
 	}
