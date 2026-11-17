@@ -29,7 +29,7 @@ func main() {
 	flag.Parse()
 	command := flag.Args()
 	if len(command) == 0 {
-		command = []string{"go", "test", "./internal/porcupine", "-run", *pattern, "-count=1", "-timeout=600s"}
+		command = []string{"go", "test", "./internal/porcupine", "./internal/lake", "-run", *pattern, "-count=1", "-timeout=600s"}
 		if *race {
 			command = append(command, "-race")
 		}
