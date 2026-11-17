@@ -16,13 +16,14 @@ import (
 
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExport) {
 	t.Helper()
 	s := duckLakeJourneyService(t)
 	s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
-	config, err := normalizeExportConfig(ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
+	config, err := output.NormalizeExportConfig(output.ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +34,10 @@ func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, stor
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	s.exports = &exportRuntime{config: config, store: store, wake: make(chan struct{}, 1)}
+	config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "native-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
 	p, ingest := project(t, s)
 	_, reader := key(t, s, []string{"events:read"}, []string{p})
 	request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"uuid":"native-export","event":"purchase","distinct_id":"user","properties":{"amount":42}}`, ingest), 200)
@@ -47,7 +51,7 @@ func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, stor
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.claimExport(context.Background(), queued)
+	job, err := queued, error(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +71,13 @@ func TestDuckLakeExportWorkerPublicationAndRevocation(t *testing.T) {
 					}
 				}
 			}
-			s.runExport(context.Background(), job)
+			s.exports.RunOne(context.Background())
 			current, err := s.loadExport(context.Background(), job.ProjectID, job.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if revoke {
-				if current.State != ExportCanceled || current.CleanupPending {
+				if current.State != output.ExportCanceled || current.CleanupPending {
 					t.Fatalf("revoked export published: %+v", current)
 				}
 				fake.mu.Lock()
@@ -83,7 +87,7 @@ func TestDuckLakeExportWorkerPublicationAndRevocation(t *testing.T) {
 				}
 				return
 			}
-			if current.State != ExportSucceeded || current.Rows != 1 || current.FileCount != 1 {
+			if current.State != output.ExportSucceeded || current.Rows != 1 || current.FileCount != 1 {
 				t.Fatalf("native export failed: %+v", current)
 			}
 			fake.mu.Lock()
@@ -112,7 +116,7 @@ func TestDuckLakeConfiguredExportsOpen(t *testing.T) {
 	fake := &exportTestS3{}
 	server := httptest.NewServer(fake)
 	defer server.Close()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "acceptance.sqlite"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Exports: &ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "native-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "acceptance.sqlite"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Exports: &output.ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "native-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +136,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			server := httptest.NewServer(fake)
 			t.Cleanup(server.Close)
 			s.pipelines.s3Origins[server.URL] = true
-			limits, err := normalizeExportConfig(ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
+			limits, err := output.NormalizeExportConfig(output.ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,8 +297,8 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 	if !errors.Is(err, lakeapi.ErrExportValueTooLarge) {
 		t.Fatalf("row-limit cause masked by COPY cancellation: %v", err)
 	}
-	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errExportPressure }})
-	if !errors.Is(err, errExportPressure) {
+	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errPipelinePressure }})
+	if !errors.Is(err, errPipelinePressure) {
 		t.Fatalf("consumer cause masked by COPY cancellation: %v", err)
 	}
 

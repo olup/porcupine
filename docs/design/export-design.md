@@ -1,8 +1,22 @@
 # SQL export design
 
-> Historical record: this page documents a past design or validation and is not a guide to the current release.
+> Implementation reference for the SQLite export domain. See [the export guide](../exports.md) for user operations.
 
 Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](../exports.md) for requests and operator settings.
+
+## Module ownership
+
+`internal/output.ExportJobs` owns the complete SQLite export lifecycle. The service constructs it through `NewSQLiteExports` and starts its worker. The HTTP and MCP handlers retain route registration, project authorization, request validation, and native SQL validation. They call the same domain operations for submission, status, pagination, cancellation, and download links.
+
+The domain stores creator-scoped idempotency, delivery watermarks, claims, retry outcomes, progress, multipart checkpoints, publication, retention, and cleanup. `RunOne` performs a bounded worker cycle. Successful publication and `usage.Recorder.AddTx` share the same SQLite transaction and the same winning attempt predicate.
+
+`ExportDependencies` supplies the journal and control databases, clock, usage recorder, external issuer, and a native `ExportReader`. Its function fields check current credential or caller authority, active project and shared owner fences, project activity, and shared analytical admission. These functions do not update export jobs. The native reader retains its query permit until `Export` returns, and the domain retains local admission and project activity until execution returns.
+
+The domain derives finite external execution metadata from the current verified caller. It retains the original tenant, issuer, and expiry without storing the token. Reusing an idempotency key cannot renew this metadata. Download signing separately uses the current caller's expiry and the retained object's deadline.
+
+Project deletion calls `StageExportProjectCleanupTx` inside the journal removal transaction. It copies namespace and upload ownership before deleting export rows. `CleanupProject` retains the control inventory before remote deletion and checkpoint removal. Offline restore calls `ExportRestoreArtifacts` before reset, then `ResetRestoredExportsTx` after preserving source artifact holds. Reset does not contact the source destination.
+
+The extraction adds no PostgreSQL implementation, migration, or hosted activation. It preserves one coherent native query per attempt and the existing delivery-barrier consistency contract.
 
 ## Query and publication boundaries
 
@@ -31,3 +45,17 @@ Large aggregations can consume compute before producing their first output row. 
 ## Verification
 
 Native tests cover project isolation, parameter binding, connection cleanup, streaming, cancellation, current revisions, delivery windows, permission revocation before publication, and restart. Object-storage tests cover private file integrity and cleanup. The [load-testing guide](load-testing.md) describes workload measurement; its results are specific to the tested deployment.
+
+## Extraction map
+
+| Original source | Current owner |
+| --- | --- |
+| `internal/porcupine/exports_types.go` and `exports_config.go` | `internal/output/export_types.go` and `export_config.go` |
+| Job persistence and finite authority in `exports_jobs.go` | `internal/output/export_sqlite.go` |
+| API-independent operations in `exports_api.go` | `internal/output/exports.go` |
+| `exports_worker.go` and `exports_sink.go` | `internal/output/export_worker.go` and `export_sink.go` |
+| `project_export_cleanup.go` and export row deletion in `project_purge_sqlite.go` | `internal/output/export_cleanup.go` |
+| Export artifact enumeration and reset in `native_restore_artifacts.go` and `native_restore.go` | `internal/output/export_artifacts.go` |
+| Export construction and worker lifecycle in `service.go` | `internal/porcupine/output_dependencies.go` wires `ExportJobs`; the domain owns the worker and storage lifecycle |
+
+The sink, worker, storage-binding, and project cleanup tests moved with their implementation. Their isolated fixture uses real SQLite, the journal's baseline schema, a real DuckLake reader, and a local S3 protocol fixture. Service integration tests retain HTTP and MCP authorization, actor-scoped idempotency, queue limits, external expiry, download pagination, and native reader coverage. Domain tests also verify usage rollback and publication replay, plus durable cancellation before signaling the active attempt.

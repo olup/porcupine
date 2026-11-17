@@ -5,6 +5,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 	"net/url"
 	"strings"
@@ -95,7 +96,7 @@ func ValidateConfig(c Config) error {
 		if c.DuckLake == nil {
 			return errors.New("exports require an analytical store")
 		}
-		if _, err := normalizeExportConfig(*c.Exports); err != nil {
+		if _, err := output.NormalizeExportConfig(*c.Exports); err != nil {
 			return err
 		}
 		if err := exportstore.ValidateConfig(c.Exports.S3); err != nil {

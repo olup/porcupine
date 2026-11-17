@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"context"
@@ -11,8 +11,9 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 	ctx := context.Background()
 	s3 := &exportTestS3{}
 	s, job := exportWorkerFixture(t, s3)
-	other, _ := project(t, s)
-	otherJob, err := s.createEventExport(exportContext(t, s, adminToken), exportInput(other, "other"))
+	other := "other"
+	s.db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES('other','default','other','now')`)
+	otherJob, err := s.Submit(ctx, other, ExportRequest{IdempotencyKey: "other", SQL: "SELECT uuid FROM events"}, fixtureActor())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +23,7 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 	add := func(jobID, attempt string, complete bool) (key, uploadID string) {
 		t.Helper()
 		key = jobID + "/" + attempt + "/part-000001.jsonl.gz"
-		up, err := s.exports.store.Begin(ctx, key)
+		up, err := s.store.Begin(ctx, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,14 +36,14 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 			}
 		}
 		if _, err = s.db.Exec(`INSERT INTO export_files(job_id,attempt_id,file_index,object_key,upload_id,storage_id)
-		    VALUES(?,?,1,?,?,?)`, jobID, attempt, key, up.ID(), s.exports.store.OwnershipID()); err != nil {
+		    VALUES(?,?,1,?,?,?)`, jobID, attempt, key, up.ID(), s.store.OwnershipID()); err != nil {
 			t.Fatal(err)
 		}
 		return key, up.ID()
 	}
 	owned, _ := add(job.ID, "a", true)
 	_, incomplete := add(job.ID, "b", false)
-	foreign, _ := add(otherJob.Body.ID, "c", true)
+	foreign, _ := add(otherJob.ID, "c", true)
 	s3.mu.Lock()
 	s3.objects["/private-exports/destination/committed-manifest"] = []byte("customer copy")
 	s3.mu.Unlock()
@@ -53,7 +54,7 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 	}
 	defer tx.Rollback()
 	for range 2 {
-		if err = s.stageProjectExportCleanup(ctx, tx, job.ProjectID); err != nil {
+		if err = StageExportProjectCleanupTx(ctx, tx, job.ProjectID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,19 +68,19 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 		t.Fatal(err)
 	}
 
-	runtime := s.exports
-	s.exports = nil
-	if err := s.purgeProjectExports(ctx, job.ProjectID); !errors.Is(err, errExportSink) {
+	runtime := s.store
+	s.store = nil
+	if err := s.CleanupProject(ctx, job.ProjectID); !errors.Is(err, errExportSink) {
 		t.Fatalf("disabled storage erased pending artifacts: %v", err)
 	}
-	if err := s.purgeProjectExports(ctx, other); err != nil {
+	if err := s.CleanupProject(ctx, other); err != nil {
 		t.Fatalf("a project with no staged files requires no store: %v", err)
 	}
-	s.exports = runtime
+	s.store = runtime
 	s3.mu.Lock()
 	s3.failDelete = true
 	s3.mu.Unlock()
-	if err := s.purgeProjectExports(ctx, job.ProjectID); err == nil {
+	if err := s.CleanupProject(ctx, job.ProjectID); err == nil {
 		t.Fatal("lost object-delete failure")
 	}
 	var n int
@@ -90,12 +91,12 @@ func TestProjectExportCleanupRetainsCheckpointsAndIsolatesDestinations(t *testin
 	s3.failDelete = false
 	s3.mu.Unlock()
 	for range 2 {
-		if err := s.purgeProjectExports(ctx, job.ProjectID); err != nil {
+		if err := s.CleanupProject(ctx, job.ProjectID); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var inventory int
-	if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE tenant_id='default' AND project_id=$1 AND kind='export' AND storage_id=$2`, job.ProjectID, s.exports.store.OwnershipID()).Scan(&inventory); err != nil || inventory != 2 {
+	if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE tenant_id='default' AND project_id=$1 AND kind='export' AND storage_id=$2`, job.ProjectID, s.store.OwnershipID()).Scan(&inventory); err != nil || inventory != 2 {
 		t.Fatal("physical-purge ownership inventory was lost or duplicated", inventory, err)
 	}
 	if err := s.control.QueryRow(`SELECT count(*) FROM managed_artifact_ownership WHERE project_id=$1`, other).Scan(&inventory); err != nil || inventory != 0 {

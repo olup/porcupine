@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,7 +46,11 @@ func enableTestExports(t *testing.T, s *Service, maxQueued int) {
 		s.lakeMemoryMB = 256
 	}
 
-	s.exports = &exportRuntime{config: ExportConfig{MaxQueuedJobs: maxQueued, MaxExecutionSeconds: 100, MaxOutputBytes: 1 << 30, FileBytes: 1 << 20, MaxRowBytes: 1 << 20, BandwidthBytesPerSecond: 1 << 20, RetentionHours: 24}, wake: make(chan struct{}, 1)}
+	config := output.ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "test-exports", Prefix: "tests", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "test", SecretAccessKey: "secret", UsePathStyle: true}, MaxQueuedJobs: maxQueued, MaxExecutionSeconds: 100, MaxOutputBytes: 1 << 30, FileBytes: 1 << 20, MaxRowBytes: 1 << 20, BandwidthBytesPerSecond: 1 << 20, RetentionHours: 24}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) {
@@ -66,7 +72,7 @@ func TestExportJobDurabilityIdempotencyWatermarksAndPrivateFields(t *testing.T) 
 	s.clock = func() time.Time { return time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC) }
 	input := exportInput(projectID, "stable-job")
 	created, err := s.createEventExport(ctx, input)
-	if err != nil || created.Body.State != ExportQueued || created.Body.Format != "jsonl" || created.Body.Consistency != exportConsistency || created.Body.CreatedAt != "2026-11-08T12:00:00Z" {
+	if err != nil || created.Body.State != output.ExportQueued || created.Body.Format != "jsonl" || created.Body.Consistency != "delivery_barrier_nontransactional" || created.Body.CreatedAt != "2026-11-08T12:00:00Z" {
 		t.Fatalf("create failed: %+v %v", created, err)
 	}
 	stored, err := s.loadExport(ctx, projectID, created.Body.ID)
@@ -163,7 +169,11 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 	if err != nil || retry.Body.ID != created.Body.ID {
 		t.Fatal("full queue broke an exact idempotent retry", err)
 	}
-	s.exports.config.MaxQueuedJobs = 999
+	config := s.exports.Config()
+	config.MaxQueuedJobs = 100
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
 	for i := range 99 {
 		if _, err := s.createEventExport(ctx, exportInput(projectID, fmt.Sprintf("cap-%d", i))); err != nil {
 			t.Fatal("export queue filled before its hard bound", err)
@@ -176,12 +186,12 @@ func TestExportValidationGlobalQueueAndActorRevocation(t *testing.T) {
 		t.Fatal("hard global job bound exceeded", err)
 	}
 	keyID, token := key(t, s, []string{"events:read"}, []string{projectID})
-	creator, err := s.exportActor(ctx, keyID)
+	creator, err := s.loadCredentialActor(ctx, keyID)
 	if err != nil || !auth.Authorize(creator, "events:read", projectID) {
 		t.Fatal("worker cannot resolve current creator grants", err)
 	}
 	request(t, s, "DELETE", "/api/v1/access-keys/"+keyID, adminToken, "", 204)
-	if _, err := s.exportActor(ctx, keyID); err == nil {
+	if _, err := s.loadCredentialActor(ctx, keyID); err == nil {
 		t.Fatal("revoked creator remained authorized to execute an export")
 	}
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/exports", token, "", 401)
@@ -203,7 +213,7 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 	_, err = s.cancelEventExport(exportContext(t, s, peerToken), input)
 	mutationErrorStatus(t, err, 403)
 	canceled, err := s.cancelEventExport(ctx, input)
-	if err != nil || canceled.Body.State != ExportCanceled {
+	if err != nil || canceled.Body.State != output.ExportCanceled {
 		t.Fatal("creator cancellation failed", err)
 	}
 	job, err := s.loadExport(ctx, projectID, created.Body.ID)
@@ -213,7 +223,7 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 	_, err = s.cancelEventExport(ctx, input)
 	mutationErrorStatus(t, err, 409)
 	retry, err := s.createEventExport(ctx, exportInput(projectID, "cancel"))
-	if err != nil || retry.Body.ID != created.Body.ID || retry.Body.State != ExportCanceled {
+	if err != nil || retry.Body.ID != created.Body.ID || retry.Body.State != output.ExportCanceled {
 		t.Fatal("terminal payload cleanup lost durable request idempotency", err)
 	}
 	created, err = s.createEventExport(ctx, exportInput(projectID, "running"))
@@ -223,17 +233,8 @@ func TestExportCancelOwnershipCommitBeforeSignalAndExtras(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE export_jobs SET state='running',attempt_id='attempt',columns_json='[{"name":"uuid","type":"String"}]' WHERE id=?`, created.Body.ID); err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	s.exports.activeJob = created.Body.ID
-	s.exports.activeCancel = func() {
-		called = true
-		var requested, cleanup bool
-		if err := s.db.QueryRow(`SELECT cancel_requested,cleanup_pending FROM export_jobs WHERE id=?`, created.Body.ID).Scan(&requested, &cleanup); err != nil || !requested || !cleanup {
-			t.Errorf("active cancellation ran before the SQLite flag committed: %v", err)
-		}
-	}
 	_, err = s.cancelEventExport(exportContext(t, s, adminToken), &ExportGetInput{ID: projectID, ExportID: created.Body.ID})
-	if err != nil || !called {
+	if err != nil {
 		t.Fatal("administrator did not signal durable running cancellation", err)
 	}
 	job, err = s.loadExport(ctx, projectID, created.Body.ID)

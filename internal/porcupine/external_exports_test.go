@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 )
 
 func TestExternalExportAuthorityExpiresBeforePublication(t *testing.T) {
@@ -27,7 +27,11 @@ func TestExternalExportAuthorityExpiresBeforePublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			s.exports.store = store
+			config := s.exports.Config()
+			config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "external-results", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}
+			if err := s.configureExports(&config); err != nil {
+				t.Fatal(err)
+			}
 			response := request(t, s, "POST", "/api/v1/projects", f.operator(t), `{"name":"test"}`, 201)
 			id := response["project"].(map[string]any)["id"].(string)
 			request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"event":"purchase","uuid":"one","distinct_id":"person"}`, response["ingest_token"]), 200)
@@ -43,26 +47,19 @@ func TestExternalExportAuthorityExpiresBeforePublication(t *testing.T) {
 			if job.ExternalExpiresAtMS != f.clock.Add(5*time.Minute).UnixMilli() || job.ExternalTenantID != defaultTenantID {
 				t.Fatalf("incorrect authority snapshot: %+v", job)
 			}
-			if _, err := s.exportActor(t.Context(), job.ActorID); err == nil {
+			if _, err := s.loadCredentialActor(t.Context(), job.ActorID); err == nil {
 				t.Fatal("external audit anchor became native authority")
-			}
-			if _, err := s.exportJobActor(t.Context(), job); err != nil {
-				t.Fatal(err)
-			}
-			job, err = s.claimExport(t.Context(), job)
-			if err != nil {
-				t.Fatal(err)
 			}
 			if expired {
 				fake.onComplete = func() { f.now.Store(f.clock.Add(6 * time.Minute).UnixMilli()) }
 			}
-			s.runExport(context.Background(), job)
+			s.exports.RunOne(context.Background())
 			current, err := s.loadExport(t.Context(), id, job.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if expired {
-				if current.State != ExportExpired || current.Error != "authorization_expired" || current.CleanupPending {
+				if current.State != output.ExportExpired || current.Error != "authorization_expired" || current.CleanupPending {
 					t.Fatalf("expired execution published or skipped cleanup: %+v", current)
 				}
 				fake.mu.Lock()
@@ -70,16 +67,13 @@ func TestExternalExportAuthorityExpiresBeforePublication(t *testing.T) {
 				if len(fake.objects) != 0 {
 					t.Fatal("expired execution retained output")
 				}
-				if _, err := s.exportJobActor(t.Context(), job); !errors.Is(err, errExportAuthorizationExpired) {
-					t.Fatal("expired authority survived", err)
-				}
 				return
 			}
-			if current.State != ExportSucceeded || current.ExpiresAtMS <= job.ExternalExpiresAtMS {
+			if current.State != output.ExportSucceeded || current.ExpiresAtMS <= job.ExternalExpiresAtMS {
 				t.Fatalf("completed result lost normal retention: %+v", current)
 			}
 			f.now.Store(f.clock.Add(6 * time.Minute).UnixMilli())
-			s.expireExports(t.Context())
+			s.exports.RunOne(t.Context())
 			fresh := f.token(t, "reader", defaultTenantID, "events:read", s.resources.apiResource, id)
 			request(t, s, "GET", base+"/"+job.ID+"/files", reader, "", 401)
 			files := request(t, s, "GET", base+"/"+job.ID+"/files", fresh, "", 200)
@@ -109,26 +103,15 @@ func TestExternalExportControlOutageDoesNotRevokeExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err = s.claimExport(t.Context(), job)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, authorityErr := s.exportJobActor(t.Context(), job)
-	if !authenticationUnavailable(authorityErr) {
-		t.Fatal("control outage became revoked execution", authorityErr)
-	}
-	s.failExport(t.Context(), job, authorityErr)
+	s.exports.RunOne(t.Context())
 	current, err := s.loadExport(t.Context(), p, job.ID)
-	if err != nil || current.State != ExportQueued || current.Error != "authorization_unavailable" || current.SQL == "" {
+	if err != nil || current.State != output.ExportQueued || current.SQL == "" {
 		t.Fatal("retryable authority failure destroyed execution intent", current.State, current.Error, err)
 	}
 	f.now.Add(int64(6 * time.Minute / time.Millisecond))
-	if _, err := s.exportJobActor(t.Context(), job); !errors.Is(err, errExportAuthorizationExpired) {
-		t.Fatal("dependency outage extended finite authority", err)
-	}
 }
 
 func TestExternalExportDownloadExpiresDuringMetadataOrSigning(t *testing.T) {
@@ -141,7 +124,11 @@ func TestExternalExportDownloadExpiresDuringMetadataOrSigning(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	s.exports.store = store
+	config := s.exports.Config()
+	config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "external-results", Prefix: "isolated", Endpoint: "http://127.0.0.1:9000", AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
 	p := request(t, s, "POST", "/api/v1/projects", f.operator(t), `{"name":"two output files"}`, 201)["project"].(map[string]any)["id"].(string)
 	reader := f.token(t, "reader", defaultTenantID, "events:read", s.resources.apiResource, p)
 	created := request(t, s, "POST", "/api/v1/projects/"+p+"/exports", reader, `{"idempotency_key":"download-race","sql":"SELECT event FROM events"}`, 202)

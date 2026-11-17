@@ -18,13 +18,14 @@ import (
 
 	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/output"
 )
 
 // PipelineConfig contains operator-owned settings. A nil config disables destinations.
 type PipelineConfig struct {
 	Key                           []byte
 	AllowedS3Endpoints            []string
-	ExportLimits                  ExportConfig
+	ExportLimits                  output.ExportConfig
 	WebhookMaxQueuedEvents        int
 	WebhookMaxQueuedBytes         int64
 	WebhookProjectMaxQueuedEvents int
@@ -67,7 +68,7 @@ func newPipelineRuntime(input *PipelineConfig) (*pipelineRuntime, error) {
 	}
 	digest := sha256.Sum256(c.Key)
 	c.Key = nil
-	c.ExportLimits, err = normalizeExportConfig(c.ExportLimits)
+	c.ExportLimits, err = output.NormalizeExportConfig(c.ExportLimits)
 	if err != nil {
 		return nil, err
 	}

@@ -2,23 +2,16 @@ package porcupine
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/csv"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
-	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
-	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 type exportTestS3 struct {
@@ -94,7 +87,7 @@ func (f *exportTestS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExport) {
 	t.Helper()
 	s := duckLakeJourneyService(t)
-	config, err := normalizeExportConfig(ExportConfig{BandwidthBytesPerSecond: 100 << 20, FileBytes: 1024})
+	config, err := output.NormalizeExportConfig(output.ExportConfig{BandwidthBytesPerSecond: 100 << 20, FileBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +98,10 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExpo
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	s.exports = &exportRuntime{config: config, store: store, wake: make(chan struct{}, 1)}
+	config.S3 = exportstore.Config{Region: "us-east-1", Bucket: "private-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}
+	if err := s.configureExports(&config); err != nil {
+		t.Fatal(err)
+	}
 	projectID, _ := project(t, s)
 	_, token := key(t, s, []string{"events:read"}, []string{projectID})
 	created, err := s.createEventExport(exportContext(t, s, token), exportInput(projectID, "worker-test"))
@@ -116,124 +112,9 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExpo
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.claimExport(context.Background(), queued)
+	job, err := queued, error(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, job
-}
-
-func TestExportSinkGzipChunksTypedJSONAndChecksums(t *testing.T) {
-	t.Parallel()
-	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	s.exports.config.FileBytes = 42
-	sink := newExportSink(context.Background(), s, job)
-	columns := []lakeapi.AnalyticsResultColumn{{Name: "id", Type: "UInt64"}, {Name: "note", Type: "String"}}
-	if err := sink.setColumns(columns); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range [][]json.RawMessage{{json.RawMessage(`"18446744073709551615"`), json.RawMessage(`"<first>"`)}, {json.RawMessage(`"2"`), json.RawMessage(`"second"`)}} {
-		if err := sink.writeRow(row); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := sink.finish(); err != nil {
-		t.Fatal(err)
-	}
-	artifacts, err := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(artifacts) != 2 || sink.rows != 2 {
-		t.Fatal("sink did not rotate at row boundaries")
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	for _, artifact := range artifacts {
-		body := fake.objects["/private-exports/isolated/"+artifact.Key]
-		digest := sha256.Sum256(body)
-		if artifact.SHA256 != hex.EncodeToString(digest[:]) || artifact.Bytes != int64(len(body)) || artifact.Rows != 1 || !artifact.Complete {
-			t.Fatal("compressed manifest statistics mismatch")
-		}
-		reader, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := io.ReadAll(reader)
-		reader.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if artifact.DecodedBytes != int64(len(decoded)) || !json.Valid(bytes.TrimSpace(decoded)) {
-			t.Fatal("invalid JSONL or decoded byte count")
-		}
-	}
-}
-
-func TestExportSinkCSVHeaderEveryChunkAndEmptyResults(t *testing.T) {
-	t.Parallel()
-	fake := &exportTestS3{}
-	s, job := exportWorkerFixture(t, fake)
-	job.Format = "csv"
-	s.exports.config.FileBytes = 1
-	sink := newExportSink(context.Background(), s, job)
-	if err := sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value", Type: "String"}}); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"comma, newline\nquote\""`)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := sink.finish(); err != nil {
-		t.Fatal(err)
-	}
-	fake.mu.Lock()
-	bodies := []string{}
-	for _, body := range fake.objects {
-		reader, _ := gzip.NewReader(bytes.NewReader(body))
-		data, _ := io.ReadAll(reader)
-		reader.Close()
-		bodies = append(bodies, string(data))
-	}
-	fake.mu.Unlock()
-	if len(bodies) != 2 {
-		t.Fatal("CSV files did not rotate")
-	}
-	for _, body := range bodies {
-		records, err := csv.NewReader(strings.NewReader(body)).ReadAll()
-		if err != nil || len(records) != 2 || records[0][0] != "value" || records[1][0] != "comma, newline\nquote\"" {
-			t.Fatal("CSV header/escaping failed", err)
-		}
-	}
-	// An empty export still produces one valid gzip file, containing the CSV header.
-	job.AttemptID = eventapi.NewID()
-	sink = newExportSink(context.Background(), s, job)
-	sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value", Type: "String"}})
-	if err := sink.finish(); err != nil {
-		t.Fatal(err)
-	}
-	if sink.files != 1 || sink.rows != 0 || sink.decoded != int64(len("value\n")) {
-		t.Fatal("empty CSV export lost its header")
-	}
-}
-
-func TestExportSinkRejectsOutputAndColumnAmbiguity(t *testing.T) {
-	t.Parallel()
-	s, job := exportWorkerFixture(t, &exportTestS3{})
-	sink := newExportSink(context.Background(), s, job)
-	if err := sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "duplicate"}, {Name: "duplicate"}}); err == nil {
-		t.Fatal("ambiguous JSONL columns accepted")
-	}
-	s.exports.config.MaxOutputBytes = 5
-	sink = newExportSink(context.Background(), s, job)
-	sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value"}})
-	if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"long value"`)}); err != errExportOutputLimit {
-		t.Fatal("output was truncated instead of rejected", err)
-	}
-	artifacts, _ := s.exportArtifacts(context.Background(), job.ID, job.AttemptID)
-	if len(artifacts) != 1 || artifacts[0].Complete {
-		t.Fatal("oversized output was published")
-	}
 }
