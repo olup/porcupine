@@ -104,6 +104,7 @@ var hostedImportSchema string
 // 14: hosted project activity and native seals. 15: retained project cleanup.
 // 16: scheduled S3 pipeline state and attempts.
 // 17: retire owner routing and journal usage publication.
+// 18: carry forward hosted usage still present in the retained daily rollups.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -122,6 +123,12 @@ var sharedControlSteps = []string{
 	hostedProjectCleanupSchema,
 	output.ScheduledPipelinePostgresSchemaV1,
 	`DROP TABLE shared_project_owners, shared_workers, shared_route_nonces, worker_tenant_usage`,
+	`INSERT INTO tenant_usage(tenant_id,period_start,accepted_events)
+SELECT u.tenant_id, left(u.day_start,7) || '-01T00:00:00Z', sum(u.live_events + u.import_events)
+FROM usage_rollups u JOIN tenants t ON t.id=u.tenant_id
+WHERE u.live_events>0 OR u.import_events>0
+GROUP BY u.tenant_id,left(u.day_start,7)
+ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

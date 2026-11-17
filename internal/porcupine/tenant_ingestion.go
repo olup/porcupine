@@ -54,7 +54,11 @@ LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE p.id=$2
 	if count > math.MaxInt64-used {
 		return errors.New("tenant event counter exhausted")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
+	return addTenantEventsTx(ctx, tx, tenant, period, count)
+}
+
+func addTenantEventsTx(ctx context.Context, tx *sql.Tx, tenant, period string, count int64) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
 ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`, tenant, period, count)
 	return err
 }
