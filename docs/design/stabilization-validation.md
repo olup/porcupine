@@ -17,7 +17,7 @@ These checks cover the development branch after the v0.14.0 review. They do not 
 | `make compat` | All 13 supported PostHog scenarios passed |
 | Segment SDK contracts | Passed, including retry duplicates |
 | `npm --prefix compat run test:identify` | Passed with supported browser and backend SDKs |
-| Python tooling tests | All 23 passed |
+| Python tooling tests | All 18 dependency-free tooling checks and 5 documentation checks passed in their respective environments |
 | Strict HTML/Markdown documentation build | Passed with links and anchor checks |
 
 An independent GPT-6 Astra review checked the storage, authorization, configuration, and test changes. It found and prompted fixes for unfamiliar catalog adoption, reordered columns, dormant-catalog recovery, global admission blocking, person snapshot retries, and container defaults. Existing project/tenant authorization and full CI suites remain in place.

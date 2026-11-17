@@ -10,7 +10,7 @@ OUTPUT = ROOT / "bin/docs-web/porcupine"
 
 def main():
     version = check_release()
-    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_docs*.py"], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "docs-theme/tests", "-p", "test_*.py"], cwd=ROOT, check=True)
     subprocess.run([sys.executable, "-m", "mkdocs", "build", "--strict", "--clean"], cwd=ROOT, check=True)
     shutil.copytree(ROOT / "site", OUTPUT, dirs_exist_ok=True)
     landing = OUTPUT / "index.html"
