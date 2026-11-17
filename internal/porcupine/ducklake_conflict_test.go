@@ -12,13 +12,13 @@ import (
 func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
 	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
-	p, release, err := store.leaseProject(context.Background(), "native-conflicts")
+	p, release, err := store.LeaseProject(context.Background(), "native-conflicts")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
 	var version string
-	if err := p.db.QueryRow("SELECT version()").Scan(&version); err != nil {
+	if err := p.DB.QueryRow("SELECT version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
@@ -35,10 +35,10 @@ func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := p.db.Exec("DROP TABLE IF EXISTS lake.conflict_probe; CREATE TABLE lake.conflict_probe(id BIGINT,value BIGINT); INSERT INTO lake.conflict_probe SELECT (i+1)*2,0 FROM range(100) r(i)"); err != nil {
+			if _, err := p.DB.Exec("DROP TABLE IF EXISTS lake.conflict_probe; CREATE TABLE lake.conflict_probe(id BIGINT,value BIGINT); INSERT INTO lake.conflict_probe SELECT (i+1)*2,0 FROM range(100) r(i)"); err != nil {
 				t.Fatal(err)
 			}
-			tx, err := p.db.BeginTx(context.Background(), nil)
+			tx, err := p.DB.BeginTx(context.Background(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
 			if _, err := tx.Exec(c.statement); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := p.db.Exec("INSERT INTO lake.conflict_probe VALUES(999,2)"); err != nil {
+			if _, err := p.DB.Exec("INSERT INTO lake.conflict_probe VALUES(999,2)"); err != nil {
 				t.Fatal(err)
 			}
 			commitErr := tx.Commit()
@@ -68,7 +68,7 @@ func TestDuckLakeNativeWriteConflictSemantics(t *testing.T) {
 					expected[2] = 1
 				}
 			}
-			result, err := p.db.Query("SELECT id,value FROM lake.conflict_probe")
+			result, err := p.DB.Query("SELECT id,value FROM lake.conflict_probe")
 			if err != nil {
 				t.Fatal(err)
 			}

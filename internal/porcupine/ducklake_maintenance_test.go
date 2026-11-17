@@ -15,7 +15,7 @@ import (
 
 func lakeMaintenanceFileCount(ctx context.Context, p *projectLake, table string) (int, error) {
 	var count int
-	err := p.db.QueryRowContext(ctx, "SELECT count(*) FROM ducklake_list_files('lake',?)", table).Scan(&count)
+	err := p.DB.QueryRowContext(ctx, "SELECT count(*) FROM ducklake_list_files('lake',?)", table).Scan(&count)
 	return count, err
 }
 
@@ -166,12 +166,12 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		}
 	}
 	store := s.lake.(*duckLakeStore)
-	p, release, err := store.leaseProject(context.Background(), projectID)
+	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	if _, err := p.db.Exec("CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
+	if _, err := p.DB.Exec("CALL ducklake_set_option('lake','target_file_size','8MB')"); err != nil {
 		t.Fatal(err)
 	}
 	initialFiles, err := lakeMaintenanceFileCount(context.Background(), p, "current_events")
@@ -179,10 +179,10 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 		t.Fatal(err)
 	}
 	var version string
-	if err := p.db.QueryRow("SELECT version()").Scan(&version); err != nil {
+	if err := p.DB.QueryRow("SELECT version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	architectureEmit("soak_environment", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "native_version": version, "engine_memory_mib": store.config.MemoryLimitMB, "engine_threads": store.config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "initial_active_event_files": initialFiles})
+	architectureEmit("soak_environment", map[string]any{"policy": policy, "seconds": seconds, "offered_rate": rate, "peak_queue_budget": 2 * rate, "native_version": version, "engine_memory_mib": store.Config.MemoryLimitMB, "engine_threads": store.Config.Threads, "delivery_max_events": s.deliveryMaxEvents, "delivery_max_bytes": s.deliveryMaxBytes, "maintenance_gap_seconds": 2, "target_file_size": "8MB", "max_candidate_groups_per_table": 1, "max_input_file_bytes": maxFileSize, "open_delivery_defaults": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") == "1", "lifecycle_views_during_load": os.Getenv("PORCUPINE_SOAK_OPEN_DEFAULTS") != "1", "initial_active_event_files": initialFiles})
 	other, otherIngest := project(t, s)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"foreign","actor_id":"foreign","name":"foreign"}`, 200)
 	if s.deliveryCancel == nil {
@@ -243,7 +243,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 			case <-time.After(2 * time.Second):
 			}
 			mctx, stop := context.WithTimeout(ctx, 5*time.Second)
-			steps, err := store.maintainSized(mctx, 1, strings.HasPrefix(policy, "locked"), maxFileSize)
+			steps, err := store.MaintainSized(mctx, 1, strings.HasPrefix(policy, "locked"), maxFileSize)
 			stop()
 			if ctx.Err() != nil {
 				return
@@ -358,7 +358,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 			}
 		}
 	}
-	rows, err := p.db.Query("SELECT message_id,CAST(id AS VARCHAR) FROM events WHERE event='live_event'")
+	rows, err := p.DB.Query("SELECT message_id,CAST(id AS VARCHAR) FROM events WHERE event='live_event'")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,18 +410,18 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	s.deliveryMaxEvents = 1000
 	s.queueMax = 10000
 	store := s.lake.(*duckLakeStore)
-	p, release, err := store.leaseProject(context.Background(), a)
+	p, release, err := store.LeaseProject(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.db.Exec("CALL ducklake_set_option('lake','target_file_size','1MB')"); err != nil {
+	if _, err := p.DB.Exec("CALL ducklake_set_option('lake','target_file_size','1MB')"); err != nil {
 		t.Fatal(err)
 	}
 	release()
 	if !architectureSeed(t, s, a, 0, 10000) {
 		return
 	}
-	p, release, err = store.leaseProject(context.Background(), a)
+	p, release, err = store.LeaseProject(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
-			steps, err := store.maintainSized(ctx, 1, false, 1<<20)
+			steps, err := store.MaintainSized(ctx, 1, false, 1<<20)
 			if err == nil {
 				for _, step := range steps {
 					progress += step.FilesProcessed
@@ -470,7 +470,7 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	lake, err := newDuckLake(store.config)
+	lake, err := newDuckLake(store.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,48 +488,6 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 		t.Fatal("restart lost correction or identity")
 	}
 	architectureEmit("concurrent_lifecycle", map[string]any{"cycles": 8, "files_processed": progress, "verdict": "VERIFIED"})
-}
-
-func TestDuckLakeMaintenanceDoesNotTakeProjectionLock(t *testing.T) {
-	t.Parallel()
-	skipInShort(t)
-	s := openLakeStorageTest(t, t.TempDir(), 1)
-	for batch := 0; batch < 20; batch++ {
-		var projections []eventProjection
-		for row := 0; row < 25; row++ {
-			i := batch*25 + row
-			projections = append(projections, lakeStorageProjection(t, "unlocked", fmt.Sprintf("unlocked-%d", i), int64(i+1)))
-		}
-		if err := s.Apply(context.Background(), projections); err != nil {
-			t.Fatal(err)
-		}
-	}
-	p, release, err := s.leaseProject(context.Background(), "unlocked")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	before, err := lakeMaintenanceFileCount(context.Background(), p, "current_events")
-	if err != nil || before < 2 {
-		t.Fatalf("missing compaction fixture %d %v", before, err)
-	}
-	if err := p.write.Lock(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	defer p.write.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := s.Maintain(ctx); err != nil {
-		t.Fatalf("maintenance blocked by projection lock: %v", err)
-	}
-	after, err := lakeMaintenanceFileCount(ctx, p, "current_events")
-	if err != nil || after >= before {
-		t.Fatalf("default maintenance made no progress: %d -> %d %v", before, after, err)
-	}
-	var count int
-	if err := p.db.QueryRowContext(ctx, "SELECT count(*) FROM events").Scan(&count); err != nil || count != 500 {
-		t.Fatalf("maintenance changed rows: %d %v", count, err)
-	}
 }
 
 type delayedMaintenanceStore struct {

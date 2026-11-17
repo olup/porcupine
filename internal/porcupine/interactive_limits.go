@@ -47,19 +47,8 @@ func effectiveInteractiveQueries(deployment InteractiveQueryConfig, tenant Tenan
 	}
 }
 
-type queryExecutionLimits struct {
-	Timeout        time.Duration
-	MaxRows        int
-	MaxResultBytes int
-}
-
 func (c InteractiveQueryConfig) executionLimits() queryExecutionLimits {
 	return queryExecutionLimits{Timeout: time.Duration(c.TimeoutMS) * time.Millisecond, MaxRows: c.MaxRows, MaxResultBytes: c.MaxResultBytes}
-}
-
-func defaultQueryExecutionLimits() queryExecutionLimits {
-	c, _ := normalizeInteractiveQueries(nil)
-	return c.executionLimits()
 }
 
 type tenantQueryAdmission struct {

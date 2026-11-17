@@ -635,7 +635,7 @@ func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	schema := sharedNativeSchema(sharedNativeCatalogID(source, projectA))
-	if err := storeA.sharedCatalog.QueryRowContext(t.Context(), "SELECT count(*) FROM "+schema+".ducklake_inlined_data_tables").Scan(&inlined); err != nil || inlined != 0 {
+	if err := storeA.SharedCatalog.QueryRowContext(t.Context(), "SELECT count(*) FROM "+schema+".ducklake_inlined_data_tables").Scan(&inlined); err != nil || inlined != 0 {
 		t.Fatal("event rows were inlined into PostgreSQL rather than Parquet/S3", inlined, err)
 	}
 	for _, node := range []*sharedJourneyNode{a, b, a} {

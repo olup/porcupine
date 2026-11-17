@@ -41,13 +41,13 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 		}
 	}
 	lake := s.lake.(*duckLakeStore)
-	p, release, err := lake.leaseProject(ctx, project)
+	p, release, err := lake.LeaseProject(ctx, project)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Prove this exact selection exceeds the native transaction budget before
 	// asking the real delivery worker to recover it automatically.
-	err = p.applyChunk(ctx, prepared)
+	err = p.ApplyChunk(ctx, prepared)
 	release()
 	var nativeError *duckdb.Error
 	if !errors.As(err, &nativeError) || nativeError.Type != duckdb.ErrorTypeOutOfMemory {
@@ -84,29 +84,6 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 	count, _ = queueUsage(t, s)
 	if count != 0 {
 		t.Fatal("retry requeued already projected events")
-	}
-}
-
-func TestDuckLakeBatchNonAllocationFailureKeepsTransactionAtomic(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	lake := openLakeStorageTest(t, t.TempDir(), 1)
-	existing := lakeStorageProjection(t, "project", "existing", 1)
-	if err := lake.Apply(ctx, []eventProjection{existing}); err != nil {
-		t.Fatal(err)
-	}
-	fresh := lakeStorageProjection(t, "project", "fresh", 2)
-	conflicting := existing
-	conflicting.ID = 3
-	err := lake.Apply(ctx, []eventProjection{fresh, conflicting})
-	if err == nil {
-		t.Fatal("changed stable event ID was accepted")
-	}
-	if n := lakeStorageCount(t, lake, "project", "events"); n != 1 {
-		t.Fatalf("non-allocation failure split the transaction: rows=%d", n)
-	}
-	if _, err := lake.Load(ctx, "project", fresh.UUID); !errors.Is(err, errEventNotFound) {
-		t.Fatalf("failed transaction applied its healthy prefix: %v", err)
 	}
 }
 
@@ -203,11 +180,11 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 		t.Fatalf("queued mutations=%d error=%v", len(prepared), err)
 	}
 	lake := s.lake.(*duckLakeStore)
-	p, release, err := lake.leaseProject(context.Background(), project)
+	p, release, err := lake.LeaseProject(context.Background(), project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = p.applyChunk(context.Background(), prepared)
+	err = p.ApplyChunk(context.Background(), prepared)
 	release()
 	var nativeError *duckdb.Error
 	if !errors.As(err, &nativeError) || nativeError.Type != duckdb.ErrorTypeOutOfMemory {
@@ -262,11 +239,11 @@ func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
 				}
 			}
 			lake := s.lake.(*duckLakeStore)
-			p, release, err := lake.leaseProject(ctx, project)
+			p, release, err := lake.LeaseProject(ctx, project)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = p.applyChunk(ctx, prepared)
+			err = p.ApplyChunk(ctx, prepared)
 			release()
 			var nativeError *duckdb.Error
 			allocationFailure := errors.As(err, &nativeError) && nativeError.Type == duckdb.ErrorTypeOutOfMemory

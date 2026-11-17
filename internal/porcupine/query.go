@@ -2,16 +2,7 @@ package porcupine
 
 import (
 	"context"
-	"encoding/json"
 	"regexp"
-
-	"github.com/olup/porcupine/internal/nativequery"
-)
-
-const (
-	maxSQLBytes       = nativequery.MaxSQLBytes
-	analyticsMaxRows  = 1000
-	analyticsMaxBytes = 1 << 20
 )
 
 type AnalyticsSchemaInput struct {
@@ -68,22 +59,6 @@ type AnalyticsQueryInput struct {
 		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden."`
 		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
 	}
-}
-
-type AnalyticsResultColumn struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
-type AnalyticsStatistics struct {
-	Elapsed float64 `json:"elapsed"`
-}
-
-type AnalyticsResult struct {
-	Meta       []AnalyticsResultColumn      `json:"meta"`
-	Data       []map[string]json.RawMessage `json:"data" doc:"Typed SQL JSON values. 64-bit integers are represented as strings to preserve precision."`
-	Rows       uint64                       `json:"rows"`
-	Statistics AnalyticsStatistics          `json:"statistics"`
 }
 
 type AnalyticsQuery struct {

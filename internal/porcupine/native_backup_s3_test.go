@@ -121,9 +121,9 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	if _, err := reader.Manifest(ctx, first); err != nil {
 		t.Fatal("failed attempt damaged prior completed backup", err)
 	}
-	keys := fixture.keys(t, reader.namespace)
+	keys := fixture.keys(t, reader.Namespace)
 	for _, key := range keys {
-		if key != reader.namespace+"owner.json" && !strings.HasPrefix(key, reader.namespace+first+"/") {
+		if key != reader.Namespace+"owner.json" && !strings.HasPrefix(key, reader.Namespace+first+"/") {
 			t.Fatal("failed attempt was not removed", key)
 		}
 	}
@@ -134,11 +134,11 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	corrupt.Store(false)
 	// Retention protects the newly published ID even if the previous manifest's clock is later.
 	m.CreatedAt = "2030-01-01T00:00:00Z"
-	if err := reader.publish(ctx, m); err != nil {
+	if err := reader.Publish(ctx, m); err != nil {
 		t.Fatal(err)
 	}
 	// A process crash may leave uploaded data without a manifest. The next attempt takes a fresh checkpoint.
-	fixture.put(t, reader.namespace+"pc_backup_crashed/acceptance.sqlite", "abandoned")
+	fixture.put(t, reader.Namespace+"pc_backup_crashed/acceptance.sqlite", "abandoned")
 	s3FixtureError(t, fixture, "retry backup after failures", s.createNativeBackup(ctx))
 	second := s.nativeBackupStatus().LatestBundle
 	if second == first {
@@ -147,8 +147,8 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	if _, err := reader.Manifest(ctx, second); err != nil {
 		t.Fatal("new backup pruned after rollback", err)
 	}
-	for _, key := range fixture.keys(t, reader.namespace) {
-		if key != reader.namespace+"owner.json" && !strings.HasPrefix(key, reader.namespace+second+"/") {
+	for _, key := range fixture.keys(t, reader.Namespace) {
+		if key != reader.Namespace+"owner.json" && !strings.HasPrefix(key, reader.Namespace+second+"/") {
 			t.Fatal("retention or incomplete cleanup failed", key)
 		}
 	}
@@ -186,7 +186,7 @@ func TestDuckLakeS3BackupLocalSourceStreamsOffhost(t *testing.T) {
 	parquet := false
 	for _, file := range m.Files {
 		parquet = parquet || strings.HasSuffix(file.Path, ".parquet")
-		if err := reader.verify(context.Background(), m.ID, file); err != nil {
+		if err := reader.Verify(context.Background(), m.ID, file); err != nil {
 			t.Fatal(err)
 		}
 	}

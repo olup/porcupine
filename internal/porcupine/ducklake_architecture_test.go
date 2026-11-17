@@ -115,14 +115,14 @@ func architectureSeed(t *testing.T, s *Service, project string, from, to int) bo
 	start := time.Now()
 	var err error
 	store := s.lake.(*duckLakeStore)
-	p, release, leaseErr := store.leaseProject(ctx, project)
+	p, release, leaseErr := store.LeaseProject(ctx, project)
 	if leaseErr != nil {
 		t.Fatal(leaseErr)
 	}
 	defer release()
 	for offset := from; offset < to && err == nil; offset += 10000 {
 		end := min(offset+10000, to)
-		tx, beginErr := p.db.BeginTx(ctx, nil)
+		tx, beginErr := p.DB.BeginTx(ctx, nil)
 		if beginErr != nil {
 			err = beginErr
 			break
@@ -323,7 +323,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 			}
 			mctx, stop := context.WithTimeout(ctx, 15*time.Second)
 			defer stop()
-			steps, err := s.lake.(*duckLakeStore).maintainMeasured(mctx, maxCompactions)
+			steps, err := s.lake.(*duckLakeStore).MaintainMeasured(mctx, maxCompactions)
 			maintenanceSuccess = err == nil
 			progress := int64(0)
 			for _, step := range steps {
@@ -408,7 +408,7 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 	nativeBenchmarkQuery(t, h, project, "SELECT count(*) AS total FROM events")
 	defer func() {
 		roots := []string{filepath.Dir(s.projectionGuard.path)}
-		roots = append(roots, s.lake.(*duckLakeStore).root)
+		roots = append(roots, s.lake.(*duckLakeStore).Root)
 		architectureEmit("resources", architectureResources(roots...))
 	}()
 	switch phase {
@@ -444,16 +444,16 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 			return
 		}
 		store := s.lake.(*duckLakeStore)
-		p, release, err := store.leaseProject(context.Background(), project)
+		p, release, err := store.LeaseProject(context.Background(), project)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if policy == "bounded" {
-			_, err = p.db.Exec("CALL ducklake_set_option('lake','target_file_size','8MB')")
+			_, err = p.DB.Exec("CALL ducklake_set_option('lake','target_file_size','8MB')")
 		}
 		var nativeVersion string
 		if err == nil {
-			err = p.db.QueryRow("SELECT version()").Scan(&nativeVersion)
+			err = p.DB.QueryRow("SELECT version()").Scan(&nativeVersion)
 		}
 		release()
 		if err != nil {
@@ -595,9 +595,9 @@ func architectureProjects(t *testing.T, s *Service) {
 			samples = append(samples, elapsed)
 		}
 		store := s.lake.(*duckLakeStore)
-		_ = store.mu.Lock(context.Background())
-		resident := len(store.projects)
-		store.mu.Unlock()
+		_ = store.Mu.Lock(context.Background())
+		resident := len(store.Projects)
+		store.Mu.Unlock()
 		if resident > 4 {
 			t.Fatal("resident catalog limit exceeded")
 		}

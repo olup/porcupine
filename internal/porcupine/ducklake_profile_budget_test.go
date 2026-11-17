@@ -48,7 +48,7 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	retained, excluded := 0, 0
-	for _, row := range read.rows {
+	for _, row := range read.Rows {
 		retained += len(row.Properties) + len(row.Context)
 		if row.Properties == "" {
 			excluded++
@@ -57,8 +57,8 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 			t.Fatalf("original size was lost for a bounded row: got=%d want=%d", row.PropertyBytes, len(properties))
 		}
 	}
-	if len(read.rows) != 1000 || retained <= 0 || retained > eventProfileSampleBytes || excluded == 0 {
-		t.Fatalf("SQL did not bound cumulative transfer before Go decoding: rows=%d retained=%d excluded=%d", len(read.rows), retained, excluded)
+	if len(read.Rows) != 1000 || retained <= 0 || retained > eventProfileSampleBytes || excluded == 0 {
+		t.Fatalf("SQL did not bound cumulative transfer before Go decoding: rows=%d retained=%d excluded=%d", len(read.Rows), retained, excluded)
 	}
 	result, err := s.eventProfile(ctx, &input)
 	if err != nil {

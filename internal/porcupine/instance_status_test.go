@@ -83,7 +83,7 @@ func TestInstanceStatusNativeChecks(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "missing_registry":
-				filename := filepath.Join(store.root, "registry.sqlite")
+				filename := filepath.Join(store.Root, "registry.sqlite")
 				moved := filename + ".saved"
 				if err := os.Rename(filename, moved); err != nil {
 					t.Fatal(err)
@@ -110,13 +110,13 @@ func TestInstanceStatusNativeChecks(t *testing.T) {
 				t.Fatal("configured native store disappeared from configuration after a failed probe")
 			}
 			encoded, _ := json.Marshal(result)
-			for _, private := range []string{store.root, source, "registry.sqlite", "DuckLake is closed", "source registry changed"} {
+			for _, private := range []string{store.Root, source, "registry.sqlite", "DuckLake is closed", "source registry changed"} {
 				if strings.Contains(string(encoded), private) {
 					t.Fatal("status disclosed private storage details")
 				}
 			}
 			if state == "missing_registry" {
-				if _, err := os.Stat(filepath.Join(store.root, "registry.sqlite")); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(store.Root, "registry.sqlite")); !os.IsNotExist(err) {
 					t.Fatal("status recreated a missing source registry")
 				}
 			}
@@ -167,13 +167,13 @@ func TestInstanceStatusBoundedProbesAndConcurrency(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
 	store := instanceStatusNativeStore(t, s)
-	if err := store.mu.Lock(t.Context()); err != nil {
+	if err := store.Mu.Lock(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	locked := true
 	defer func() {
 		if locked {
-			store.mu.Unlock()
+			store.Mu.Unlock()
 		}
 	}()
 	done := make(chan *InstanceStatusOutput, 1)
@@ -201,7 +201,7 @@ func TestInstanceStatusBoundedProbesAndConcurrency(t *testing.T) {
 	if time.Since(started) > 3*time.Second || len(s.statusSlots) != 0 {
 		t.Fatal("status did not release its bounded slot")
 	}
-	store.mu.Unlock()
+	store.Mu.Unlock()
 	locked = false
 	result, err := s.getInstanceStatus(instanceStatusReaderContext(context.Background()), &struct{}{})
 	if err != nil || result.Body.Checks.DuckLake != dependencyOK || result.Body.Status != "ok" {

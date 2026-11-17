@@ -27,7 +27,7 @@ func checkpointCurrentFileFixture(t *testing.T, store *duckLakeStore, project, k
 		t.Fatal(err)
 	}
 	flushCleanupProject(t, store, project)
-	p, release, err := store.leaseProject(ctx, project)
+	p, release, err := store.LeaseProject(ctx, project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func checkpointCurrentFileFixture(t *testing.T, store *duckLakeStore, project, k
 		column = "delete_file"
 	}
 	var path string
-	if err := p.db.QueryRowContext(ctx, "SELECT "+column+" FROM ducklake_list_files('lake','current_events') WHERE "+column+" IS NOT NULL LIMIT 1").Scan(&path); err != nil {
+	if err := p.DB.QueryRowContext(ctx, "SELECT "+column+" FROM ducklake_list_files('lake','current_events') WHERE "+column+" IS NOT NULL LIMIT 1").Scan(&path); err != nil {
 		t.Fatalf("fixture did not produce a current %s file: %v", kind, err)
 	}
 	return path
@@ -101,7 +101,7 @@ func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing
 			s3FixtureError(t, fixture, "open healthy backup reader", err)
 			defer reader.Close()
 			key := strings.TrimPrefix(missing, "s3://"+fixture.storage.Bucket+"/")
-			if key == missing || !strings.HasPrefix(key, store.remote.projectPrefix(project)) {
+			if key == missing || !strings.HasPrefix(key, store.Remote.ProjectPrefix(project)) {
 				t.Fatal("fixture current file escaped its project prefix")
 			}
 			_, err = fixture.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(key)})
@@ -115,7 +115,7 @@ func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing
 			manifest, err := reader.Manifest(ctx, first)
 			s3FixtureError(t, fixture, "read preserved healthy manifest", err)
 			for _, file := range manifest.Files {
-				s3FixtureError(t, fixture, "verify preserved healthy backup file", reader.verify(ctx, first, file))
+				s3FixtureError(t, fixture, "verify preserved healthy backup file", reader.Verify(ctx, first, file))
 			}
 		})
 	}

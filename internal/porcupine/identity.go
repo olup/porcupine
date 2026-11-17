@@ -12,19 +12,6 @@ import (
 const identityMaxTraitsBytes = 32 << 10
 const identityMaxTraitKeys = 128
 
-type identityLinkSnapshot struct {
-	AnonymousID  string `json:"anonymous_id"`
-	IdentifiedID string `json:"identified_id"`
-	Version      string `json:"version"`
-}
-
-type identitySnapshot struct {
-	Version      string                 `json:"version"`
-	IdentifiedID string                 `json:"identified_id"`
-	Traits       map[string]any         `json:"traits"`
-	Links        []identityLinkSnapshot `json:"links"`
-}
-
 func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
 
 func validIdentityID(id string) bool {
