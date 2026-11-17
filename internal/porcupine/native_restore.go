@@ -197,53 +197,62 @@ func verifyRestoreInventory(ctx context.Context, r nativeBackupReader, m nativeB
 	return nil
 }
 
-// Compare the current application schema without opening or migrating the
-// restored database. Equal release versions alone do not establish compatibility.
+// Compare each restored database with the versioned schema it claims, without
+// opening or migrating it. The next server start applies any newer steps.
 func verifyRestoreSQLiteSchema(ctx context.Context, journal, control *sql.DB) error {
-	reference, err := Open(Config{DBPath: ":memory:", BootstrapToken: strings.Repeat("r", 32)})
-	if err != nil {
-		return err
-	}
-	defer reference.Close()
-	if err := verifyRestoreDatabaseSchema(ctx, reference.db, journal); err != nil {
+	if err := verifyRestoreDatabaseSchema(ctx, journalSchema, journal); err != nil {
 		return fmt.Errorf("journal: %w", err)
 	}
-	if err := verifyRestoreDatabaseSchema(ctx, reference.control, control); err != nil {
+	if err := verifyRestoreDatabaseSchema(ctx, localControlSchema, control); err != nil {
 		return fmt.Errorf("control: %w", err)
 	}
 	return nil
 }
 
-func verifyRestoreDatabaseSchema(ctx context.Context, reference, source *sql.DB) error {
-	expected, err := nativeRestoreTableSchemas(ctx, reference)
-	if err != nil {
+func verifyRestoreDatabaseSchema(ctx context.Context, store schemaStore, source *sql.DB) error {
+	var version int
+	if err := source.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
+	}
+	if version > len(store.steps) {
+		return schemaTooNew("backup "+store.name, version, len(store.steps))
 	}
 	actual, err := nativeRestoreTableSchemas(ctx, source)
 	if err != nil {
 		return err
 	}
-	if _, ok := actual["project_deletion_files"]; ok {
-		if _, err = reference.ExecContext(ctx, `CREATE TABLE project_deletion_files(project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL,PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`); err != nil {
-			return err
-		}
-		expected, err = nativeRestoreTableSchemas(ctx, reference)
-		if err != nil {
-			return err
-		}
+	if version == 0 {
+		// Pre-versioning backups equal version 1, except for a table that
+		// was created on first project deletion.
+		version = 1
+		delete(actual, "project_deletion_files")
+	}
+	reference, err := openLocalSQLite(":memory:")
+	if err != nil {
+		return err
+	}
+	defer reference.Close()
+	at := store
+	at.steps = store.steps[:version]
+	if err := migrateSQLite(ctx, reference, at); err != nil {
+		return err
+	}
+	expected, err := nativeRestoreTableSchemas(ctx, reference)
+	if err != nil {
+		return err
 	}
 	if !reflect.DeepEqual(expected, actual) {
 		for name, wanted := range expected {
 			if actual[name] != wanted {
-				return fmt.Errorf("backup SQLite application schema differs for table %s; migrations are not supported by native restore", name)
+				return fmt.Errorf("backup SQLite schema differs from version %d for table %s", version, name)
 			}
 		}
 		for name := range actual {
 			if _, ok := expected[name]; !ok {
-				return fmt.Errorf("backup SQLite application schema has unknown table %s; migrations are not supported by native restore", name)
+				return fmt.Errorf("backup SQLite schema has unknown table %s for version %d", name, version)
 			}
 		}
-		return errors.New("backup SQLite application schema differs from this release")
+		return fmt.Errorf("backup SQLite schema differs from version %d", version)
 	}
 	return nil
 }

@@ -28,33 +28,6 @@ func (s *Service) initializeSharedIngestion(ctx context.Context) error {
 		return nil
 	}
 	s.sharedIngestion = &sharedIngestionState{}
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shared_tenant_cache (
-tenant_id TEXT NOT NULL REFERENCES tenants(id),period_start TEXT NOT NULL,
-global_accepted INTEGER NOT NULL CHECK(global_accepted>=0),
-own_published INTEGER NOT NULL CHECK(own_published>=0),refreshed_at_ms INTEGER NOT NULL,
-PRIMARY KEY(tenant_id,period_start)) WITHOUT ROWID;`); err != nil {
-		return err
-	}
-	tx, err := s.control.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(1886352211,2)`); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `CREATE SEQUENCE IF NOT EXISTS shared_event_id_sequence INCREMENT BY 1024 START WITH 1;
-CREATE TABLE IF NOT EXISTS worker_tenant_usage (
-worker_id TEXT NOT NULL,tenant_id TEXT NOT NULL REFERENCES tenants(id),period_start TEXT NOT NULL,
-accepted_events BIGINT NOT NULL CHECK(accepted_events>=0),
-PRIMARY KEY(worker_id,tenant_id,period_start));
-CREATE TABLE IF NOT EXISTS shared_cookieless_keys (
-day TEXT PRIMARY KEY,secret BYTEA NOT NULL CHECK(octet_length(secret)=32));`); err != nil {
-		return err
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
 	s.eventRules.allocateID = s.nextSharedEventID
 	s.eventRules.consumeTenant = s.consumeSharedTenantEvents
 	s.eventRules.cookielessKey = s.sharedCookielessKey

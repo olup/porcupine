@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -80,14 +79,14 @@ func openLocalSQLite(path string) (*sql.DB, error) {
 }
 
 func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, queries InteractiveQueryConfig) error {
+	if err := migrateSQLite(ctx, db, localControlSchema); err != nil {
+		return err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, controlSchema); err != nil {
-		return fmt.Errorf("initialize local control schema: %w", err)
-	}
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
 	if errors.Is(err, sql.ErrNoRows) {

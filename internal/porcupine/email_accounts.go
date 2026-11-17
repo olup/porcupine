@@ -92,21 +92,8 @@ func normalizeEmail(raw string) (string, error) {
 }
 
 func (s *Service) initializeEmailAccounts(ctx context.Context) error {
-	var err error
-	if s.shared == nil {
-		_, err = s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS email_humans (
- principal_id TEXT PRIMARY KEY REFERENCES access_keys(id), email TEXT NOT NULL UNIQUE,
- project_grants TEXT NOT NULL, deployment_admin INTEGER NOT NULL DEFAULT 0 CHECK(deployment_admin IN (0,1)),
- notice_sent INTEGER NOT NULL DEFAULT 0, notice_attempt TEXT NOT NULL DEFAULT '', notice_retry_after_ms INTEGER NOT NULL DEFAULT 0);
- CREATE UNIQUE INDEX IF NOT EXISTS email_deployment_admin ON email_humans(deployment_admin) WHERE deployment_admin=1;
- CREATE TRIGGER IF NOT EXISTS email_grant_change AFTER UPDATE OF project_grants ON email_humans
- WHEN NEW.project_grants<>OLD.project_grants BEGIN
- UPDATE access_keys SET revoked_at=datetime('now') WHERE revoked_at IS NULL AND
- id IN (SELECT principal_id FROM oauth_interactive_grants WHERE human_id=NEW.principal_id);
- END;`)
-	}
-	if err != nil || s.oauth == nil || s.oauth.config.Email == nil || s.oauth.config.Email.AdminEmail == "" {
-		return err
+	if s.oauth == nil || s.oauth.config.Email == nil || s.oauth.config.Email.AdminEmail == "" {
+		return nil
 	}
 	if blocked, err := s.restoredIdentityBootstrapBlocked(ctx); err != nil || blocked {
 		return err

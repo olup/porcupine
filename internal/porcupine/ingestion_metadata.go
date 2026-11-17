@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
@@ -26,30 +25,6 @@ type storedIngestionMetadata struct {
 	MessageID string          `json:"message_id"`
 	EventType string          `json:"event_type"`
 	Context   json.RawMessage `json:"context"`
-}
-
-func (s *Service) initializeIngestionMetadata(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, column := range []struct{ table, name, definition string }{
-		{"events", "ingestion_metadata", `TEXT NOT NULL DEFAULT ''`},
-		{"event_receipts", "event_id", `INTEGER NOT NULL DEFAULT 0`},
-		{"event_heads", "event_id", `INTEGER NOT NULL DEFAULT 0`},
-	} {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info($1) WHERE name=$2)`, column.table, column.name).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			if _, err := tx.ExecContext(ctx, `ALTER TABLE `+column.table+` ADD COLUMN `+column.name+` `+column.definition); err != nil {
-				return err
-			}
-		}
-	}
-	return tx.Commit()
 }
 
 func prepareIngestionMetadata(event *Event, input *ingestionMetadata, configuredSource string) error {

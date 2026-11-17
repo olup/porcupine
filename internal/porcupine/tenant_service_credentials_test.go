@@ -8,11 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"golang.org/x/oauth2"
-	"golang.org/x/time/rate"
 	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/time/rate"
 )
 
 func tenantServiceFixture(t *testing.T) (*oauthIntegration, string, string, string, string, string) {

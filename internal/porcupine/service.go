@@ -245,6 +245,9 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
+		return fail(err)
+	}
 	s.projectionGuard, err = openProjectionGuard(c.DBPath)
 	if err != nil {
 		return fail(err)
@@ -253,56 +256,12 @@ func Open(c Config) (*Service, error) {
 		return fail(err)
 	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, created_at TEXT NOT NULL, ingestion_mode TEXT NOT NULL DEFAULT 'mixed' CHECK(ingestion_mode IN ('mixed','server_only')));
-CREATE INDEX IF NOT EXISTS projects_tenant ON projects(tenant_id,id);
-CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed INTEGER NOT NULL CHECK(completed IN (0,1)));
-CREATE TABLE IF NOT EXISTS access_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, permissions TEXT NOT NULL, projects TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL, event TEXT NOT NULL, distinct_id TEXT NOT NULL, properties TEXT NOT NULL, timestamp TEXT NOT NULL, received_at TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, UNIQUE(project_id,uuid));
-CREATE INDEX IF NOT EXISTS events_project_id ON events(project_id,id);
-CREATE INDEX IF NOT EXISTS events_pending ON events(delivered,id);
-CREATE TABLE IF NOT EXISTS delivery_ready (event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE);
-CREATE TABLE IF NOT EXISTS delivery_quarantine (
-event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
-error_code INTEGER NOT NULL CHECK(error_code IN (321,469)),quarantined_at TEXT NOT NULL);
-CREATE TRIGGER IF NOT EXISTS delivery_ready_insert AFTER INSERT ON events WHEN NEW.delivered=0 BEGIN
-INSERT OR IGNORE INTO delivery_ready(event_id) VALUES(NEW.id);
-END;
-CREATE TRIGGER IF NOT EXISTS delivery_ready_update AFTER UPDATE OF delivered ON events BEGIN
-DELETE FROM delivery_ready WHERE event_id=NEW.id;
-INSERT OR IGNORE INTO delivery_ready(event_id) SELECT NEW.id WHERE NEW.delivered=0 AND NOT EXISTS(SELECT 1 FROM delivery_quarantine WHERE event_id=NEW.id);
-END;
-CREATE TRIGGER IF NOT EXISTS delivery_quarantine_insert AFTER INSERT ON delivery_quarantine BEGIN
-DELETE FROM delivery_ready WHERE event_id=NEW.event_id;
-END;
-CREATE TRIGGER IF NOT EXISTS delivery_quarantine_retry AFTER DELETE ON delivery_quarantine BEGIN
-INSERT OR IGNORE INTO delivery_ready(event_id) SELECT id FROM events WHERE id=OLD.event_id AND delivered=0;
-END;
-INSERT OR IGNORE INTO delivery_ready(event_id) SELECT id FROM events WHERE delivered=0 AND NOT EXISTS(SELECT 1 FROM delivery_quarantine WHERE event_id=events.id);
-CREATE TABLE IF NOT EXISTS cookieless_keys (day TEXT PRIMARY KEY, secret BLOB NOT NULL CHECK(length(secret)=32));
-CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL, PRIMARY KEY(project_id,uuid)) WITHOUT ROWID;`)
+	// Rebuild the delivery index if a previous process stopped between writes.
+	_, err = db.Exec(`INSERT OR IGNORE INTO delivery_ready(event_id) SELECT id FROM events WHERE delivered=0 AND NOT EXISTS(SELECT 1 FROM delivery_quarantine WHERE event_id=events.id)`)
 	if err != nil {
 		return fail(err)
 	}
-	if err := s.initializeProjectIngestion(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeMutations(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeIngestionMetadata(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeIdentity(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeImports(context.Background()); err != nil {
-		return fail(err)
-	}
 	if err := s.initializeQueueUsage(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeExports(context.Background()); err != nil {
 		return fail(err)
 	}
 	tx, err := db.Begin()
@@ -358,9 +317,6 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 		if err := s.initializeSharedIngestion(context.Background()); err != nil {
 			return fail(err)
 		}
-		if err := s.initializeSharedQueryPermits(context.Background()); err != nil {
-			return fail(err)
-		}
 		if c.DuckLake != nil {
 			lakeConfig := *c.DuckLake
 			if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='shared_source_id'`).Scan(&lakeConfig.SharedSourceID); err != nil {
@@ -394,9 +350,6 @@ CREATE TABLE IF NOT EXISTS event_receipts (project_id TEXT NOT NULL REFERENCES p
 		s.deliveryMaxEvents = 1000
 	}
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
-		return fail(err)
-	}
-	if err := s.initializeServiceKeys(context.Background()); err != nil {
 		return fail(err)
 	}
 	if err := s.initializeOAuth(context.Background()); err != nil {

@@ -9,24 +9,6 @@ import (
 	"time"
 )
 
-func (s *Service) initializeImportRows(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS posthog_import_person_state(
- project_id TEXT NOT NULL REFERENCES projects(id),distinct_id TEXT NOT NULL,person_id TEXT NOT NULL,source_id TEXT NOT NULL DEFAULT 'posthog',
- person_version TEXT NOT NULL,mapping_version TEXT NOT NULL,profile_version INTEGER NOT NULL,
- deleted INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(project_id,distinct_id)) WITHOUT ROWID;`)
-	if err != nil {
-		return err
-	}
-	var exists bool
-	if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('posthog_import_person_state') WHERE name='source_id')`).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		_, err = s.db.ExecContext(ctx, `ALTER TABLE posthog_import_person_state ADD COLUMN source_id TEXT NOT NULL DEFAULT 'posthog'`)
-	}
-	return err
-}
-
 type importedPersonState struct {
 	sourceID                      string
 	found                         bool

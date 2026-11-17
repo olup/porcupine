@@ -45,21 +45,10 @@ func decodeBrowserSession(raw string) (*oidcBrowserSession, error) {
 }
 
 func (s *Service) initializeSharedBrowser(ctx context.Context) error {
-	if s.shared == nil || s.oauth == nil || s.oauth.browser == nil {
-		return nil
-	}
-	_, err := s.control.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_browser_sessions (
- session_hash TEXT PRIMARY KEY,payload TEXT NOT NULL,expires_at_ms BIGINT NOT NULL);
-CREATE INDEX IF NOT EXISTS oauth_browser_sessions_expiry ON oauth_browser_sessions(expires_at_ms);
-CREATE TABLE IF NOT EXISTS oauth_email_delivery_counts (
- period BIGINT NOT NULL,scope TEXT NOT NULL,count BIGINT NOT NULL,PRIMARY KEY(period,scope));
-CREATE TABLE IF NOT EXISTS oauth_email_delivery_attempts (
- id TEXT PRIMARY KEY,expires_at_ms BIGINT NOT NULL);
-CREATE INDEX IF NOT EXISTS oauth_email_attempts_expiry ON oauth_email_delivery_attempts(expires_at_ms);`)
-	if err == nil {
+	if s.shared != nil && s.oauth != nil && s.oauth.browser != nil {
 		s.oauth.browser.sharedDB = s.control
 	}
-	return err
+	return nil
 }
 
 func (o *oauthBrowser) saveSharedSession(session *oidcBrowserSession) (string, bool) {

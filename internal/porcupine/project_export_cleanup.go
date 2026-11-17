@@ -9,13 +9,7 @@ import (
 // stageProjectExportCleanup runs in the project-removal transaction after the
 // writers drain. The checkpoints must survive deletion of export_jobs/files.
 func (s *Service) stageProjectExportCleanup(ctx context.Context, tx *sql.Tx, projectID string) error {
-	_, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS project_deletion_files (
-		project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL,
-		PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO project_deletion_files(project_id,object_key,upload_id)
+	_, err := tx.ExecContext(ctx, `INSERT INTO project_deletion_files(project_id,object_key,upload_id)
 		SELECT j.project_id,f.object_key,f.upload_id FROM export_jobs j
 		JOIN export_files f ON f.job_id=j.id WHERE j.project_id=$1
 		ON CONFLICT(project_id,object_key,upload_id) DO NOTHING`, projectID)

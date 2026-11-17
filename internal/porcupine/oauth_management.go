@@ -20,34 +20,6 @@ func (s *Service) initializeOAuthClients(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	if s.shared == nil {
-		var sourceColumn bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('access_keys') WHERE name='source_id')`).Scan(&sourceColumn); err != nil {
-			return err
-		}
-		if !sourceColumn {
-			if _, err = tx.ExecContext(ctx, `ALTER TABLE access_keys ADD COLUMN source_id TEXT NOT NULL DEFAULT ''`); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS oauth_clients (
-client_id TEXT PRIMARY KEY REFERENCES access_keys(id),
-secret_hash TEXT NOT NULL
-)`); err != nil {
-			return err
-		}
-		for name, definition := range map[string]string{"grant_types": `TEXT NOT NULL DEFAULT '["client_credentials"]'`, "redirect_uris": "TEXT NOT NULL DEFAULT '[]'", "token_endpoint_auth_method": "TEXT NOT NULL DEFAULT 'client_secret_basic'"} {
-			var exists bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('oauth_clients') WHERE name=$1)`, name).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				if _, err = tx.ExecContext(ctx, `ALTER TABLE oauth_clients ADD COLUMN `+name+` `+definition); err != nil {
-					return err
-				}
-			}
-		}
-	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,permissions FROM access_keys WHERE name='bootstrap admin' ORDER BY created_at,id`)
 	if err != nil {
 		return err

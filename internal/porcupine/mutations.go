@@ -75,26 +75,6 @@ type MutationResponse struct {
 type MutationOutput struct{ Body MutationResponse }
 type EventMutationOutput = MutationOutput
 
-func (s *Service) initializeMutations(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS event_heads (
-project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL,
-revision INTEGER NOT NULL, is_deleted INTEGER NOT NULL, pending INTEGER NOT NULL,
-PRIMARY KEY(project_id,uuid)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS mutation_audit (
-seq INTEGER PRIMARY KEY AUTOINCREMENT, mutation_id TEXT NOT NULL UNIQUE,
-project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL,
-actor_id TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key_hash TEXT NOT NULL,
-request_hash TEXT NOT NULL, expected_revision INTEGER NOT NULL,
-state TEXT NOT NULL, created_at TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT '',
-UNIQUE(project_id,idempotency_key_hash));
-CREATE INDEX IF NOT EXISTS mutation_audit_project_sequence ON mutation_audit(project_id,seq);
-CREATE TABLE IF NOT EXISTS mutation_outbox (
-seq INTEGER PRIMARY KEY REFERENCES mutation_audit(seq),
-project_id TEXT NOT NULL REFERENCES projects(id), uuid TEXT NOT NULL,
-payload TEXT NOT NULL, UNIQUE(project_id,uuid));`)
-	return err
-}
-
 func parseExpectedRevision(raw string) (uint64, error) {
 	if raw == "" {
 		return 0, apiError(400, "expected_revision must be a decimal revision string")

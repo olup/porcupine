@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -16,6 +14,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func nativeRestoreTarget(t *testing.T, id, bundle, source string) NativeRestoreRequest {

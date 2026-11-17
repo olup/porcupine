@@ -28,6 +28,10 @@ Public requests may enter through any worker and are internally forwarded when t
 
 Shared mode requires a PostgreSQL catalog and S3 whenever analytics is enabled. Keep separate persistent local directories and stable identities for workers; never share a local SQLite database between processes. [Configuration and ownership](shared-deployment.md#configure-workers)
 
+## Unreleased schema versions
+
+Each operational database records a schema version: SQLite in `PRAGMA user_version`, shared PostgreSQL control in `metadata.schema_version`. On start, the server applies the missing numbered steps in one transaction. It refuses a database written by a newer release, and an unversioned database it does not recognize, before changing anything. A native backup restores at its own version; the next start upgrades it.
+
 ## Retention and deletion
 
 Live events have no automatic age limit. Edits and deletions change the current analytical state once projected. Payload-free heads preserve revision and deletion facts so a late original cannot resurrect deleted data.

@@ -27,6 +27,10 @@ func sharedBrowserPair(t *testing.T) (*oauthBrowser, *oauthBrowser) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { first.Close(); second.Close() })
+	queries, _ := normalizeInteractiveQueries(nil)
+	if err := initializeSharedControl(context.Background(), first, adminToken, queries); err != nil {
+		t.Fatal(err)
+	}
 	a, b := newOAuthBrowser(false), newOAuthBrowser(false)
 	s := &Service{control: first, shared: &sharedRuntime{}, oauth: &oauthRuntime{browser: a}}
 	if err := s.initializeSharedBrowser(context.Background()); err != nil {

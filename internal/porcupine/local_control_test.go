@@ -193,7 +193,8 @@ func TestCombinedControlJournalLayoutRequiresFreshDirectory(t *testing.T) {
 		s.Close()
 		t.Fatal("old combined layout silently reused")
 	}
-	if !strings.Contains(err.Error(), "fresh data directory") {
+	if !strings.Contains(err.Error(), "start with an empty data directory") {
 		t.Fatal("layout failure lacks recovery guidance", err)
 	}
+	assertSQLiteUnchanged(t, path, 1)
 }

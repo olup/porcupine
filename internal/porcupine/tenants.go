@@ -58,30 +58,8 @@ func tenantName(raw string) (string, error) {
 }
 
 func (s *Service) initializeTenants(ctx context.Context) error {
-	var oldProjects bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects') AND NOT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='tenant_id')`).Scan(&oldProjects); err != nil {
-		return err
-	}
-	if oldProjects {
-		return errors.New("pre-tenant database schema is unsupported; start with an empty data directory")
-	}
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS tenants (
-id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL,
-ingestion_allowed INTEGER NOT NULL DEFAULT 1 CHECK(ingestion_allowed IN (0,1)),
-ingestion_monthly_events INTEGER CHECK(ingestion_monthly_events IS NULL OR ingestion_monthly_events>=0),
-hot_query_max_concurrent INTEGER NOT NULL CHECK(hot_query_max_concurrent BETWEEN 1 AND 64),
-hot_query_timeout_ms INTEGER NOT NULL CHECK(hot_query_timeout_ms BETWEEN 1 AND 60000),
-hot_query_max_rows INTEGER NOT NULL CHECK(hot_query_max_rows BETWEEN 1 AND 100000),
-hot_query_max_result_bytes INTEGER NOT NULL CHECK(hot_query_max_result_bytes BETWEEN 256 AND 67108864));
-CREATE TABLE IF NOT EXISTS tenant_usage (
-tenant_id TEXT NOT NULL REFERENCES tenants(id),period_start TEXT NOT NULL,
-accepted_events INTEGER NOT NULL CHECK(accepted_events>=0),
-PRIMARY KEY(tenant_id,period_start)) WITHOUT ROWID;`)
-	if err != nil {
-		return err
-	}
 	b := s.defaultTenantBudgets()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,$2,$3,1,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,$2,$3,1,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
 	return err
 }
 

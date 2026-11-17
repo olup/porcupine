@@ -81,20 +81,9 @@ func normalizeS3PipelineSpec(c S3PipelineSpec) (S3PipelineSpec, error) {
 	return c, nil
 }
 
+// initializeS3Pipelines requeues runs interrupted by a previous process.
 func (s *Service) initializeS3Pipelines(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS pipeline_s3_state(
- pipeline_id TEXT PRIMARY KEY REFERENCES pipelines(id) ON DELETE CASCADE,cursor_ms INTEGER NOT NULL,last_attempt_ms INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE IF NOT EXISTS pipeline_s3_runs(
- id TEXT PRIMARY KEY,pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
- window_start_ms INTEGER NOT NULL,window_end_ms INTEGER NOT NULL,state TEXT NOT NULL,
- attempts INTEGER NOT NULL DEFAULT 0,created_at_ms INTEGER NOT NULL,completed_at_ms INTEGER NOT NULL DEFAULT 0,
- next_attempt_ms INTEGER NOT NULL DEFAULT 0,error_code TEXT NOT NULL DEFAULT '',attempt_id TEXT NOT NULL DEFAULT '',
- event_watermark INTEGER NOT NULL DEFAULT 0,mutation_watermark INTEGER NOT NULL DEFAULT 0,
- manifest TEXT NOT NULL DEFAULT '',row_count INTEGER NOT NULL DEFAULT 0,byte_count INTEGER NOT NULL DEFAULT 0,UNIQUE(pipeline_id,window_start_ms));
- CREATE TABLE IF NOT EXISTS pipeline_s3_files(
- run_id TEXT NOT NULL REFERENCES pipeline_s3_runs(id) ON DELETE CASCADE,object_key TEXT NOT NULL,upload_id TEXT NOT NULL DEFAULT '',
- PRIMARY KEY(run_id,object_key));
- UPDATE pipeline_s3_runs SET state='queued',error_code='interrupted' WHERE state='running';`)
+	_, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='queued',error_code='interrupted' WHERE state='running'`)
 	return err
 }
 func (s *Service) createS3PipelineState(ctx context.Context, tx *sql.Tx, id string, c S3PipelineSpec) error {

@@ -24,57 +24,9 @@ func queueByteExpression(prefix string) string {
 	return "(" + expression + ")"
 }
 
+// initializeQueueUsage seeds the accounting row; schema triggers maintain it.
 func (s *Service) initializeQueueUsage(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS queue_usage (
-id INTEGER PRIMARY KEY CHECK(id=1),
-pending_count INTEGER NOT NULL CHECK(pending_count>=0),
-pending_bytes INTEGER NOT NULL CHECK(pending_bytes>=0)
-)`); err != nil {
-		return err
-	}
-	var initialized bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM queue_usage WHERE id=1)`).Scan(&initialized); err != nil {
-		return err
-	}
-	if !initialized {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO queue_usage(id,pending_count,pending_bytes)
-SELECT 1,count(*),COALESCE(sum(`+queueByteExpression("")+`),0) FROM events WHERE delivered=0`); err != nil {
-			return err
-		}
-	}
-	var identityAccounting bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ingestion_queue_accounting')`).Scan(&identityAccounting); err != nil {
-		return err
-	}
-	if !identityAccounting {
-		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS queue_usage_insert;DROP TRIGGER IF EXISTS queue_usage_delete;DROP TRIGGER IF EXISTS queue_usage_update;`); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE queue_usage SET pending_count=(SELECT count(*) FROM events WHERE delivered=0),pending_bytes=(SELECT coalesce(sum(`+queueByteExpression("")+`),0) FROM events WHERE delivered=0) WHERE id=1`); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('ingestion_queue_accounting','1')`); err != nil {
-			return err
-		}
-	}
-	newBytes, oldBytes := queueByteExpression("NEW."), queueByteExpression("OLD.")
-	_, err = tx.ExecContext(ctx, `CREATE TRIGGER IF NOT EXISTS queue_usage_insert AFTER INSERT ON events WHEN NEW.delivered=0 BEGIN
-UPDATE queue_usage SET pending_count=pending_count+1,pending_bytes=pending_bytes+`+newBytes+` WHERE id=1;
-END;
-CREATE TRIGGER IF NOT EXISTS queue_usage_delete AFTER DELETE ON events WHEN OLD.delivered=0 BEGIN
-UPDATE queue_usage SET pending_count=pending_count-1,pending_bytes=pending_bytes-`+oldBytes+` WHERE id=1;
-END;
-CREATE TRIGGER IF NOT EXISTS queue_usage_update AFTER UPDATE ON events WHEN OLD.delivered=0 OR NEW.delivered=0 BEGIN
-UPDATE queue_usage SET pending_count=pending_count+(NEW.delivered=0)-(OLD.delivered=0),
-pending_bytes=pending_bytes+CASE WHEN NEW.delivered=0 THEN `+newBytes+` ELSE 0 END-CASE WHEN OLD.delivered=0 THEN `+oldBytes+` ELSE 0 END WHERE id=1;
-END;`)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO queue_usage(id,pending_count,pending_bytes)
+SELECT 1,count(*),COALESCE(sum(`+queueByteExpression("")+`),0) FROM events WHERE delivered=0`)
+	return err
 }

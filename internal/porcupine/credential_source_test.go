@@ -3,7 +3,6 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,41 +121,5 @@ func TestCredentialSourceGrantAndDelegationBoundaries(t *testing.T) {
 		if readOnly["source_id"] != nil {
 			t.Fatal("read-only credential received ingestion binding", readOnly)
 		}
-	}
-}
-
-func TestCredentialSourceMigrationPreservesExistingCredentials(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectID, _ := project(t, s)
-	_, oldKey := key(t, s, []string{"events:write"}, []string{projectID})
-	if _, err = s.control.Exec(`DROP TRIGGER revoke_service_api_keys; ALTER TABLE access_keys DROP COLUMN source_id`); err != nil {
-		s.Close()
-		t.Fatal(err)
-	}
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(Config{DBPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	for _, raw := range []string{adminToken, oldKey} {
-		a, err := s.authenticate(context.Background(), raw)
-		if err != nil || a.SourceID != "" {
-			t.Fatal("migration changed legacy authentication", a, err)
-		}
-	}
-	if err = s.initializeOAuthClients(context.Background()); err != nil {
-		t.Fatal("migration not idempotent", err)
-	}
-	var missing int
-	if s.control.QueryRow(`SELECT count(*) FROM access_keys WHERE source_id IS NULL OR source_id<>''`).Scan(&missing) != nil || missing != 0 {
-		t.Fatal("migration did not preserve blank source defaults")
 	}
 }

@@ -10,6 +10,9 @@ Agents connecting to a running instance should start with the
 - Register management operations with Huma. Set the operation ID and authorization
   metadata so HTTP and MCP share their contract. After an API change, run
   `make cli-generate`; it regenerates the offline OpenAPI snapshot and standalone CLI catalog. Commit both generated artifacts. The snapshot is never an authorization registry.
+- Change a database schema only by appending a numbered step in
+  `internal/porcupine/schema_migrations.go`; never edit a released step or add
+  DDL to startup code. The schema tests compare startup with the steps.
 - Keep instance administration separate from project-scoped event permissions.
 - Resolve project scope from credentials, never trust an ingestion payload's project ID.
 - Preserve durable acceptance: acknowledge only after the bounded SQLite queue commits.

@@ -153,9 +153,6 @@ func (s *Service) openPipelineSecret(projectID, pipelineID string, blob []byte) 
 }
 
 func (s *Service) initializePipelines(ctx context.Context) error {
-	if err := s.initializePipelineSchema(ctx); err != nil {
-		return err
-	}
 	if err := s.verifyPipelineConfig(ctx); err != nil {
 		return err
 	}

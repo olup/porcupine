@@ -34,25 +34,22 @@ func sharedQueryTestFixture(t *testing.T) (string, *Service, *Service) {
 	dsn := sharedPostgresDSN(t)
 	first := sharedQueryTestService(t, dsn, "first")
 	second := sharedQueryTestService(t, dsn, "second")
-	_, err := first.control.Exec(`CREATE TABLE tenants(
- id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL,ingestion_allowed INTEGER NOT NULL,
- ingestion_monthly_events BIGINT, hot_query_max_concurrent INTEGER NOT NULL,hot_query_timeout_ms INTEGER NOT NULL,
- hot_query_max_rows INTEGER NOT NULL,hot_query_max_result_bytes INTEGER NOT NULL);
- CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id));
- CREATE TABLE project_deletions(project_id TEXT PRIMARY KEY,completed INTEGER NOT NULL);
- INSERT INTO tenants VALUES('one','One','2026-11-01',1,NULL,1,5000,1000,1048576),('two','Two','2026-11-01',1,NULL,1,5000,1000,1048576);
- INSERT INTO projects VALUES('a','one'),('b','one'),('c','two')`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Concurrent workers initialize one shared schema under its advisory lock.
 	initialized := make(chan error, 2)
 	for _, s := range []*Service{first, second} {
-		go func(s *Service) { initialized <- s.initializeSharedQueryPermits(context.Background()) }(s)
+		go func(s *Service) {
+			initialized <- initializeSharedControl(context.Background(), s.control, adminToken, s.interactiveConfig)
+		}(s)
 	}
 	for range 2 {
-		if err = <-initialized; err != nil {
+		if err := <-initialized; err != nil {
 			t.Fatal(err)
 		}
+	}
+	_, err := first.control.Exec(`INSERT INTO tenants(id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES('one','One','2026-11-01',1,NULL,1,5000,1000,1048576),('two','Two','2026-11-01',1,NULL,1,5000,1000,1048576);
+ INSERT INTO projects(id,tenant_id,name,created_at) VALUES('a','one','A','2026-11-01'),('b','one','B','2026-11-01'),('c','two','C','2026-11-01')`)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return dsn, first, second
 }

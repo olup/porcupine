@@ -149,9 +149,10 @@ INSERT INTO projects VALUES('old-project','Existing project','2020-01-01T00:00:0
 		s.Close()
 		t.Fatal("startup accepted a pre-tenant schema")
 	}
-	if !strings.Contains(err.Error(), "pre-tenant database schema is unsupported") {
+	if !strings.Contains(err.Error(), "unversioned journal database is unsupported") {
 		t.Fatalf("unexpected startup error: %v", err)
 	}
+	assertSQLiteUnchanged(t, path, 1)
 	db, err = sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
