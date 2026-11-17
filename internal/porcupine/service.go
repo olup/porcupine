@@ -32,6 +32,7 @@ type Config struct {
 	BootstrapToken string
 	QueueMaxEvents int
 	QueueMaxBytes  int64
+	AcceptanceMode AcceptanceMode
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
 	ReceiptRetention   time.Duration
@@ -64,7 +65,7 @@ type Service struct {
 	deletionWake                chan struct{}
 	db                          *sql.DB
 	*eventRules
-	acceptance            *eventAcceptance
+	acceptance            liveAcceptor
 	imports               *importManager
 	allowedOrigins        map[string]bool
 	trustedProxies        []netip.Prefix
@@ -215,8 +216,9 @@ func Open(c Config) (*Service, error) {
 		s.shared = &sharedRuntime{config: copyConfig}
 	}
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
-	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
-	configureWebhooks(s, pipelines)
+	durable := &durableAcceptance{db: db, rules: s.eventRules}
+	s.acceptance = durable
+	configureWebhooks(s, durable, pipelines)
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
@@ -575,7 +577,7 @@ func (s *Service) Handler() http.Handler {
 	m.HandleFunc("POST /i/v0/e/", capture)
 	m.HandleFunc("POST /e/", capture)
 	m.HandleFunc("POST /ingest/v1/events", limitConcurrent(s.captureSlots, s.captureNative))
-	m.HandleFunc("GET /ingest/v1/schema", serveNativeInputSchema)
+	m.HandleFunc("GET /ingest/v1/schema", s.serveNativeInputSchema)
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
@@ -778,9 +780,10 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		return
 	}
 	s.wakeWebhook()
-	response := map[string]any{"status": 1, "accepted": result.accepted, "duplicates": result.duplicates, "identity_ignored": result.identityIgnored}
-	if nativeResponse {
-		response["receipts"] = result.receipts
+	response, err := liveAcceptanceResponse(result, nativeResponse)
+	if err != nil {
+		problem(w, 503, err.Error())
+		return
 	}
 	write(w, 200, response)
 }

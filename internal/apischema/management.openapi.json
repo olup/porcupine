@@ -2298,6 +2298,39 @@
         ],
         "type": "object"
       },
+      "NativeAcknowledgment": {
+        "additionalProperties": false,
+        "properties": {
+          "durability": {
+            "enum": [
+              "durable",
+              "buffered"
+            ],
+            "type": "string"
+          },
+          "meaning": {
+            "type": "string"
+          },
+          "receipt_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "received_meaning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "durability",
+          "meaning",
+          "receipt_fields"
+        ],
+        "type": "object"
+      },
       "NativeBackupStatus": {
         "additionalProperties": false,
         "properties": {
@@ -2366,8 +2399,15 @@
           "historical_schema_status": {
             "type": "string"
           },
+          "live_acknowledgment": {
+            "$ref": "#/components/schemas/NativeAcknowledgment"
+          },
           "live_endpoint": {
             "type": "string"
+          },
+          "live_response_schema": {
+            "additionalProperties": {},
+            "type": "object"
           },
           "live_schema": {
             "additionalProperties": {},
@@ -2391,6 +2431,8 @@
           }
         },
         "required": [
+          "live_acknowledgment",
+          "live_response_schema",
           "version",
           "live_endpoint",
           "live_schema",
