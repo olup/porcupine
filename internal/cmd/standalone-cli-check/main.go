@@ -307,7 +307,7 @@ func (j *journey) check() error {
 	if err != nil {
 		return err
 	}
-	if err := require(status["status"] == "ok" && field(status, "checks")["sqlite"] == "ok" && field(status, "checks")["ducklake"] == "ok", "instance health mismatch"); err != nil {
+	if err := require(status["status"] == "ok" && len(field(status, "checks")) == 2 && field(status, "checks")["sqlite"] == "ok" && field(status, "checks")["ducklake"] == "ok" && field(status, "configuration")["analytics"] == true, "instance health mismatch"); err != nil {
 		return err
 	}
 	for name, value := range field(status, "configuration") {
@@ -345,7 +345,11 @@ func (j *journey) check() error {
 	if err != nil {
 		return err
 	}
-	if err := require(len(list(projects, "projects")) == 2, "admin project list mismatch"); err != nil {
+	listedIDs := map[string]bool{}
+	for _, project := range list(projects, "projects") {
+		listedIDs[text(project.(map[string]any)["id"])] = true
+	}
+	if err := require(len(list(projects, "projects")) == 2 && listedIDs[ids[0]] && listedIDs[ids[1]], "admin project list mismatch"); err != nil {
 		return err
 	}
 	renamed, err := j.cliJSON(adminKey, nil, "rename-project", "--id", ids[0], "--body", `{"name":"CLI renamed"}`)
@@ -373,6 +377,11 @@ func (j *journey) check() error {
 	}
 	scopedStatus, err := j.cliJSON(key, nil, "get-instance-status")
 	if err != nil {
+		return err
+	}
+	sharedChecks, _ := json.Marshal(status["checks"])
+	scopedChecks, _ := json.Marshal(scopedStatus["checks"])
+	if err := require(bytes.Equal(sharedChecks, scopedChecks), "scoped instance health mismatch"); err != nil {
 		return err
 	}
 	serialized, _ := json.Marshal(scopedStatus)
