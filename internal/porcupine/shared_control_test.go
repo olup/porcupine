@@ -132,10 +132,18 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 			}
 		})
 	}
-	for _, table := range []string{"events", "delivery_ready", "identity_profiles", "identity_links", "event_heads", "mutation_outbox", "export_jobs", "pipelines", "webhook_deliveries", "pipeline_s3_runs"} {
+	for _, table := range []string{"events", "delivery_ready", "identity_profiles", "identity_links", "event_heads", "mutation_outbox", "pipelines", "webhook_deliveries", "pipeline_s3_runs"} {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=$1)`, table).Scan(&exists); err != nil || exists {
 			t.Fatalf("payload table leaked into shared control: %s %v", table, err)
+		}
+	}
+	for _, table := range []string{"export_jobs", "export_files", "hosted_pipeline_configs", "pipeline_effect_jobs", "pipeline_effect_assemblies"} {
+		var columns, payloads int
+		err := db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER (WHERE column_name IN ('payload','body','event_data'))
+FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1`, table).Scan(&columns, &payloads)
+		if err != nil || columns == 0 || payloads != 0 {
+			t.Fatalf("invalid shared job metadata schema: %s columns=%d payloads=%d error=%v", table, columns, payloads, err)
 		}
 	}
 	if err := checkSharedImportMetadata(ctx, db); err != nil {

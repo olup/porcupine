@@ -16,7 +16,7 @@ func pipelineFixture(t *testing.T) (*sql.DB, *PGPipelineEffects) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { db.Close() })
-	_, e = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE access_keys(id TEXT PRIMARY KEY,permissions TEXT,projects TEXT,revoked_at TEXT);CREATE TABLE tenant_credentials(principal_id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE project_deletions(project_id TEXT);CREATE TABLE tenant_deletions(tenant_id TEXT);CREATE TABLE service_api_keys(principal_id TEXT);CREATE TABLE email_humans(principal_id TEXT);CREATE TABLE oauth_interactive_grants(principal_id TEXT);` + PipelineSchemaV1)
+	_, e = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE access_keys(id TEXT PRIMARY KEY,permissions TEXT,projects TEXT,revoked_at TEXT);CREATE TABLE tenant_credentials(principal_id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE project_deletions(project_id TEXT);CREATE TABLE tenant_deletions(tenant_id TEXT);CREATE TABLE service_api_keys(principal_id TEXT);CREATE TABLE email_humans(principal_id TEXT);CREATE TABLE oauth_interactive_grants(principal_id TEXT);` + PipelineSchemaV1 + PipelineDeliverySchemaV1)
 	if e != nil {
 		t.Fatal(e)
 	}

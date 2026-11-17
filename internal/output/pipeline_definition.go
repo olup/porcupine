@@ -42,8 +42,9 @@ func (p *PGPipelineEffects) CompareAndSwapDefinitionTx(ctx context.Context, tx *
 			return ErrPipelineConflict
 		}
 	}
-	// Lock first, then resolve current creator, including a create.
-	if next.State != "retired" {
+	// Pausing an unchanged target removes eligibility even after creator revocation.
+	requiresCreator := next.State == "active" || next.State == "paused" && (expected == nil || *expected != t)
+	if requiresCreator {
 		ok, e := p.authority.ResolveCreatorTx(ctx, tx, next.TenantID, next.ProjectID, t.CreatorID)
 		if e != nil {
 			return e
@@ -63,7 +64,7 @@ func (p *PGPipelineEffects) CompareAndSwapDefinitionTx(ctx context.Context, tx *
 		return e
 	}
 	if expected != nil && (next.State == "retired" || t.Incarnation != old.Incarnation || t.DestinationRevision != old.DestinationRevision || t.CreatorID != old.CreatorID) {
-		_, e = tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET state='retired',attempt='',version=version+1,lease_until=NULL WHERE project_id=$1 AND tenant_id=$2 AND pipeline_id=$3 AND state IN ('pending','running')`, next.ProjectID, next.TenantID, t.ID)
+		_, e = tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET state='retired',attempt='',version=version+1,lease_until=NULL,needs_recompose=false WHERE project_id=$1 AND tenant_id=$2 AND pipeline_id=$3 AND (state IN ('pending','running') OR needs_recompose)`, next.ProjectID, next.TenantID, t.ID)
 	}
 	return e
 }

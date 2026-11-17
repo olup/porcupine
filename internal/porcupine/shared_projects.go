@@ -83,6 +83,10 @@ func (s *Service) projectOperationNeedsOwner(operation string) bool {
 		return s.hostedQueries == nil
 	case "query-events", "get-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project":
 		return false
+	case "create-event-export", "list-event-exports", "get-event-export", "cancel-event-export", "list-event-export-files":
+		return !s.exports.UsesSharedControl()
+	case "create-pipeline", "list-pipelines", "get-pipeline", "pause-pipeline", "resume-pipeline", "delete-pipeline", "replace-pipeline-credentials", "list-pipeline-runs", "get-pipeline-run", "retry-pipeline-run":
+		return !s.pipelines.UsesSharedControl()
 	default:
 		return true
 	}

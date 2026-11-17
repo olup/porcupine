@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
@@ -15,6 +16,7 @@ type PipelineOutput struct {
 	Body                                                                             PipelineRef
 	Members                                                                          []PipelineMember
 	Charge                                                                           PipelineDemand
+	Fragment                                                                         *PipelineFragmentSpec `json:",omitempty"`
 }
 type PipelinePublication struct {
 	Manifest    PipelineRef
@@ -110,6 +112,20 @@ func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sq
 		_, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_jobs(source_id,project_id,catalog_id,stream_id,tenant_id,id,batch_id,pipeline_id,incarnation,rule_revision,destination_revision,creator_id,generation,kind,sequence,body_key,body_version,body_sha,body_bytes,state,refs,bytes,rows,artifacts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, a...)
 		if e != nil {
 			return false, e
+		}
+		if o.Fragment != nil {
+			if o.Kind != "fragment" || !o.Fragment.valid() {
+				return false, ErrPipelineConflict
+			}
+			raw, err := json.Marshal(o.Fragment)
+			if err != nil {
+				return false, err
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET fragment_spec=$6,window_start_ms=$7,window_end_ms=$8 WHERE `+pipelineScopeWhere+` AND id=$5`,
+				append(pipelineScopeArgs(b.Scope), o.ID, string(raw), o.Fragment.WindowStartMS, o.Fragment.WindowEndMS)...)
+			if err != nil {
+				return false, err
+			}
 		}
 		for i, m := range o.Members {
 			a := append(pipelineScopeArgs(b.Scope), o.ID, i, m.UUID, m.Bytes)

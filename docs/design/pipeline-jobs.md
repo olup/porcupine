@@ -1,4 +1,4 @@
-# SQLite pipeline jobs
+# Pipeline jobs
 
 `internal/output.PipelineJobs` owns the SQLite pipeline domain. The service constructs it with `NewSQLitePipelines` and narrow dependencies for current authority, native reads, admission and project activity. The domain has no `Service` pointer. Existing HTTP, CLI and MCP operations share the existing Huma registration and authorization policy.
 
@@ -15,7 +15,7 @@
 | `managed_artifact_ownership.go` | The shared helper in `internal/output/export_artifacts.go` retains export and pipeline artifact ownership without a Service receiver |
 | Service worker construction and lifecycle | `pipeline_dependencies.go` supplies narrow dependencies. `PipelineJobs` starts, cancels and drains its workers |
 
-`internal/delivery` retains pure payload and row encoders, bounded HTTP responses and SSRF-safe transport. `internal/exportstore` retains S3 protocol operations. Export and pipeline cleanup share the existing artifact ownership helper. Existing PG participants remain separate and unchanged. This extraction does not activate hosted output workers.
+`internal/delivery` retains pure payload and row encoders, bounded HTTP responses and SSRF-safe transport. `internal/exportstore` retains S3 protocol operations. Export and pipeline cleanup share the existing artifact ownership helper.
 
 ## Transactions and worker lifetime
 
@@ -38,3 +38,13 @@ Cleanup uses only the retained old identity and namespace. A missing upload ID t
 Canceled run history retains the latest 1000 windows per pipeline, with the original completion time. Rotation copies every remaining prefix, manifest and file owner before pruning that history. Successful run retention remains unchanged.
 
 DELETE commits a paused state before signaling local cancellation or waiting for cleanup exclusion. If a native call has not actually returned, DELETE reports `503` and asks the caller to retry cleanup. It retains the activity and native permit, and no new run starts while paused. A failed pause transaction sends no cancellation. Project deletion waits for retired cleanup. Offline restore enumerates live and retired ownership before reset, then clears outbound credentials and pauses pipelines without contacting source destinations. The original encryption key remains required while live or retired encrypted destinations exist.
+
+## Hosted webhook provider
+
+The staged PostgreSQL provider stores the routing rule and encrypted destination separately. The ciphertext is bound to the tenant, project, pipeline incarnation and destination revision. Pausing stops new selection and retains queued deliveries. Replacing credentials retires jobs for the old destination. A live commit can publish a body reference or a batch fragment under its original immutable object prefix.
+
+Workers reconcile the native cut and check durable deletion intents and creator authority before freezing the send. The send transaction holds the project coordinator session. The HTTP attempt begins after that session releases, with a durable project activity ticket and a finite attempt lease. The winning result transaction records delivery status and usage. An expired attempt can be reclaimed using the same body and receiver delivery ID.
+
+Batch assembly reserves capacity and freezes its fragment membership before uploading a body. A deletion can recompose an unattempted batch under its existing delivery ID. When an earlier attempt froze the original membership, the surviving batch has a new delivery ID. Artifact ownership and capacity attribution follow their original immutable namespaces until authorized cleanup proves removal.
+
+Hosted startup must supply the mutation gate and activity callbacks. Restore-gated artifact reclamation and scheduled S3 query pipelines remain activation dependencies.

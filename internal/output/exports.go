@@ -11,6 +11,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func exportQueueLimit(config ExportConfig) int {
@@ -24,7 +25,21 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 	if !s.Enabled() {
 		return ExportJob{}, apiError(503, "exports are not configured")
 	}
+	if s.retained != nil {
+		finish, err := s.beginExportAdmissionActivity(ctx, project)
+		if err != nil {
+			return ExportJob{}, apiError(503, "export admission unavailable")
+		}
+		defer finish()
+	}
 	canonical := request.SQL
+	if s.validateSQL != nil {
+		var err error
+		canonical, err = s.validateSQL(ctx, project, canonical, request.Parameters)
+		if err != nil {
+			return ExportJob{}, err
+		}
+	}
 	format := request.Format
 	if format == "" {
 		format = "jsonl"
@@ -46,60 +61,160 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 	}
 	encodedParameters, _ := json.Marshal(parameters)
 	keyHash, requestHash := hash(request.IdempotencyKey), hash(string(payload))
-	actorID := caller.ID
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+
+	admission := exportAdmissionRequest{
+		project: project, canonical: canonical, format: format, parameters: string(encodedParameters),
+		keyHash: keyHash, requestHash: requestHash, caller: caller,
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
-	}
-	var previousID, previousHash string
-	err = tx.QueryRowContext(ctx, `SELECT id,request_hash FROM export_jobs WHERE project_id=$1 AND actor_id=$2 AND idempotency_hash=$3`, project, actorID, keyHash).Scan(&previousID, &previousHash)
-	if err == nil {
-		if previousHash != requestHash {
-			return ExportJob{}, apiError(409, "idempotency_key was used for a different export request")
-		}
-		job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE id=$1`, previousID))
+	if s.retained == nil {
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return ExportJob{}, apiError(503, "export storage unavailable")
 		}
-		return s.publicExportJob(job), nil
+		defer tx.Rollback()
+		job, err := s.submitExportTx(ctx, tx, admission, lakeapi.ExportSnapshot{})
+		if err != nil {
+			return ExportJob{}, err
+		}
+		if err = tx.Commit(); err != nil {
+			return ExportJob{}, apiError(503, "export storage unavailable")
+		}
+		s.Wake()
+		return job, nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	// Fast idempotency lookup avoids recapturing a snapshot for an admitted
+	// request. The insert transaction repeats it to handle competing requests.
+	if previous, found, err := s.previousExport(ctx, s.db, admission); found || err != nil {
+		return previous, err
+	}
+	var job ExportJob
+	err = s.snapshotCut(ctx, project, func(cut context.Context, run ExportControlTx) error {
+		snapshot, err := s.retained.CaptureExportSnapshot(cut, project)
+		if err != nil || snapshot.CatalogID == "" || snapshot.Version < 0 {
+			return apiError(503, "export analytical snapshot unavailable")
+		}
+		return run(cut, func(ctx context.Context, tx *sql.Tx) error {
+			job, err = s.submitExportTx(ctx, tx, admission, snapshot)
+			return err
+		})
+	})
+	if err == nil && job.ID == "" {
+		err = apiError(503, "export analytical snapshot unavailable")
+	}
+	if err != nil {
+		var status interface{ GetStatus() int }
+		if !errors.As(err, &status) {
+			err = apiError(503, "export analytical snapshot unavailable")
+		}
+		return ExportJob{}, err
+	}
+	s.Wake()
+	return job, nil
+}
+
+type exportAdmissionRequest struct {
+	project, canonical, format, parameters, keyHash, requestHash string
+	caller                                                       auth.Principal
+}
+
+type exportQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (s *ExportJobs) previousExport(ctx context.Context, db exportQueryer, admission exportAdmissionRequest) (ExportJob, bool, error) {
+	var previousID, previousHash string
+	err := db.QueryRowContext(ctx, `SELECT id,request_hash FROM export_jobs WHERE project_id=$1 AND actor_id=$2 AND idempotency_hash=$3`, admission.project, admission.caller.ID, admission.keyHash).Scan(&previousID, &previousHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExportJob{}, false, nil
+	}
+	if err != nil {
+		return ExportJob{}, false, apiError(503, "export storage unavailable")
+	}
+	if previousHash != admission.requestHash {
+		return ExportJob{}, true, apiError(409, "idempotency_key was used for a different export request")
+	}
+	job, err := s.scanExport(db.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE id=$1`, previousID))
+	if err != nil {
+		return ExportJob{}, true, apiError(503, "export storage unavailable")
+	}
+	return s.publicExportJob(job), true, nil
+}
+
+func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission exportAdmissionRequest, snapshot lakeapi.ExportSnapshot) (ExportJob, error) {
+	if err := s.lockExportQueue(ctx, tx); err != nil {
 		return ExportJob{}, apiError(503, "export storage unavailable")
 	}
-	var pending int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM export_jobs WHERE state IN ('queued','running')`).Scan(&pending); err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+	if previous, found, err := s.previousExport(ctx, tx, admission); found || err != nil {
+		return previous, err
 	}
-	if pending >= exportQueueLimit(s.config) {
-		return ExportJob{}, apiError(503, "export queue is full")
+
+	job := ExportJob{ID: eventapi.NewID(), ProjectID: admission.project, State: ExportQueued, Format: admission.format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
+	windowColumns := "event_watermark,mutation_watermark"
+	var first, second any
+	var tenant string
+	var err error
+	if s.retained == nil {
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM export_jobs WHERE state IN ('queued','running')`).Scan(&pending); err != nil {
+			return ExportJob{}, apiError(503, "export storage unavailable")
+		}
+		if pending >= exportQueueLimit(s.config) {
+			return ExportJob{}, apiError(503, "export queue is full")
+		}
+		var events, mutations int64
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='events'),0),coalesce((SELECT max(seq) FROM mutation_audit),0)`).Scan(&events, &mutations); err != nil {
+			return ExportJob{}, apiError(503, "export delivery barrier unavailable")
+		}
+		first, second = events, mutations
+	} else {
+		tenant, err = lockActiveExportProject(ctx, tx, admission.project)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ExportJob{}, apiError(404, "project not found")
+		}
+		if err != nil {
+			return ExportJob{}, apiError(503, "export project unavailable")
+		}
+
+		if err := s.checkHostedExportCapacity(ctx, tx, tenant, admission.project); err != nil {
+			return ExportJob{}, err
+		}
+		if admission.caller.External == nil {
+			actor, authorityErr := s.exportJobActorTx(ctx, tx, storedExport{ExportJob: job, ActorID: admission.caller.ID})
+			if authenticationUnavailable(authorityErr) {
+				return ExportJob{}, apiError(503, "export authorization unavailable")
+			}
+			if authorityErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
+				return ExportJob{}, apiError(403, "export authorization has changed")
+			}
+		}
+		windowColumns, first, second = "snapshot_catalog_id,snapshot_version", snapshot.CatalogID, snapshot.Version
+		job.Consistency = retainedExportConsistency
 	}
-	var eventWatermark, mutationWatermark int64
-	if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='events'),0),coalesce((SELECT max(seq) FROM mutation_audit),0)`).Scan(&eventWatermark, &mutationWatermark); err != nil {
-		return ExportJob{}, apiError(503, "export delivery barrier unavailable")
-	}
-	job := ExportJob{ID: eventapi.NewID(), ProjectID: project, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
-	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
-	if err == nil && caller.External != nil {
-		actor, authorityErr := s.currentActor(ctx, caller)
+	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,`+windowColumns+`,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, admission.caller.ID, admission.canonical, admission.parameters, job.Format, admission.keyHash, admission.requestHash, job.State, first, second, job.CreatedAt)
+	if err == nil && admission.caller.External != nil {
+		var actor auth.Principal
+		var authorityErr error
+		if s.retained == nil {
+			actor, authorityErr = s.currentActor(ctx, admission.caller)
+		} else {
+			actor, authorityErr = s.currentActorTx(ctx, tx, admission.caller)
+		}
 		if authenticationUnavailable(authorityErr) {
 			return ExportJob{}, apiError(503, "export authorization unavailable")
 		}
-		if authorityErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
+		if authorityErr != nil || actor.External == nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 			return ExportJob{}, apiError(403, "external export authorization expired or changed")
 		}
-		var tenant string
-		if err = s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err == nil {
+		if s.retained == nil {
+			err = s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant)
+		}
+		if err == nil {
 			_, err = tx.ExecContext(ctx, `INSERT INTO export_external_authority(job_id,tenant_id,issuer,expires_at_ms) VALUES($1,$2,$3,$4)`, job.ID, tenant, actor.External.Issuer(), actor.External.Expires().UnixMilli())
 		}
 	}
-	if err != nil || tx.Commit() != nil {
+	if err != nil {
 		return ExportJob{}, apiError(503, "export storage unavailable")
 	}
-	s.Wake()
 	return job, nil
 }
 
@@ -161,10 +276,12 @@ func (s *ExportJobs) Cancel(ctx context.Context, project, id string, caller auth
 		return ExportJob{}, apiError(503, "export storage unavailable")
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+	if s.retained == nil {
+		if err := s.lockExportQueue(ctx, tx); err != nil {
+			return ExportJob{}, apiError(503, "export storage unavailable")
+		}
 	}
-	job, err := scanExport(tx.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 AND id=$2`, project, id))
+	job, err := s.scanExport(tx.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE project_id=$1 AND id=$2`+s.lockExportJob(), project, id))
 	if err != nil {
 		return ExportJob{}, exportLookupError(err)
 	}
@@ -220,16 +337,21 @@ func (s *ExportJobs) Files(ctx context.Context, project, id string, limit, offse
 	if !s.Enabled() || s.store == nil {
 		return ExportFilePage{}, apiError(503, "export storage is not configured")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,rows,bytes,decoded_bytes,sha256 FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND complete=1 ORDER BY file_index LIMIT $3 OFFSET $4`, job.ID, job.AttemptID, limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,rows,bytes,decoded_bytes,sha256,storage_id FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND complete=1 ORDER BY file_index LIMIT $3 OFFSET $4`, job.ID, job.AttemptID, limit+1, offset)
 	if err != nil {
 		return ExportFilePage{}, apiError(503, "export file metadata unavailable")
 	}
 	artifacts := []exportArtifact{}
 	for rows.Next() {
 		var artifact exportArtifact
-		if err := rows.Scan(&artifact.Index, &artifact.Key, &artifact.Rows, &artifact.Bytes, &artifact.DecodedBytes, &artifact.SHA256); err != nil {
+		var storage string
+		if err := rows.Scan(&artifact.Index, &artifact.Key, &artifact.Rows, &artifact.Bytes, &artifact.DecodedBytes, &artifact.SHA256, &storage); err != nil {
 			rows.Close()
 			return ExportFilePage{}, apiError(503, "export file metadata unavailable")
+		}
+		if s.retained != nil && storage != s.store.OwnershipID() {
+			rows.Close()
+			return ExportFilePage{}, apiError(503, "export storage namespace unavailable")
 		}
 		artifacts = append(artifacts, artifact)
 	}

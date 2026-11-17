@@ -61,6 +61,11 @@ func (s *ExportJobs) removeExportArtifact(ctx context.Context, key, uploadID str
 		if err := s.store.Abort(ctx, key, uploadID); err != nil {
 			return err
 		}
+	} else if s.retained != nil {
+		// The owned key was checkpointed before Begin could reach S3.
+		if err := s.store.AbortKeyUploads(ctx, key); err != nil {
+			return err
+		}
 	}
 	// Complete may have committed despite a lost acknowledgment; always delete.
 	return s.store.Delete(ctx, key)

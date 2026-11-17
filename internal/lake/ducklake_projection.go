@@ -34,9 +34,9 @@ CREATE TABLE IF NOT EXISTS lake.identity_links (
 );
 `
 
-const duckLakeEventsView = `
-CREATE OR REPLACE VIEW events AS
- SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
+const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;`
+
+const duckLakeEventsSelect = `SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,
  COALESCE(l.identified_id,e.distinct_id) AS person_id,
  COALESCE(p.traits,'{}') AS person_properties,
@@ -44,8 +44,7 @@ CREATE OR REPLACE VIEW events AS
  FROM lake.current_events e
  LEFT JOIN lake.identity_links l ON l.anonymous_id=e.distinct_id
  LEFT JOIN lake.identity_profiles p ON p.identified_id=COALESCE(l.identified_id,e.distinct_id)
- WHERE e.identity_snapshot='';
-`
+ WHERE e.identity_snapshot=''`
 
 type PreparedLakeProjection struct {
 	projection EventProjection
