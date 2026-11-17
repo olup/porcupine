@@ -64,6 +64,7 @@ func (o *oauthBrowser) finishEmailDelivery() {
 var emailLoginPage = template.Must(template.New("email-login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Porcupine</title><main>
 <h1>Connect {{.Client}} to Porcupine</h1>
 <form method="post" action="/oauth/email/request"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Email address <input type="email" name="email" autocomplete="email" required></label> <button>Send sign-in code</button></form>
+{{if .Provider}}<p>Or</p><form method="post" action="/oauth/oidc/start"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Continue with {{.Provider}}</button></form>{{end}}
 </main></html>`))
 
 var emailVerificationPage = template.Must(template.New("email-verification").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify your email</title><main>
@@ -92,9 +93,16 @@ func (s *Service) startEmailLogin(w http.ResponseWriter, request oauthAuthorizat
 		return
 	}
 	browser.cookie(w, raw, int(oidcSessionLifetime.Seconds()))
+	provider := ""
+	if s.oauth.oidc != nil {
+		provider = "identity provider"
+		if s.oauth.oidc.issuer == "https://accounts.google.com" {
+			provider = "Google"
+		}
+	}
 	_ = emailLoginPage.Execute(w, struct {
-		Client, CSRF string
-	}{request.ClientName, session.csrf})
+		Client, CSRF, Provider string
+	}{request.ClientName, session.csrf, provider})
 }
 
 // All login forms carry a session-bound token as well as an exact browser origin.

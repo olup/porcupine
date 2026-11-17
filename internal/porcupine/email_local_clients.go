@@ -19,10 +19,13 @@ func (s *Service) initializeLocalEmailClients(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := registerLocalEmailClient(ctx, tx, "porcupine-local", "Porcupine local analytics", interactiveOAuthScopes); err != nil {
+	if err := registerLocalEmailClient(ctx, tx, "porcupine-local", "Porcupine local project access", projectPermissionNames); err != nil {
 		return err
 	}
 	if err := registerLocalEmailClient(ctx, tx, "porcupine-local-admin", "Porcupine local administration", []string{"instance:admin"}); err != nil {
+		return err
+	}
+	if err := registerLocalEmailClient(ctx, tx, "porcupine-local-tenant-admin", "Porcupine local tenant administration", []string{tenantAdminScope}); err != nil {
 		return err
 	}
 	return tx.Commit()

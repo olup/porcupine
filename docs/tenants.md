@@ -6,15 +6,13 @@ A tenant groups projects that share an ingestion allowance and interactive query
 
 ## Ownership and access
 
-For a fresh deployment, follow [team setup](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased): connect the instance administrator, choose or create a tenant, create its projects, then invite people to those projects.
+For a fresh deployment, follow [team setup](tenant-access.md): connect the instance operator, choose or create a tenant, and invite its first administrator. That administrator can create the team's projects and invite its members.
 
 Each project belongs to one tenant. Its `tenant_id` is returned with project metadata and cannot be changed after creation. Producers send events to a project; Porcupine resolves its tenant from stored project ownership. A field supplied in an event cannot select a different tenant.
 
-Permissions still name projects explicitly. A person or service can have access to several projects, including projects in different tenants. Adding access to one project does not expose another project's events or the tenant's aggregate usage. An operator-issued `*` project grant covers the whole deployment, including all tenants; it is not a tenant-local wildcard.
+A human can belong to several tenants with different roles. A tenant administrator manages that tenant's projects, memberships, and team service accounts. A member receives project permissions through an `all` or `selected` project scope. `all` includes future projects in that tenant; `selected` includes only the listed projects. Role presets provide reader, contributor, or manager permissions, and explicit permission lists allow different access on each project. [Tenant access](tenant-access.md)
 
-There is no invitation to an entire tenant. A person invited to existing projects does not gain access to projects created later in that tenant.
-
-Only a credential with `instance:admin` can create projects, manage tenants, change budgets, suspend ingestion, or read tenant-wide usage. Project readers can see the configured budgets and deployment ceilings through their project's schema, but cannot change them or read aggregate consumption. There is no separate tenant administrator role. Project permissions continue to control queries, imports, event changes, and pipelines. [Permissions](security-and-interfaces.md)
+Only an instance operator with `instance:admin` can create tenants, change their budgets, or suspend ingestion. Tenant administrators can inspect their own tenant's configuration and usage. Project readers can inspect their effective query limits through the project schema, but cannot change budgets or read aggregate tenant consumption. An operator-issued `*` project grant covers the whole deployment; tenant-wide access never uses that wildcard. [Permissions](security-and-interfaces.md#tenant-roles-and-project-permissions-unreleased)
 
 ## Create a tenant and its projects
 
@@ -29,7 +27,7 @@ The HTTP API, generated CLI, and MCP use these operation IDs and the same permis
 | `update-tenant-budgets` | `PUT /api/v1/tenants/{tenant_id}/budgets` | Replace its complete budget configuration |
 | `get-tenant-usage` | `GET /api/v1/tenants/{tenant_id}/usage` | Read one month's consumption |
 
-Every operation in this table requires `instance:admin`. `list-tenants` accepts `limit` (default 100, maximum 200). Pass a returned `next_cursor` as `cursor` for the next page. There is no tenant deletion or manual budget-reset operation.
+Creating a tenant, replacing budgets, and changing the ingestion switch require `instance:admin`. Tenant administrators can rename their own tenant and read its configuration and usage. `list-tenants` returns only tenants the caller can administer, unless the caller is an instance operator. Ordinary members use `list-projects` to discover their allowed projects. The running operation contracts describe the caller's available actions. `list-tenants` accepts `limit` (default 100, maximum 200). Pass a returned `next_cursor` as `cursor` for the next page. There is no tenant deletion or manual budget-reset operation.
 
 After connecting the matching CLI with an instance administrator's credential, inspect the default tenant and its current usage:
 

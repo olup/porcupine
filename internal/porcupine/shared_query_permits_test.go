@@ -130,7 +130,7 @@ func TestSharedQueryPermitsAcrossServices(t *testing.T) {
 		t.Fatal("shared admission used stale policy", limits)
 	}
 	r()
-	if _, err = a.control.Exec(`INSERT INTO project_deletions VALUES('a',0)`); err != nil {
+	if _, err = a.control.Exec(`INSERT INTO project_deletions(project_id,completed) VALUES('a',0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err = b.beginInteractiveQuery(ctx, "a"); queryStatus(err) != 404 {
@@ -277,7 +277,7 @@ func TestSharedQueryProjectDeletionWaitsForReaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if _, err = a.control.Exec(`INSERT INTO project_deletions VALUES('a',0)`); err != nil {
+	if _, err = a.control.Exec(`INSERT INTO project_deletions(project_id,completed) VALUES('a',0)`); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 1)

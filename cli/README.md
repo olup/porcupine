@@ -26,7 +26,9 @@ On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"
 
 On an email-enabled instance, login opens the browser for approval using OAuth with PKCE. The default client requests event and management read access. An instance administrator can run `porcupine login --admin` to authorize administration. Login needs the local callback port 43179. The latest login replaces the previous session for that origin. Tokens are refreshed on demand and stored in the user's configuration directory under `porcupine/credentials`.
 
-For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audience service key](../docs/service-keys.md). The CLI uses it ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. The upstream OIDC login option is for read-only MCP clients. See [team setup](../docs/connect-your-team.md) to enable CLI browser login.
+For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audience service key](../docs/service-keys.md). The CLI uses it ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. **Unreleased:** [Google or another trusted OIDC provider](../docs/mcp-interactive-oauth.md) can also authenticate invited humans for CLI login, using the same account permissions as email OTP. See [team setup](../docs/connect-your-team.md).
+
+**Unreleased login options:** use `porcupine login --tenant-admin` to authorize administration of one tenant, or `porcupine login --scopes 'events:read events:write management:read'` for selected project permissions. The default remains read-only. Project scopes cannot be combined with `--admin` or `--tenant-admin`, and requesting a scope never adds rights to the human account.
 
 ## Import event history
 

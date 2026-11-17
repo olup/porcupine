@@ -11,11 +11,6 @@ import (
 // including after the client has already opened a session.
 func TestMCPInteractiveProjectIsolationAndRevocation(t *testing.T) {
 	f := newOIDCFixture(t)
-	for _, id := range []string{"project-a", "project-b"} {
-		if _, err := f.s.control.Exec("INSERT INTO projects(id,tenant_id,name,created_at) VALUES(?,?,?,?)", id, defaultTenantID, id, now()); err != nil {
-			t.Fatal(err)
-		}
-	}
 	tokens := interactiveEndpoint(t, f.s, "/oauth/token", interactiveTokenForm(f, interactiveCode(t, f)), "", "", 200)
 	bearer := tokens["access_token"].(string)
 	ctx, session := mcpTestSession(t, f.host.URL, bearer, "2025-11-25")

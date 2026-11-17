@@ -1,50 +1,68 @@
-# Interactive MCP authorization with upstream OIDC
+# Sign in with Google or another OpenID Connect provider
 
-Porcupine can authenticate a person through an operator-selected OpenID Connect provider before asking them to approve an MCP client. The upstream provider authenticates the person. Porcupine grants access only to projects explicitly assigned to that provider's verified subject ID.
+**Unreleased.** Use a development server and CLI from the same version. The published v0.14.0 OIDC configuration does not provide this combined login model.
 
-Choose either SMTP email login or upstream OIDC for a deployment. OIDC consent grants read access to MCP. For CLI browser login or interactive write and admin permissions, configure [email login](connect-your-team.md).
+Porcupine can verify an invited person's identity through Google or an operator-configured OpenID Connect provider. Email OTP remains available when SMTP is configured. Both methods use the same Porcupine human account, tenant memberships, and project permissions. The identity provider authenticates the person; it does not assign their Porcupine access.
 
-This mode requires a public HTTPS Porcupine OAuth issuer. Use a lowercase scheme and hostname, canonical IP and port spelling, and omit default ports such as `:443`; noncanonical issuer representations are rejected so browser Origin, cookies and OAuth metadata agree. HTTP is accepted only for loopback development. Machine client credentials remain separate. There is no public client registration and no automatic access based on email domains, provider groups, or client-supplied project IDs.
+Google sign-in requests `openid email profile`. It does not request Gmail access or permission to read mail. Tools still connect through Porcupine's OAuth server with PKCE. A Google access token or ID token is not a Porcupine API credential.
 
-## Operator setup
+## Configure Google sign-in
 
-Register a confidential authorization-code client with the upstream OIDC provider. Set its exact callback URL to `https://analytics.example.com/oauth/oidc/callback`, replacing the origin with `PORCUPINE_OAUTH_ISSUER`. Enable the `openid` scope and S256 PKCE at the provider. Porcupine uses discovery, verifies signed ID tokens with `github.com/coreos/go-oidc/v3`, and separately checks the login nonce.
-
-Configure:
+1. Create a Google OAuth client for a web application in the [Google Cloud console](https://console.cloud.google.com/auth/clients).
+2. Configure the consent screen and, if the application is in testing, its permitted test users.
+3. Register the exact callback `https://analytics.example.com/oauth/oidc/callback`, replacing the origin with your Porcupine origin.
+4. Store the client secret in a private deployment secret file.
+5. Configure Porcupine and restart it.
 
 ```sh
 PORCUPINE_OAUTH_ISSUER=https://analytics.example.com
-PORCUPINE_OIDC_ISSUER=https://login.example.com/realms/analytics
-PORCUPINE_OIDC_CLIENT_ID=porcupine
-PORCUPINE_OIDC_CLIENT_SECRET_FILE=/run/secrets/porcupine-oidc-secret
-PORCUPINE_OIDC_BINDINGS_FILE=/etc/porcupine/oidc-bindings.json
+PORCUPINE_OIDC_ISSUER=https://accounts.google.com
+PORCUPINE_OIDC_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID
+PORCUPINE_OIDC_CLIENT_SECRET_FILE=/run/secrets/porcupine-google-secret
+PORCUPINE_ADMIN_EMAIL=operator@example.com
 ```
 
-The secret file contains only the upstream client secret, with an optional trailing newline. Protect it with deployment secret-file permissions. It is read into memory and never written into the analytics database. Protect the bindings file as operator configuration too. Configuration is loaded at startup; changing either file requires a restart.
+`PORCUPINE_ADMIN_EMAIL` optionally seeds the original instance administrator. Use the intended administrator's address. Google authentication never promotes an ordinary invited account to administrator. An independent bootstrap credential remains the recovery path.
 
-An example bindings file:
+The secret file contains the Google client secret, with an optional trailing newline. `PORCUPINE_OIDC_CLIENT_SECRET` accepts the value directly instead; configure exactly one of the direct value and the `_FILE` variant. The secret is used only for the upstream code exchange and is not returned by status or management APIs.
 
-```json
-[
-  {
-    "subject": "the-providers-stable-subject-id",
-    "permissions": ["events:read", "management:read"],
-    "projects": ["project-id-a", "project-id-b"]
-  }
-]
+For a development build with Compose, set these values in the private environment file, then run:
+
+```sh
+docker compose -f compose.yaml -f compose.oauth.yaml -f compose.oidc.yaml up -d --build
 ```
 
-Use the provider's exact stable `sub`, not a display name or email address. The configured issuer and verified subject jointly select the account. Every binding must list explicit project IDs and non-admin permissions. Wildcard projects and `instance:admin` are rejected. An unbound subject cannot consent or obtain a grant. An empty bindings array allows no people to sign in.
+The OIDC overlay mounts the host secret file at `/run/secrets/porcupine_oidc_client_secret`. The image runs as UID 65532; that user must be able to read the mounted file. Keep its host directory private. Add `-f compose.email.yaml` to the same command if SMTP OTP and invitation delivery are configured. Do not add the v0.14.0 release image overlay for this unreleased feature.
 
-Upstream discovery must succeed at startup. Discovery, token, authorization and JWKS endpoints require HTTPS except on loopback. Back-channel HTTP requests have a ten-second timeout and do not follow redirects. Deploy the provider at its final discovery URL.
+Keep the issuer at a canonical origin: lowercase scheme and hostname, canonical IP and port spelling, and no default port such as `:443`. HTTPS is required except for loopback development. Register the exact development callback separately at the provider if it permits loopback.
+
+For another trusted OIDC provider, replace the issuer and client credentials. The provider must support discovery, authorization code with S256 PKCE, signed ID tokens, and a verified email claim. Configure a provider you trust to verify the email addresses it asserts. Provider groups, domain names, and client-supplied claims do not grant Porcupine roles.
+
+Discovery, authorization, token, and JWKS endpoints require HTTPS except on loopback. Discovery must succeed at startup. Back-channel requests have a ten-second timeout and do not follow redirects.
+
+## Keep email OTP available
+
+Configure [SMTP delivery](email-transport.md) to keep email codes alongside Google. The browser then offers both methods. A person who uses either method reaches the same Porcupine consent page and can connect another tool without another membership invitation.
+
+With OIDC configured and no SMTP, invited people can still sign in with the provider. Porcupine authorizes their account and membership without sending an invitation notice. Give them the instance URL and the [tool connection instructions](connect-tools.md). No one-time login code is created by an invitation.
+
+## Invite people before they connect
+
+An instance administrator or authorized tenant administrator invites each person and assigns their tenant and project access. An uninvited account cannot obtain Porcupine access merely by signing in with Google. See [team setup](connect-your-team.md) and [human account management](email-accounts.md).
+
+At the first provider login, Porcupine requires a verified email matching an active invited account and records the provider's stable issuer and subject against that account. Future sign-ins must match that binding and invited email. A different subject cannot claim the same person's existing provider binding. Changing an email at the provider does not move a Porcupine account or its memberships.
+
+For Google, automatic first linking requires a Gmail address or an authoritative Google Workspace email, identified by a verified email and the signed `hd` claim. A Workspace account can use a secondary email domain; the `hd` value need not match that email domain. A Google account using an unrelated third-party email address must use email OTP instead. Google's `email_verified` claim alone is not current ownership proof for those addresses. [Google's ID-token guidance](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token)
 
 ## Register the downstream client
 
-An instance administrator must pre-register each MCP client's exact callback URL and appropriate authentication method through the OAuth client management API. Authorize only `events:read` and `management:read` for the interactive MCP flow. The client registration is an application capability limit; it does not give a person access to any project.
+The upstream Google client identifies Porcupine to Google. It is different from the downstream client that identifies Codex, a CLI, ChatGPT, or Claude to Porcupine. Never put the Google client secret in an agent's MCP configuration.
 
-Copy the exact callback URL displayed in the hosted client's connection settings. Register that URL with Porcupine. For a confidential client, save its returned client ID and secret in the connector configuration. A public client needs its client ID and S256 PKCE.
+The local CLI and compatible local MCP tools use Porcupine's public PKCE clients. Run `porcupine login` for analysis, `porcupine login --tenant-admin` to select a tenant you administer, or `porcupine login --admin` for instance administration. Each administrative command requires that account's actual role. See [connect your tools](connect-tools.md) and [team administration](connect-your-team.md).
 
-For a public client, save a registration body to a private file and replace every placeholder with the operator-approved values:
+For a hosted client, register its exact callback with Porcupine through the OAuth client management API. Keep its requested scopes within the rights needed by that application. The registration limits what the application may request; the current human account and memberships limit what it can receive.
+
+For example, an analysis client can request:
 
 ```json
 {
@@ -57,52 +75,18 @@ For a public client, save a registration body to a private file and replace ever
 }
 ```
 
-A confidential client can use `client_secret_basic` or `client_secret_post` if the client supports it. The returned secret is displayed once; save it privately and configure the client. Public clients use `none` and receive no client secret. Do not enable `client_credentials` for a public interactive registration.
+A public client uses `none` with S256 PKCE and has no client secret. A confidential client can use `client_secret_basic` or `client_secret_post` if supported. Do not enable `client_credentials` on a public interactive registration. Store any returned secret in the connector's secret store.
 
-With an instance-admin API access token in a mode-600 curl config file containing an `Authorization: Bearer ...` header, create the registration:
-
-```sh
-umask 077
-curl --fail-with-body --config "$PORCUPINE_ADMIN_CURL_CONFIG" \
-  "$PORCUPINE_OAUTH_ISSUER/api/v1/oauth-clients" \
-  -H 'Content-Type: application/json' \
-  --data-binary @oauth-client-registration.json > oauth-client-created.json
-```
-
-Enter the returned `client_id` in the connector's preconfigured OAuth client settings. Keep any secret in that connector's secret store. The [machine OAuth guide](oauth.md) covers the bootstrap exchange for an administrator API token.
-
-The client connects to `https://analytics.example.com/mcp`, discovers OAuth metadata, and sends an authorization-code request with its registered client ID, exact callback, MCP resource and S256 PKCE challenge. The upstream login completes before Porcupine displays the client name, client ID, callback address and permissions. The person explicitly selects which of their assigned projects to share. An approval cannot add projects or permissions. Denial returns `access_denied` to the validated callback.
+An API client requests the exact resource ending in `/api/v1`; an MCP client requests `/mcp`. After upstream login, Porcupine displays the downstream application, callback, permissions, and authorized tenant or project choices. Consent cannot add authority beyond the person's current rights and the application's registration.
 
 ## Sessions and revocation
 
-Login and consent state lasts at most ten minutes and is held only in bounded process memory. Cookies are HttpOnly and SameSite=Lax, and use Secure plus a `__Host-` name on HTTPS. Restarting the process ends pending browser sessions. Callback state, nonce, cookie possession and a single-use consent CSRF token protect the flow. The consent POST also requires the configured issuer as its Origin. Pages cannot be framed, do not load third-party resources, and use `no-store` and a same-origin referrer policy. Cross-origin navigation sends no referrer.
+Login and consent sessions last at most ten minutes. Cookies are HttpOnly and SameSite=Lax, with Secure and a `__Host-` name on HTTPS. State, nonce, upstream PKCE, cookie possession, and single-use CSRF checks protect the flow. Login and consent pages use `no-store` and cannot be framed.
 
-Human principals are durable access-key records linked by `oidc_humans`; they have no issued public bearer credential. Existing `access_keys.revoked_at` revocation disables the human and dependent grants. Restarting never clears that revocation. Removing a subject binding or reducing its projects or permissions also limits subsequent consent and token checks. Do not delete the principal and recreate it as a way to revoke access, since the operator binding would provision it again at startup. Use revocation and remove the binding.
+The provider's signature, issuer, audience, expiry, authorized party, nonce, and verified email are checked before linking an account. No upstream bearer token is persisted as a Porcupine credential.
 
-To revoke a registered application, use its returned client ID:
+Use the human and membership APIs to revoke an account or its access to one tenant. Use `revoke-oauth-grant` to disconnect one tool, or revoke the downstream client to disable that application. Current local permissions remain authoritative even if the person can still sign in to Google. Removing a login provider does not transfer its identities to another issuer.
 
-```sh
-curl --fail-with-body --config "$PORCUPINE_ADMIN_CURL_CONFIG" \
-  -X DELETE "$PORCUPINE_OAUTH_ISSUER/api/v1/oauth-clients/$CLIENT_ID"
-```
+Pending browser sessions use the deployment's control database in shared mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
 
-Use `list-oauth-grants` to find a connection by its verified issuer, subject, client ID and resource. The result includes the grant `id` and the `human_id`. Pass the grant ID to `revoke-oauth-grant` to disconnect that authorization. To disable an OIDC human, remove their operator binding and restart. To revoke their active principal immediately through the API, pass the verified `human_id` to `revoke-access-key`. Each of these management operations requires an administrator credential.
-
-The API never returns an OIDC human bearer secret. Remove the matching binding as part of offboarding. Confirm that the old MCP access token and refresh token both fail, then confirm that a new login cannot grant the removed project. The integration tests perform token rejection after human revocation and reject attempts to select a project outside the binding.
-
-Downstream client, consent-grant, refresh-token and human revocation are checked by the OAuth token implementation. Revocation of upstream OIDC login alone does not automatically notify Porcupine or invalidate an already issued downstream grant. Revoke the Porcupine human or grant when removing a person, and remove their operator binding. No upstream refresh or access token is used as an MCP credential.
-
-## Local verification
-
-The Go integration tests use a local discovery endpoint, RSA-signed ID tokens, JWKS and actual upstream code exchange with PKCE. They exercise project selection, forged state/cookie/CSRF, invalid issuer/audience/nonce, unbound subjects, denial, expiry and revocation.
-
-```sh
-go test ./internal/porcupine -run TestInteractiveOIDC -count=1
-cd compat
-npm ci
-npx playwright install chromium
-cd ..
-PORCUPINE_OIDC_BROWSER=1 go test ./internal/porcupine -run TestInteractiveOIDCRealBrowser -count=1
-```
-
-The Chromium test completes login and project selection through a real browser against the local provider. These tests establish protocol behavior without connecting to a live ChatGPT, Claude or production identity provider account. Verify the operator's exact issuer, subject values, deployment cookie behavior and client callback configuration in staging before rollout.
+The automated tests use a signed mock provider to cover the browser code flow and rejection cases. A real Google login still requires operator-provided Google credentials and a correctly registered callback.

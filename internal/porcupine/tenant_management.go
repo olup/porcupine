@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -61,12 +63,13 @@ type TenantUsageOutput struct{ Body TenantUsage }
 
 func (s *Service) registerTenants(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
 	operator := operationAccess{Permission: "instance:admin"}
-	huma.Register(api, op("list-tenants", "GET", "/api/v1/tenants", "List tenants and configured budgets; deployment operator only", operator, 200), s.managementListTenants)
+	tenantAdmin := operationAccess{Permission: tenantAdminScope, TenantParameter: "tenant_id", TenantAdmin: true}
+	huma.Register(api, op("list-tenants", "GET", "/api/v1/tenants", "List tenants administered by this caller; operators can list the deployment", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 200), s.managementListTenants)
 	huma.Register(api, op("create-tenant", "POST", "/api/v1/tenants", "Create a tenant with optional budgets; deployment operator only", operator, 201), s.managementCreateTenant)
-	huma.Register(api, op("get-tenant", "GET", "/api/v1/tenants/{tenant_id}", "Read tenant configuration; deployment operator only", operator, 200), s.managementGetTenant)
-	huma.Register(api, op("update-tenant", "PATCH", "/api/v1/tenants/{tenant_id}", "Rename a tenant or suspend new ingestion without changing usage; deployment operator only", operator, 200), s.managementUpdateTenant)
+	huma.Register(api, op("get-tenant", "GET", "/api/v1/tenants/{tenant_id}", "Read configuration of a tenant administered by this caller", tenantAdmin, 200), s.managementGetTenant)
+	huma.Register(api, op("update-tenant", "PATCH", "/api/v1/tenants/{tenant_id}", "Rename this tenant; only instance operators may change ingestion_allowed", tenantAdmin, 200), s.managementUpdateTenant)
 	huma.Register(api, op("update-tenant-budgets", "PUT", "/api/v1/tenants/{tenant_id}/budgets", "Replace monthly ingestion and interactive query budgets without resetting consumption; deployment operator only", operator, 200), s.managementUpdateTenantBudgets)
-	usage := op("get-tenant-usage", "GET", "/api/v1/tenants/{tenant_id}/usage", "Read a tenant's UTC monthly acceptance counter and remaining allowance; deployment operator only", operator, 200)
+	usage := op("get-tenant-usage", "GET", "/api/v1/tenants/{tenant_id}/usage", "Read an administered tenant's UTC monthly acceptance counter and remaining allowance", tenantAdmin, 200)
 	usage.Description = "Budgets belong to the tenant and aggregate all its projects. Calendar months start at midnight UTC. Counters are committed with durable acceptance, survive event/project deletion, and are retained across month boundaries. Imports are charged to their acceptance month rather than their occurrence month. Native/Segment quota refusals are explicit errors; PostHog compatibility uses a terminal quota_limited response. No reset API is exposed. Project readers discover their effective interactive limits through get-event-schema without gaining access to tenant-wide consumption."
 	huma.Register(api, usage, s.managementTenantUsage)
 }
@@ -79,9 +82,6 @@ func tenantOperator(ctx context.Context) error {
 }
 
 func (s *Service) managementListTenants(ctx context.Context, input *TenantListInput) (*TenantListOutput, error) {
-	if err := tenantOperator(ctx); err != nil {
-		return nil, err
-	}
 	limit := input.Limit
 	if limit == 0 {
 		limit = 100
@@ -89,7 +89,22 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 	if limit < 1 || limit > 200 || len(input.Cursor) > 128 {
 		return nil, apiError(400, "invalid tenant pagination")
 	}
-	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1 ORDER BY id LIMIT $2`, input.Cursor, limit+1)
+	args := []any{input.Cursor}
+	filter := ""
+	if !principal(ctx).admin() {
+		admins := principal(ctx).tenantAdmins
+		if len(admins) == 0 {
+			return nil, apiError(403, "tenant administrator required")
+		}
+		markers := []string{}
+		for _, id := range admins {
+			args = append(args, id)
+			markers = append(markers, fmt.Sprintf("$%d", len(args)))
+		}
+		filter = " AND id IN (" + strings.Join(markers, ",") + ")"
+	}
+	args = append(args, limit+1)
+	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1`+filter+` ORDER BY id LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
 	if err != nil {
 		return nil, apiError(503, "tenant storage unavailable")
 	}
@@ -131,8 +146,8 @@ func (s *Service) managementCreateTenant(ctx context.Context, input *TenantCreat
 }
 
 func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput) (*TenantOutput, error) {
-	if err := tenantOperator(ctx); err != nil {
-		return nil, err
+	if !principal(ctx).canAdminTenant(input.TenantID) {
+		return nil, apiError(403, "tenant administrator required")
 	}
 	t, err := s.loadTenant(ctx, input.TenantID)
 	if err != nil {
@@ -144,8 +159,11 @@ func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput)
 }
 
 func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdateInput) (*TenantOutput, error) {
-	if err := tenantOperator(ctx); err != nil {
-		return nil, err
+	if !principal(ctx).canAdminTenant(input.TenantID) {
+		return nil, apiError(403, "tenant administrator required")
+	}
+	if input.Body.IngestionAllowed != nil && !principal(ctx).admin() {
+		return nil, apiError(403, "only instance operators may change ingestion admission")
 	}
 	if s.shared == nil {
 		if err := s.localAdmission.Lock(ctx); err != nil {
@@ -168,11 +186,19 @@ func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdat
 	if input.Body.IngestionAllowed != nil {
 		allowed = *input.Body.IngestionAllowed
 	}
-	t, err := scanTenant(s.control.QueryRowContext(ctx, `UPDATE tenants SET name=coalesce($1,name),ingestion_allowed=coalesce($2,ingestion_allowed) WHERE id=$3 RETURNING `+tenantColumns, name, allowed, input.TenantID))
+	tx, err := s.beginTenantAdministration(ctx, input.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET name=coalesce($1,name),ingestion_allowed=coalesce($2,ingestion_allowed) WHERE id=$3 RETURNING `+tenantColumns, name, allowed, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "tenant not found")
 	}
 	if err != nil {
+		return nil, apiError(503, "tenant storage unavailable")
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "tenant storage unavailable")
 	}
 	out := &TenantOutput{}
@@ -207,8 +233,8 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 }
 
 func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageInput) (*TenantUsageOutput, error) {
-	if err := tenantOperator(ctx); err != nil {
-		return nil, err
+	if !principal(ctx).canAdminTenant(input.TenantID) {
+		return nil, apiError(403, "tenant administrator required")
 	}
 	if err := s.publishLocalUsage(ctx); err != nil {
 		return nil, apiError(503, "tenant usage publication unavailable")

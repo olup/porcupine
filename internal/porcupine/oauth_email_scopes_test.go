@@ -76,7 +76,7 @@ func TestEmailProjectManagementGrantCannotMintIndependentClient(t *testing.T) {
 }
 
 func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {
-	human := actor{emailHuman: true, Permissions: []string{"events:read", "events:write"}, Projects: []string{"a", "b"}, emailProjectPermissions: map[string][]string{
+	human := actor{emailHuman: true, Permissions: []string{"events:read", "events:write"}, Projects: []string{"a", "b"}, projectPermissions: map[string][]string{
 		"a": {"events:read"}, "b": {"events:read", "events:write"},
 	}}
 	tool := actor{Permissions: []string{"events:read", "events:write"}, Projects: []string{"*"}}

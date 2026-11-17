@@ -2,17 +2,17 @@
 
 This guide is for the instance operator. If you have already been invited and want to connect an agent or the CLI, use [Connect your tools](connect-tools.md).
 
-A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Enable [SMTP delivery](email-transport.md) and set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. The server sends an invitation notice when an administrator grants access and a verification code when the person starts a login.
+A person can use one invited email address to connect their CLI, local agent and hosted MCP clients. Set `PORCUPINE_OAUTH_ISSUER` to the instance's public HTTPS origin. For email verification codes, enable [SMTP delivery](email-transport.md). The server sends a notice when an administrator grants access and issues a verification code only when the person starts a login. In an OIDC-only development setup without SMTP, share the instance URL and connection instructions yourself.
 
-For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). Choose one interactive login method per deployment. An alternative for teams with an existing identity provider is [OIDC for read-only MCP](mcp-interactive-oauth.md).
+For unattended jobs or an agent shared by the team, use a [service account](service-keys.md). **Unreleased:** configured Google or OIDC sign-in can use the same invited human accounts as email verification. Both methods lead to the same tool consent and current permissions. See [sign-in configuration](mcp-interactive-oauth.md).
 
 ## Connect the first administrator
 
 Optionally set `PORCUPINE_ADMIN_EMAIL` to the mailbox of the operator during deployment. This seeds a durable human account. Keep the separate machine bootstrap credential as a recovery path. The operator can use their mailbox to authorize an administrative tool on a new computer. A revoked account stays revoked after restart.
 
-Email-enabled deployments provide the public PKCE client `porcupine-local` for local read-only tools. They also provide the separate `porcupine-local-admin` client for instance administrators. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
+Deployments with human sign-in provide the public PKCE client `porcupine-local` for local read-only tools. They also provide the separate `porcupine-local-admin` client for instance administrators. Both accept the exact loopback callback `http://127.0.0.1:43179/callback`. They use no client secret. The client ID identifies the application; the user's OTP and consent grant the access.
 
-To administer the instance from the [standalone CLI](../cli/README.md), set `PORCUPINE_URL` to the issuer and run `porcupine login --admin`. Enter your administrator email in the browser, verify the code and approve the grant. Run `porcupine list-projects` to check the connection. Each tool gets its own grant.
+To administer the instance from the [standalone CLI](../cli/README.md), set `PORCUPINE_URL` to the issuer and run `porcupine login --admin`. Authenticate with your invited administrator address using the configured sign-in method, then approve the grant. Run `porcupine list-projects` to check the connection. Each tool gets its own grant.
 
 For Codex, add the following to your Codex configuration, replacing the host with your own. The client and its callback are configured once. Use the issuer's `/mcp` URL exactly.
 
@@ -27,32 +27,33 @@ callback_url = "http://127.0.0.1:43179/callback"
 callback_port = 43179
 ```
 
-Run `codex mcp login porcupine_admin --scopes instance:admin`. Enter your authorized administrator email on the Porcupine page, enter the code delivered to its inbox, and approve instance administration. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
+Run `codex mcp login porcupine_admin --scopes instance:admin`. Authenticate with your authorized administrator address on the Porcupine page and approve instance administration. Email sign-in requests a fresh inbox code; a configured Google or OIDC provider authenticates the same invited identity. Keep this connection for administrative tasks. The ordinary local client cannot request the admin scope. A regular invited mailbox cannot acquire that scope even with the admin client ID.
 
 ## Choose a tenant for your projects (unreleased)
 
-This step applies to tenant-enabled development builds, not the published v0.14.0 release. Use a CLI built from the same version as the server.
+This workflow requires a matching development server and CLI. The published v0.14.0 release does not include tenant memberships.
 
-After connecting the instance administrator, set up the team in this order:
+Set up the team in this order:
 
-1. Choose the tenant that holds the team's projects. A fresh instance creates `default`; keep it for a single-team installation.
-2. Create projects inside that tenant.
-3. Invite people to the projects they need.
+1. Connect the instance operator with `porcupine login --admin`.
+2. Keep the automatically created `default` tenant, or create one with `porcupine create-tenant`.
+3. Invite the team's first administrator with `invite-tenant-member` and `role: "admin"`.
+4. Have that person connect with `porcupine login --tenant-admin` and explicitly select the tenant.
+5. Let the tenant administrator create projects, invite members, and provision team service accounts.
 
-For the default tenant, run:
+For example, the operator can give an administrator control of the default tenant before creating any project:
 
 ```sh
-porcupine get-tenant --tenant-id default
-porcupine create-project --body '{"name":"Website","tenant_id":"default","ingestion_mode":"server_only"}'
+porcupine invite-tenant-member --tenant-id default --body '{"email":"lea@example.org","role":"admin"}'
 ```
 
-To keep another team's budgets separate, run `porcupine create-tenant --body '{"name":"Research team"}'`. Use the returned `tenant.id` as `tenant_id` when creating that team's projects. The tenant's projects share its ingestion allowance and interactive query limits. Only an instance administrator manages these budgets.
+The tenant administrator's local OAuth client is `porcupine-local-tenant-admin`, with the sole scope `tenant:admin`. It uses the same exact loopback callback as the other local clients. This role applies to one selected tenant, including future projects. It does not grant deployment administration.
 
-With MCP, ask the admin agent to inspect `list-tenants`, choose or create a tenant, and create the team's projects there. The agent discovers the installed contracts through `porcupine_docs`.
-
-Invitations still grant explicit project permissions. There is no tenant membership or tenant administrator role yet. Inviting someone to a project does not grant access to the tenant's other projects, and new projects do not inherit existing invitations. See [tenants and budgets](tenants.md).
+A member can receive reader, contributor, or manager permissions on selected projects, or a default for all of the tenant's projects. Only the instance operator changes hard budgets or suspends ingestion. Follow [Give a team access to its tenant](tenant-access.md) for CLI bodies, MCP examples, and membership revocation.
 
 ## Invite someone once
+
+For the unreleased tenant workflow, use [tenant membership invitations](tenant-access.md#create-a-project-and-invite-a-reader). The `invite-human` workflow below is the operator-wide API available in v0.14.0.
 
 Ask the connected admin agent to create a project if necessary, then invite the person's address with the required permissions for each project. For example:
 

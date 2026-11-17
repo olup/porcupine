@@ -37,6 +37,9 @@ func emailConfiguration() (*porcupine.EmailConfig, error) {
 	if host == "" && port == "" && mode == "" && from == "" && user == "" && secretFile == "" && admin == "" {
 		return nil, nil
 	}
+	if host == "" && port == "" && mode == "" && from == "" && user == "" && secretFile == "" && os.Getenv("PORCUPINE_OIDC_ISSUER") != "" && os.Getenv("PORCUPINE_OAUTH_ISSUER") != "" {
+		return &porcupine.EmailConfig{AdminEmail: admin}, nil
+	}
 	if os.Getenv("PORCUPINE_OAUTH_ISSUER") == "" || host == "" || from == "" {
 		return nil, errors.New("email login requires PORCUPINE_OAUTH_ISSUER, PORCUPINE_SMTP_HOST and PORCUPINE_SMTP_FROM")
 	}

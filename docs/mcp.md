@@ -25,7 +25,7 @@ embedded images from `site/assets/favicon.svg`, install `rsvg-convert` and run
 
 For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
-Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. Upstream OIDC supports read-only MCP access. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
+Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human account alongside email OTP. The account's current memberships and the client's allowed scopes determine its access, including authorized administration. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
 
 Access tokens expire after 15 minutes by default. Machine clients repeat the token exchange. Interactive clients rotate refresh tokens during the seven-day consent grant. When the grant expires, the person connects again. Each request checks expiry, resource, parent revocation and effective grants. Exports also check creator authority while running and before publication.
 

@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -14,12 +15,14 @@ const serviceKeyPrefix = "pc_sk_"
 
 type ServiceKeyCreateInput struct {
 	ID   string `path:"id" doc:"Machine OAuth client ID that owns this key."`
-	Body struct {
-		Name        string   `json:"name" minLength:"1" maxLength:"200"`
-		Audience    string   `json:"audience" enum:"api,mcp" doc:"Use the key with this resource only."`
-		Permissions []string `json:"permissions" minItems:"1" doc:"Subset of the service account's permissions."`
-		Projects    []string `json:"projects" minItems:"1" doc:"Subset of the service account's projects."`
-	}
+	Body ServiceKeySpec
+}
+
+type ServiceKeySpec struct {
+	Name        string   `json:"name" minLength:"1" maxLength:"200"`
+	Audience    string   `json:"audience" enum:"api,mcp" doc:"Use the key with this resource only."`
+	Permissions []string `json:"permissions" minItems:"1" maxItems:"32" doc:"Subset of the service account's permissions."`
+	Projects    []string `json:"projects" minItems:"1" maxItems:"64" doc:"Subset of the service account's projects."`
 }
 
 func (s *Service) initializeServiceKeys(ctx context.Context) error {
@@ -102,10 +105,19 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES($1,$2,$3)`, id, parent.ID, body.Audience); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
+	if len(parent.tenantIDs) == 1 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, parent.tenantIDs[0]); err != nil {
+			return nil, apiError(503, "service key ownership unavailable")
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
-	return &AccessKeyCreateOutput{Body: AccessKeyCreated{ID: id, Name: body.Name, ServiceClientID: parent.ID, Audience: body.Audience, Permissions: body.Permissions, Projects: body.Projects, SourceID: sourceID, Token: secret}}, nil
+	tenantID := ""
+	if len(parent.tenantIDs) == 1 {
+		tenantID = parent.tenantIDs[0]
+	}
+	return &AccessKeyCreateOutput{Body: AccessKeyCreated{TenantID: tenantID, ID: id, Name: body.Name, ServiceClientID: parent.ID, Audience: body.Audience, Permissions: body.Permissions, Projects: body.Projects, SourceID: sourceID, Token: secret}}, nil
 }
 
 func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource string) (actor, error) {
@@ -132,5 +144,33 @@ func (s *Service) authenticateServiceKey(ctx context.Context, raw, resource stri
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return actor{}, errors.New("invalid service key grants")
 	}
+	return constrainServiceKeyActor(ctx, s.control, a)
+}
+
+func constrainServiceKeyActor(ctx context.Context, query oauthQueryer, a actor) (actor, error) {
+	var parentID string
+	err := query.QueryRowContext(ctx, `SELECT client_id FROM service_api_keys WHERE principal_id=$1`, a.ID).Scan(&parentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, nil
+	}
+	if err != nil {
+		return actor{}, err
+	}
+	a, err = constrainTenantCredentialActor(ctx, query, a)
+	if err != nil {
+		return actor{}, err
+	}
+	parent, err := loadOAuthClient(ctx, query, parentID)
+	if err != nil || !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) || !slices.Equal(a.tenantIDs, parent.tenantIDs) {
+		return actor{}, errors.New("service key parent authority unavailable")
+	}
+	for _, project := range a.Projects {
+		for _, permission := range a.Permissions {
+			if !authorize(parent.actor, permission, project) {
+				return actor{}, errors.New("service key exceeds current parent grants")
+			}
+		}
+	}
+	a.serviceKey = true
 	return a, nil
 }

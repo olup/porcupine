@@ -325,7 +325,7 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?),token_hash='restored-revoked-'||id`, now()); err != nil {
 		return result, err
 	}
-	for _, table := range []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "oauth_clients", "email_humans", "oidc_humans"} {
+	for _, table := range []string{"oauth_interactive_access", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_authorization_requests", "oauth_tokens", "oauth_interactive_grants", "service_api_keys", "tenant_credentials", "oauth_clients", "oidc_identities", "email_humans"} {
 
 		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return result, fmt.Errorf("reset restored %s: %w", table, err)
@@ -349,7 +349,11 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 		}
 		raw := token()
 		scope, _ := json.Marshal([]string{key.project})
-		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, newID(), key.name, hash(raw), string(scope), now(), key.source); err != nil {
+		keyID := newID()
+		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, keyID, key.name, hash(raw), string(scope), now(), key.source); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) SELECT ?,tenant_id FROM projects WHERE id=?`, keyID, key.project); err != nil {
 			return result, err
 		}
 		result.IngestionKeys = append(result.IngestionKeys, NativeRestoreIngestionKey{key.project, key.source, raw})

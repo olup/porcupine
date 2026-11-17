@@ -44,11 +44,15 @@ func (c *oauthClient) VerifyPassword(secret string) bool {
 }
 
 type oauthQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func (s *Service) loadCredentialActor(ctx context.Context, id string) (actor, error) {
-	query := s.control
+	return s.loadCredentialActorFrom(ctx, s.control, id)
+}
+
+func (s *Service) loadCredentialActorFrom(ctx context.Context, query oauthQueryer, id string) (actor, error) {
 	var result actor
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&result.ID, &permissions, &projects, &result.SourceID)
@@ -57,6 +61,24 @@ func (s *Service) loadCredentialActor(ctx context.Context, id string) (actor, er
 	}
 	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
 		return actor{}, errors.New("invalid current credential grants")
+	}
+	var emailHuman bool
+	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1)`, id).Scan(&emailHuman); err != nil {
+		return actor{}, err
+	}
+	if emailHuman {
+		result, err = loadEmailHuman(ctx, query, id)
+		if err != nil {
+			return actor{}, err
+		}
+	}
+	result, err = constrainTenantCredentialActor(ctx, query, result)
+	if err != nil {
+		return actor{}, err
+	}
+	result, err = constrainServiceKeyActor(ctx, query, result)
+	if err != nil {
+		return actor{}, err
 	}
 	return s.validateInteractivePrincipal(ctx, query, result)
 }
@@ -88,6 +110,10 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 		return nil, errors.New("invalid OAuth registration")
 	}
 	client.GrantTypes, client.RedirectURIs, client.AuthMethod = normalizedGrants, normalizedRedirects, method
+	client.actor, err = constrainTenantCredentialActor(ctx, query, client.actor)
+	if err != nil {
+		return nil, err
+	}
 	return client, nil
 }
 
@@ -271,6 +297,9 @@ func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource stri
 	}
 	if err != nil {
 		return actor{}, oautherrors.ErrInvalidAccessToken
+	}
+	if stored.grantID != "" && tenantAdminConsent(strings.Fields(info.GetScope())) && len(current.tenantAdmins) == 1 {
+		return current, nil
 	}
 	allowed := oauthPermissions(current)
 	permissions := []string{}

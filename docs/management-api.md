@@ -22,7 +22,7 @@ does not reset credentials. The alias stays pinned to that first administrator.
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
 issued scope and project snapshot intersect current parent grants on every
-request. Operators can choose [email accounts](email-accounts.md) for interactive API and MCP access, or [upstream OIDC](mcp-interactive-oauth.md) for read-only MCP. Each deployment selects one interactive login method. Authentication
+request. Operators can configure [email accounts](email-accounts.md) for interactive API and MCP access. **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate those same invited accounts, with email OTP available alongside it when SMTP is configured. Both login methods use the same current permissions. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
 and project checks, with separate API and MCP token resources. The CLI generates its commands from the same OpenAPI operations.
 

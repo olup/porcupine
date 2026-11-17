@@ -52,24 +52,30 @@ func interactiveEndpoint(t *testing.T, s *Service, path string, form url.Values,
 
 func TestOAuthAuthorizationRejectsCallbackForgeryAndPKCEDowngrade(t *testing.T) {
 	f := newOIDCFixture(t)
-	for _, change := range []func(url.Values){
-		func(q url.Values) { q.Set("redirect_uri", f.callback+"/unregistered") },
-		func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") },
-		func(q url.Values) { q.Set("code_challenge_method", "plain") },
-		func(q url.Values) { q.Del("code_challenge_method") },
-		func(q url.Values) { q.Set("code_challenge", "bad") },
-		func(q url.Values) { q.Set("scope", "events:write") },
-		func(q url.Values) { q.Set("resource", f.host.URL+"/api/v1") },
-		func(q url.Values) { q.Add("redirect_uri", f.callback) },
+	for _, test := range []struct {
+		name   string
+		change func(url.Values)
+	}{
+		{"unregistered-callback", func(q url.Values) { q.Set("redirect_uri", f.callback+"/unregistered") }},
+		{"foreign-callback", func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") }},
+		{"plain-pkce", func(q url.Values) { q.Set("code_challenge_method", "plain") }},
+		{"missing-pkce-method", func(q url.Values) { q.Del("code_challenge_method") }},
+		{"invalid-challenge", func(q url.Values) { q.Set("code_challenge", "bad") }},
+		{"unregistered-write-scope", func(q url.Values) { q.Set("scope", "events:write") }},
+		{"unregistered-admin-scope", func(q url.Values) { q.Set("scope", "instance:admin") }},
+		{"unknown-resource", func(q url.Values) { q.Set("resource", f.host.URL+"/api/v1/unregistered") }},
+		{"repeated-callback", func(q url.Values) { q.Add("redirect_uri", f.callback) }},
 	} {
-		target, _ := url.Parse(f.authorizeURL(f.callback))
-		q := target.Query()
-		change(q)
-		target.RawQuery = q.Encode()
-		location, _ := f.get(t, target.String(), 400)
-		if location != "" {
-			t.Fatal("invalid request redirected browser")
-		}
+		t.Run(test.name, func(t *testing.T) {
+			target, _ := url.Parse(f.authorizeURL(f.callback))
+			q := target.Query()
+			test.change(q)
+			target.RawQuery = q.Encode()
+			location, _ := f.get(t, target.String(), 400)
+			if location != "" {
+				t.Fatal("invalid request redirected browser")
+			}
+		})
 	}
 	for _, raw := range []string{"https://user:secret@example.com/cb", "https://example.com/cb#fragment", "http://example.com/cb", "https://example.com/cb?code=preloaded", "https://*.example.com/cb"} {
 		if validOAuthRedirect(raw) {
@@ -190,7 +196,7 @@ func TestOAuthInteractiveRevocationAndAdminGrantManagement(t *testing.T) {
 	admin := oauthProtocolRequest(t, f.s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {f.host.URL + "/api/v1"}}, 200)["access_token"].(string)
 	grants := request(t, f.s, "GET", "/api/v1/oauth-grants", admin, "", 200)
 	entries := grants["grants"].([]any)
-	if len(entries) != 1 || entries[0].(map[string]any)["id"] != principal.ID || entries[0].(map[string]any)["subject"] != "operator-subject" {
+	if len(entries) != 1 || entries[0].(map[string]any)["id"] != principal.ID || entries[0].(map[string]any)["human_id"] != f.humanID || entries[0].(map[string]any)["issuer"] != "email" || entries[0].(map[string]any)["subject"] != "operator@example.test" {
 		t.Fatal("admin cannot inspect human grant identity", grants)
 	}
 	request(t, f.s, "DELETE", "/api/v1/oauth-grants/"+principal.ID, admin, "", 204)

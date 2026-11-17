@@ -78,26 +78,26 @@ func TestNativeRestoreDoesNotReseedEmailAdminWithoutReview(t *testing.T) {
 	}
 }
 
-func TestNativeRestoreDoesNotReseedOIDCBindingsWithoutReview(t *testing.T) {
+func TestNativeRestoreDoesNotCreateOIDCAccountsOrLinks(t *testing.T) {
+	provider := newOIDCMock(t)
 	for _, reviewed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "blocked", true: "explicit_opt_in"}[reviewed], func(t *testing.T) {
-			s, err := Open(Config{DBPath: restoreGuardDatabase(t), BootstrapToken: adminToken})
+			s, err := Open(Config{DBPath: restoreGuardDatabase(t), BootstrapToken: adminToken, OAuth: &OAuthConfig{
+				Issuer: "https://analytics.example.test", AllowRestoredIdentityBootstrap: reviewed,
+				OIDC: &OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"},
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{
-				config: OAuthConfig{AllowRestoredIdentityBootstrap: reviewed},
-				oidc: &interactiveOIDC{issuer: "https://identity.example.test", bindings: map[string]actor{
-					"configured-subject": {Permissions: []string{"events:read"}, Projects: []string{"project-a"}},
-				}},
-			}}
-			if err := seeder.initializeOIDCHumans(context.Background()); err != nil {
-				t.Fatal(err)
+			if _, err := s.oidcHuman(t.Context(), "operator-subject", "operator@example.test"); err == nil {
+				t.Fatal("provider configuration created an uninvited human")
 			}
-			var count int
-			if err := s.control.QueryRow("SELECT count(*) FROM oidc_humans").Scan(&count); err != nil || count != map[bool]int{false: 0, true: 1}[reviewed] {
-				t.Fatalf("configured OIDC subject seeded without review: reviewed=%v count=%d error=%v", reviewed, count, err)
+			for _, table := range []string{"email_humans", "oidc_identities"} {
+				var count int
+				if err := s.control.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("provider recreated %s after restore: %d %v", table, count, err)
+				}
 			}
 		})
 	}

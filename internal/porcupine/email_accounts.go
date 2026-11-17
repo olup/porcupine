@@ -177,14 +177,14 @@ func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (actor, 
 		return actor{}, errors.New("invalid email account grants")
 	}
 	var grants []HumanProjectGrant
-	if err := json.Unmarshal([]byte(grantsJSON), &grants); err != nil || len(grants) == 0 {
+	if err := json.Unmarshal([]byte(grantsJSON), &grants); err != nil {
 		return actor{}, errors.New("invalid email project grants")
 	}
-	a.emailProjectPermissions = make(map[string][]string, len(grants))
+	a.projectPermissions = make(map[string][]string, len(grants))
 	for _, g := range grants {
-		a.emailProjectPermissions[g.ProjectID] = g.Permissions
+		a.projectPermissions[g.ProjectID] = g.Permissions
 	}
-	return a, nil
+	return addTenantMembershipAuthority(ctx, query, a)
 }
 
 func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string, error) {

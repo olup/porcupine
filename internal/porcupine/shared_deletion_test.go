@@ -52,7 +52,8 @@ func TestSharedProjectDeletionGrantsOwnershipAndUsage(t *testing.T) {
 	}
 	if _, err := s.control.Exec(`INSERT INTO oauth_clients(client_id,secret_hash) VALUES('multi','hashed');
  INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES('service-key','multi','api');
- INSERT INTO oidc_humans(principal_id,issuer,subject) VALUES('oidc','https://identity.test','member');
+ INSERT INTO email_humans(principal_id,email,project_grants) VALUES('oidc','oidc@example.test','[{"project_id":"removed","permissions":["events:read"]}]');
+ INSERT INTO oidc_identities(issuer,subject,principal_id,linked_email,created_at) VALUES('https://identity.test','member','oidc','oidc@example.test','now');
  UPDATE access_keys SET revoked_at='original-revocation' WHERE id='already-revoked';
  INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms) VALUES('single-token','single','api','events:read','["removed"]',0,1),('multi-token','multi','api','events:read','["removed","kept"]',0,1);
  INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES('default','2026-11-01T00:00:00Z',7)`); err != nil {

@@ -14,12 +14,12 @@ func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) er
 		return err
 	}
 	defer tx.Rollback()
-	var project string
+	var project, tenant string
 	lock := ""
 	if s.shared != nil {
 		lock = " FOR UPDATE"
 	}
-	err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1`+lock, id).Scan(&project)
+	err = tx.QueryRowContext(ctx, `SELECT id,tenant_id FROM projects WHERE id=$1`+lock, id).Scan(&project, &tenant)
 	if errors.Is(err, sql.ErrNoRows) {
 		var completed bool
 		if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed); err != nil {
@@ -33,8 +33,16 @@ func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) er
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_deletions(project_id,completed) VALUES($1,0) ON CONFLICT(project_id) DO NOTHING`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_deletions(project_id,tenant_id,completed) VALUES($1,$2,0)
+ON CONFLICT(project_id) DO UPDATE SET tenant_id=excluded.tenant_id WHERE project_deletions.tenant_id=''`, id, tenant); err != nil {
 		return err
+	}
+	var recordedTenant string
+	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM project_deletions WHERE project_id=$1`, id).Scan(&recordedTenant); err != nil {
+		return err
+	}
+	if recordedTenant != tenant {
+		return apiError(409, "project deletion tenant ownership is inconsistent")
 	}
 	if err := purgeProjectGrants(ctx, tx, id); err != nil {
 		return err

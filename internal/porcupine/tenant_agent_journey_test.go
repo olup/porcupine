@@ -15,7 +15,11 @@ func TestTenantMCPDiscoveryOperatorJourneyAndRevocation(t *testing.T) {
 	for _, id := range operations {
 		detail := mcpTestTool(t, ctx, operator, "porcupine_docs", mcpDocsInput{OperationID: id}, false)
 		op := detail["operations"].([]any)[0].(map[string]any)
-		if op["permission"] != "instance:admin" || op["operation_id"] != id || detail["contract"] == nil {
+		permission := tenantAdminScope
+		if id == "create-tenant" || id == "update-tenant-budgets" {
+			permission = "instance:admin"
+		}
+		if op["permission"] != permission || op["operation_id"] != id || detail["contract"] == nil {
 			t.Fatalf("missing operator contract: %v", detail)
 		}
 	}

@@ -139,7 +139,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 		}
 	}
 	record, err := loadEmailHuman(t.Context(), s.control, h.ID)
-	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.emailProjectPermissions) != 1 {
+	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.projectPermissions) != 1 {
 		t.Fatal(record, err)
 	}
 	runProjectPurge(t, s, keep, true)
@@ -187,23 +187,34 @@ func TestProjectPurgeMachineGrants(t *testing.T) {
 	}
 }
 
-func TestProjectPurgeOIDCBindingsAfterRestart(t *testing.T) {
+func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)
-	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{oidc: &interactiveOIDC{issuer: "https://identity.example", bindings: map[string]actor{"member": {Permissions: []string{"events:read"}, Projects: []string{removed, keep}}}}}}
-	if err := seeder.initializeOIDCHumans(t.Context()); err != nil {
+	human := EmailHuman{ID: newID(), Email: "member@example.test", CreatedAt: now(), Permissions: []string{"events:read"}, Projects: []string{removed, keep}, Grants: []HumanProjectGrant{
+		{ProjectID: removed, Permissions: []string{"events:read"}}, {ProjectID: keep, Permissions: []string{"events:read"}},
+	}}
+	tx, err := s.control.BeginTx(t.Context(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.control.Exec("INSERT INTO project_deletions VALUES(?,1)", removed); err != nil {
+	if err := insertEmailHuman(t.Context(), tx, human); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: &interactiveOIDC{issuer: "https://identity.example"}}}
+	if _, err := seeder.oidcHuman(t.Context(), "member", human.Email); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.control.Exec("INSERT INTO project_deletions(project_id,completed) VALUES(?,1)", removed); err != nil {
 		t.Fatal(err)
 	}
 	runProjectPurge(t, s, removed, true)
-	if err := seeder.initializeOIDCHumans(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	got, err := seeder.oidcHuman(t.Context(), "member")
+	got, err := seeder.oidcHuman(t.Context(), "member", human.Email)
 	if err != nil || !slices.Equal(got.Projects, []string{keep}) {
-		t.Fatal("startup reapplied deleted project", got, err)
+		t.Fatal("identity link restored deleted project", got, err)
 	}
 }

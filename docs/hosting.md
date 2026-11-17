@@ -25,7 +25,7 @@ For one server or one team, keep SQLite. PostgreSQL is not required to use tenan
 
 Choose [shared PostgreSQL deployment](shared-deployment.md) when workers need common management state and analytical catalogs. PostgreSQL stores metadata, not an intermediate copy of event payloads. Shared mode still needs durable project ownership and the owner's SQLite volume. It does not provide automatic writer failover, transparent project rebalancing, or coordinated whole-instance backup.
 
-After deployment, [connect the instance administrator, choose a tenant, create projects, and invite people](connect-your-team.md#choose-a-tenant-for-your-projects-unreleased). Invitations currently grant explicit project permissions in both modes. Only an instance administrator manages tenants and their budgets.
+After deployment, [connect the instance operator, choose a tenant, and invite its first administrator](tenant-access.md). That administrator creates the team's projects, invites members, and manages team service accounts. Members receive permissions on selected projects or all projects in their tenant. Hard budgets and suspension remain instance-operator settings in both storage modes.
 
 The standalone setup below remains the default. Start a fresh data directory for the unreleased tenant-enabled schema; existing combined control/journal and pre-tenant data directories are not migrated.
 
@@ -202,7 +202,7 @@ These settings belong to the unreleased [tenant implementation](tenants.md), not
 
 The concurrency pool also retains the existing background export safety slot; tenant interactive budgets do not create additional deployment capacity. These settings do not change DuckDB's per-engine memory budget or provide process isolation. Increase them only within the host's measured resource capacity. An unset value uses the default. Query readers discover their effective limits through `get-event-schema`.
 
-Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance administrator can create additional tenants, set per-tenant budgets, or inspect aggregate usage. This works in the default single-process SQLite mode and optional [shared mode](shared-deployment.md). In shared mode, query places are reserved across workers, and each process retains its own local resource ceiling.
+Each fresh installation starts with one default tenant and unlimited monthly ingestion. Only an instance operator can create additional tenants or set hard budgets. A tenant administrator can inspect their own tenant's configuration and aggregate usage, without changing those operator limits. This works in the default single-process SQLite mode and optional [shared mode](shared-deployment.md). In shared mode, query places are reserved across workers, and each process retains its own local resource ceiling.
 
 Shared PostgreSQL analytical metadata also uses `PORCUPINE_DUCKLAKE_METADATA_TIMEOUT_SECONDS`: default 10, range 2–60 seconds. This setting applies to native connection, statement, lock, and TCP waits and is not accepted for local catalogs. `get-event-schema` reports `limits.metadata_request_timeout_seconds`. Some native network calls can outlast cancellation; the setting does not guarantee that every query timeout returns an HTTP error immediately.
 

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"strings"
 
@@ -11,45 +9,23 @@ import (
 )
 
 func oidcConfiguration() (*porcupine.OIDCConfig, error) {
+	if os.Getenv("PORCUPINE_OIDC_BINDINGS_FILE") != "" {
+		return nil, errors.New("PORCUPINE_OIDC_BINDINGS_FILE is not supported; invite human accounts through the API")
+	}
 	issuer := os.Getenv("PORCUPINE_OIDC_ISSUER")
 	clientID := os.Getenv("PORCUPINE_OIDC_CLIENT_ID")
-	secretFile := os.Getenv("PORCUPINE_OIDC_CLIENT_SECRET_FILE")
-	bindingsFile := os.Getenv("PORCUPINE_OIDC_BINDINGS_FILE")
-	if issuer == "" && clientID == "" && secretFile == "" && bindingsFile == "" {
+	secret, err := sharedSecretSetting("PORCUPINE_OIDC_CLIENT_SECRET")
+	if err != nil {
+		return nil, err
+	}
+	if len(secret) > 16<<10 || strings.ContainsAny(secret, "\x00\r\n\t") {
+		return nil, errors.New("invalid PORCUPINE_OIDC_CLIENT_SECRET")
+	}
+	if issuer == "" && clientID == "" && secret == "" {
 		return nil, nil
 	}
-	if issuer == "" || clientID == "" || secretFile == "" || bindingsFile == "" || os.Getenv("PORCUPINE_OAUTH_ISSUER") == "" {
-		return nil, errors.New("OIDC requires PORCUPINE_OAUTH_ISSUER, PORCUPINE_OIDC_ISSUER, PORCUPINE_OIDC_CLIENT_ID, PORCUPINE_OIDC_CLIENT_SECRET_FILE and PORCUPINE_OIDC_BINDINGS_FILE")
+	if issuer == "" || clientID == "" || secret == "" || os.Getenv("PORCUPINE_OAUTH_ISSUER") == "" {
+		return nil, errors.New("OIDC requires PORCUPINE_OAUTH_ISSUER, PORCUPINE_OIDC_ISSUER, PORCUPINE_OIDC_CLIENT_ID and PORCUPINE_OIDC_CLIENT_SECRET or its _FILE option")
 	}
-	read := func(path string, limit int64) ([]byte, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		data, err := io.ReadAll(io.LimitReader(f, limit+1))
-		if int64(len(data)) > limit {
-			return nil, errors.New("file too large")
-		}
-		return data, err
-	}
-	secret, err := read(secretFile, 16<<10)
-	if err != nil {
-		return nil, errors.New("cannot read bounded OIDC client secret file")
-	}
-	secretValue := strings.TrimRight(string(secret), "\r\n")
-	if secretValue == "" {
-		return nil, errors.New("empty OIDC client secret")
-	}
-	data, err := read(bindingsFile, 1<<20)
-	if err != nil {
-		return nil, errors.New("cannot read bounded OIDC bindings file")
-	}
-	var bindings []porcupine.OIDCBinding
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&bindings) != nil || decoder.Decode(new(any)) != io.EOF {
-		return nil, errors.New("invalid OIDC bindings JSON")
-	}
-	return &porcupine.OIDCConfig{Issuer: issuer, ClientID: clientID, ClientSecret: secretValue, Bindings: bindings}, nil
+	return &porcupine.OIDCConfig{Issuer: issuer, ClientID: clientID, ClientSecret: secret}, nil
 }

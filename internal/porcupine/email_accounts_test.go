@@ -211,7 +211,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 	}
 	ctx := context.Background()
 	h, err := loadEmailHuman(ctx, s.control, id)
-	if err != nil || !slices.Equal(h.emailProjectPermissions[a], []string{"events:read"}) || !slices.Equal(h.emailProjectPermissions[b], []string{"events:write"}) {
+	if err != nil || !slices.Equal(h.projectPermissions[a], []string{"events:read"}) || !slices.Equal(h.projectPermissions[b], []string{"events:write"}) {
 		t.Fatal("incorrect stored project grants", err)
 	}
 	request(t, s, "POST", "/api/v1/humans", admin, `{"email":"lea@example.test","grants":`+grants(b, a)+`}`, 409)

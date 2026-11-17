@@ -60,6 +60,7 @@ type ProjectRenameOutput struct {
 
 // AccessKey contains public credential metadata. Secrets and hashes have no fields here.
 type AccessKey struct {
+	TenantID        string   `json:"tenant_id,omitempty" doc:"Owning tenant for a team credential."`
 	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
 	Audience        string   `json:"audience,omitempty" doc:"API or MCP resource for a static service key."`
 	ID              string   `json:"id"`
@@ -83,6 +84,7 @@ type AccessKeyCreateInput struct {
 	}
 }
 type AccessKeyCreated struct {
+	TenantID        string   `json:"tenant_id,omitempty" doc:"Owning tenant for a team credential."`
 	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
 	Audience        string   `json:"audience,omitempty" doc:"API or MCP resource for a static service key."`
 	ID              string   `json:"id"`
@@ -165,7 +167,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
 		req, w := humago.Unwrap(ctx)
 		w.Header().Set("Cache-Control", "no-store")
-		access, _ := ctx.Operation().Metadata["access"].(operationAccess)
+		access := managementOperationAccess(ctx.Operation())
 		if access.ProjectParameter == "" && ctx.Operation().OperationID != "delete-project" {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
@@ -187,7 +189,20 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			problem(w, http.StatusUnauthorized, "invalid access credential")
 			return
 		}
-		if !access.allows(a, ctx.Param(access.ProjectParameter)) {
+		tenantID := ctx.Param(access.TenantParameter)
+		if access.TenantAdmin && access.ProjectParameter != "" && !a.admin() {
+			var err error
+			tenantID, err = s.projectAdministrationTenant(ctx.Context(), ctx.Param(access.ProjectParameter))
+			if err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					problem(w, http.StatusServiceUnavailable, "project ownership unavailable")
+				} else {
+					problem(w, http.StatusForbidden, "required permission and project access missing")
+				}
+				return
+			}
+		}
+		if !access.allows(a, ctx.Param(access.ProjectParameter), tenantID) {
 			_, w := humago.Unwrap(ctx)
 			problem(w, http.StatusForbidden, "required permission and project access missing")
 			return
@@ -254,12 +269,12 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", operationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
 	huma.Register(api, op("get-event-input-contract", "GET", "/api/v1/projects/{id}/input-contract", "Discover native live and historical schemas, trusted server fields and import semantics", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventInputContract)
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", operationAccess{Permission: "management:read"}, 200), s.managementListProjects)
-	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant; requires the deployment operator. Mixed projects return a one-time public ingestion key", operationAccess{Permission: "instance:admin"}, 201), s.managementCreateProject)
+	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 201), s.managementCreateProject)
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", operationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
-	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", operationAccess{Permission: "instance:admin", ProjectParameter: "id"}, 204), s.managementDeleteProject)
+	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", operationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListKeys)
 	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", operationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
-	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke a key; the last active administrator is protected", operationAccess{Permission: "instance:admin"}, 204), s.managementRevokeKey)
+	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", operationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
 	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
 	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
@@ -285,6 +300,8 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending or applied", operationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
 	s.registerQuarantine(api, op)
 	s.registerTenants(api, op)
+	s.registerTenantMembers(api, op)
+	s.registerTenantServiceCredentials(api, op)
 	s.registerImportUploads(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
@@ -343,16 +360,29 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 }
 
 func (s *Service) managementDeleteProject(ctx context.Context, input *ProjectIDInput) (*struct{}, error) {
+	if !principal(ctx).admin() {
+		tenant, err := s.projectAdministrationTenant(ctx, input.ID)
+		if err != nil {
+			return nil, apiError(404, "project not found")
+		}
+		tx, err := s.beginTenantAdministration(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, apiError(503, "tenant administration unavailable")
+		}
+	}
 	return nil, s.deleteProject(ctx, input.ID)
 }
 
 func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCreateInput) (*ProjectCreateOutput, error) {
-	if !principal(ctx).admin() {
-		return nil, apiError(403, "deployment operator required to create projects")
-	}
 	tenantID := input.Body.TenantID
 	if tenantID == "" {
 		tenantID = defaultTenantID
+	}
+	if !principal(ctx).canAdminTenant(tenantID) {
+		return nil, apiError(403, "tenant administrator required to create projects")
 	}
 	if _, err := s.loadTenant(ctx, tenantID); err != nil {
 		return nil, err
@@ -376,15 +406,19 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if mode == ingestionMixed {
 		raw = token()
 	}
-	tx, err := s.control.BeginTx(ctx, nil)
+	tx, err := s.beginTenantAdministration(ctx, tenantID)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, err
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$3,$4,$5)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
 	if err == nil && mode == ingestionMixed {
 		projects, _ := json.Marshal([]string{p.ID})
-		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, newID(), p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
+		ingestionID := newID()
+		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, ingestionID, p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, ingestionID, tenantID)
+		}
 	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(500, "storage error")
@@ -403,7 +437,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessKeyListOutput, error) {
 	a := principal(ctx)
 	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
-		coalesce(b.client_id,''),coalesce(b.audience,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id ORDER BY k.created_at,k.id`)
+		coalesce(b.client_id,''),coalesce(b.audience,''),coalesce(t.tenant_id,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id LEFT JOIN tenant_credentials t ON t.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -412,11 +446,14 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	for rows.Next() {
 		var key AccessKey
 		var permissions, projects string
-		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience); err != nil {
+		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience, &key.TenantID); err != nil {
 			return nil, apiError(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
 			return nil, apiError(500, "storage error")
+		}
+		if len(a.tenantAdmins) > 0 && !a.admin() && !a.canAdminTenant(key.TenantID) {
+			continue
 		}
 		if a.containsProjects(key.Projects) {
 			items = append(items, key)
@@ -444,6 +481,11 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a actor, name str
 		return apiError(403, "cannot grant projects outside your scope")
 	}
 	for _, project := range projects {
+		for _, permission := range permissions {
+			if !authorize(a, permission, project) {
+				return apiError(403, "permission exceeds the grant on this project")
+			}
+		}
 		if project != "*" {
 			var n int
 			if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1`, project).Scan(&n); err != nil {
@@ -462,6 +504,15 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a actor, name str
 
 func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreateInput) (*AccessKeyCreateOutput, error) {
 	a, body := principal(ctx), input.Body
+	if slices.Contains(body.Permissions, tenantAdminScope) {
+		return nil, apiError(400, "tenant administration requires interactive human consent")
+	}
+	if len(a.tenantIDs) > 0 && len(a.tenantAdmins) == 0 && !a.admin() {
+		return nil, apiError(403, "team service accounts cannot provision independent raw credentials")
+	}
+	if len(a.tenantAdmins) > 0 && !a.admin() && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
+		return nil, apiError(403, "use tenant service accounts for private team access")
+	}
 	if !a.canProvisionCredentials() {
 		return nil, apiError(403, "instance administrator required to provision independent credentials")
 	}
@@ -479,11 +530,33 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	id, raw := newID(), token()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
-	_, err = s.control.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
+	tenantID := ""
+	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, apiError(503, "credential storage unavailable")
+	}
+	defer tx.Rollback()
+	if len(body.Permissions) == 1 && body.Permissions[0] == "events:write" && len(body.Projects) == 1 && body.Projects[0] != "*" {
+		if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+			return nil, apiError(503, "credential storage unavailable")
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, body.Projects[0]).Scan(&tenantID); err != nil {
+			return nil, apiError(404, "project not found")
+		}
+		if len(a.tenantAdmins) > 0 && !a.admin() {
+			if err := s.requireTenantAdminCurrent(ctx, tx, a, tenantID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
+	if err == nil && tenantID != "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, tenantID)
+	}
+	if err != nil || tx.Commit() != nil {
 		return nil, apiError(500, "storage error")
 	}
-	return &AccessKeyCreateOutput{Body: AccessKeyCreated{ID: id, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, Token: raw}}, nil
+	return &AccessKeyCreateOutput{Body: AccessKeyCreated{TenantID: tenantID, ID: id, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, Token: raw}}, nil
 }
 
 func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDeleteInput) (*struct{}, error) {
@@ -496,6 +569,18 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return nil, apiError(500, "storage error")
 	}
+	if !principal(ctx).admin() {
+		var tenant string
+		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_credentials WHERE principal_id=$1`, input.ID).Scan(&tenant); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, apiError(403, "key is not owned by an administered tenant")
+			}
+			return nil, apiError(503, "credential ownership unavailable")
+		}
+		if err := s.requireTenantAdminCurrent(ctx, tx, principal(ctx), tenant); err != nil {
+			return nil, err
+		}
+	}
 	var permissions string
 	err = tx.QueryRowContext(ctx, `SELECT permissions FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, input.ID).Scan(&permissions)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -507,6 +592,9 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	var granted []string
 	if json.Unmarshal([]byte(permissions), &granted) != nil {
 		return nil, apiError(500, "storage error")
+	}
+	if !principal(ctx).admin() && (slices.Contains(granted, "instance:admin") || slices.Contains(granted, tenantAdminScope)) {
+		return nil, apiError(403, "human administration credentials require instance administration")
 	}
 	if slices.Contains(granted, "instance:admin") {
 		// Human grants, interactive-only client registrations, and service keys are
@@ -535,7 +623,6 @@ func independentAdminAvailable(ctx context.Context, tx *sql.Tx, excluded string,
 k.id=coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),''),
 EXISTS(SELECT 1 FROM oauth_clients WHERE client_id=k.id)
 OR EXISTS(SELECT 1 FROM email_humans WHERE principal_id=k.id)
-OR EXISTS(SELECT 1 FROM oidc_humans WHERE principal_id=k.id)
 OR EXISTS(SELECT 1 FROM service_api_keys WHERE principal_id=k.id)
 OR EXISTS(SELECT 1 FROM oauth_interactive_grants WHERE principal_id=k.id)
 FROM access_keys k LEFT JOIN oauth_clients c ON c.client_id=k.id WHERE k.id<>$1 AND k.revoked_at IS NULL`, excluded)

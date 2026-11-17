@@ -38,6 +38,21 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	if err != nil || !slices.Contains(client.GrantTypes, "authorization_code") {
 		return actor{}, errInteractiveGrant
 	}
+	if tenantAdminConsent(a.Permissions) {
+		if !s.interactiveScopesAllowed(human, client, resource, a.Permissions) {
+			return actor{}, errInteractiveGrant
+		}
+		var tenantID string
+		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM oauth_grant_tenants WHERE grant_id=$1`, grantID).Scan(&tenantID); err != nil {
+			return actor{}, errInteractiveGrant
+		}
+		narrowed, err := s.tenantAdminActor(ctx, query, human, tenantID)
+		if err != nil {
+			return actor{}, errInteractiveGrant
+		}
+		narrowed.ID = principalID
+		return narrowed, nil
+	}
 	filtered := []string{}
 	for _, permission := range a.Permissions {
 		if s.interactiveScopesAllowed(human, client, resource, []string{permission}) {
@@ -48,6 +63,16 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	a.Projects = oauthProjectIntersection(oauthProjectIntersection(a.Projects, human.Projects), client.Projects)
 	if len(a.Permissions) == 0 || !interactiveProjectsAllowed(human, client.actor, a.Permissions, a.Projects) {
 		return actor{}, errInteractiveGrant
+	}
+	if human.projectPermissions != nil {
+		a.projectPermissions = make(map[string][]string, len(a.Projects))
+		for _, project := range a.Projects {
+			for _, permission := range a.Permissions {
+				if human.admin() || slices.Contains(human.projectPermissions[project], permission) {
+					a.projectPermissions[project] = append(a.projectPermissions[project], permission)
+				}
+			}
+		}
 	}
 	a.interactive = true
 	return a, nil
@@ -69,7 +94,8 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 			return nil, errInteractiveGrant
 		}
 	}
-	if len(permissions) == 0 || len(projects) == 0 || !current.containsProjects(projects) {
+	tenantRole := tenantAdminConsent(permissions) && len(current.tenantAdmins) == 1
+	if len(permissions) == 0 || !tenantRole && (len(projects) == 0 || !current.containsProjects(projects)) {
 		return nil, errInteractiveGrant
 	}
 	if err = s.pruneInteractiveOAuth(ctx, tx); err != nil {
@@ -92,6 +118,9 @@ func (s *Service) interactiveTokenResponse(ctx context.Context, tx *sql.Tx, clie
 	refresh, err := oauthRandom("pc_rt_")
 	if err != nil {
 		return nil, err
+	}
+	if tenantRole {
+		projects = []string{}
 	}
 	encodedProjects, _ := json.Marshal(projects)
 	now := s.clock().UnixMilli()
@@ -162,7 +191,11 @@ func (s *Service) exchangeInteractiveCode(ctx context.Context, client *oauthClie
 	if err = tx.QueryRowContext(ctx, `SELECT expires_at_ms FROM oauth_interactive_grants WHERE id=$1`, grantID).Scan(&refreshExpiry); err != nil {
 		return nil, err
 	}
-	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, resource, strings.Join(a.Permissions, " "), a.Projects, refreshExpiry)
+	scope := strings.Join(a.Permissions, " ")
+	if len(a.tenantAdmins) == 1 {
+		scope = tenantAdminScope
+	}
+	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, grantID, resource, scope, a.Projects, refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +275,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 	}
 	slices.Sort(current)
 	current = slices.Compact(current)
-	if len(current) == 0 || len(projects) == 0 {
+	if len(current) == 0 || len(projects) == 0 && !(tenantAdminConsent(current) && len(a.tenantAdmins) == 1) {
 		return nil, errInteractiveGrant
 	}
 	response, err := s.interactiveTokenResponse(ctx, tx, client, grantID, familyID, resource, strings.Join(current, " "), projects, expires)

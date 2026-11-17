@@ -96,7 +96,7 @@ func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 	s := service(t, 20)
 	api := request(t, s, "GET", "/openapi.json", "", "", 200)
 	paths := api["paths"].(map[string]any)
-	operations := 0
+	operations := map[string]bool{}
 	for path, value := range paths {
 		if !strings.HasPrefix(path, "/api/v1/") {
 			t.Fatalf("unexpected documented operation %s", path)
@@ -106,11 +106,17 @@ func TestManagementTypedOpenAPIAndValidation(t *testing.T) {
 			if len(op["security"].([]any)) == 0 {
 				t.Fatal("private operation lacks bearer security")
 			}
-			operations++
+			id := op["operationId"].(string)
+			if operations[id] {
+				t.Fatalf("duplicate public operation ID %s", id)
+			}
+			operations[id] = true
 		}
 	}
-	if operations != 53 {
-		t.Fatalf("got %d operations", operations)
+	for _, id := range []string{"list-projects", "create-project", "query-events", "create-access-key", "get-tenant-project-roles"} {
+		if !operations[id] {
+			t.Fatalf("missing operation %s", id)
+		}
 	}
 	components := api["components"].(map[string]any)
 	security := components["securitySchemes"].(map[string]any)["bearerAuth"].(map[string]any)

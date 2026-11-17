@@ -264,7 +264,19 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if err != nil {
 		return "", err
 	}
-	if !s.interactiveScopesAllowed(human, client, current.Resource, approved.Permissions) || !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
+	if !s.interactiveScopesAllowed(human, client, current.Resource, approved.Permissions) {
+		return "", errors.New("invalid consent grants")
+	}
+	tenantID := ""
+	if tenantAdminConsent(approved.Permissions) {
+		if len(approved.tenantAdmins) != 1 || len(approved.Projects) != 0 {
+			return "", errors.New("invalid tenant consent")
+		}
+		tenantID = approved.tenantAdmins[0]
+		if _, err := s.tenantAdminActor(ctx, tx, human, tenantID); err != nil {
+			return "", errors.New("tenant administration is not granted")
+		}
+	} else if !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
 		return "", errors.New("invalid consent grants")
 	}
 	requested := strings.Fields(current.Scope)
@@ -299,6 +311,11 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,resource,created_at_ms,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7)`, grantID, grantID, human.ID, client.ID, current.Resource, s.clock().UnixMilli(), s.clock().Add(oauthRefreshTTL).UnixMilli())
 	if err != nil {
 		return "", err
+	}
+	if tenantID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO oauth_grant_tenants(grant_id,tenant_id) VALUES($1,$2)`, grantID, tenantID); err != nil {
+			return "", err
+		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_authorization_codes(code_hash,grant_id,client_id,redirect_uri,challenge,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6)`, hash(code), grantID, client.ID, current.RedirectURI, current.CodeChallenge, s.clock().Add(oauthCodeTTL).UnixMilli())
 	if err != nil {

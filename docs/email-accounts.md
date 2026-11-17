@@ -2,7 +2,15 @@
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-## Invite a person
+## Invite a tenant member (unreleased)
+
+Tenant administrators invite people with `invite-tenant-member`, scoped to their own tenant. A durable human identity can have independent memberships in several tenants. Revoking one membership removes that team's access without disabling the human elsewhere or revoking independent team service accounts.
+
+Use `list-tenant-members`, `update-tenant-member`, and `revoke-tenant-member` to manage that membership. A tenant administrator cannot remove or demote the last active administrator. An instance operator can recover the team. The [tenant access guide](tenant-access.md) includes request bodies and the operator-to-team setup sequence.
+
+This feature is not in the published v0.14.0 release. The operator-wide human operations below remain separate: `revoke-human` disables the identity across all its tenants and tool connections. Tenant administrators cannot use that global action.
+
+## Invite a person with the operator API
 
 Use an instance-admin credential for the appropriate resource. In MCP, use `porcupine_docs` to discover the operation and `porcupine_call` to invoke it. The HTTP API and CLI use the API audience. After `porcupine login --admin`, the standalone CLI accepts each operation name below as a command. Save the example grant in `member.json` and run `porcupine invite-human --body @member.json`.
 
@@ -47,7 +55,7 @@ To disconnect only one tool, use `list-oauth-grants` and `revoke-oauth-grant`. T
 
 ## Invitation and sign-in behavior
 
-Project member invitations require explicit project IDs. Email domains are case-insensitive; Porcupine preserves the case of the mailbox before `@` and recognizes an exact ASCII mailbox address. Provide the invited address when signing in.
+The operator-wide `invite-human` API uses explicit project grants. Tenant invitations instead include a tenant-local role and project scope. In an `all` scope, future projects inherit the membership's default permissions; a `selected` scope does not gain new projects automatically. Email domains are case-insensitive; Porcupine preserves the case of the mailbox before `@` and recognizes an exact ASCII mailbox address. Provide the invited address when signing in.
 
 The initial invitation notice contains connection instructions. Sign-in codes are issued only when the account holder starts a login. The account exists durably before the notice is sent. If delivery fails, Porcupine returns `503`; retry the same invite after at least five seconds. If an attempt is already in flight, Porcupine returns `429`. A crashed attempt can be retried after one minute. Retrying an acknowledged delivery returns the same human ID without sending again. A crash between SMTP acceptance and recording success can lead to duplicate notices; a notice alone grants no access. Reinviting a disabled account or submitting different grants for an existing account returns `409`.
 

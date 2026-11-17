@@ -4,6 +4,8 @@ Use this guide when your team already runs Porcupine. Ask its administrator for 
 
 If you are setting up the instance, start with [hosting](hosting.md) and [team sign-in](connect-your-team.md).
 
+**Unreleased:** tenant members can use the instance's configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and explicitly select their team. These features require matching development builds; follow [tenant access](tenant-access.md) and [sign-in configuration](mcp-interactive-oauth.md). The email steps below also apply to v0.14.0.
+
 ## Connect an agent through MCP
 
 Give your agent the instance URL and the [agent guide](https://olup.github.io/porcupine/llms.txt). Use the instance's `/mcp` endpoint, for example `https://analytics.example.com/mcp`.
@@ -37,14 +39,14 @@ Login opens the browser for email verification and consent. The ordinary login r
 
 You should see only projects allowed by your account and the connection you approved. Copy a project ID and continue with [your first query](query-events.md).
 
-CLI browser login requires email sign-in on the instance. The optional upstream OIDC mode supports read-only MCP. See [authentication options](connect-your-team.md).
+In v0.14.0, CLI browser login requires email sign-in. Development builds also allow the configured Google or OIDC provider. A tenant administrator uses `porcupine login --tenant-admin` and selects one tenant; `--admin` remains deployment administration. Ordinary CLI login requests read access. In development builds, a member can request permitted project writes explicitly with `porcupine login --scopes 'events:read events:write management:read'`. The browser shows those scopes and project choices. `--scopes` accepts project permissions only and cannot be combined with either administrative login flag. See [authentication options](connect-your-team.md).
 
 ## Connect a backend or shared agent
 
-Ask an administrator for a [service key](service-keys.md) with the projects and permissions that integration needs. Service accounts belong to the instance and work independently of the person who created them.
+Ask an administrator for a [service key](service-keys.md) with the projects and permissions that integration needs. In tenant-enabled builds, team service accounts belong to a tenant and work independently of the person who created them.
 
 For HTTP or the CLI, use an API-audience key. Load it into `PORCUPINE_API_KEY` through your secret manager. For MCP clients that accept a bearer header, use an MCP-audience key on `/mcp`. A key for one audience cannot be used for the other.
 
 ## Change or remove access
 
-An administrator can disconnect one tool with `revoke-oauth-grant`, or revoke a person's account with `revoke-human`. Revoking a person disconnects all of that person's tools. Service clients and their keys are managed separately. See [people](email-accounts.md) and [service keys](service-keys.md).
+A tenant administrator uses `revoke-tenant-member` to remove that team's access while preserving unrelated memberships and independent team service accounts. The instance operator can disconnect one tool with `revoke-oauth-grant`, or disable the human across the deployment with `revoke-human`. See [people](email-accounts.md) and [service keys](service-keys.md).

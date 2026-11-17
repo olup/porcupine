@@ -51,7 +51,11 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 	projectID, ingest := project(t, s)
 	readerID, oldReader := key(t, s, []string{"events:read"}, []string{projectID})
 	ctx := context.Background()
-	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);INSERT INTO oidc_identities(issuer,subject,principal_id,linked_email,created_at) SELECT 'https://identity.example.test','restored-subject',principal_id,email,'now' FROM email_humans WHERE email='revoked@example.test';UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
+		t.Fatal(err)
+	}
+	permissions := tenantTestBody(t, projectPermissionNames)
+	if _, err := s.control.Exec(`INSERT INTO tenant_memberships(tenant_id,human_id,role,project_scope,permissions,project_grants,created_at,updated_at) VALUES(?,?,'admin','all',?,'[]',?,?)`, defaultTenantID, readerID, permissions, now(), now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO identity_profiles(project_id,identified_id,is_identified,version,traits) VALUES(?,'person',1,7,'{"plan":"team"}')`, projectID); err != nil {
@@ -78,7 +82,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatalf("missing rotated ingestion credential: %+v", result)
 	}
 	nativeRequest(t, s, result.IngestionKeys[0].Token, `{"type":"track","name":"new-key","actor_id":"person"}`, 200)
-	for _, table := range []string{"email_humans", "oidc_humans", "oauth_clients", "oauth_tokens", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_interactive_grants", "service_api_keys", "webhook_deliveries", "export_files"} {
+	for _, table := range []string{"email_humans", "oidc_identities", "tenant_memberships", "oauth_grant_tenants", "oauth_clients", "oauth_tokens", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_interactive_grants", "service_api_keys", "webhook_deliveries", "export_files"} {
 		var count int
 		database := s.control
 		if table == "webhook_deliveries" || table == "export_files" {
@@ -87,6 +91,14 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		if err = database.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("old credential/output table %s retained rows: %d %v", table, count, err)
 		}
+	}
+	var oldCredentials int
+	if err = s.control.QueryRow(`SELECT count(*) FROM tenant_credentials t JOIN access_keys k ON k.id=t.principal_id WHERE k.revoked_at IS NOT NULL`).Scan(&oldCredentials); err != nil || oldCredentials != 0 {
+		t.Fatal("restore retained archived tenant credential ownership", err)
+	}
+	var owner string
+	if err = s.control.QueryRow(`SELECT t.tenant_id FROM tenant_credentials t JOIN access_keys k ON k.id=t.principal_id WHERE k.token_hash=?`, hash(result.IngestionKeys[0].Token)).Scan(&owner); err != nil || owner != defaultTenantID {
+		t.Fatal("rotated ingestion key lost tenant ownership", err)
 	}
 	var writerCount int
 	if err = s.db.QueryRow(`SELECT count(*) FROM metadata WHERE key='native_backup_writer_id'`).Scan(&writerCount); err != nil || writerCount != 0 {

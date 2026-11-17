@@ -44,18 +44,21 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 	if err := purgeProjectHumanGrants(ctx, tx, projectID); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects,h.project_grants,o.principal_id FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id LEFT JOIN oidc_humans o ON o.principal_id=k.id`)
+	if err := purgeProjectTenantMemberships(ctx, tx, projectID); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects,h.project_grants FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id`)
 	if err != nil {
 		return err
 	}
 	type principalGrant struct {
 		id, permissions, projects string
-		humanGrants, oidc         sql.NullString
+		humanGrants               sql.NullString
 	}
 	var principals []principalGrant
 	for rows.Next() {
 		var p principalGrant
-		if err := rows.Scan(&p.id, &p.permissions, &p.projects, &p.humanGrants, &p.oidc); err != nil {
+		if err := rows.Scan(&p.id, &p.permissions, &p.projects, &p.humanGrants); err != nil {
 			rows.Close()
 			return err
 		}
@@ -97,7 +100,7 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 			permissions = string(encoded)
 		}
 		var revoked any
-		if len(retained) == 0 && !p.humanGrants.Valid && !p.oidc.Valid {
+		if len(retained) == 0 && !p.humanGrants.Valid {
 			revoked = now()
 		}
 		encoded, err := json.Marshal(retained)
@@ -114,6 +117,55 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 	}
 	for _, table := range []string{"oauth_tokens", "oauth_refresh_tokens"} {
 		if err := purgeProjectTokenScopes(ctx, tx, table, projectID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func purgeProjectTenantMemberships(ctx context.Context, tx *sql.Tx, projectID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT tenant_id,human_id,project_grants FROM tenant_memberships
+WHERE tenant_id=(SELECT tenant_id FROM projects WHERE id=$1)`, projectID)
+	if err != nil {
+		return err
+	}
+	type storedMembership struct{ tenant, human, grants string }
+	var memberships []storedMembership
+	for rows.Next() {
+		var membership storedMembership
+		if err := rows.Scan(&membership.tenant, &membership.human, &membership.grants); err != nil {
+			rows.Close()
+			return err
+		}
+		memberships = append(memberships, membership)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, membership := range memberships {
+		var grants []TenantProjectGrant
+		if err := json.Unmarshal([]byte(membership.grants), &grants); err != nil {
+			return fmt.Errorf("invalid stored tenant project grants: %w", err)
+		}
+		retained := make([]TenantProjectGrant, 0, len(grants))
+		for _, grant := range grants {
+			if grant.ProjectID != projectID {
+				retained = append(retained, grant)
+			}
+		}
+		if len(retained) == len(grants) {
+			continue
+		}
+		encoded, err := json.Marshal(retained)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE tenant_memberships SET project_grants=$1,updated_at=$2
+WHERE tenant_id=$3 AND human_id=$4 AND project_grants=$5`, string(encoded), now(), membership.tenant, membership.human, membership.grants)
+		if err != nil {
+			return err
+		}
+		if err := projectGrantUpdateApplied(result); err != nil {
 			return err
 		}
 	}

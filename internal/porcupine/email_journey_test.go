@@ -107,6 +107,11 @@ func csrfFromJourneyForm(t *testing.T, page string) string {
 
 func (j *emailJourney) browserLogin(t *testing.T, app *oauth2.Config, email, resource, project, forbiddenProject string, consentStatus int) *oauth2.Token {
 	t.Helper()
+	return j.browserLoginSelection(t, app, email, resource, "project", project, forbiddenProject, consentStatus)
+}
+
+func (j *emailJourney) browserLoginSelection(t *testing.T, app *oauth2.Config, email, resource, field, project, forbiddenProject string, consentStatus int) *oauth2.Token {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -164,14 +169,14 @@ func (j *emailJourney) browserLogin(t *testing.T, app *oauth2.Config, email, res
 		return nil
 	}
 	csrf := csrfFromJourneyForm(t, page)
-	consent := url.Values{"decision": {"approve"}, "project": {project}, "csrf": {csrf}}
+	consent := url.Values{"decision": {"approve"}, field: {project}, "csrf": {csrf}}
 	if forbiddenProject != "" {
 		if strings.Contains(page, `value="`+forbiddenProject+`"`) {
 			t.Fatal("consent page offered an unassigned project")
 		}
-		consent.Set("project", forbiddenProject)
+		consent.Set(field, forbiddenProject)
 		step(j.issuer+location, consent, 403)
-		consent.Set("project", project)
+		consent.Set(field, project)
 	}
 	_, callback := step(j.issuer+location, consent, 303)
 	u, err := url.Parse(callback)

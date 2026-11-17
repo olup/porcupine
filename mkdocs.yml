@@ -34,6 +34,7 @@ nav:
       - Webhooks and S3 pipelines: pipelines.md
       - Correct or delete events: events.md
   - Projects and access:
+      - Team access (unreleased): tenant-access.md
       - Manage projects: projects.md
       - Invite and manage people: email-accounts.md
       - Create service keys: service-keys.md

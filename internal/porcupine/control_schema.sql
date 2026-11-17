@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, tenant_id TEXT NOT NUL
 
 CREATE INDEX IF NOT EXISTS projects_tenant ON projects(tenant_id,id);
 
-CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, completed BIGINT NOT NULL CHECK(completed IN (0,1)));
+CREATE TABLE IF NOT EXISTS project_deletions (project_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT '', completed BIGINT NOT NULL CHECK(completed IN (0,1)));
 
 CREATE TABLE IF NOT EXISTS access_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, permissions TEXT NOT NULL, projects TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT '');
 
@@ -79,8 +79,6 @@ CREATE TABLE IF NOT EXISTS oauth_interactive_access(
 
 CREATE INDEX IF NOT EXISTS oauth_tokens_interactive_grant ON oauth_tokens(interactive_grant_id);
 
-CREATE TABLE IF NOT EXISTS oidc_humans (principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),issuer TEXT NOT NULL,subject TEXT NOT NULL,UNIQUE(issuer,subject));
-
 CREATE TABLE IF NOT EXISTS email_humans (
  principal_id TEXT PRIMARY KEY REFERENCES access_keys(id), email TEXT NOT NULL UNIQUE,
  project_grants TEXT NOT NULL, deployment_admin BIGINT NOT NULL DEFAULT 0 CHECK(deployment_admin IN (0,1)),
@@ -88,3 +86,26 @@ CREATE TABLE IF NOT EXISTS email_humans (
 
 CREATE UNIQUE INDEX IF NOT EXISTS email_deployment_admin ON email_humans(deployment_admin) WHERE deployment_admin=1;
 
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+ tenant_id TEXT NOT NULL REFERENCES tenants(id),
+ human_id TEXT NOT NULL REFERENCES email_humans(principal_id) ON DELETE CASCADE,
+ role TEXT NOT NULL CHECK(role IN ('admin','member')),
+ project_scope TEXT NOT NULL CHECK(project_scope IN ('all','selected')),
+ permissions TEXT NOT NULL,project_grants TEXT NOT NULL,
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,revoked_at TEXT,
+ notice_sent BIGINT NOT NULL DEFAULT 0 CHECK(notice_sent IN (0,1)),
+ notice_attempt TEXT NOT NULL DEFAULT '',notice_retry_after_ms BIGINT NOT NULL DEFAULT 0,
+ PRIMARY KEY(tenant_id,human_id));
+CREATE INDEX IF NOT EXISTS tenant_memberships_human ON tenant_memberships(human_id,tenant_id);
+CREATE TABLE IF NOT EXISTS tenant_credentials (
+ principal_id TEXT PRIMARY KEY REFERENCES access_keys(id),tenant_id TEXT NOT NULL REFERENCES tenants(id));
+CREATE INDEX IF NOT EXISTS tenant_credentials_tenant ON tenant_credentials(tenant_id,principal_id);
+CREATE TABLE IF NOT EXISTS oauth_grant_tenants (
+ grant_id TEXT PRIMARY KEY REFERENCES oauth_interactive_grants(id) ON DELETE CASCADE,
+ tenant_id TEXT NOT NULL REFERENCES tenants(id));
+CREATE TABLE IF NOT EXISTS oidc_identities (
+ issuer TEXT NOT NULL,subject TEXT NOT NULL,
+ principal_id TEXT NOT NULL REFERENCES email_humans(principal_id) ON DELETE CASCADE,
+ linked_email TEXT NOT NULL,created_at TEXT NOT NULL,
+ PRIMARY KEY(issuer,subject),UNIQUE(issuer,principal_id));
