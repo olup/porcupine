@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"time"
 
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -20,6 +21,8 @@ type importChunkWork struct {
 	samples   []importer.ImportRowSample
 }
 
+const importChunkCommitTimeout = 30 * time.Second
+
 func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, data []byte, final bool) (importChunkWork, error) {
 	chunk, err := importer.ParseChunk(ctx, importer.ChunkState{FileID: file.ID, Kind: file.Kind, Format: file.Format, LineNumber: file.LineNumber, Tail: file.Tail, Discarding: file.Discarding, Counts: file.Counts}, data, final)
 	if errors.Is(err, importer.ErrChunkRows) {
@@ -30,6 +33,8 @@ func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, da
 }
 
 func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor auth.Principal, complete bool) error {
+	ctx, cancelCommit := context.WithTimeout(ctx, importChunkCommitTimeout)
+	defer cancelCommit()
 	release, err := m.rules.receiptGates.lock(ctx, project)
 	if err != nil {
 		return err
