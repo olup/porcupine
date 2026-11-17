@@ -52,6 +52,9 @@ func (s settings) analyticsConfiguration() (*lakeapi.DuckLakeConfig, error) {
 		{"PORCUPINE_DUCKLAKE_SNAPSHOT_RETENTION", &config.SnapshotRetention},
 		{"PORCUPINE_DUCKLAKE_CLEANUP_GRACE", &config.CleanupGrace},
 		{"PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL", &config.CleanupInterval},
+		{"PORCUPINE_DUCKLAKE_RESTORE_WINDOW", &config.RestoreWindow},
+		{"PORCUPINE_DUCKLAKE_RESTORE_MAX_READER_TIME", &config.RestoreMaxReaderTime},
+		{"PORCUPINE_DUCKLAKE_RESTORE_SAFETY_MARGIN", &config.RestoreSafetyMargin},
 	} {
 		if raw := s.get(field.name); raw != "" {
 			duration, err := time.ParseDuration(raw)
