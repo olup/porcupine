@@ -16,7 +16,9 @@ import (
 	"sync"
 	"testing"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type exportTestS3 struct {
@@ -127,7 +129,7 @@ func TestExportSinkGzipChunksTypedJSONAndChecksums(t *testing.T) {
 	s, job := exportWorkerFixture(t, fake)
 	s.exports.config.FileBytes = 42
 	sink := newExportSink(context.Background(), s, job)
-	columns := []AnalyticsResultColumn{{Name: "id", Type: "UInt64"}, {Name: "note", Type: "String"}}
+	columns := []lakeapi.AnalyticsResultColumn{{Name: "id", Type: "UInt64"}, {Name: "note", Type: "String"}}
 	if err := sink.setColumns(columns); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func TestExportSinkCSVHeaderEveryChunkAndEmptyResults(t *testing.T) {
 	job.Format = "csv"
 	s.exports.config.FileBytes = 1
 	sink := newExportSink(context.Background(), s, job)
-	if err := sink.setColumns([]AnalyticsResultColumn{{Name: "value", Type: "String"}}); err != nil {
+	if err := sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value", Type: "String"}}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -206,9 +208,9 @@ func TestExportSinkCSVHeaderEveryChunkAndEmptyResults(t *testing.T) {
 		}
 	}
 	// An empty export still produces one valid gzip file, containing the CSV header.
-	job.AttemptID = newID()
+	job.AttemptID = eventapi.NewID()
 	sink = newExportSink(context.Background(), s, job)
-	sink.setColumns([]AnalyticsResultColumn{{Name: "value", Type: "String"}})
+	sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value", Type: "String"}})
 	if err := sink.finish(); err != nil {
 		t.Fatal(err)
 	}
@@ -221,12 +223,12 @@ func TestExportSinkRejectsOutputAndColumnAmbiguity(t *testing.T) {
 	t.Parallel()
 	s, job := exportWorkerFixture(t, &exportTestS3{})
 	sink := newExportSink(context.Background(), s, job)
-	if err := sink.setColumns([]AnalyticsResultColumn{{Name: "duplicate"}, {Name: "duplicate"}}); err == nil {
+	if err := sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "duplicate"}, {Name: "duplicate"}}); err == nil {
 		t.Fatal("ambiguous JSONL columns accepted")
 	}
 	s.exports.config.MaxOutputBytes = 5
 	sink = newExportSink(context.Background(), s, job)
-	sink.setColumns([]AnalyticsResultColumn{{Name: "value"}})
+	sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "value"}})
 	if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"long value"`)}); err != errExportOutputLimit {
 		t.Fatal("output was truncated instead of rejected", err)
 	}

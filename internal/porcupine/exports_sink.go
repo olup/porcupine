@@ -1,11 +1,9 @@
 package porcupine
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,7 +12,9 @@ import (
 	"io"
 	"time"
 
+	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"golang.org/x/time/rate"
 )
 
@@ -28,9 +28,7 @@ type exportSink struct {
 	ctx                       context.Context
 	job                       storedExport
 	limiter                   *rate.Limiter
-	columns                   []AnalyticsResultColumn
-	names                     [][]byte
-	header                    []byte
+	encoder                   *delivery.RowEncoder
 	current                   *exportSinkFile
 	rows, decoded, compressed int64
 	files                     int
@@ -48,93 +46,27 @@ func newExportSink(ctx context.Context, s *Service, job storedExport) *exportSin
 	return &exportSink{s: s, ctx: ctx, job: job, limiter: rate.NewLimiter(rate.Limit(s.exports.config.BandwidthBytesPerSecond), 64<<10), lastProgress: time.Now()}
 }
 
-func (w *exportSink) setColumns(columns []AnalyticsResultColumn) error {
-	if w.columns != nil {
+func (w *exportSink) setColumns(columns []lakeapi.AnalyticsResultColumn) error {
+	if w.encoder != nil {
 		return errExportSink
 	}
-	w.columns = append([]AnalyticsResultColumn{}, columns...)
-	seen := map[string]bool{}
-	for _, column := range columns {
-		if w.job.Format == "jsonl" && seen[column.Name] {
-			return errExportSink
-		}
-		seen[column.Name] = true
-		var encoded bytes.Buffer
-		encoder := json.NewEncoder(&encoded)
-		encoder.SetEscapeHTML(false)
-		if err := encoder.Encode(column.Name); err != nil {
-			return errExportSink
-		}
-		w.names = append(w.names, bytes.TrimSuffix(encoded.Bytes(), []byte("\n")))
+	names := make([]string, len(columns))
+	for i, column := range columns {
+		names[i] = column.Name
 	}
-	if w.job.Format == "csv" {
-		var header bytes.Buffer
-		writer := csv.NewWriter(&header)
-		names := make([]string, len(columns))
-		for i, column := range columns {
-			names[i] = column.Name
-		}
-		if err := writer.Write(names); err != nil {
-			return errExportSink
-		}
-		writer.Flush()
-		if writer.Error() != nil {
-			return errExportSink
-		}
-		w.header = header.Bytes()
-	} else if w.job.Format != "jsonl" {
+	encoder, err := delivery.NewRowEncoder(w.job.Format, names)
+	if err != nil {
 		return errExportSink
 	}
+	w.encoder = encoder
 	return nil
-}
-
-func (w *exportSink) encodeRow(values []json.RawMessage) ([]byte, error) {
-	if w.columns == nil || len(values) != len(w.columns) {
-		return nil, errExportSink
-	}
-	var row bytes.Buffer
-	if w.job.Format == "jsonl" {
-		row.WriteByte('{')
-		for i, value := range values {
-			if i > 0 {
-				row.WriteByte(',')
-			}
-			row.Write(w.names[i])
-			row.WriteByte(':')
-			row.Write(value)
-		}
-		row.WriteString("}\n")
-	} else {
-		fields := make([]string, len(values))
-		for i, value := range values {
-			if bytes.Equal(value, []byte("null")) {
-				continue
-			}
-			if len(value) > 0 && value[0] == '"' {
-				if json.Unmarshal(value, &fields[i]) != nil {
-					return nil, errExportSink
-				}
-			} else {
-				fields[i] = string(value)
-			}
-		}
-		writer := csv.NewWriter(&row)
-		if err := writer.Write(fields); err != nil {
-			return nil, errExportSink
-		}
-		writer.Flush()
-		if writer.Error() != nil {
-			return nil, errExportSink
-		}
-	}
-	return row.Bytes(), nil
 }
 
 func (w *exportSink) writeRow(values []json.RawMessage) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
-	row, err := w.encodeRow(values)
+	row, err := w.encoder.Encode(values)
 	if err != nil {
 		return err
 	}
@@ -163,7 +95,7 @@ func (w *exportSink) beginFile() error {
 	if w.files >= 10000 {
 		return errExportOutputLimit
 	}
-	if int64(len(w.header)) > w.s.exports.config.MaxOutputBytes-w.decoded {
+	if int64(len(w.encoder.Header())) > w.s.exports.config.MaxOutputBytes-w.decoded {
 		return errExportOutputLimit
 	}
 	w.files++
@@ -189,8 +121,8 @@ func (w *exportSink) beginFile() error {
 		return errExportSink
 	}
 	w.current = file
-	if len(w.header) > 0 {
-		return w.writeDecoded(w.header)
+	if len(w.encoder.Header()) > 0 {
+		return w.writeDecoded(w.encoder.Header())
 	}
 	return nil
 }

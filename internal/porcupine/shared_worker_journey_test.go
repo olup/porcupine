@@ -20,6 +20,9 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	"github.com/olup/porcupine/internal/importer"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const sharedJourneySecret = "shared-worker-journey-routing-secret-test-only"
@@ -239,7 +242,7 @@ func TestSharedWorkerAdaptersGzipAndCookielessForwarding(t *testing.T) {
 	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-0'`).Scan(&left); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-1'`).Scan(&right); err != nil || left != right || left == cookielessSentinel {
+	if err := a.service.db.QueryRow(`SELECT distinct_id FROM events WHERE uuid='cookieless-1'`).Scan(&right); err != nil || left != right || left == ingestfmt.CookielessSentinel {
 		t.Fatal("edge hop changed the daily visitor identity", left, right, err)
 	}
 	if err := a.service.db.QueryRow(`SELECT timestamp FROM events WHERE ingestion_metadata LIKE '%native-gzip%'`).Scan(&occurred); err != nil || occurred != "2020-01-02T01:15:00.123456789Z" {
@@ -366,7 +369,7 @@ func TestSharedWorkerNativeCLIInterruptedImportResume(t *testing.T) {
 	if err := resume.Run(); err != nil {
 		t.Fatal("cross-edge CLI resume failed", err, diagnostic.String())
 	}
-	var job ImportUploadJob
+	var job importer.ImportUploadJob
 	if err := json.Unmarshal(output.Bytes(), &job); err != nil || job.State != "completed" || job.Counts.Accepted != 300 || job.Counts.Invalid != 0 || job.ID != jobID {
 		t.Fatal("CLI did not complete the same historical owner job", output.String(), err)
 	}
@@ -546,7 +549,7 @@ func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture) (*sharedJo
 		directory := t.TempDir()
 		config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken,
 			Shared:   &SharedConfig{DatabaseURL: control, WorkerID: worker, RouteURL: "http://" + host.Listener.Addr().String(), RoutingSecret: []byte(sharedJourneySecret)},
-			DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), PostgresURL: catalogs, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true, MaintenanceInterval: 24 * time.Hour}}
+			DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), PostgresURL: catalogs, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true, MaintenanceInterval: 24 * time.Hour}}
 		if fixture.storage.CACertFile == "" {
 			config.Exports = &ExportConfig{S3: exportstore.Config{Endpoint: fixture.storage.Endpoint, Region: fixture.storage.Region, Bucket: fixture.storage.Bucket,
 				Prefix: fixture.storage.Prefix + "/exports", AccessKeyID: fixture.storage.AccessKeyID, SecretAccessKey: fixture.storage.SecretAccessKey, UsePathStyle: true},
@@ -624,7 +627,7 @@ func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
 	if replay := sharedJourneyNative(t, b.host.URL, ingestA, page, 200); replay["duplicates"] != float64(1) || sharedJourneyReceipt(t, replay) != eventID {
 		t.Fatal("native deletion changed the permanent retry receipt", replay)
 	}
-	storeA, storeB := a.service.lake.(*duckLakeStore), b.service.lake.(*duckLakeStore)
+	storeA, storeB := a.service.lake.(*lakeapi.DuckLakeStore), b.service.lake.(*lakeapi.DuckLakeStore)
 	prefixA, prefixB := fixture.projectPrefix(t, storeA, projectA), fixture.projectPrefix(t, storeB, projectB)
 	if len(fixture.keys(t, prefixA)) == 0 || len(fixture.keys(t, prefixB)) == 0 {
 		t.Fatal("shared native events were not written into isolated S3 project prefixes")
@@ -634,7 +637,7 @@ func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := sharedNativeSchema(sharedNativeCatalogID(source, projectA))
+	schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(source, projectA))
 	if err := storeA.SharedCatalog.QueryRowContext(t.Context(), "SELECT count(*) FROM "+schema+".ducklake_inlined_data_tables").Scan(&inlined); err != nil || inlined != 0 {
 		t.Fatal("event rows were inlined into PostgreSQL rather than Parquet/S3", inlined, err)
 	}

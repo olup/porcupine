@@ -12,6 +12,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 const oauthRequestTTL = 10 * time.Minute
@@ -119,8 +122,8 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	requested := strings.Split(q.Get("scope"), " ")
 	if _, present := q["scope"]; !present {
 		requested = []string{}
-		for _, permission := range interactiveOAuthScopes {
-			if client.permitsInteractiveScope(permission) {
+		for _, permission := range auth.InteractiveReadScopes() {
+			if client.Principal.PermitsInteractiveScope(permission, client.GrantTypes) {
 				requested = append(requested, permission)
 			}
 		}
@@ -131,15 +134,17 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Discovery recommends both read scopes. A read-only tool can be registered for
 	// just one. The token and consent page report the subset the tool actually gets.
-	if s.oauth.config.Email != nil && onlyInteractiveReadScopes(requested) {
-		requested = slices.DeleteFunc(requested, func(permission string) bool { return !client.permitsInteractiveScope(permission) })
+	if s.oauth.config.Email != nil && auth.OnlyInteractiveReadScopes(requested) {
+		requested = slices.DeleteFunc(requested, func(permission string) bool {
+			return !client.Principal.PermitsInteractiveScope(permission, client.GrantTypes)
+		})
 	}
 	if len(requested) == 0 {
 		oauthTokenError(w, 400, "invalid_scope")
 		return
 	}
 	for _, permission := range requested {
-		if !slices.Contains(validPermissions, permission) || !client.permitsInteractiveScope(permission) || s.oauth.config.Email == nil && !slices.Contains(interactiveOAuthScopes, permission) {
+		if !slices.Contains(auth.Permissions(), permission) || !client.Principal.PermitsInteractiveScope(permission, client.GrantTypes) || s.oauth.config.Email == nil && !slices.Contains(auth.InteractiveReadScopes(), permission) {
 			oauthTokenError(w, 400, "invalid_scope")
 			return
 		}
@@ -152,7 +157,7 @@ func (s *Service) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 429, "temporarily_unavailable")
 		return
 	}
-	rawID, err := oauthRandom("pc_ar_")
+	rawID, err := auth.RandomSecret("pc_ar_")
 	if err != nil {
 		oauthTokenError(w, 503, "temporarily_unavailable")
 		return
@@ -195,7 +200,7 @@ func clientName(ctx context.Context, query oauthQueryer, id string) string {
 	return name
 }
 
-func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof humanLoginProof, approved actor) (string, error) {
+func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauthAuthorizationRequest, humanID string, proof humanLoginProof, approved auth.Principal) (string, error) {
 	if !s.interactiveOAuthEnabled() {
 		return "", errors.New("interactive OAuth unavailable")
 	}
@@ -230,14 +235,14 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	}
 	tenantID := ""
 	if tenantAdminConsent(approved.Permissions) {
-		if len(approved.tenantAdmins) != 1 || len(approved.Projects) != 0 {
+		if len(approved.TenantAdmins) != 1 || len(approved.Projects) != 0 {
 			return "", errors.New("invalid tenant consent")
 		}
-		tenantID = approved.tenantAdmins[0]
+		tenantID = approved.TenantAdmins[0]
 		if _, err := s.tenantAdminActor(ctx, tx, human, tenantID); err != nil {
 			return "", errors.New("tenant administration is not granted")
 		}
-	} else if !interactiveProjectsAllowed(human, client.actor, approved.Permissions, approved.Projects) {
+	} else if !auth.InteractiveProjectsAllowed(human, client.Principal, approved.Permissions, approved.Projects) {
 		return "", errors.New("invalid consent grants")
 	}
 	requested := strings.Fields(current.Scope)
@@ -254,12 +259,12 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=$1) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>$2`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
 		return "", errOAuthCapacity
 	}
-	grantID := newID()
-	code, err := oauthRandom("pc_ac_")
+	grantID := eventapi.NewID()
+	code, err := auth.RandomSecret("pc_ac_")
 	if err != nil {
 		return "", err
 	}
-	unusable, err := oauthRandom("pc_ig_")
+	unusable, err := auth.RandomSecret("pc_ig_")
 	if err != nil {
 		return "", err
 	}

@@ -12,6 +12,7 @@ import (
 	oautherrors "github.com/go-oauth2/oauth2/v4/errors"
 	"github.com/go-oauth2/oauth2/v4/manage"
 	"github.com/go-oauth2/oauth2/v4/server"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func (s *Service) initializeOAuth(ctx context.Context) error {
@@ -46,7 +47,7 @@ func (s *Service) oauthToken(w http.ResponseWriter, r *http.Request) {
 		oauthTokenError(w, 405, "invalid_request")
 		return
 	}
-	form, status, code := readOAuthForm(w, r)
+	form, status, code := auth.ReadOAuthForm(w, r)
 	if code != "" {
 		oauthTokenError(w, status, code)
 		return
@@ -108,7 +109,7 @@ func (s *Service) oauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, scopePresent := form["scope"]
-	scope, err := oauthScope(client.actor, form.Get("scope"), scopePresent)
+	scope, err := oauthScope(client.Principal, form.Get("scope"), scopePresent)
 	if err != nil {
 		oauthTokenError(w, 400, "invalid_scope")
 		return

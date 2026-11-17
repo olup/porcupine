@@ -33,6 +33,10 @@ var journalSchema = schemaStore{name: "journal", steps: []string{
 	journalSchemaV1,
 	// 2: export objects of a deleted project, created lazily before versioning.
 	`CREATE TABLE IF NOT EXISTS project_deletion_files (project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL, PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`,
+	// 3: receipt age for bounded retention. Existing receipts count from the upgrade.
+	`ALTER TABLE event_receipts ADD COLUMN recorded_at_ms INTEGER NOT NULL DEFAULT 0;
+UPDATE event_receipts SET recorded_at_ms=CAST(strftime('%s','now') AS INTEGER)*1000;
+CREATE INDEX event_receipts_recorded ON event_receipts(recorded_at_ms)`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
@@ -120,7 +124,7 @@ func migrateSharedControl(ctx context.Context, tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&raw)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			// Pre-versioning shared control reapplied version 1 on every start.
+			return errors.New("unversioned shared control schema is unsupported; use an empty dedicated schema")
 		case err != nil:
 			return err
 		default:
@@ -133,6 +137,16 @@ func migrateSharedControl(ctx context.Context, tx *sql.Tx) error {
 		return schemaTooNew("shared control", version, latest)
 	}
 	if version == 0 {
+		var occupied bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=current_schema() AND c.relkind IN ('r','p','v','m','f','S')
+)`).Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied {
+			return errors.New("unversioned shared control schema is unsupported; use an empty dedicated schema")
+		}
 		if _, err := tx.ExecContext(ctx, sharedControlSteps[0]); err != nil {
 			return fmt.Errorf("apply shared control schema version 1: %w", err)
 		}

@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type NativeBackupStatus struct {
@@ -28,7 +31,7 @@ type NativeBackupStatus struct {
 }
 
 type nativeBackupRuntime struct {
-	config              NativeBackupConfig
+	config              lakeapi.NativeBackupConfig
 	databasePath        string
 	controlDatabasePath string
 	mu                  sync.Mutex
@@ -38,31 +41,13 @@ type nativeBackupRuntime struct {
 	done                chan struct{}
 }
 
-func prepareNativeBackup(c *NativeBackupConfig, database, controlDatabase string, lake *DuckLakeConfig) (*nativeBackupRuntime, error) {
+func prepareNativeBackup(c *lakeapi.NativeBackupConfig, database, controlDatabase string, lake *lakeapi.DuckLakeConfig) (*nativeBackupRuntime, error) {
 	if c == nil {
 		return nil, nil
 	}
-	if lake != nil && lake.S3 != nil && c.S3 == nil {
-		return nil, errors.New("native local backups do not include remote analytical S3 objects; disable native backups for this storage mode")
-	}
-	if lake == nil || lake.Directory == "" || (database == ":memory:" || controlDatabase == ":memory:") || (c.Directory == "" && c.S3 == nil) {
-		return nil, errors.New("native backups require file-backed SQLite, DuckLake and one backup destination")
-	}
-	if c.Directory != "" && c.S3 != nil {
-		return nil, errors.New("configure exactly one native backup destination")
-	}
-	config := *c
-	if config.Interval == 0 {
-		config.Interval = 24 * time.Hour
-	}
-	if config.Timeout == 0 {
-		config.Timeout = 5 * time.Minute
-	}
-	if config.Retain == 0 {
-		config.Retain = 7
-	}
-	if config.Interval < time.Minute || config.Timeout < time.Second || config.Timeout > time.Hour || config.Retain < 1 || config.Retain > 1000 {
-		return nil, errors.New("invalid native backup schedule, timeout or retention")
+	config, err := normalizeNativeBackupConfig(c, database, controlDatabase, lake)
+	if err != nil {
+		return nil, err
 	}
 	path, err := filepath.Abs(database)
 	if err != nil {
@@ -76,18 +61,6 @@ func prepareNativeBackup(c *NativeBackupConfig, database, controlDatabase string
 		return nil, errors.New("native backup requires separate journal and control databases")
 	}
 	if config.S3 != nil {
-		normalized, err := normalizeDuckLakeS3(config.S3)
-		if err != nil {
-			return nil, errors.New("invalid native backup S3 configuration")
-		}
-		config.S3 = normalized
-		source, err := normalizeDuckLakeS3(lake.S3)
-		if err != nil {
-			return nil, errors.New("invalid analytical S3 configuration for native backups")
-		}
-		if source != nil && source.Bucket == normalized.Bucket && (strings.HasPrefix(normalized.Prefix+"/", source.Prefix+"/") || strings.HasPrefix(source.Prefix+"/", normalized.Prefix+"/")) {
-			return nil, errors.New("backup S3 destination must not overlap analytical storage")
-		}
 		return &nativeBackupRuntime{config: config, databasePath: path, controlDatabasePath: controlPath, slot: make(chan struct{}, 1), status: NativeBackupStatus{Enabled: true, State: "waiting", IntervalSeconds: int64(config.Interval / time.Second), TimeoutSeconds: int64(config.Timeout / time.Second), RetainCompleted: config.Retain}}, nil
 	}
 	directory, err := filepath.Abs(config.Directory)
@@ -112,21 +85,14 @@ func prepareNativeBackup(c *NativeBackupConfig, database, controlDatabase string
 	if err != nil {
 		return nil, err
 	}
-	relative, err := filepath.Rel(native, directory)
-	if err != nil || relative == "." || filepath.IsLocal(relative) {
-		return nil, errors.New("backup destination must be outside the DuckLake directory")
-	}
-	if inverse, err := filepath.Rel(directory, native); err != nil || inverse == "." || filepath.IsLocal(inverse) {
-		return nil, errors.New("backup destination must not contain the DuckLake directory")
-	}
-	for _, databasePath := range []string{path, controlPath} {
-		databaseLocation := databasePath
+	databases := []string{path, controlPath}
+	for i, databasePath := range databases {
 		if parent, err := filepath.EvalSymlinks(filepath.Dir(databasePath)); err == nil {
-			databaseLocation = filepath.Join(parent, filepath.Base(databasePath))
+			databases[i] = filepath.Join(parent, filepath.Base(databasePath))
 		}
-		if relative, err := filepath.Rel(directory, databaseLocation); err != nil || relative == "." || filepath.IsLocal(relative) {
-			return nil, errors.New("backup destination must not contain a live SQLite database")
-		}
+	}
+	if err := validateBackupDirectory(directory, native, databases); err != nil {
+		return nil, err
 	}
 	info, err := os.Stat(directory)
 	if err != nil {
@@ -278,17 +244,17 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 		return err
 	}
 	defer unlockDirectory()
-	if err := claimLocalNativeBackupOwner(runtime.config.Directory, sourceID, writerID); err != nil {
+	if err := lakeapi.ClaimLocalNativeBackupOwner(runtime.config.Directory, sourceID, writerID); err != nil {
 		return err
 	}
-	if err := removeIncompleteNativeBackups(runtime.config.Directory); err != nil {
+	if err := lakeapi.RemoveIncompleteNativeBackups(runtime.config.Directory); err != nil {
 		return err
 	}
 	release, err := s.projectionGuard.exclusive(ctx)
 	if err != nil {
 		return err
 	}
-	var checkpoint *nativeCheckpoint
+	var checkpoint *lakeapi.NativeCheckpoint
 	var capturedAt string
 	func() {
 		defer release()
@@ -301,7 +267,7 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, checkpoint.Close()) }()
-	if err := validateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
 		return err
 	}
 	stage := checkpoint.Directory
@@ -310,24 +276,24 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 	if sourceID != checkpoint.SourceID {
 		return errors.New("native backup source identity changed during capture")
 	}
-	id := "pc_backup_" + newID()
+	id := "pc_backup_" + eventapi.NewID()
 	partial := filepath.Join(runtime.config.Directory, "."+id+".incomplete")
 	if err := os.Mkdir(partial, 0700); err != nil {
 		return err
 	}
 	defer os.RemoveAll(partial)
 	previousDirectory := ""
-	previousFiles := map[string]backupFile{}
+	previousFiles := map[string]lakeapi.BackupFile{}
 	if previous := s.nativeBackupStatus().LatestBundle; filepath.IsLocal(previous) && filepath.Base(previous) == previous && strings.HasPrefix(previous, "pc_backup_") {
 		candidate := filepath.Join(runtime.config.Directory, previous)
-		if old, verifyErr := verifyNativeBackup(ctx, candidate); verifyErr == nil && old.SourceID == sourceID {
+		if old, verifyErr := lakeapi.VerifyNativeBackup(ctx, candidate); verifyErr == nil && old.SourceID == sourceID {
 			previousDirectory = candidate
 			for _, file := range old.Files {
 				previousFiles[file.Path] = file
 			}
 		}
 	}
-	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: sourceID, CreatedAt: now(), CapturedAt: capturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
+	manifest := lakeapi.NativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: sourceID, CreatedAt: now(), CapturedAt: capturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
 	if err := filepath.WalkDir(stage, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -346,10 +312,10 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 		if !entry.Type().IsRegular() {
 			return errors.New("backup stage contains a non-regular file")
 		}
-		if len(manifest.Files) >= nativeBackupFileLimit {
+		if len(manifest.Files) >= lakeapi.NativeBackupFileLimit {
 			return errors.New("native backup file inventory limit reached; reduce the small-file backlog before retrying")
 		}
-		file, err := hashBackupFile(ctx, path, filepath.ToSlash(relative))
+		file, err := lakeapi.HashBackupFile(ctx, path, filepath.ToSlash(relative))
 		if err != nil {
 			return err
 		}
@@ -360,7 +326,7 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 			}
 		}
 		if !reused {
-			if err := copyCheckpointFile(ctx, path, target); err != nil {
+			if err := lakeapi.CopyCheckpointFile(ctx, path, target); err != nil {
 				return err
 			}
 		}
@@ -370,25 +336,25 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 		return err
 	}
 	for _, path := range []string{filepath.Join(partial, "acceptance.sqlite"), filepath.Join(partial, "control.sqlite"), filepath.Join(partial, "ducklake", "registry.sqlite")} {
-		if err := validateBackupSQLite(ctx, path); err != nil {
+		if err := lakeapi.ValidateBackupSQLite(ctx, path); err != nil {
 			return err
 		}
 	}
-	if err := writeBackupManifest(partial, manifest); err != nil {
+	if err := lakeapi.WriteBackupManifest(partial, manifest); err != nil {
 		return err
 	}
-	if _, err := verifyNativeBackup(ctx, partial); err != nil {
+	if _, err := lakeapi.VerifyNativeBackup(ctx, partial); err != nil {
 		return err
 	}
 	complete := filepath.Join(runtime.config.Directory, id)
 	if err := os.Rename(partial, complete); err != nil {
 		return err
 	}
-	if err := syncBackupDirectory(runtime.config.Directory); err != nil {
+	if err := lakeapi.SyncBackupDirectory(runtime.config.Directory); err != nil {
 		return err
 	}
 	if err := s.recordNativeBackupStatus(ctx, "ok", id, capturedAt); err != nil {
 		return err
 	}
-	return pruneNativeBackups(runtime.config.Directory, sourceID, runtime.config.Retain, id)
+	return lakeapi.PruneNativeBackups(runtime.config.Directory, sourceID, runtime.config.Retain, id)
 }

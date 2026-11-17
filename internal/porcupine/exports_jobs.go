@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const exportConsistency = "delivery_barrier_nontransactional"
@@ -31,7 +33,7 @@ func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (stor
 	return scanExport(s.db.QueryRowContext(ctx, `SELECT `+exportJobColumns+` FROM export_jobs WHERE project_id=$1 AND id=$2`, projectID, jobID))
 }
 
-func (s *Service) exportActor(ctx context.Context, keyID string) (actor, error) {
+func (s *Service) exportActor(ctx context.Context, keyID string) (auth.Principal, error) {
 	return s.loadCredentialActor(ctx, keyID)
 }
 

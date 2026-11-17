@@ -17,6 +17,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func nativeRestoreTarget(t *testing.T, id, bundle, source string) NativeRestoreRequest {
@@ -76,7 +77,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	}
 	r := nativeRestoreTarget(t, id, bundle, source)
 	r.TargetControlDBPath = filepath.Join(t.TempDir(), "separate-control", "management.db")
-	result, err := RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: DuckLakeConfig{MemoryLimitMB: 256, Threads: 1}})
+	result, err := RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: lakeapi.DuckLakeConfig{MemoryLimitMB: 256, Threads: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	if err = os.Rename(bundle, bundle+".offline"); err != nil {
 		t.Fatal(err)
 	}
-	restoredConfig := Config{DBPath: r.TargetDBPath, ControlDBPath: r.TargetControlDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
+	restoredConfig := Config{DBPath: r.TargetDBPath, ControlDBPath: r.TargetControlDBPath, DuckLake: &lakeapi.DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
 	restored, err := Open(restoredConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +152,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	if err = restored.lake.Maintain(context.Background()); err != nil {
 		t.Fatal("target-only maintenance failed", err)
 	}
-	lake := restored.lake.(*duckLakeStore)
+	lake := restored.lake.(*lakeapi.DuckLakeStore)
 	for i := 0; i < 2; i++ {
 		if err = lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)); err != nil {
 			t.Fatal("target-only cleanup failed", err)
@@ -227,7 +228,7 @@ func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *tes
 					}
 					for i, f := range manifest.Files {
 						if f.Path == "acceptance.sqlite" {
-							manifest.Files[i], err = hashBackupFile(context.Background(), filepath.Join(copyPath, f.Path), f.Path)
+							manifest.Files[i], err = lakeapi.HashBackupFile(context.Background(), filepath.Join(copyPath, f.Path), f.Path)
 							if err != nil {
 								t.Fatal(err)
 							}
@@ -235,11 +236,11 @@ func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *tes
 					}
 				}
 				os.Remove(filepath.Join(copyPath, "manifest.json"))
-				if err := writeBackupManifest(copyPath, manifest); err != nil {
+				if err := lakeapi.WriteBackupManifest(copyPath, manifest); err != nil {
 					t.Fatal(err)
 				}
 			}
-			_, err := RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: DuckLakeConfig{MemoryLimitMB: 128, Threads: 1}})
+			_, err := RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: lakeapi.DuckLakeConfig{MemoryLimitMB: 128, Threads: 1}})
 			if err == nil {
 				t.Fatal("unsafe restore accepted", a)
 			}
@@ -250,7 +251,7 @@ func TestDuckLakeNativeRestoreRefusesIncompleteTamperedAndExistingTargets(t *tes
 				if _, err = os.Stat(localControlPath(r.TargetDBPath) + ".native-restore-incomplete"); err != nil {
 					t.Fatal("failed restore lost control incomplete marker", err)
 				}
-				if _, err = Open(Config{DBPath: r.TargetDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory}}); err == nil {
+				if _, err = Open(Config{DBPath: r.TargetDBPath, DuckLake: &lakeapi.DuckLakeConfig{Directory: r.TargetDuckLakeDirectory}}); err == nil {
 					t.Fatal("startup accepted incomplete restore")
 				}
 			}
@@ -282,7 +283,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 		backup.Endpoint, backup.CACertFile = proxy.URL, caPath
 	}
 
-	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 256, Threads: 1, S3: &fixture.storage, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &NativeBackupConfig{S3: &backup, Retain: 1}}
+	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 256, Threads: 1, S3: &fixture.storage, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &lakeapi.NativeBackupConfig{S3: &backup, Retain: 1}}
 	s, err := Open(config)
 	s3FixtureError(t, fixture, "open restore source", err)
 	defer s.Close()
@@ -292,8 +293,8 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	state := lakeMaintenanceLifecycle(t, s, a, ingest, "s3-restore", true)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"second-project","actor_id":"other","name":"untouched"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	fixture.flush(t, s.lake.(*duckLakeStore), a)
-	fixture.flush(t, s.lake.(*duckLakeStore), b)
+	fixture.flush(t, s.lake.(*lakeapi.DuckLakeStore), a)
+	fixture.flush(t, s.lake.(*lakeapi.DuckLakeStore), b)
 	s.deliveryCancel()
 	<-s.deliveryDone
 	pending := `{"type":"track","message_id":"restore-pending","actor_id":"person","name":"pending"}`
@@ -315,7 +316,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	targetS3 := fixture.storage
 	targetS3.Prefix += "-restored"
 	r := nativeRestoreTarget(t, id, "", source)
-	restoreConfig := NativeRestoreConfig{Request: r, Backup: NativeBackupConfig{S3: &backup}, DuckLake: DuckLakeConfig{S3: &targetS3, MemoryLimitMB: 256, Threads: 1}}
+	restoreConfig := NativeRestoreConfig{Request: r, Backup: lakeapi.NativeBackupConfig{S3: &backup}, DuckLake: lakeapi.DuckLakeConfig{S3: &targetS3, MemoryLimitMB: 256, Threads: 1}}
 	originalOverlap := restoreConfig
 	originalOverlap.DuckLake.S3 = &fixture.storage
 	if _, err = RestoreNativeBackup(context.Background(), originalOverlap); err == nil {
@@ -356,13 +357,13 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	}
 	// Make both the original data and the entire independent backup unavailable.
 	// Restarts, native cleanup and project deletion must use only target objects.
-	reader, err := newNativeBackupS3(context.Background(), backup, source)
+	reader, err := lakeapi.NewNativeBackupS3(context.Background(), backup, source)
 	s3FixtureError(t, fixture, "open fixture archive cleanup", err)
 	s3FixtureError(t, fixture, "remove fixture archive after completed restore", reader.Remove(context.Background(), id))
 	reader.Close()
 	outside := fixture.storage.Prefix + "/outside-recovery-sentinel"
 	fixture.put(t, outside, "source output must stay untouched")
-	targetConfig := Config{DBPath: r.TargetDBPath, DuckLake: &DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, S3: &targetS3, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
+	targetConfig := Config{DBPath: r.TargetDBPath, DuckLake: &lakeapi.DuckLakeConfig{Directory: r.TargetDuckLakeDirectory, S3: &targetS3, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
 	restored, err := Open(targetConfig)
 	s3FixtureError(t, fixture, "start restored target with archive unreachable", err)
 	defer func() { restored.Close() }()
@@ -389,7 +390,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	restored, err = Open(targetConfig)
 	s3FixtureError(t, fixture, "restart completed restored target", err)
 	s3FixtureError(t, fixture, "maintain isolated restored target", restored.lake.Maintain(context.Background()))
-	lake := restored.lake.(*duckLakeStore)
+	lake := restored.lake.(*lakeapi.DuckLakeStore)
 	for i := 0; i < 2; i++ {
 		s3FixtureError(t, fixture, "cleanup isolated restored target", lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)))
 	}
@@ -412,7 +413,7 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 	if err := s.lake.Maintain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	lake := s.lake.(*duckLakeStore)
+	lake := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := lake.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +451,7 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 	}
 	for i, f := range manifest.Files {
 		if f.Path == catalog.Path {
-			manifest.Files[i], err = hashBackupFile(context.Background(), filepath.Join(bundle, filepath.FromSlash(f.Path)), f.Path)
+			manifest.Files[i], err = lakeapi.HashBackupFile(context.Background(), filepath.Join(bundle, filepath.FromSlash(f.Path)), f.Path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -459,11 +460,11 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 	if err = os.Remove(filepath.Join(bundle, "manifest.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err = writeBackupManifest(bundle, manifest); err != nil {
+	if err = lakeapi.WriteBackupManifest(bundle, manifest); err != nil {
 		t.Fatal(err)
 	}
 	r := nativeRestoreTarget(t, id, bundle, manifest.SourceID)
-	if _, err = RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: DuckLakeConfig{MemoryLimitMB: 256, Threads: 1}}); err == nil {
+	if _, err = RestoreNativeBackup(context.Background(), NativeRestoreConfig{Request: r, DuckLake: lakeapi.DuckLakeConfig{MemoryLimitMB: 256, Threads: 1}}); err == nil {
 		t.Fatal("restore read an absolute original data reference outside the archive")
 	}
 	if _, err = os.Stat(r.TargetDBPath); !os.IsNotExist(err) {
@@ -476,7 +477,7 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 
 func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
 	t.Parallel()
-	backup := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "archive", Region: "us-east-1", Endpoint: "http://127.0.0.1:1/", UsePathStyle: true}
+	backup := lakeapi.DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "archive", Region: "us-east-1", Endpoint: "http://127.0.0.1:1/", UsePathStyle: true}
 	target := backup
 	target.Endpoint = "http://127.0.0.1:1"
 	target.Prefix = "archive/native-backups/source/pc_backup_test/restored"
@@ -488,14 +489,14 @@ func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
 
 func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.T) {
 	t.Parallel()
-	target := DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
-	if err := validateNativeRestoreSourceStorage(&target, nativeBackupStorageIdentity{}, false); err == nil {
+	target := lakeapi.DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
+	if err := validateNativeRestoreSourceStorage(&target, lakeapi.NativeBackupStorageIdentity{}, false); err == nil {
 		t.Fatal("remote target without original storage identity accepted")
 	}
-	if err := validateNativeRestoreSourceStorage(nil, nativeBackupStorageIdentity{}, true); err == nil {
+	if err := validateNativeRestoreSourceStorage(nil, lakeapi.NativeBackupStorageIdentity{}, true); err == nil {
 		t.Fatal("remote archive without original storage identity accepted")
 	}
-	source := nativeBackupStorageIdentity{Mode: "s3", Bucket: target.Bucket, Prefix: "original-source", Region: target.Region, Endpoint: "http://127.0.0.1:2"}
+	source := lakeapi.NativeBackupStorageIdentity{Mode: "s3", Bucket: target.Bucket, Prefix: "original-source", Region: target.Region, Endpoint: "http://127.0.0.1:2"}
 	if err := validateNativeRestoreSourceStorage(&target, source, true); err == nil {
 		t.Fatal("original source namespace overlap through an endpoint alias accepted")
 	}

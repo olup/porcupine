@@ -10,6 +10,9 @@ import (
 	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 // initializeOAuthClients preserves principal IDs shared by grants and async jobs.
@@ -112,12 +115,12 @@ type OAuthClientDeleteInput struct {
 	ID string `path:"id" doc:"Registered OAuth client ID. Revocation disables its principal and every token issued to it."`
 }
 
-func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	s.registerInteractiveOAuthManagement(api, op)
 	base := "/api/v1/oauth-clients"
-	huma.Register(api, op("create-oauth-client", "POST", base, "Create a scoped machine OAuth client and return its secret once", operationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
-	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", operationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
-	huma.Register(api, op("revoke-oauth-client", "DELETE", base+"/{id}", "Revoke an OAuth principal and its issued tokens; the last administrator is protected", operationAccess{Permission: "instance:admin"}, 204), s.managementRevokeOAuthClient)
+	huma.Register(api, op("create-oauth-client", "POST", base, "Create a scoped machine OAuth client and return its secret once", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
+	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
+	huma.Register(api, op("revoke-oauth-client", "DELETE", base+"/{id}", "Revoke an OAuth principal and its issued tokens; the last administrator is protected", auth.OperationAccess{Permission: "instance:admin"}, 204), s.managementRevokeOAuthClient)
 }
 
 func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthClientCreateInput) (*OAuthClientCreateOutput, error) {
@@ -125,10 +128,10 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
-	if !a.admin() && len(a.tenantIDs) > 0 {
+	if !a.Admin() && len(a.TenantIDs) > 0 {
 		return nil, apiError(403, "use tenant service-account operations for team credentials")
 	}
-	if !a.canProvisionCredentials() {
+	if !a.CanProvisionCredentials() {
 		return nil, apiError(403, "this credential cannot create independent clients")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
@@ -139,18 +142,18 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, err
 	}
 	body.SourceID = sourceID
-	grants, redirects, authMethod, err := normalizeOAuthClientRegistration(body.GrantTypes, body.RedirectURIs, body.TokenEndpointAuthMethod)
+	grants, redirects, authMethod, err := auth.NormalizeOAuthClientRegistration(body.GrantTypes, body.RedirectURIs, body.TokenEndpointAuthMethod)
 	if err != nil {
 		return nil, apiError(400, "invalid OAuth client registration")
 	}
-	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth.config.Email == nil || !a.admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
+	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
 		return nil, apiError(400, "tenant administration requires a dedicated interactive email client")
 	}
 	if slices.Contains(grants, "authorization_code") {
 		if sourceID != "" {
 			return nil, apiError(400, "interactive clients cannot have a producer source")
 		}
-		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || !a.admin() || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
+		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || !a.Admin() || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
 			return nil, apiError(400, "administrator login requires a dedicated interactive email client with only instance:admin across all projects")
 		}
 	}
@@ -168,7 +171,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if authMethod == "none" {
 		secret = ""
 	}
-	id, created := newID(), now()
+	id, created := eventapi.NewID(), now()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	tx, err := s.control.BeginTx(ctx, nil)
@@ -192,7 +195,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 
 func (s *Service) managementListOAuthClients(ctx context.Context, _ *struct{}) (*OAuthClientListOutput, error) {
 	a := principal(ctx)
-	if !a.admin() && len(a.tenantIDs) > 0 {
+	if !a.Admin() && len(a.TenantIDs) > 0 {
 		return nil, apiError(403, "use tenant service-account operations for team credentials")
 	}
 	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method,coalesce(t.tenant_id,'')
@@ -214,7 +217,7 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id LEFT JOIN tenant_cre
 		if json.Unmarshal([]byte(grants), &item.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &item.RedirectURIs) != nil {
 			return nil, apiError(500, "storage error")
 		}
-		if a.containsProjects(item.Projects) {
+		if a.ContainsProjects(item.Projects) {
 			items = append(items, item)
 		}
 	}

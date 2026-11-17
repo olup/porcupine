@@ -16,6 +16,7 @@ import (
 	liboauth "github.com/go-oauth2/oauth2/v4"
 	oautherrors "github.com/go-oauth2/oauth2/v4/errors"
 	"github.com/go-oauth2/oauth2/v4/models"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const oauthMaxTokensPerClient = 64
@@ -27,7 +28,7 @@ type oauthIssueContextKey struct{}
 type oauthIssue struct{ resource string }
 
 type oauthClient struct {
-	actor
+	auth.Principal
 	secretHash   string
 	GrantTypes   []string
 	RedirectURIs []string
@@ -48,37 +49,37 @@ type oauthQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func (s *Service) loadCredentialActor(ctx context.Context, id string) (actor, error) {
+func (s *Service) loadCredentialActor(ctx context.Context, id string) (auth.Principal, error) {
 	return s.loadCredentialActorFrom(ctx, s.control, id)
 }
 
-func (s *Service) loadCredentialActorFrom(ctx context.Context, query oauthQueryer, id string) (actor, error) {
-	var result actor
+func (s *Service) loadCredentialActorFrom(ctx context.Context, query oauthQueryer, id string) (auth.Principal, error) {
+	var result auth.Principal
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&result.ID, &permissions, &projects, &result.SourceID)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	if json.Unmarshal([]byte(permissions), &result.Permissions) != nil || json.Unmarshal([]byte(projects), &result.Projects) != nil {
-		return actor{}, errors.New("invalid current credential grants")
+		return auth.Principal{}, errors.New("invalid current credential grants")
 	}
 	var emailHuman bool
 	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1)`, id).Scan(&emailHuman); err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	if emailHuman {
 		result, err = loadEmailHuman(ctx, query, id)
 		if err != nil {
-			return actor{}, err
+			return auth.Principal{}, err
 		}
 	}
 	result, err = constrainTenantCredentialActor(ctx, query, result)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	result, err = constrainServiceKeyActor(ctx, query, result)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	return s.validateInteractivePrincipal(ctx, query, result)
 }
@@ -105,12 +106,12 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 	if json.Unmarshal([]byte(grants), &client.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &client.RedirectURIs) != nil {
 		return nil, errors.New("invalid OAuth registration")
 	}
-	normalizedGrants, normalizedRedirects, method, err := normalizeOAuthClientRegistration(client.GrantTypes, client.RedirectURIs, client.AuthMethod)
+	normalizedGrants, normalizedRedirects, method, err := auth.NormalizeOAuthClientRegistration(client.GrantTypes, client.RedirectURIs, client.AuthMethod)
 	if err != nil {
 		return nil, errors.New("invalid OAuth registration")
 	}
 	client.GrantTypes, client.RedirectURIs, client.AuthMethod = normalizedGrants, normalizedRedirects, method
-	client.actor, err = constrainTenantCredentialActor(ctx, query, client.actor)
+	client.Principal, err = constrainTenantCredentialActor(ctx, query, client.Principal)
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +124,10 @@ func (store oauthClientStore) GetByID(ctx context.Context, id string) (liboauth.
 	return loadOAuthClient(ctx, store.s.control, id)
 }
 
-func oauthPermissions(current actor) []string {
+func oauthPermissions(current auth.Principal) []string {
 	permissions := []string{}
-	for _, permission := range validPermissions {
-		if current.can(permission) {
+	for _, permission := range auth.Permissions() {
+		if current.Can(permission) {
 			permissions = append(permissions, permission)
 		}
 	}
@@ -134,7 +135,7 @@ func oauthPermissions(current actor) []string {
 	return permissions
 }
 
-func oauthScope(current actor, requested string, present bool) (string, error) {
+func oauthScope(current auth.Principal, requested string, present bool) (string, error) {
 	allowed := oauthPermissions(current)
 	if !present {
 		return strings.Join(allowed, " "), nil
@@ -144,12 +145,12 @@ func oauthScope(current actor, requested string, present bool) (string, error) {
 	}
 	requestedPermissions := strings.Split(requested, " ")
 	for _, permission := range requestedPermissions {
-		if !slices.Contains(validPermissions, permission) || !slices.Contains(allowed, permission) {
+		if !slices.Contains(auth.Permissions(), permission) || !slices.Contains(allowed, permission) {
 			return "", oautherrors.ErrInvalidScope
 		}
 	}
 	if slices.Contains(requestedPermissions, "instance:admin") {
-		requestedPermissions = append([]string{}, validPermissions...)
+		requestedPermissions = append([]string{}, auth.Permissions()...)
 	}
 	slices.Sort(requestedPermissions)
 	requestedPermissions = slices.Compact(requestedPermissions)
@@ -193,7 +194,7 @@ func (store oauthTokenStore) Create(ctx context.Context, info liboauth.TokenInfo
 		return oautherrors.ErrUnauthorizedClient
 	}
 
-	allowed := oauthPermissions(client.actor)
+	allowed := oauthPermissions(client.Principal)
 	for _, permission := range strings.Split(info.GetScope(), " ") {
 		if !slices.Contains(allowed, permission) {
 			return oautherrors.ErrInvalidScope
@@ -277,34 +278,34 @@ func (oauthTokenStore) GetByRefresh(context.Context, string) (liboauth.TokenInfo
 	return nil, oautherrors.ErrUnsupportedGrantType
 }
 
-func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource string) (actor, error) {
+func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource string) (auth.Principal, error) {
 	if s.oauth == nil || (resource != s.oauth.apiResource && resource != s.oauth.mcpResource) {
-		return actor{}, oautherrors.ErrInvalidAccessToken
+		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
 	info, err := (oauthTokenStore{s: s}).GetByAccess(ctx, raw)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	stored, ok := info.(*oauthStoredToken)
 	if !ok || stored.resource != resource {
-		return actor{}, oautherrors.ErrInvalidAccessToken
+		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
-	var current actor
+	var current auth.Principal
 	if stored.grantID != "" {
 		current, err = s.loadInteractiveOAuthActor(ctx, s.control, stored.grantID)
 	} else {
 		current, err = s.loadCredentialActor(ctx, info.GetClientID())
 	}
 	if err != nil {
-		return actor{}, oautherrors.ErrInvalidAccessToken
+		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
-	if stored.grantID != "" && tenantAdminConsent(strings.Fields(info.GetScope())) && len(current.tenantAdmins) == 1 {
+	if stored.grantID != "" && tenantAdminConsent(strings.Fields(info.GetScope())) && len(current.TenantAdmins) == 1 {
 		return current, nil
 	}
 	allowed := oauthPermissions(current)
 	permissions := []string{}
 	for _, permission := range strings.Split(info.GetScope(), " ") {
-		if slices.Contains(allowed, permission) && slices.Contains(validPermissions, permission) {
+		if slices.Contains(allowed, permission) && slices.Contains(auth.Permissions(), permission) {
 			permissions = append(permissions, permission)
 		}
 	}

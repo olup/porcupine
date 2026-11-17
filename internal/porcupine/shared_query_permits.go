@@ -10,6 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // Expiry is a recovery bound, not a renewable admission lease: it must remain
@@ -98,7 +101,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 	if active >= limits.MaxConcurrent {
 		return InteractiveQueryConfig{}, nil, tenantQueryConcurrencyError()
 	}
-	token := newID()
+	token := eventapi.NewID()
 	lifetimeMS := sharedQueryPermitLifetime(limits, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds).Milliseconds()
 	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.config.WorkerID, lifetimeMS)
 	if err != nil {
@@ -122,7 +125,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 
 func sharedQueryPermitError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
-		return duckLakeQueryError(ctx, err)
+		return lakeapi.DuckLakeQueryError(ctx, err)
 	}
 	return apiError(503, "shared query admission unavailable")
 }

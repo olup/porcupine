@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestNativeRestoreRequiresFreshTargetsAndPrivateReset(t *testing.T) {
@@ -56,7 +58,7 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 	if _, err := s.control.Exec(`INSERT INTO email_humans(principal_id,email,project_grants,notice_sent) VALUES(?,'revoked@example.test','[]',0);INSERT INTO oidc_identities(id,issuer,subject,principal_id,linked_email,created_at) SELECT 'restored-link','https://identity.example.test','restored-subject',principal_id,email,'now' FROM email_humans WHERE email='revoked@example.test';UPDATE access_keys SET revoked_at=? WHERE id=?`, readerID, now(), readerID); err != nil {
 		t.Fatal(err)
 	}
-	permissions := tenantTestBody(t, projectPermissionNames)
+	permissions := tenantTestBody(t, auth.ProjectPermissions())
 	if _, err := s.control.Exec(`INSERT INTO tenant_memberships(tenant_id,human_id,role,project_scope,permissions,project_grants,created_at,updated_at) VALUES(?,?,'admin','all',?,'[]',?,?)`, defaultTenantID, readerID, permissions, now(), now()); err != nil {
 		t.Fatal(err)
 	}

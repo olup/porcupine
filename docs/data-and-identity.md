@@ -4,7 +4,7 @@ Porcupine’s recommended browser profile sends a cookieless event that the serv
 
 ## Event identity and immutability
 
-Within a project, the unbound PostHog input uses the original event UUID. Native and Segment inputs use the logical source and producer message ID to derive the stored UUID. Reuse the same source and message ID on a retry to receive the same durable event ID. Without a stable producer ID, a retry can create another event. [Receipts and logical sources](native-and-segment-ingestion.md#receipts-and-logical-sources)
+Within a project, the unbound PostHog input uses the original event UUID. Native and Segment inputs use the logical source and producer message ID to derive the stored UUID. Reuse the same source and message ID on a retry to receive the same durable event ID. Without a stable producer ID, a retry can create another event. [Receipts and logical sources](reference/native-and-segment-ingestion.md#receipts-and-logical-sources)
 
 Each ordinary event retains its accepted `distinct_id`. SQL exposes `person_id` to group that event under the currently resolved identity, including events accepted before login. `person_properties` contains the current profile as a JSON object encoded in a string.
 

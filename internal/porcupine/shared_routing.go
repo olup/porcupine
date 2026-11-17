@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type sharedRoutingState struct {
@@ -126,7 +128,7 @@ func (s *Service) initializeSharedRouting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state := &sharedRoutingState{conn: conn, token: newID(), done: make(chan struct{})}
+	state := &sharedRoutingState{conn: conn, token: eventapi.NewID(), done: make(chan struct{})}
 	state.ctx, state.cancel = context.WithCancel(context.Background())
 	state.transport = &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2: true, MaxIdleConns: 16, MaxIdleConnsPerHost: 4, IdleConnTimeout: 60 * time.Second,
@@ -172,7 +174,7 @@ func (s *Service) sharedWorkerVolume(ctx context.Context, worker string) (string
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_worker_id',$1),('shared_worker_volume_id',$2) ON CONFLICT(key) DO NOTHING`, worker, newID()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_worker_id',$1),('shared_worker_volume_id',$2) ON CONFLICT(key) DO NOTHING`, worker, eventapi.NewID()); err != nil {
 		return "", err
 	}
 	var previous, volume string
@@ -189,6 +191,11 @@ func (s *Service) sharedWorkerVolume(ctx context.Context, worker string) (string
 }
 
 func closeSharedRoutingConnection(conn *sql.Conn) {
+	// Wait for PostgreSQL to acknowledge a clean release. Closing the socket
+	// alone leaves a window before the backend notices EOF and drops its lock.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock_all()`)
+	cancel()
 	// Discard the physical session so an advisory lock cannot return to the pool.
 	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 	_ = conn.Close()
@@ -410,7 +417,7 @@ func (s *Service) forwardSharedProject(w http.ResponseWriter, r *http.Request, p
 		peerText = peer.String()
 	}
 	claim := sharedRouteClaim{Version: 1, Source: s.shared.config.WorkerID, Target: owner, Project: project,
-		Epoch: epoch, IssuedAtMS: time.Now().UnixMilli(), Nonce: newID(), Method: r.Method, URI: r.URL.RequestURI(),
+		Epoch: epoch, IssuedAtMS: time.Now().UnixMilli(), Nonce: eventapi.NewID(), Method: r.Method, URI: r.URL.RequestURI(),
 		Host: r.Host, Peer: peerText, UserAgent: r.UserAgent(), ContentType: r.Header.Get("Content-Type"),
 		Encoding: r.Header.Get("Content-Encoding"), AuthHash: sharedRouteDigest([]byte(r.Header.Get("Authorization"))),
 		BodyHash: sharedRouteDigest(body), MCP: mcp}

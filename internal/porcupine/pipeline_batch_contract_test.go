@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type pipelineBatchContractTransport func(*http.Request) (*http.Response, error)
@@ -174,10 +176,10 @@ func TestPipelineBatchHTTPAndMCPContract(t *testing.T) {
 		t.Fatal("outbound batch request did not preserve its HTTPS destination and credentials")
 	}
 	var payload struct {
-		DeliveryID string  `json:"delivery_id"`
-		PipelineID string  `json:"pipeline_id"`
-		ProjectID  string  `json:"project_id"`
-		Events     []Event `json:"events"`
+		DeliveryID string           `json:"delivery_id"`
+		PipelineID string           `json:"pipeline_id"`
+		ProjectID  string           `json:"project_id"`
+		Events     []eventapi.Event `json:"events"`
 	}
 	if err := json.Unmarshal(first.body, &payload); err != nil {
 		t.Fatal(err)

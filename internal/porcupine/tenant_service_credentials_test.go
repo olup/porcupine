@@ -202,7 +202,7 @@ func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
 	f.call(t, "POST", "/api/v1/tenants/"+tenant+"/members", root, map[string]any{"email": "team-admin@example.test", "role": "admin"}, 201, &member)
 	id := member.HumanID
 	admin, err := loadEmailHuman(ctx, f.s.control, id)
-	if err != nil || !admin.canAdminTenant(tenant) {
+	if err != nil || !admin.CanAdminTenant(tenant) {
 		t.Fatalf("tenant admin fixture unavailable: %v", err)
 	}
 	ctx = context.WithValue(ctx, actorContextKey{}, admin)

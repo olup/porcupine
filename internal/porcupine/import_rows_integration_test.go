@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/importer"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) {
@@ -67,13 +70,13 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 	call("POST", "/capture/", "", map[string]any{"api_key": ingest, "uuid": "live-first", "event": "live", "distinct_id": "anon"}, nil, 200)
 	persons := []byte(`{"person_id":"internal-not-an-app-id","distinct_id":"anon","person_version":5,"person_distinct_id_version":1,"properties":{"plan":"archive"},"created_at":"2020-01-01T00:00:00.123456Z","is_deleted":false}` + "\n" + `{"person_id":"old-internal","distinct_id":"live-user","person_version":9,"person_distinct_id_version":1,"properties":{"name":"stale"},"created_at":"2020-01-01T00:00:00Z","is_deleted":false}`)
 	events := []byte(`{"uuid":"live-first","event":"archive duplicate","distinct_id":"anon","timestamp":"2020-01-01T00:00:00Z","properties":{}}` + "\n" + `{"uuid":"archived-click","event":"$autocapture","distinct_id":"anon","timestamp":"2020-01-01T00:00:00.123456Z","properties":{"large":9007199254740993},"elements_chain":"button.synthetic","person_id":"internal-not-an-app-id","person_properties":{"stale":true}}` + "\n" + `{"uuid":"archive-cookie","event":"$pageview","distinct_id":"cookieless_archived_daily_hash","timestamp":"2020-01-02T00:00:00Z","properties":{"cookieless":true,"identity_day":"2020-01-02","$session_id":"must-not-return"}}` + "\n" + `{"uuid":"stripped-control","event":"$set","distinct_id":"live-user","timestamp":"2020-01-01T00:00:00Z","properties":{}}` + "\n" + `{"uuid":"archive-link","event":"$identify","distinct_id":"archive-account","timestamp":"2020-01-01T00:00:00Z","properties":{"$anon_distinct_id":"anon"}}` + "\n" + `{"event":"malformed missing required fields"}`)
-	specs := []ImportUploadFileSpec{}
+	specs := []importer.ImportUploadFileSpec{}
 	for _, file := range []struct {
 		path, kind string
 		data       []byte
 	}{{"persons/part-1.jsonl", "persons", persons}, {"events/part-1.jsonl", "events", events}} {
 		digest := sha256.Sum256(file.data)
-		specs = append(specs, ImportUploadFileSpec{Path: file.path, Kind: file.kind, SizeBytes: int64(len(file.data)), SHA256: hex.EncodeToString(digest[:])})
+		specs = append(specs, importer.ImportUploadFileSpec{Path: file.path, Kind: file.kind, SizeBytes: int64(len(file.data)), SHA256: hex.EncodeToString(digest[:])})
 	}
 	base := "/api/v1/projects/" + projectID + "/imports"
 	job := call("POST", base, adminToken, map[string]any{"idempotency_key": "synthetic-import", "files": specs}, nil, 201)
@@ -164,7 +167,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 	// including a user projection alias with the same import-marker name.
 	for _, query := range []string{"SELECT uuid FROM events ORDER BY uuid", "SELECT uuid,0 AS is_imported FROM events ORDER BY uuid"} {
 		var ids []string
-		stream, err := s.lake.Export(context.Background(), projectID, query, nil, &analyticalWindow{StartMS: 0, EndMS: 9223372036854775807}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func(values []json.RawMessage) error {
+		stream, err := s.lake.Export(context.Background(), projectID, query, nil, &lakeapi.AnalyticalWindow{StartMS: 0, EndMS: 9223372036854775807}, 1<<20, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func(values []json.RawMessage) error {
 			var id string
 			if err := json.Unmarshal(values[0], &id); err != nil {
 				return err
@@ -176,7 +179,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 			t.Fatalf("automatic export included imported history: %v ids=%v", err, ids)
 		}
 	}
-	stream, err := s.lake.Export(context.Background(), projectID, "SELECT uuid,0 AS received_at_ms FROM events", nil, &analyticalWindow{StartMS: 0, EndMS: 10}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }})
+	stream, err := s.lake.Export(context.Background(), projectID, "SELECT uuid,0 AS received_at_ms FROM events", nil, &lakeapi.AnalyticalWindow{StartMS: 0, EndMS: 10}, 1<<20, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }})
 	if err != nil || stream.Rows != 0 {
 		t.Fatal("user projection alias bypassed trusted receipt-time filter", err)
 	}
@@ -202,7 +205,7 @@ func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
 		t.Fatal("live native/PostHog namespace overlap lost")
 	}
 	input := []byte(`{"uuid":"cross-same","event":"Archive duplicate","distinct_id":"u","timestamp":"2020-01-01T00:00:00Z","properties":{}}` + "\n" + `{"uuid":"import-first","event":"Imported","distinct_id":"u","timestamp":"2020-01-01T00:00:00Z","source_id":"malicious-other-source","project_id":"` + other + `","properties":{}}` + "\n")
-	job := importTestCreate(t, s, projectID, warehouse, "bound-source-import", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(input)), SHA256: importTestSHA(input)}})
+	job := importTestCreate(t, s, projectID, warehouse, "bound-source-import", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(input)), SHA256: importTestSHA(input)}})
 	rawJob, _ := json.Marshal(job)
 	var public map[string]any
 	json.Unmarshal(rawJob, &public)
@@ -221,7 +224,7 @@ func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
 		t.Fatal("native retry duplicated same-source imported message")
 	}
 	independent := []byte(`{"uuid":"import-first","event":"Other source","distinct_id":"other-source-user","timestamp":"2020-01-01T00:00:00Z","properties":{}}` + "\n")
-	otherJob := importTestCreate(t, s, projectID, foreign, "foreign-source-import", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(independent)), SHA256: importTestSHA(independent)}})
+	otherJob := importTestCreate(t, s, projectID, foreign, "foreign-source-import", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(independent)), SHA256: importTestSHA(independent)}})
 	importTestPut(t, s, projectID, otherJob, otherJob.Files[0], foreign, 0, independent, 200)
 	importTestRequest(t, s, "POST", importTestBase(projectID, otherJob.ID)+"/files/"+otherJob.Files[0].ID+"/complete", foreign, []byte(`{}`), nil, 200)
 	importTestRequest(t, s, "POST", importTestBase(projectID, otherJob.ID)+"/complete", foreign, []byte(`{}`), nil, 200)
@@ -249,7 +252,7 @@ func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
 		json.Unmarshal(row["source_id"], &source)
 		json.Unmarshal(row["message_id"], &message)
 		json.Unmarshal(row["uuid"], &uuid)
-		if !strings.HasPrefix(uuid, sourceEventUUIDPrefix) {
+		if !strings.HasPrefix(uuid, lakeapi.SourceEventUUIDPrefix) {
 			t.Fatal("bound import did not use existing physical namespace")
 		}
 		seen[source+":"+message] = true

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func runProjectPurge(t *testing.T, s *Service, project string, commit bool) {
@@ -119,7 +121,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 	one, oneToken := key(t, s, []string{"events:read"}, []string{remove})
 	_, bothToken := key(t, s, []string{"events:read"}, []string{remove, keep})
 	_, manager := key(t, s, []string{"management:read"}, []string{keep})
-	h := EmailHuman{ID: newID(), Email: "dev@example.org", CreatedAt: now(), Projects: []string{remove, keep}, Permissions: []string{"events:edit", "events:read"}, Grants: []HumanProjectGrant{{remove, []string{"events:edit"}}, {keep, []string{"events:read"}}}}
+	h := EmailHuman{ID: eventapi.NewID(), Email: "dev@example.org", CreatedAt: now(), Projects: []string{remove, keep}, Permissions: []string{"events:edit", "events:read"}, Grants: []HumanProjectGrant{{remove, []string{"events:edit"}}, {keep, []string{"events:read"}}}}
 	tx, err := s.control.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +143,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 		}
 	}
 	record, err := loadEmailHuman(t.Context(), s.control, h.ID)
-	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.projectPermissions) != 1 {
+	if err != nil || !slices.Equal(record.Projects, []string{keep}) || !slices.Equal(record.Permissions, []string{"events:read"}) || len(record.ProjectPermissions) != 1 {
 		t.Fatal(record, err)
 	}
 	runProjectPurge(t, s, keep, true)
@@ -195,7 +197,7 @@ func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)
-	human := EmailHuman{ID: newID(), Email: "member@example.test", CreatedAt: now(), Permissions: []string{"events:read"}, Projects: []string{removed, keep}, Grants: []HumanProjectGrant{
+	human := EmailHuman{ID: eventapi.NewID(), Email: "member@example.test", CreatedAt: now(), Permissions: []string{"events:read"}, Projects: []string{removed, keep}, Grants: []HumanProjectGrant{
 		{ProjectID: removed, Permissions: []string{"events:read"}}, {ProjectID: keep, Permissions: []string{"events:read"}},
 	}}
 	tx, err := s.control.BeginTx(t.Context(), nil)
@@ -209,7 +211,12 @@ func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: &interactiveOIDC{issuer: "https://identity.example"}}}
+	provider := newOIDCMock(t)
+	upstream, err := newInteractiveOIDC(&OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"}, "http://127.0.0.1:9000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: upstream}}
 	if _, err := seeder.oidcHuman(t.Context(), "member", human.Email); err != nil {
 		t.Fatal(err)
 	}

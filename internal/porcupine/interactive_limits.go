@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // InteractiveQueryConfig defines deployment safety ceilings. Tenant policy can
@@ -17,7 +19,7 @@ type InteractiveQueryConfig struct {
 }
 
 func normalizeInteractiveQueries(raw *InteractiveQueryConfig) (InteractiveQueryConfig, error) {
-	c := InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 5000, MaxRows: analyticsMaxRows, MaxResultBytes: analyticsMaxBytes}
+	c := InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 5000, MaxRows: lakeapi.AnalyticsMaxRows, MaxResultBytes: lakeapi.AnalyticsMaxBytes}
 	if raw != nil {
 		if raw.MaxConcurrent != 0 {
 			c.MaxConcurrent = raw.MaxConcurrent
@@ -47,8 +49,8 @@ func effectiveInteractiveQueries(deployment InteractiveQueryConfig, tenant Tenan
 	}
 }
 
-func (c InteractiveQueryConfig) executionLimits() queryExecutionLimits {
-	return queryExecutionLimits{Timeout: time.Duration(c.TimeoutMS) * time.Millisecond, MaxRows: c.MaxRows, MaxResultBytes: c.MaxResultBytes}
+func (c InteractiveQueryConfig) executionLimits() lakeapi.QueryExecutionLimits {
+	return lakeapi.QueryExecutionLimits{Timeout: time.Duration(c.TimeoutMS) * time.Millisecond, MaxRows: c.MaxRows, MaxResultBytes: c.MaxResultBytes}
 }
 
 type tenantQueryAdmission struct {
@@ -90,7 +92,7 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 	}
 	limits := effectiveInteractiveQueries(s.interactiveConfig, tenant.Budgets)
 	if ctx.Err() != nil {
-		return nil, InteractiveQueryConfig{}, nil, duckLakeQueryError(ctx, ctx.Err())
+		return nil, InteractiveQueryConfig{}, nil, lakeapi.DuckLakeQueryError(ctx, ctx.Err())
 	}
 	started := time.Now()
 	var releaseTenant func()
@@ -140,7 +142,7 @@ func (s *Service) beginInteractiveQuery(ctx context.Context, project string) (co
 	}
 	if child.Err() != nil {
 		release()
-		return nil, InteractiveQueryConfig{}, nil, duckLakeQueryError(child, child.Err())
+		return nil, InteractiveQueryConfig{}, nil, lakeapi.DuckLakeQueryError(child, child.Err())
 	}
 	if s.shared != nil {
 		stopWatchdog = armSharedQueryWatchdog(hardDeadline, s.lakeS3RequestTimeoutSeconds, s.lakeMetadataTimeoutSeconds, time.Now)

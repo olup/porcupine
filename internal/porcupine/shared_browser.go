@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"github.com/olup/porcupine/internal/auth"
 	"sync"
 	"time"
 )
@@ -165,11 +166,11 @@ func (o *oauthBrowser) redeemSharedEmailCode(key, code string, now time.Time) (*
 
 func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) (func(), bool) {
 	if o.sharedDB == nil {
-		if !o.reserveEmailDelivery(now, address, peer) {
+		if !o.emailDelivery.Reserve(now, address, peer) {
 			return nil, false
 		}
 		var once sync.Once
-		return func() { once.Do(o.finishEmailDelivery) }, true
+		return func() { once.Do(o.emailDelivery.Finish) }, true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sharedBrowserTimeout)
 	defer cancel()
@@ -181,7 +182,7 @@ func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) 
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(2081294132)`); err != nil {
 		return nil, false
 	}
-	period := now.UnixMilli() / emailDeliveryPeriod.Milliseconds()
+	period := now.UnixMilli() / auth.EmailDeliveryPeriod.Milliseconds()
 	if _, err = tx.ExecContext(ctx, `DELETE FROM oauth_email_delivery_counts WHERE period<$1`, period); err != nil {
 		return nil, false
 	}

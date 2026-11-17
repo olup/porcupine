@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func normalizedCapture(t *testing.T, s *Service, token string, batch eventBatch, status int) map[string]any {
@@ -26,7 +29,7 @@ func normalizedCapture(t *testing.T, s *Service, token string, batch eventBatch,
 }
 
 func normalizedTrack(protocol, message string) eventInput {
-	return eventInput{Event: "purchase", DistinctID: "actor", Properties: map[string]any{"token": "business", "distinct_id": "business-distinct", "cookieless": "business-marker"}, ingestion: &ingestionMetadata{Protocol: protocol, MessageID: message, EventType: "track", Context: json.RawMessage(`{"large":9007199254740993,"page":{"url":"https://example.test/checkout"}}`)}}
+	return eventInput{Event: "purchase", DistinctID: "actor", Properties: map[string]any{"token": "business", "distinct_id": "business-distinct", "cookieless": "business-marker"}, ingestion: &ingestfmt.Metadata{Protocol: protocol, MessageID: message, EventType: "track", Context: json.RawMessage(`{"large":9007199254740993,"page":{"url":"https://example.test/checkout"}}`)}}
 }
 
 func receiptFrom(t *testing.T, result map[string]any, index int) map[string]any {
@@ -49,7 +52,7 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "shared-message")}, 200)
 	receipt := receiptFrom(t, first, 0)
 	uuid, id := receipt["uuid"].(string), receipt["event_id"].(string)
-	if len(uuid) <= 128 || !validStoredEventUUID(uuid) || id == "" || receipt["duplicate"] != false {
+	if len(uuid) <= 128 || !lakeapi.ValidStoredEventUUID(uuid) || id == "" || receipt["duplicate"] != false {
 		t.Fatal("native event lacks stable disjoint physical UUID and numeric ID", receipt)
 	}
 	second := normalizedCapture(t, s, token, eventBatch{normalizedTrack("segment", "shared-message")}, 200)
@@ -73,7 +76,7 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 		t.Fatal("different logical source collided")
 	}
 	_, legacy := key(t, s, []string{"events:write"}, []string{projectID})
-	legacyUUID := sourceEventUUIDPrefix + strings.Repeat("a", 128-len(sourceEventUUIDPrefix))
+	legacyUUID := lakeapi.SourceEventUUIDPrefix + strings.Repeat("a", 128-len(lakeapi.SourceEventUUIDPrefix))
 	request(t, s, "POST", "/capture/", "", captureBody(legacy, legacyUUID), 200)
 	var stored string
 	if err := s.db.QueryRow(`SELECT uuid FROM events WHERE uuid=?`, legacyUUID).Scan(&stored); err != nil || stored != legacyUUID {
@@ -113,7 +116,7 @@ func TestNormalizedMetadataPersistsWithoutChangingBusinessProperties(t *testing.
 		t.Fatal("private provenance is not included in queue capacity")
 	}
 	privacy := normalizedTrack("native", "privacy")
-	privacy.DistinctID = cookielessSentinel
+	privacy.DistinctID = ingestfmt.CookielessSentinel
 	privacy.ingestion.Context = json.RawMessage(`{"large":9007199254740993,"ip":"192.0.2.3","session_id":"secret","nested":{"anonymousId":"secret","page":{"url":"https://example.test"}},"list":[{"user_id":"secret"}]}`)
 	result := normalizedCapture(t, s, token, eventBatch{privacy}, 200)
 	projection, _, err = s.currentEvent(context.Background(), projectID, receiptFrom(t, result, 0)["uuid"].(string))
@@ -203,8 +206,8 @@ func TestNormalizedControlContextNeverReachesSQLiteWALOrProjection(t *testing.T)
 	t.Parallel()
 	s := service(t, 100)
 	_, token := project(t, s)
-	accepted := eventInput{Event: "$identify", DistinctID: "account", Properties: map[string]any{"$anon_distinct_id": "anon", "$set": map[string]any{"plan": "approved"}}, ingestion: &ingestionMetadata{Protocol: "native", MessageID: "accepted-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.81","private":"accepted-control-context-marker"}`)}}
-	ignored := eventInput{Event: "$identify", DistinctID: cookielessSentinel, Properties: map[string]any{"$set": map[string]any{"email": "discarded-control-email-marker"}}, ingestion: &ingestionMetadata{Protocol: "segment", MessageID: "ignored-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.82","nested":{"session_id":"ignored-control-context-marker"}}`)}}
+	accepted := eventInput{Event: "$identify", DistinctID: "account", Properties: map[string]any{"$anon_distinct_id": "anon", "$set": map[string]any{"plan": "approved"}}, ingestion: &ingestfmt.Metadata{Protocol: "native", MessageID: "accepted-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.81","private":"accepted-control-context-marker"}`)}}
+	ignored := eventInput{Event: "$identify", DistinctID: ingestfmt.CookielessSentinel, Properties: map[string]any{"$set": map[string]any{"email": "discarded-control-email-marker"}}, ingestion: &ingestfmt.Metadata{Protocol: "segment", MessageID: "ignored-control", EventType: "identify", Context: json.RawMessage(`{"ip":"192.0.2.82","nested":{"session_id":"ignored-control-context-marker"}}`)}}
 	response := normalizedCapture(t, s, token, eventBatch{accepted, ignored}, 200)
 	if response["identity_ignored"] != float64(1) {
 		t.Fatal("cookieless control was not ignored")

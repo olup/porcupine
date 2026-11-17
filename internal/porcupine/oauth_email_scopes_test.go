@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 // A deployment operator's personal privileges and an OAuth tool's authorization
@@ -79,10 +81,10 @@ func TestEmailProjectManagementGrantCannotMintIndependentClient(t *testing.T) {
 
 func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {
 	t.Parallel()
-	human := actor{emailHuman: true, Permissions: []string{"events:read", "events:write"}, Projects: []string{"a", "b"}, projectPermissions: map[string][]string{
+	human := auth.Principal{EmailHuman: true, Permissions: []string{"events:read", "events:write"}, Projects: []string{"a", "b"}, ProjectPermissions: map[string][]string{
 		"a": {"events:read"}, "b": {"events:read", "events:write"},
 	}}
-	tool := actor{Permissions: []string{"events:read", "events:write"}, Projects: []string{"*"}}
+	tool := auth.Principal{Permissions: []string{"events:read", "events:write"}, Projects: []string{"*"}}
 	for _, tt := range []struct {
 		projects, scopes []string
 		allowed          bool
@@ -93,7 +95,7 @@ func TestInteractiveScopeMatrixAcrossSelectedProjects(t *testing.T) {
 		{[]string{"a", "b"}, []string{"events:write", "events:read"}, false},
 		{[]string{"*"}, []string{"events:read"}, false},
 	} {
-		if got := interactiveProjectsAllowed(human, tool, tt.scopes, tt.projects); got != tt.allowed {
+		if got := auth.InteractiveProjectsAllowed(human, tool, tt.scopes, tt.projects); got != tt.allowed {
 			t.Errorf("projects=%v scopes=%v got %v want %v", tt.projects, tt.scopes, got, tt.allowed)
 		}
 	}
@@ -118,7 +120,7 @@ func TestEmailReadScopeDiscoveryForRestrictedClient(t *testing.T) {
 	for _, scope := range resourceMeta["scopes_supported"].([]any) {
 		app.Scopes = append(app.Scopes, scope.(string))
 	}
-	if !slices.Equal(app.Scopes, interactiveOAuthScopes) {
+	if !slices.Equal(app.Scopes, auth.InteractiveReadScopes()) {
 		t.Fatal("protected resource advertised elevated default scopes")
 	}
 	token := j.browserLogin(t, app, "reader@example.test", "/api/v1", project, "", 200)

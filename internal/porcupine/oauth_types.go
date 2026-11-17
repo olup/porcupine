@@ -3,11 +3,9 @@ package porcupine
 import (
 	"context"
 	"errors"
-	"net"
-	"net/url"
-	"strconv"
 	"strings"
 
+	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/time/rate"
 )
 
@@ -37,37 +35,45 @@ type oauthRuntime struct {
 	limiter           *rate.Limiter
 	oidc              *interactiveOIDC
 	browser           *oauthBrowser
-	authorizationGate oauthAuthorizationGate
+	authorizationGate auth.AuthorizationGate
 }
 
-func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
-	u, err := url.Parse(c.Issuer)
-	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != "" && u.Path != "/" || u.RawPath != "" {
-		return nil, errors.New("invalid OAuth issuer")
+// ValidateOAuthConfig checks startup settings without network requests or database writes.
+func ValidateOAuthConfig(config OAuthConfig) error {
+	_, err := normalizeOAuthSettings(config)
+	return err
+}
+
+func normalizeOAuthSettings(c OAuthConfig) (OAuthConfig, error) {
+	issuer, err := auth.NormalizeIssuer(c.Issuer, c.OIDC != nil || c.Email != nil)
+	if err != nil {
+		return OAuthConfig{}, err
 	}
-	if u.Scheme != "https" {
-		ip := net.ParseIP(u.Hostname())
-		if u.Scheme != "http" || !(u.Hostname() == "localhost" || ip != nil && ip.IsLoopback()) {
-			return nil, errors.New("OAuth issuer requires HTTPS except on loopback")
-		}
-	}
-	c.Issuer = strings.TrimSuffix(c.Issuer, "/")
+	c.Issuer = issuer
 	if c.OIDC != nil && c.Email == nil {
 		c.Email = &EmailConfig{}
 	}
 	if c.Email != nil && c.Email.SendCode == nil && c.OIDC == nil {
-		return nil, errors.New("email login requires a configured sender")
-	}
-	if c.Email != nil || c.OIDC != nil {
-		if err := validateBrowserIssuer(u, c.Issuer); err != nil {
-			return nil, err
-		}
+		return OAuthConfig{}, errors.New("email login requires a configured sender")
 	}
 	if c.AccessTokenLifetimeSeconds == 0 {
 		c.AccessTokenLifetimeSeconds = 900
 	}
 	if c.AccessTokenLifetimeSeconds < 60 || c.AccessTokenLifetimeSeconds > 3600 {
-		return nil, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
+		return OAuthConfig{}, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
+	}
+	if c.OIDC != nil {
+		if err := auth.ValidateOIDCConfig(auth.OIDCConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, ClientSecret: c.OIDC.ClientSecret}, c.Issuer); err != nil {
+			return OAuthConfig{}, err
+		}
+	}
+	return c, nil
+}
+
+func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
+	c, err := normalizeOAuthSettings(c)
+	if err != nil {
+		return nil, err
 	}
 	interactive, err := newInteractiveOIDC(c.OIDC, c.Issuer)
 	if err != nil {
@@ -77,37 +83,7 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 	if interactive != nil {
 		browser = interactive.oauthBrowser
 	} else if c.Email != nil {
-		browser = newOAuthBrowser(u.Scheme == "https")
+		browser = newOAuthBrowser(strings.HasPrefix(c.Issuer, "https://"))
 	}
 	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10), oidc: interactive}, nil
-}
-
-// A consent form compares the browser Origin byte for byte. Machine clients
-// retain their configured issuer and resource strings across upgrades.
-func validateBrowserIssuer(u *url.URL, issuer string) error {
-	host := strings.ToLower(u.Hostname())
-	if ip := net.ParseIP(host); ip != nil {
-		host = ip.String()
-	}
-	port := u.Port()
-	if port != "" {
-		number, err := strconv.Atoi(port)
-		if err != nil || number < 1 || number > 65535 {
-			return errors.New("invalid OAuth issuer port")
-		}
-		port = strconv.Itoa(number)
-		if u.Scheme == "https" && port == "443" || u.Scheme == "http" && port == "80" {
-			port = ""
-		}
-	}
-	if port != "" {
-		host = net.JoinHostPort(host, port)
-	} else if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	canonical := u.Scheme + "://" + host
-	if issuer != canonical {
-		return errors.New("OAuth issuer must use a canonical origin: lowercase scheme and host, canonical IP and port, no default port")
-	}
-	return nil
 }

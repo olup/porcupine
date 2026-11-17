@@ -9,11 +9,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // eventRules is the shared policy for live and historical acceptance. Its clock
 // and budgets have one owner even when several entry points write the journal.
 type eventRules struct {
+	receiptGates      receiptProjectGates
 	admission         *contextMutex
 	clock             func() time.Time
 	queueMax          int
@@ -22,11 +27,14 @@ type eventRules struct {
 	consumeTenant     func(context.Context, *sql.Tx, string, time.Time, int64) error
 	cookielessKey     func(context.Context, *sql.Tx, string) ([]byte, error)
 	prepareAcceptance func(context.Context, string) error
+	// receiptRetention bounds local receipts; knownEvents finds older events.
+	receiptRetention time.Duration
+	knownEvents      func(context.Context, string, []string) (map[string]int64, error)
 }
 
 type preparedLiveBatch struct {
 	projectID  string
-	events     []Event
+	events     []eventapi.Event
 	cookieless bool
 }
 
@@ -52,12 +60,12 @@ func (e *acceptanceFailure) Error() string { return e.message }
 type eventAcceptance struct {
 	db              *sql.DB
 	rules           *eventRules
-	enqueueWebhooks func(context.Context, *sql.Tx, []Event) error
+	enqueueWebhooks func(context.Context, *sql.Tx, []eventapi.Event) error
 }
 
 func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time) (preparedLiveBatch, error) {
 	received := receiptTime.Format(time.RFC3339Nano)
-	events := make([]Event, 0, len(batch))
+	events := make([]eventapi.Event, 0, len(batch))
 	cookieless := false
 	for _, e := range batch {
 		if e.DistinctID == "" && e.ingestion == nil {
@@ -65,7 +73,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 				e.DistinctID = value
 			}
 		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
+		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
 			cookieless = true
 		}
 		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
@@ -75,7 +83,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 			return preparedLiveBatch{}, errors.New("unsupported reserved control event")
 		}
 		if e.UUID == "" && e.ingestion == nil {
-			e.UUID = newID()
+			e.UUID = eventapi.NewID()
 		}
 		if e.ingestion == nil && len(e.UUID) > 128 {
 			return preparedLiveBatch{}, errors.New("uuid exceeds 128 characters")
@@ -112,11 +120,11 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		if err != nil {
 			return preparedLiveBatch{}, errors.New("invalid properties")
 		}
-		prepared := Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
+		prepared := eventapi.Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
 		metadata := e.ingestion
 		if metadata == nil && source != "" {
-			enriched := eventWithMetadata(prepared)
-			metadata = &ingestionMetadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
+			enriched := lakeapi.EventWithMetadata(prepared)
+			metadata = &ingestfmt.Metadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
 		}
 		if metadata != nil {
 			if err := prepareIngestionMetadata(&prepared, metadata, source); err != nil {
@@ -129,6 +137,19 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 }
 
 func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, peer ingestionPeer, withReceipts bool) (liveAcceptanceResult, error) {
+	// Project exclusion covers the lookup through commit, including the first
+	// receipt prune. Only local policy and the transaction take the global lock.
+	release, err := a.rules.receiptGates.lock(ctx, batch.projectID)
+	if err != nil {
+		return liveAcceptanceResult{}, err
+	}
+	defer release()
+	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
+	known, err := a.rules.coldKnown(lookup, batch.projectID, batch.events)
+	cancel()
+	if err != nil {
+		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable", retry: true}
+	}
 	if a.rules.admission != nil {
 		if err := a.rules.admission.Lock(ctx); err != nil {
 			return liveAcceptanceResult{}, err
@@ -175,11 +196,19 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	accepted, duplicates, identityIgnored := 0, 0, 0
 	var receipts []ingestionReceipt
 	var acceptedBytes int64
-	var webhookEvents []Event
+	var webhookEvents []eventapi.Event
 	for _, e := range batch.events {
 		exists, lookupErr := localReceipt(ctx, tx, batch.projectID, e.UUID)
 		if lookupErr != nil {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
+		}
+		coldID, cold := known[e.UUID]
+		if cold && !exists {
+			if withReceipts {
+				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(coldID, 10), UUID: e.UUID, Duplicate: true})
+			}
+			duplicates++
+			continue
 		}
 		if exists {
 			if withReceipts {
@@ -198,11 +227,11 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 		if pending+int64(accepted) >= int64(a.rules.queueMax) {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "queue is full", retry: true}
 		}
-		if e.DistinctID == cookielessSentinel && !isIdentityControl(e.Event) {
+		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
 			e.DistinctID = cookielessID
 			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
 			if e.SourceID != "" {
-				e.Context = scrubIngestionContext(e.Context)
+				e.Context = ingestfmt.ScrubContext(e.Context)
 			}
 		}
 		identityInput := e
@@ -265,7 +294,7 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	return liveAcceptanceResult{accepted: accepted, duplicates: duplicates, identityIgnored: identityIgnored, receipts: receipts}, nil
 }
 
-func (r *eventRules) insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event Event) (int64, error) {
+func (r *eventRules) insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event eventapi.Event) (int64, error) {
 	args := []any{event.ProjectID, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event), event.Imported}
 	query := `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`
 	if r.allocateID != nil {

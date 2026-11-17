@@ -26,13 +26,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 var duckLakeS3ExtensionOnce sync.Once
 var duckLakeS3ExtensionError error
 
 type duckLakeS3Fixture struct {
-	storage DuckLakeS3Config
+	storage lakeapi.DuckLakeS3Config
 	client  *s3.Client
 }
 
@@ -73,7 +74,7 @@ func nativeS3Fixture(t *testing.T) duckLakeS3Fixture {
 	if duckLakeS3ExtensionError != nil {
 		t.Fatal("cannot prepare the native S3 test extensions")
 	}
-	config := DuckLakeS3Config{Bucket: bucket, Endpoint: endpoint, Region: os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_REGION"),
+	config := lakeapi.DuckLakeS3Config{Bucket: bucket, Endpoint: endpoint, Region: os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_REGION"),
 		Prefix:      path.Join(os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_PREFIX"), t.Name()),
 		AccessKeyID: os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_SECRET_ACCESS_KEY"),
 		UsePathStyle: true, CACertFile: os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_CA_CERT_FILE")}
@@ -133,7 +134,7 @@ func (f duckLakeS3Fixture) put(t *testing.T, key, payload string) {
 	s3FixtureError(t, f, "write fixture sentinel", err)
 }
 
-func (f duckLakeS3Fixture) projectPrefix(t *testing.T, store *duckLakeStore, project string) string {
+func (f duckLakeS3Fixture) projectPrefix(t *testing.T, store *lakeapi.DuckLakeStore, project string) string {
 	t.Helper()
 	source, err := store.SourceID(context.Background())
 	s3FixtureError(t, f, "read native source identity", err)
@@ -141,19 +142,19 @@ func (f duckLakeS3Fixture) projectPrefix(t *testing.T, store *duckLakeStore, pro
 	return path.Join(f.storage.Prefix, source, hex.EncodeToString(digest[:])) + "/"
 }
 
-func (f duckLakeS3Fixture) flush(t *testing.T, store *duckLakeStore, id string) {
+func (f duckLakeS3Fixture) flush(t *testing.T, store *lakeapi.DuckLakeStore, id string) {
 	t.Helper()
 	p, release, err := store.LeaseProject(context.Background(), id)
 	s3FixtureError(t, f, "lease project before native flush", err)
 	defer release()
-	s3FixtureError(t, f, "flush native S3 Parquet", p.MaintenanceCommand(context.Background(), "CALL ducklake_flush_inlined_data('lake')", &duckLakeMaintenanceStats{}))
+	s3FixtureError(t, f, "flush native S3 Parquet", p.MaintenanceCommand(context.Background(), "CALL ducklake_flush_inlined_data('lake')", &lakeapi.DuckLakeMaintenanceStats{}))
 }
 
 func nativeS3Service(t *testing.T, fixture duckLakeS3Fixture) (*Service, Config) {
 	t.Helper()
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "acceptance.db"), BootstrapToken: adminToken,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2, MaintenanceInterval: 24 * time.Hour}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2, MaintenanceInterval: 24 * time.Hour}}
 	s, err := Open(config)
 	s3FixtureError(t, fixture, "open native S3 service", err)
 	s.lakeMaintenanceCancel()
@@ -184,7 +185,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	nativeRequest(t, s, ingestA, `{"type":"identify","message_id":"s3-identify","anonymous_id":"browser","user_id":"person","set":{"plan":"team"}}`, 200)
 	request(t, s, "POST", "/capture/", "", captureBody(ingestB, "s3-other-project"), 200)
 	duckLakeJourneyDrain(t, s)
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	for _, id := range []string{a, b} {
 		fixture.flush(t, store, id)
 	}
@@ -235,7 +236,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	<-s.deliveryDone
 	s.lakeMaintenanceCancel()
 	<-s.lakeMaintenanceDone
-	store = s.lake.(*duckLakeStore)
+	store = s.lake.(*lakeapi.DuckLakeStore)
 	reopened, err := store.SourceID(context.Background())
 	s3FixtureError(t, fixture, "reopened source identity", err)
 	if reopened != source {
@@ -309,7 +310,8 @@ func (c *pausedS3HTTPClient) Do(request *http.Request) (*http.Response, error) {
 }
 
 func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
-	t.Parallel()
+	// This native I/O wall-clock bound runs without competing object-store
+	// tests. The rest of the S3 suite can still execute in parallel.
 	fixture := nativeS3Fixture(t)
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
@@ -334,18 +336,24 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	storage := fixture.storage
 	storage.Endpoint, storage.CACertFile = proxy.URL, ""
 	storage.RequestTimeoutSeconds = 1
-	config := DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
-	lake, err := newDuckLake(config)
+	config := lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
+	lake, err := lakeapi.NewDuckLake(config)
 	s3FixtureError(t, fixture, "open S3 cancellation fixture", err)
-	store := lake.(*duckLakeStore)
+	store := lake.(*lakeapi.DuckLakeStore)
 	defer func() { store.Close() }()
 	ctx := context.Background()
-	s3FixtureError(t, fixture, "seed S3 cancellation fixture", store.Apply(ctx, []eventProjection{lakeStorageProjection(t, "a", "kept", 1)}))
+	s3FixtureError(t, fixture, "seed S3 cancellation fixture", store.Apply(ctx, []lakeapi.EventProjection{lakeStorageProjection(t, "a", "kept", 1)}))
 	fixture.flush(t, store, "a")
 	s3FixtureError(t, fixture, "close S3 cancellation seed", store.Close())
-	lake, err = newDuckLake(config)
+	lake, err = lakeapi.NewDuckLake(config)
 	s3FixtureError(t, fixture, "reopen S3 cancellation fixture", err)
-	store = lake.(*duckLakeStore)
+	store = lake.(*lakeapi.DuckLakeStore)
+	// Opening validates catalog identity and schema through their own Parquet
+	// files. Finish that work before blocking event reads so this test measures
+	// interruption of an analytical query, not cleanup of a failed cold open.
+	_, release, err := store.LeaseProject(ctx, "a")
+	s3FixtureError(t, fixture, "open S3 cancellation query engine", err)
+	release()
 	paused.Store(true)
 	// Cancel when the remote read is in flight, not after a fixed delay, so
 	// CPU contention before the read cannot make the fixture miss it.
@@ -359,7 +367,7 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 		canceledAt.Store(time.Now().UnixNano())
 		cancel()
 	}()
-	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
+	_, err = store.Query(limited, "a", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 	cancel()
 	elapsed := time.Since(time.Unix(0, canceledAt.Load()))
 	paused.Store(false)
@@ -372,7 +380,7 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	if err == nil || elapsed > 2*time.Second {
 		t.Fatalf("S3 query cancellation was not bounded: error=%t elapsed=%s", err != nil, elapsed)
 	}
-	result, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
+	result, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 	s3FixtureError(t, fixture, "query recovered S3 endpoint", err)
 	if len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"kept"` {
 		t.Fatal("native S3 connection did not recover after cancellation")
@@ -403,20 +411,20 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 	defer proxy.Close()
 	storage := fixture.storage
 	storage.Endpoint, storage.CACertFile = proxy.URL, ""
-	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
 	s3FixtureError(t, fixture, "open cold S3 fixture", err)
-	store := lake.(*duckLakeStore)
+	store := lake.(*lakeapi.DuckLakeStore)
 	defer store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for index, id := range []string{"a", "b"} {
-		s3FixtureError(t, fixture, "seed cold S3 fixture", store.Apply(ctx, []eventProjection{lakeStorageProjection(t, id, id, int64(index+1))}))
+		s3FixtureError(t, fixture, "seed cold S3 fixture", store.Apply(ctx, []lakeapi.EventProjection{lakeStorageProjection(t, id, id, int64(index+1))}))
 		fixture.flush(t, store, id)
 	}
 	_, releaseB, err := store.LeaseProject(ctx, "b")
 	s3FixtureError(t, fixture, "hold resident S3 project", err)
 	defer releaseB()
-	s3FixtureError(t, fixture, "evict the cold S3 project", store.Apply(ctx, []eventProjection{lakeStorageProjection(t, "c", "c", 3)}))
+	s3FixtureError(t, fixture, "evict the cold S3 project", store.Apply(ctx, []lakeapi.EventProjection{lakeStorageProjection(t, "c", "c", 3)}))
 	if store.Projects["a"] != nil {
 		t.Fatal("cold-open fixture did not evict its target")
 	}
@@ -425,7 +433,7 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		_, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
+		_, err := store.Query(ctx, "a", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 		done <- err
 	}()
 	var releaseOnce sync.Once
@@ -437,7 +445,7 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 		t.Fatal("cold opening did not exercise remote catalog-identity data")
 	}
 	limited, stop := context.WithTimeout(ctx, time.Second)
-	result, err := store.Query(limited, "b", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
+	result, err := store.Query(limited, "b", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 	stop()
 	if err != nil || len(result.Data) != 1 || string(result.Data[0]["uuid"]) != `"b"` {
 		t.Fatal("cold-project S3 access blocked an already resident project")
@@ -469,17 +477,17 @@ func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
 			if chain {
 				storage.AccessKeyID, storage.SecretAccessKey = "", ""
 			}
-			config := DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
-			lake, err := newDuckLake(config)
+			config := lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
+			lake, err := lakeapi.NewDuckLake(config)
 			s3FixtureError(t, fixture, "open untrusted S3 configuration", err)
-			store := lake.(*duckLakeStore)
+			store := lake.(*lakeapi.DuckLakeStore)
 			defer func() { store.Close() }()
 			ctx := context.Background()
 			original := lakeStorageProjection(t, "tls", "kept", 1)
-			s3FixtureError(t, fixture, "accept inline event before TLS assertion", store.Apply(ctx, []eventProjection{original}))
+			s3FixtureError(t, fixture, "accept inline event before TLS assertion", store.Apply(ctx, []lakeapi.EventProjection{original}))
 			project, release, err := store.LeaseProject(ctx, "tls")
 			s3FixtureError(t, fixture, "lease untrusted S3 store", err)
-			flushErr := project.MaintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &duckLakeMaintenanceStats{})
+			flushErr := project.MaintenanceCommand(ctx, "CALL ducklake_flush_inlined_data('lake')", &lakeapi.DuckLakeMaintenanceStats{})
 			release()
 			if flushErr == nil {
 				t.Fatal("native S3 upload accepted a certificate outside its trust bundle")
@@ -491,12 +499,12 @@ func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
 			}
 			s3FixtureError(t, fixture, "close failed TLS configuration", store.Close())
 			storage.CACertFile = fixture.storage.CACertFile
-			lake, err = newDuckLake(config)
+			lake, err = lakeapi.NewDuckLake(config)
 			s3FixtureError(t, fixture, "reopen S3 store with the correct CA", err)
-			store = lake.(*duckLakeStore)
-			s3FixtureError(t, fixture, "retry accepted event after correcting TLS", store.Apply(ctx, []eventProjection{original}))
+			store = lake.(*lakeapi.DuckLakeStore)
+			s3FixtureError(t, fixture, "retry accepted event after correcting TLS", store.Apply(ctx, []lakeapi.EventProjection{original}))
 			fixture.flush(t, store, "tls")
-			rows, err := store.Query(ctx, "tls", "SELECT uuid FROM events", nil, defaultQueryExecutionLimits())
+			rows, err := store.Query(ctx, "tls", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 			s3FixtureError(t, fixture, "query after correcting TLS", err)
 			if len(rows.Data) != 1 || string(rows.Data[0]["uuid"]) != `"kept"` {
 				t.Fatal("TLS configuration correction lost the accepted event")
@@ -510,7 +518,7 @@ func TestDuckLakeS3RejectsIncompleteLocalBackups(t *testing.T) {
 	fixture := nativeS3Fixture(t)
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "acceptance.db"), BootstrapToken: adminToken,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage}, NativeBackup: &lakeapi.NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
 	service, err := Open(config)
 	if err == nil {
 		service.Close()

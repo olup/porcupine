@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 )
 
@@ -79,7 +81,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	human := EmailHuman{ID: newID(), Email: "person@example.test", CreatedAt: now(), Permissions: []string{"management:read", "events:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"management:read", "events:read"}}}}
+	human := EmailHuman{ID: eventapi.NewID(), Email: "person@example.test", CreatedAt: now(), Permissions: []string{"management:read", "events:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"management:read", "events:read"}}}}
 	tx, err := first.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +105,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	token := j.browserLogin(t, app, human.Email, "/mcp", "project-a", "project-b", 200)
 	for _, worker := range []*Service{a, b} {
 		actor, err := worker.authenticateResource(ctx, token.AccessToken, worker.oauth.mcpResource)
-		if err != nil || !authorize(actor, "events:read", "project-a") || authorize(actor, "events:read", "project-b") {
+		if err != nil || !auth.Authorize(actor, "events:read", "project-a") || auth.Authorize(actor, "events:read", "project-b") {
 			t.Fatalf("shared OAuth lost project isolation: actor=%+v err=%v", actor, err)
 		}
 	}
@@ -111,7 +113,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	if err := first.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&operatorID); err != nil {
 		t.Fatal(err)
 	}
-	operator := context.WithValue(ctx, actorContextKey{}, actor{ID: operatorID, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
+	operator := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: operatorID, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
 	clientInput := &OAuthClientCreateInput{}
 	clientInput.Body.Name = "Shared reporting service"
 	clientInput.Body.Permissions = []string{"events:read"}
@@ -149,7 +151,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	for _, worker := range []*Service{a, b} {
 		for _, secret := range []string{machineToken.AccessToken, key.Body.Token} {
 			principal, err := worker.authenticateResource(ctx, secret, worker.oauth.apiResource)
-			if err != nil || !authorize(principal, "events:read", "project-a") || authorize(principal, "events:read", "project-b") {
+			if err != nil || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") {
 				t.Fatalf("machine access lost shared scope: actor=%+v err=%v", principal, err)
 			}
 		}
@@ -169,7 +171,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestID, err := oauthRandom("pc_ar_")
+	requestID, err := auth.RandomSecret("pc_ar_")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +182,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		hash(requestID), authorization.ClientID, authorization.RedirectURI, authorization.Scope, authorization.Resource, authorization.State, authorization.CodeChallenge, authorization.ExpiresAtMS); err != nil {
 		t.Fatal(err)
 	}
-	callback, err := a.issueOAuthAuthorizationCode(ctx, authorization, human.ID, humanLoginProof{Verified: true}, actor{ID: human.ID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}})
+	callback, err := a.issueOAuthAuthorizationCode(ctx, authorization, human.ID, humanLoginProof{Verified: true}, auth.Principal{ID: human.ID, Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}})
 	if err != nil {
 		t.Fatal(err)
 	}

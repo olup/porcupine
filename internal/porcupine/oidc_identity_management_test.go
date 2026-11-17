@@ -6,6 +6,9 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type identityRecoveryTokens struct{ access, refresh string }
@@ -72,7 +75,7 @@ func identityRecoveryVersion(t *testing.T, f *oidcFixture) int64 {
 
 func identityRecoveryOtherHuman(t *testing.T, f *oidcFixture) string {
 	t.Helper()
-	human := EmailHuman{ID: newID(), Email: "unaffected@example.test", CreatedAt: now(), Projects: []string{"project-b"}, Permissions: []string{"events:read", "management:read"}, Grants: []HumanProjectGrant{{ProjectID: "project-b", Permissions: []string{"events:read", "management:read"}}}}
+	human := EmailHuman{ID: eventapi.NewID(), Email: "unaffected@example.test", CreatedAt: now(), Projects: []string{"project-b"}, Permissions: []string{"events:read", "management:read"}, Grants: []HumanProjectGrant{{ProjectID: "project-b", Permissions: []string{"events:read", "management:read"}}}}
 	tx, err := f.s.control.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +288,7 @@ func TestOIDCIdentityRecoveryPreservesTenantMembershipsAndTeamCredentials(t *tes
 	}
 	for _, credential := range []string{machineToken, serviceKey} {
 		principal, err := f.s.authenticateResource(t.Context(), credential, f.host.URL+"/api/v1")
-		if err != nil || !authorize(principal, "events:read", projects[0]) || authorize(principal, "events:read", projects[1]) {
+		if err != nil || !auth.Authorize(principal, "events:read", projects[0]) || auth.Authorize(principal, "events:read", projects[1]) {
 			t.Fatal("identity recovery changed independent team credentials", err)
 		}
 	}
@@ -296,7 +299,7 @@ func TestOIDCIdentityRecoveryPreservesTenantMembershipsAndTeamCredentials(t *tes
 		}
 	}
 	current, err := loadEmailHuman(t.Context(), f.s.control, f.humanID)
-	if err != nil || !authorize(current, "events:read", projects[0]) || !authorize(current, "events:read", projects[1]) {
+	if err != nil || !auth.Authorize(current, "events:read", projects[0]) || !auth.Authorize(current, "events:read", projects[1]) {
 		t.Fatal("identity recovery changed the human's standing project permissions", err)
 	}
 	var revoked *string

@@ -10,11 +10,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
 func cookielessRequest(t *testing.T, s *Service, token, uuid, peer, ua string, headers map[string]string, status int) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"api_key": token, "event": "visit", "uuid": uuid, "properties": map[string]any{"distinct_id": cookielessSentinel}})
+	body, err := json.Marshal(map[string]any{"api_key": token, "event": "visit", "uuid": uuid, "properties": map[string]any{"distinct_id": ingestfmt.CookielessSentinel}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +40,9 @@ func cookielessRawRequest(t *testing.T, s *Service, body []byte, peer, ua string
 	return w
 }
 
-func storedCookieless(t *testing.T, s *Service, uuid string) Event {
+func storedCookieless(t *testing.T, s *Service, uuid string) eventapi.Event {
 	t.Helper()
-	var e Event
+	var e eventapi.Event
 	var props string
 	if err := s.db.QueryRow(`SELECT distinct_id,properties,timestamp,received_at FROM events WHERE uuid=?`, uuid).Scan(&e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt); err != nil {
 		t.Fatal(err)
@@ -217,7 +220,7 @@ func TestCookielessKnownIdentityAndIPPropertiesNeverPersist(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
 	id, ingest := project(t, s)
-	props := map[string]any{"distinct_id": cookielessSentinel, "business": "retained", "$browser": "Firefox"}
+	props := map[string]any{"distinct_id": ingestfmt.CookielessSentinel, "business": "retained", "$browser": "Firefox"}
 	removed := []string{"$device_id", "$user_id", "$anon_distinct_id", "$session_id", "$window_id", "$ip", "ip", "ip_address", "client_ip", "remote_addr", "x-forwarded-for"}
 	for _, field := range removed {
 		props[field] = "192.0.2.73"
@@ -239,7 +242,7 @@ func TestCookielessKnownIdentityAndIPPropertiesNeverPersist(t *testing.T) {
 	}
 	result := request(t, s, "GET", "/api/v1/projects/"+id+"/events", adminToken, "", 200)
 	api, _ := json.Marshal(result)
-	for _, raw := range []string{"192.0.2.73", "198.51.100.17", cookielessSentinel} {
+	for _, raw := range []string{"192.0.2.73", "198.51.100.17", ingestfmt.CookielessSentinel} {
 		if bytes.Contains(api, []byte(raw)) {
 			t.Fatalf("raw identity in events API: %s", raw)
 		}

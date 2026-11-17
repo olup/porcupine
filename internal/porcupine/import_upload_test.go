@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/importer"
 )
 
 func importTestSHA(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
@@ -41,15 +43,15 @@ func importTestRequest(t *testing.T, s *Service, method, path, token string, dat
 	}
 	return w
 }
-func importTestJob(t *testing.T, w *httptest.ResponseRecorder) ImportUploadJob {
+func importTestJob(t *testing.T, w *httptest.ResponseRecorder) importer.ImportUploadJob {
 	t.Helper()
-	var job ImportUploadJob
+	var job importer.ImportUploadJob
 	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
 		t.Fatal(err)
 	}
 	return job
 }
-func importTestCreate(t *testing.T, s *Service, project, token, key string, files []ImportUploadFileSpec) ImportUploadJob {
+func importTestCreate(t *testing.T, s *Service, project, token, key string, files []importer.ImportUploadFileSpec) importer.ImportUploadJob {
 	t.Helper()
 	data, _ := json.Marshal(map[string]any{"idempotency_key": key, "files": files})
 	return importTestJob(t, importTestRequest(t, s, "POST", "/api/v1/projects/"+project+"/imports", token, data, nil, 201))
@@ -57,7 +59,7 @@ func importTestCreate(t *testing.T, s *Service, project, token, key string, file
 func importTestBase(project, job string) string {
 	return "/api/v1/projects/" + project + "/imports/" + job
 }
-func importTestPut(t *testing.T, s *Service, project string, job ImportUploadJob, file ImportUploadFile, token string, offset int64, data []byte, status int) *httptest.ResponseRecorder {
+func importTestPut(t *testing.T, s *Service, project string, job importer.ImportUploadJob, file importer.ImportUploadFile, token string, offset int64, data []byte, status int) *httptest.ResponseRecorder {
 	t.Helper()
 	return importTestRequest(t, s, "PUT", importTestBase(project, job.ID)+"/files/"+file.ID, token, data, map[string]string{"Upload-Offset": fmt.Sprint(offset), "X-Chunk-SHA256": importTestSHA(data)}, status)
 }
@@ -73,7 +75,7 @@ func TestImportUploadRestartChunkIdempotencyCompletionAndMarker(t *testing.T) {
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	data := append(importTestRow("first"), bytes.TrimSuffix(importTestRow("second"), []byte{'\n'})...)
-	files := []ImportUploadFileSpec{{Path: "events/part.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}
+	files := []importer.ImportUploadFileSpec{{Path: "events/part.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}
 	job := importTestCreate(t, s, project, token, "stable-import", files)
 	again := importTestCreate(t, s, project, token, "stable-import", files)
 	if again.ID != job.ID || again.Files[0].ID != job.Files[0].ID {
@@ -134,8 +136,8 @@ func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	data := append(importTestRow("one"), importTestRow("two")...)
-	file := ImportUploadFileSpec{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}
-	job := importTestCreate(t, s, project, token, "queue", []ImportUploadFileSpec{file})
+	file := importer.ImportUploadFileSpec{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}
+	job := importTestCreate(t, s, project, token, "queue", []importer.ImportUploadFileSpec{file})
 	importTestPut(t, s, project, job, job.Files[0], token, 0, data, 503)
 	status, _ := s.imports.loadImportJob(t.Context(), project, job.ID)
 	if status.Files[0].OffsetBytes != 0 || status.Counts.Rows != 0 || eventCount(t, s) != 0 {
@@ -151,7 +153,7 @@ func TestImportUploadConflictDigestAndQueueAtomicity(t *testing.T) {
 	wrong := file
 	wrong.SHA256 = strings.Repeat("a", 64)
 	wrong.Path = "wrong.jsonl"
-	bad := importTestCreate(t, s, project, token, "bad-digest", []ImportUploadFileSpec{wrong})
+	bad := importTestCreate(t, s, project, token, "bad-digest", []importer.ImportUploadFileSpec{wrong})
 	importTestPut(t, s, project, bad, bad.Files[0], token, 0, data, 200)
 	importTestRequest(t, s, "POST", importTestBase(project, bad.ID)+"/files/"+bad.Files[0].ID+"/complete", token, nil, nil, 409)
 	failed, _ := s.imports.loadImportJob(t.Context(), project, bad.ID)
@@ -171,14 +173,14 @@ func TestImportUploadOrderCancellationAndBoundedSamples(t *testing.T) {
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	data := append([]byte(strings.Repeat("{\"private\":\"must-not-be-in-status\"}\n", 50)), importTestRow("valid")...)
-	job := importTestCreate(t, s, project, token, "order", []ImportUploadFileSpec{{Path: "z-events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}, {Path: "a-persons.jsonl", Kind: "persons", SizeBytes: 0, SHA256: importTestSHA(nil)}})
+	job := importTestCreate(t, s, project, token, "order", []importer.ImportUploadFileSpec{{Path: "z-events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}, {Path: "a-persons.jsonl", Kind: "persons", SizeBytes: 0, SHA256: importTestSHA(nil)}})
 	if job.Files[0].Kind != "persons" {
 		t.Fatal("persons are not first in manifest upload order")
 	}
 	importTestPut(t, s, project, job, job.Files[1], token, 0, data, 409)
 	importTestRequest(t, s, "POST", importTestBase(project, job.ID)+"/files/"+job.Files[0].ID+"/complete", token, nil, nil, 200)
 	imported := importTestJob(t, importTestPut(t, s, project, job, job.Files[1], token, 0, data, 200))
-	if imported.Counts.Invalid != 50 || imported.Counts.Accepted != 1 || len(imported.Samples) != importMaxSamples {
+	if imported.Counts.Invalid != 50 || imported.Counts.Accepted != 1 || len(imported.Samples) != importer.MaxSamples {
 		t.Fatal("invalid row counts or sample budget wrong", imported.Counts)
 	}
 	encoded, _ := json.Marshal(imported)
@@ -186,7 +188,7 @@ func TestImportUploadOrderCancellationAndBoundedSamples(t *testing.T) {
 		t.Fatal("status leaked invalid row data")
 	}
 	partialData := []byte(`{"uuid":"partial-secret`)
-	partial := importTestCreate(t, s, project, token, "cancel", []ImportUploadFileSpec{{Path: "partial.jsonl", Kind: "events", SizeBytes: int64(len(partialData) + 10), SHA256: strings.Repeat("a", 64)}})
+	partial := importTestCreate(t, s, project, token, "cancel", []importer.ImportUploadFileSpec{{Path: "partial.jsonl", Kind: "events", SizeBytes: int64(len(partialData) + 10), SHA256: strings.Repeat("a", 64)}})
 	importTestPut(t, s, project, partial, partial.Files[0], token, 0, partialData, 200)
 	cancelled := importTestJob(t, importTestRequest(t, s, "DELETE", importTestBase(project, partial.ID), token, nil, nil, 200))
 	if cancelled.State != "cancelled" {
@@ -212,13 +214,13 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 	_, onlyImport := key(t, s, []string{"imports:write"}, []string{project})
 	peerID, peer := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	data := importTestRow("row")
-	manifest := map[string]any{"idempotency_key": "auth", "files": []ImportUploadFileSpec{{Path: "file.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}}
+	manifest := map[string]any{"idempotency_key": "auth", "files": []importer.ImportUploadFileSpec{{Path: "file.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}}
 	raw, _ := json.Marshal(manifest)
 	base := "/api/v1/projects/" + project + "/imports"
 	importTestRequest(t, s, "POST", base, "", raw, nil, 401)
 	importTestRequest(t, s, "POST", base, public, raw, nil, 403)
 	importTestRequest(t, s, "POST", base, onlyImport, raw, nil, 403)
-	job := importTestCreate(t, s, project, writer, "auth", manifest["files"].([]ImportUploadFileSpec))
+	job := importTestCreate(t, s, project, writer, "auth", manifest["files"].([]importer.ImportUploadFileSpec))
 	importTestRequest(t, s, "GET", importTestBase(other, job.ID), writer, nil, nil, 403)
 	importTestRequest(t, s, "GET", importTestBase(other, job.ID), adminToken, nil, nil, 404)
 	importTestRequest(t, s, "GET", importTestBase(project, job.ID), peer, nil, nil, 200)
@@ -227,17 +229,17 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 	importTestRequest(t, s, "GET", importTestBase(project, job.ID), peer, nil, nil, 401)
 	for i, label := range []string{"../escape.jsonl", "/absolute.jsonl", "x/../escape.jsonl", "x\\file.jsonl"} {
 		manifest["idempotency_key"] = fmt.Sprint("invalid-", i)
-		manifest["files"] = []ImportUploadFileSpec{{Path: label, Kind: "events", SHA256: importTestSHA(nil)}}
+		manifest["files"] = []importer.ImportUploadFileSpec{{Path: label, Kind: "events", SHA256: importTestSHA(nil)}}
 		raw, _ = json.Marshal(manifest)
 		importTestRequest(t, s, "POST", base, writer, raw, nil, 400)
 	}
-	changed := map[string]any{"idempotency_key": "auth", "files": []ImportUploadFileSpec{{Path: "other.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
+	changed := map[string]any{"idempotency_key": "auth", "files": []importer.ImportUploadFileSpec{{Path: "other.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
 	raw, _ = json.Marshal(changed)
 	importTestRequest(t, s, "POST", base, writer, raw, nil, 409)
 	for i := 0; i < 3; i++ {
-		importTestCreate(t, s, project, writer, fmt.Sprint("cap-", i), []ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}})
+		importTestCreate(t, s, project, writer, fmt.Sprint("cap-", i), []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}})
 	}
-	raw, _ = json.Marshal(map[string]any{"idempotency_key": "fifth", "files": []ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}})
+	raw, _ = json.Marshal(map[string]any{"idempotency_key": "fifth", "files": []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}})
 	importTestRequest(t, s, "POST", base, writer, raw, nil, 503)
 }
 
@@ -249,10 +251,10 @@ func TestImportUploadOAuthRequiresAPIAudience(t *testing.T) {
 	client := f.createClient(t, admin.AccessToken, []string{"imports:write", "events:write"}, []string{project})
 	access := f.token(t, client.ClientID, client.ClientSecret, f.s.oauth.apiResource)
 	mcp := f.token(t, client.ClientID, client.ClientSecret, f.s.oauth.mcpResource)
-	body := map[string]any{"idempotency_key": "oauth", "files": []ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
+	body := map[string]any{"idempotency_key": "oauth", "files": []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
 	base := "/api/v1/projects/" + project + "/imports"
 	f.call(t, "POST", base, mcp.AccessToken, body, 401, nil)
-	var job ImportUploadJob
+	var job importer.ImportUploadJob
 	f.call(t, "POST", base, access.AccessToken, body, 201, &job)
 	if job.ID == "" {
 		t.Fatal("project API OAuth import failed")
@@ -268,14 +270,14 @@ func TestImportUploadOversizedRowsRemainBoundedAndResume(t *testing.T) {
 	s := service(t, 100)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
-	data := append([]byte(strings.Repeat("x", importMaxRowBytes+100)+"\n"), importTestRow("after-oversize")...)
-	job := importTestCreate(t, s, project, token, "oversize", []ImportUploadFileSpec{{Path: "oversize.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	data := append([]byte(strings.Repeat("x", importer.MaxRowBytes+100)+"\n"), importTestRow("after-oversize")...)
+	job := importTestCreate(t, s, project, token, "oversize", []importer.ImportUploadFileSpec{{Path: "oversize.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 	for offset := 0; offset < len(data); {
-		end := min(offset+importMaxChunkBytes, len(data))
+		end := min(offset+importer.MaxChunkBytes, len(data))
 		importTestPut(t, s, project, job, job.Files[0], token, int64(offset), data[offset:end], 200)
 		var retained int
 		s.db.QueryRow(`SELECT length(tail) FROM import_upload_files WHERE id=?`, job.Files[0].ID).Scan(&retained)
-		if retained > importMaxRowBytes {
+		if retained > importer.MaxRowBytes {
 			t.Fatal("oversized row exceeded durable staging cap")
 		}
 		offset = end
@@ -306,7 +308,7 @@ func TestImportUploadRevocationAndCancellationDuringBodyRead(t *testing.T) {
 			project, _ := project(t, s)
 			actorID, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 			data := importTestRow("new-row")
-			job := importTestCreate(t, s, project, token, "blocked", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+			job := importTestCreate(t, s, project, token, "blocked", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 			body := &importBlockingBody{reader: bytes.NewReader(data), entered: make(chan struct{}), release: make(chan struct{})}
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(body.release) }) }
@@ -359,7 +361,7 @@ func TestImportUploadConcurrentChunksCommitExactlyOnce(t *testing.T) {
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	data := importTestRow("concurrent")
-	job := importTestCreate(t, s, project, token, "concurrent", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	job := importTestCreate(t, s, project, token, "concurrent", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 	handler := s.Handler()
 	responses := make(chan int, 12)
 	for range 12 {
@@ -402,7 +404,7 @@ func TestImportUploadFreezesBoundSourceAcrossAdminResumeAndLiveReplay(t *testing
 	other := createWriter("other-source")
 	request(t, s, "POST", "/capture/", "", captureBody(warehouse, "same-live"), 200)
 	data := append(importTestRow("same-live"), importTestRow("import-first")...)
-	spec := []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}
+	spec := []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}}
 	job := importTestCreate(t, s, project, warehouse, "bound", spec)
 	if job.SourceID != "warehouse" {
 		t.Fatal("job did not freeze authenticated creator source")
@@ -448,7 +450,7 @@ func TestImportUploadInvalidBoundMetadataDoesNotPoisonFile(t *testing.T) {
 	token := created["token"].(string)
 	bad, _ := json.Marshal(map[string]any{"uuid": "bad-context", "event": "page", "distinct_id": "customer", "timestamp": "2020-01-02T03:04:05Z", "properties": map[string]any{"$current_url": "https://example.test/" + strings.Repeat("x", 70000)}})
 	data := append(append(bad, '\n'), importTestRow("valid-after-context")...)
-	job := importTestCreate(t, s, project, token, "invalid-context", []ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	job := importTestCreate(t, s, project, token, "invalid-context", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
 	imported := importTestJob(t, importTestPut(t, s, project, job, job.Files[0], token, 0, data, 200))
 	if imported.Counts.Rows != 2 || imported.Counts.Invalid != 1 || imported.Counts.Accepted != 1 || len(imported.Samples) != 1 || imported.Samples[0].Reason != "invalid_metadata" || eventCount(t, s) != 1 {
 		t.Fatal("bad bound row metadata poisoned unrelated valid archive row", imported)

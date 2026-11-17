@@ -3,6 +3,8 @@ package porcupine
 import (
 	"context"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const instanceProbeTimeout = time.Second
@@ -35,13 +37,13 @@ type InstanceConfiguration struct {
 }
 
 type InstanceStatus struct {
-	NativeBackup    *NativeBackupStatus    `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
-	DuckLakeCleanup *DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
-	Status          string                 `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
-	Version         string                 `json:"version" doc:"Server build version, or dev for an unversioned build."`
-	CheckedAt       string                 `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
-	Checks          InstanceChecks         `json:"checks"`
-	Configuration   InstanceConfiguration  `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
+	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
+	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
+	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, or when administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
+	Version         string                         `json:"version" doc:"Server build version, or dev for an unversioned build."`
+	CheckedAt       string                         `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
+	Checks          InstanceChecks                 `json:"checks"`
+	Configuration   InstanceConfiguration          `json:"configuration" doc:"Configured services, not health claims or authorization grants."`
 }
 
 type InstanceStatusOutput struct{ Body InstanceStatus }
@@ -120,7 +122,7 @@ AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND grant
 			result.Status = "degraded"
 		}
 	}
-	if s.lake != nil && principal(ctx).admin() {
+	if s.lake != nil && principal(ctx).Admin() {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
 		status, err := s.lake.CleanupStatus(probe)
 		cancel()
@@ -133,7 +135,7 @@ AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND grant
 			result.Status = "degraded"
 		}
 	}
-	if s.backups != nil && principal(ctx).admin() {
+	if s.backups != nil && principal(ctx).Admin() {
 		result.NativeBackup = s.nativeBackupStatus()
 		if result.NativeBackup != nil && (result.NativeBackup.State == "failed" || result.NativeBackup.State == "interrupted") {
 			result.Status = "degraded"

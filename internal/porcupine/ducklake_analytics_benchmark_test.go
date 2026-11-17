@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // The container runner measures the native service in a fixed resource budget.
@@ -91,7 +93,7 @@ func nativeBenchmarkServiceMemory(b testing.TB, memoryMB int) (*Service, string,
 			b.Error(err)
 		}
 	})
-	s.lake, err = newDuckLake(DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake"), MemoryLimitMB: memoryMB})
+	s.lake, err = lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake"), MemoryLimitMB: memoryMB})
 	s.lakeMemoryMB = memoryMB
 	if err != nil {
 		b.Fatal(err)
@@ -156,7 +158,7 @@ func nativeBenchmarkAccept(b testing.TB, handler http.Handler, token string, pay
 	}
 }
 
-func nativeBenchmarkQuery(b testing.TB, handler http.Handler, project, sql string) AnalyticsResult {
+func nativeBenchmarkQuery(b testing.TB, handler http.Handler, project, sql string) lakeapi.AnalyticsResult {
 	b.Helper()
 	body, err := json.Marshal(map[string]any{"sql": sql})
 	if err != nil {

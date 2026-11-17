@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type architectureQuery struct{ name, sql string }
@@ -71,12 +73,12 @@ func architectureHTTP(handler http.Handler, method, path, token string, body []b
 	return w.Code, w.Body.Bytes(), time.Since(start)
 }
 
-func architectureRunQuery(handler http.Handler, token, project, sql string) (int, AnalyticsResult, time.Duration) {
+func architectureRunQuery(handler http.Handler, token, project, sql string) (int, lakeapi.AnalyticsResult, time.Duration) {
 	body, _ := json.Marshal(map[string]any{"sql": sql})
 	status, raw, elapsed := architectureHTTP(handler, "POST", "/api/v1/projects/"+project+"/query", token, body, false)
 	var response AnalyticsQuery
 	if status == 200 && json.Unmarshal(raw, &response) != nil {
-		return 599, AnalyticsResult{}, elapsed
+		return 599, lakeapi.AnalyticsResult{}, elapsed
 	}
 	return status, response.Result, elapsed
 }
@@ -114,7 +116,7 @@ func architectureSeed(t *testing.T, s *Service, project string, from, to int) bo
 	defer cancel()
 	start := time.Now()
 	var err error
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, leaseErr := store.LeaseProject(ctx, project)
 	if leaseErr != nil {
 		t.Fatal(leaseErr)
@@ -167,7 +169,7 @@ func architectureFixtureChecks(t *testing.T, s *Service, project string, rows in
 	for _, q := range architectureQueries {
 		var samples []time.Duration
 		codes := map[int]int{}
-		var result AnalyticsResult
+		var result lakeapi.AnalyticsResult
 		for range 5 {
 			code, r, elapsed := architectureRunQuery(h, adminToken, project, q.sql)
 			codes[code]++
@@ -323,7 +325,7 @@ func architectureMixed(t *testing.T, s *Service, project, token string, rate, re
 			}
 			mctx, stop := context.WithTimeout(ctx, 15*time.Second)
 			defer stop()
-			steps, err := s.lake.(*duckLakeStore).MaintainMeasured(mctx, maxCompactions)
+			steps, err := s.lake.(*lakeapi.DuckLakeStore).MaintainMeasured(mctx, maxCompactions)
 			maintenanceSuccess = err == nil
 			progress := int64(0)
 			for _, step := range steps {
@@ -408,7 +410,7 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 	nativeBenchmarkQuery(t, h, project, "SELECT count(*) AS total FROM events")
 	defer func() {
 		roots := []string{filepath.Dir(s.projectionGuard.path)}
-		roots = append(roots, s.lake.(*duckLakeStore).Root)
+		roots = append(roots, s.lake.(*lakeapi.DuckLakeStore).Root)
 		architectureEmit("resources", architectureResources(roots...))
 	}()
 	switch phase {
@@ -443,7 +445,7 @@ func TestAnalyticsArchitectureExperiment(t *testing.T) {
 		if !architectureSeed(t, s, project, 0, 1000000) {
 			return
 		}
-		store := s.lake.(*duckLakeStore)
+		store := s.lake.(*lakeapi.DuckLakeStore)
 		p, release, err := store.LeaseProject(context.Background(), project)
 		if err != nil {
 			t.Fatal(err)
@@ -594,7 +596,7 @@ func architectureProjects(t *testing.T, s *Service) {
 			}
 			samples = append(samples, elapsed)
 		}
-		store := s.lake.(*duckLakeStore)
+		store := s.lake.(*lakeapi.DuckLakeStore)
 		_ = store.Mu.Lock(context.Background())
 		resident := len(store.Projects)
 		store.Mu.Unlock()

@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type largeEventReceipt struct {
@@ -29,9 +32,9 @@ type largeEventCrashState struct {
 }
 
 func largeEventPayload(offset, count int) []byte {
-	batch := make([]nativeMessage, count)
+	batch := make([]ingestfmt.Message, count)
 	for i := range batch {
-		batch[i] = nativeMessage{Type: "track", MessageID: fmt.Sprintf("large-%04d", offset+i), ActorID: "large-anonymous", Name: "large_event", Timestamp: "2026-11-13T12:00:00Z", Properties: map[string]any{"app": "same-app", "padding": strings.Repeat("x", 15<<10)}}
+		batch[i] = ingestfmt.Message{Type: "track", MessageID: fmt.Sprintf("large-%04d", offset+i), ActorID: "large-anonymous", Name: "large_event", Timestamp: "2026-11-13T12:00:00Z", Properties: map[string]any{"app": "same-app", "padding": strings.Repeat("x", 15<<10)}}
 	}
 	raw, _ := json.Marshal(batch)
 	return raw
@@ -187,7 +190,7 @@ func TestDuckLakeLargeEventsCrashHelper(t *testing.T) {
 	}
 	stage := os.Getenv("PORCUPINE_LARGE_EVENT_STAGE")
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 2000,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512, Threads: 2, MaintenanceInterval: 24 * time.Hour}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512, Threads: 2, MaintenanceInterval: 24 * time.Hour}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

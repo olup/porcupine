@@ -6,19 +6,19 @@ Porcupine accepts native HTTP events, supported PostHog SDK requests, and Segmen
 
 | Your application | Start with |
 | --- | --- |
-| Already uses PostHog | [PostHog SDK configuration and tested profiles](compatibility.md) |
-| Already uses Segment | [Segment tracking routes and SDK example](native-and-segment-ingestion.md#point-a-segment-producer-at-porcupine) |
-| Sends JSON from a backend or custom client | [Native event format](native-and-segment-ingestion.md#send-native-events) |
+| Already uses PostHog | [PostHog SDK configuration and tested profiles](reference/compatibility.md) |
+| Already uses Segment | [Segment tracking routes and SDK example](reference/native-and-segment-ingestion.md#point-a-segment-producer-at-porcupine) |
+| Sends JSON from a backend or custom client | [Native event format](reference/native-and-segment-ingestion.md#send-native-events) |
 | Has historical events | [Native, PostHog, or Segment imports](imports.md) |
 
-PostHog compatibility covers ingestion. Queries and management use Porcupine's own API. The [compatibility guide](compatibility.md) lists the tested SDK versions and supported behavior.
+PostHog compatibility covers ingestion. Queries and management use Porcupine's own API. The [compatibility guide](reference/compatibility.md) lists the tested SDK versions and supported behavior.
 
 ## Choose project credentials
 
-Create or select a [project](projects.md) before configuring the producer.
+Create or select a [project](reference/projects.md) before configuring the producer.
 
 - For browser capture, use a `mixed` project's public ingestion key and configure the application's exact origin in `PORCUPINE_ALLOWED_ORIGINS`. Public ingestion keys allow event submission, never analytics reads.
-- For native backend capture, use an API-audience [service key](service-keys.md) or OAuth token with `events:write` for the project. A `server_only` project requires private credentials.
+- For native backend capture, use an API-audience [service key](reference/service-keys.md) or OAuth token with `events:write` for the project. A `server_only` project requires private credentials.
 
 Keep private credentials on the backend. Use the adapter-specific authentication described in the PostHog or Segment guide when configuring those SDKs.
 
@@ -35,7 +35,7 @@ curl --fail-with-body "$PORCUPINE_URL/ingest/v1/events" \
 
 The response contains the event's durable `event_id`. Reuse `message_id` when retrying that original event. For the same project and logical source, a retry returns the same `event_id` with `duplicate: true`. Use a new message ID for a new event.
 
-Native requests can contain one object or a batch of up to 1,000 objects, within a 1 MiB request limit. See the [native reference](native-and-segment-ingestion.md) for pageviews, identify messages, batches, and logical sources.
+Native requests can contain one object or a batch of up to 1,000 objects, within a 1 MiB request limit. See the [native reference](reference/native-and-segment-ingestion.md) for pageviews, identify messages, batches, and logical sources.
 
 ## Check delivery and identity
 

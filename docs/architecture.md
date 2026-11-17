@@ -1,71 +1,59 @@
 # Architecture
 
-The default Porcupine deployment runs one Go server with embedded SQLite, DuckDB, and DuckLake. The server serves ingestion, the management API, and MCP. The standalone CLI is an HTTP client and needs no local database.
+Porcupine runs ingestion, queries, and management in one Go server. The standalone CLI is an HTTP client with no native database dependency. MCP and HTTP use the same operation contracts and authorization.
 
-## From capture to a query
+## From an event to a query
 
-1. An input adapter validates and normalizes a native, PostHog, or Segment event. Credentials select the project.
-2. SQLite commits the accepted event, its identity changes, and any webhook work before the server acknowledges capture. The queue has event-count and byte limits.
-3. A worker projects accepted events into the project's DuckLake catalog. After the analytical transaction commits, a SQLite transaction records receipts and removes delivered queue payloads.
-4. DuckDB executes validated read-only SQL against that project's public `events` view. Private originals, revision heads, and deletion tombstones remain inaccessible to client SQL.
+1. A native, PostHog, or Segment adapter validates and normalizes the input. The credential selects the project.
+2. SQLite commits the event, stable-ID receipt, identity changes, and planned webhook work before capture succeeds.
+3. A background worker projects queued work into DuckLake, then confirms delivery in SQLite. Failures leave durable work to retry.
+4. DuckDB executes validated read-only SQL against the project's public `events` view. Private revision and deletion state cannot be queried directly.
 
-Each project has its own local DuckLake catalog and either a local Parquet directory or an isolated analytical S3 prefix. A bounded number of project engines can be resident at once. DuckLake manages transactional file replacement and snapshots. Porcupine schedules native maintenance and preserves its own stable-ID, identity, and event-revision rules.
+DuckLake owns transactional catalog/file changes and snapshots. Porcupine schedules maintenance and enforces event identity, revisions, deletion, and retry semantics. Queries see delivered data, so durable acceptance and analytical visibility are separate states.
 
-SQLite remains authoritative for projects, grants, OAuth state, receipts, pending events, mutations, and destination jobs. DuckLake stores analytical history. Both are needed for recovery.
+Each project has its own catalog and managed data namespace. A bounded number of project engines stay resident. More projects do not each receive a permanent process, but active engines and native memory still need sizing.
 
-## Unreleased control and ingestion separation
+## Storage responsibilities
 
-Local development builds use distinct SQLite databases for control metadata and the ingestion journal. `Service.control` owns accounts, credentials, tenants, project definitions, budget policy, and aggregate usage. `Service.db` owns event acceptance, receipt history, identity state, exact local acceptance counters, imports, mutations, and delivery jobs. Journal project and actor rows are uncredentialed foreign-key anchors, not authorization records.
+The published v0.14.0 server uses one operational SQLite database and local DuckLake catalogs, with local SSD or S3 analytical files.
 
-A local acceptance batch refreshes authoritative policy under the standalone admission lock, then atomically accepts events and consumption in the journal. Policy changes use the same lock. Usage reads replay the journal's high-water counters into control without charging twice. Native backups capture both SQLite databases and analytical state; file identities prevent pairing unrelated snapshots. The separate local layout is unreleased and requires a fresh data directory.
+**Unreleased:** local mode separates operational state into two SQLite files:
 
-## Unreleased shared deployment
+- **Control** owns humans, credentials, tenant memberships, projects, policies, and reported usage.
+- **Journal** owns accepted payloads, receipts, identity state, acceptance counters, mutations, imports, and delivery jobs.
 
-The same server can optionally use [shared PostgreSQL metadata](shared-deployment.md) and S3 while keeping a durable SQLite volume on each worker. This configuration is in development and is not included in v0.14.0.
+The two files have matching persistent identities and must be restored together. Optional shared mode replaces control and DuckLake catalog metadata with PostgreSQL and keeps journal SQLite local to each worker. Complete event rows go from that journal directly to S3 Parquet without a PostgreSQL event queue; data inlining is disabled. DuckLake catalog metadata can still hold column statistics containing derived event values.
 
-PostgreSQL holds control metadata, authorization, policies, usage reports, worker ownership, query reservations, and DuckLake catalogs. It does not hold event payloads. PostgreSQL-backed DuckLake catalogs disable data inlining, so payloads move directly from the owner's SQLite queue into S3 Parquet files.
+Each project has a durable owner. Public workers forward owner-bound requests; delivered SQL can run against shared metadata and files. Adding workers does not recover an unavailable owner's queue. See [shared deployment](reference/shared-deployment.md) for supervision, timeout, and failure behavior.
 
-Each project has one durable owner for its acceptance queue, receipt ledger, identities, imports, mutations, and jobs. Any public worker can authenticate a request and forward owner-bound work internally. SQL can read delivered data on any worker through the shared catalog and S3. A non-owner query reports `delivery.pending_unknown: true`; schema discovery routes to the owner for authoritative delivery status.
+## Boundaries in the code
 
-Workers share tenant query reservations and publish cumulative monthly usage with a ten-second budget refresh. Auth revocation is checked against shared control independently of this cache. Owner-local SQLite commits remain the acceptance boundary. Adding workers distributes projects and analytical requests, while a project's writes stay with its owner.
-
-Native PostgreSQL metadata uses bounded connection, statement, lock, and TCP settings, but not every native network call stops immediately on cancellation. Shared interactive execution has a fail-stop watchdog: if native work exceeds its SQL deadline, both I/O grace allowances, and a 15-second margin, the process exits with status `70` before its shared permit becomes reusable. Operators must supervise restart with the same owner volume. [Timeout and supervision contract](shared-deployment.md#native-timeouts-and-worker-supervision)
-
-There is no automatic owner failover without its volume. An unavailable owner produces `503` for owner-bound requests. Recovery requires the shared PostgreSQL metadata, S3 data, and every owner volume; native whole-instance backup and restore are unsupported in shared mode. [Failure and recovery contract](shared-deployment.md#failure-and-recovery-boundary)
-
-## Deployment and isolation
-
-Run one application process per SQLite database and DuckLake directory. Keep the full `/data` volume on persistent local storage. The default deployment has one writer. The unreleased shared deployment has one writer per project owner, with a separate persistent volume per worker. A replicated event queue and automatic owner failover are outside both models.
-
-Project isolation applies to HTTP, CLI, MCP, interactive queries, exports, and destination pipelines. Native SQL validation rejects external sources, table functions, private tables, writes, and configuration changes. Each engine is restricted to its managed local directory and, when configured, its own S3 prefix. Output, time, and concurrency limits also apply. DuckDB's memory setting is a shared engine budget, not a hard process-memory limit; use a container limit for containment.
-
-## Background work
-
-| Work | Data source | Control |
-| --- | --- | --- |
-| Event projection | Durable SQLite queue | Server worker |
-| Identify, edits, and deletion | Accepted versioned changes | Server worker |
-| Native file maintenance | Project DuckLake files | Server worker |
-| Webhook delivery | Accepted original-event outbox | Project pipeline |
-| One-time SQL export | Validated project SQL | Project export job |
-| Scheduled S3 delivery | Closed receipt-time query windows | Project pipeline |
-
-Webhooks and S3 destinations keep their own retry and publication state. Destination delivery does not change analytical storage retention. [Pipeline contract](pipelines.md)
-
-## Code layout
-
-| Package | Owns |
+| Module | Responsibility |
 | --- | --- |
-| `internal/porcupine` | HTTP, MCP and management handlers, authorization, acceptance, imports, delivery workers, pipelines and exports. |
-| `internal/lake` | The DuckLake engine: per-project catalogs, projection, SQL execution, catalog and profile reads, maintenance, checkpoints and the native backup format. It has no HTTP or `Service` dependency. |
-| `internal/nativequery` | SQL policy: AST validation, function inventory and parameter binding. |
-| `internal/apierr`, `internal/syncx` | The shared API error shape and small locking primitives. |
-| `internal/exportstore` | S3 object storage for export files. |
+| `internal/porcupine` | Service composition, HTTP/MCP handlers, durable transactions, jobs, and cross-module coordination |
+| `internal/lake` | Project engines, analytical projection/query, maintenance, and native backup state |
+| `internal/nativequery` | SQL AST policy, allowed functions, and bindings |
+| `internal/auth` | Principals, grant/consent policy, OAuth input validation, upstream OIDC verification, and login/email admission limits |
+| `internal/event` | Canonical event model and IDs, independent of storage and adapters |
+| `internal/ingest` | Native/Segment live input decoding, normalization, traits, and privacy filtering |
+| `internal/importer` | Historical native/PostHog/Segment decoding, manifests, and bounded JSONL parsing |
+| `internal/delivery` | Webhook destination/DNS policy, HTTP delivery, and CSV/JSONL row encoding |
+| `internal/s3client` | Common S3 client construction, with separate credentials and transports for each destination |
+| `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
+| `internal/exportstore` | Export object storage |
 
-Tests follow the same split: engine tests live in `internal/lake` and run without a server.
+This table describes the unreleased stabilization work. The service still owns durable jobs, retry state, checkpoint commits, quotas, and the atomic acceptance transaction. The input and delivery modules do not commit events or own that transaction. Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
 
-## Storage and recovery
+## Isolation and limits
 
-The default backend uses local SSD storage. Fresh deployments can keep analytical data files on [S3](ducklake-s3.md), with local SQLite and DuckLake catalogs. Storage identity is pinned to prevent accidental bucket or prefix changes. There is no automatic migration from an existing SSD archive or age-based native S3 tiering. Local archives support [scheduled coordinated backups](native-backups.md); that local-only backup mode is rejected for analytical S3. No physical-erasure deadline is guaranteed. Query-result exports are separate from backups.
+Resolve tenant/project scope from authenticated access, never an event's claimed project ID. SQL validation rejects writes, external sources, private tables, and configuration changes. Engines are restricted to managed local storage and the configured S3 namespace.
 
-Version v0.14.0 uses DuckDB/DuckLake exclusively. The [native boundary design](native-only-architecture.md) records transaction ownership, guards, contract generation, and the staged modularization. Historical comparison code remains on `reference/clickhouse-before-ducklake`.
+Bound queues, query concurrency, execution time, returned rows, and result bytes. Unreleased tenant budgets subdivide operator ceilings; they cannot raise them. Per-engine memory is not a hard process RSS limit. A worker/container limit provides additional containment.
+
+Shared usage publication can lag, so monthly quotas permit some overshoot. Concurrent query admission instead reserves a shared place before execution. Auth revocation is checked independently of the usage cache.
+
+## Recovery and deployment
+
+Run one process per local journal and DuckLake root. Preserve the complete volume, control state, private configuration, and matching version. A query export or S3 bucket listing is not an instance checkpoint. Use [coordinated backups](backup-and-restore.md).
+
+The same server can support self-hosting and a future commercial deployment. The commercial controller owns prices and billing and uses an authenticated management API. It does not need a private fork or direct access to the operational database. Separate compute roles and automatic owner failover remain design work, not current deployment guarantees.

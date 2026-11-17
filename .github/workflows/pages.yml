@@ -7,13 +7,14 @@ on:
       - 'VERSION'
       - 'docs/**'
       - 'docs-theme/**'
-      - 'docs-requirements.txt'
-      - 'mkdocs.yml'
+      - 'internal/docsite/**'
+      - 'internal/cmd/docsite/**'
+      - 'internal/porcupine/contracts/*.schema.json'
+      - 'examples/events/**'
+      - 'go.mod'
+      - 'Makefile'
       - 'README.md'
       - 'cli/README.md'
-      - 'scripts/build_docs.py'
-      - 'scripts/release_version.py'
-      - 'scripts/test_release_version.py'
       - 'examples/hello.sh'
       - 'compose*.yaml'
       - 'compat/matrix.json'
@@ -45,32 +46,15 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Publish only an existing stable release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import json, os, re, urllib.error, urllib.request
-          from pathlib import Path
-          tag = 'v' + Path('VERSION').read_text().strip()
-          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
-              raise SystemExit('Invalid VERSION')
-          url = os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GITHUB_REPOSITORY'] + '/releases/tags/' + tag
-          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-          try:
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  release = json.load(response)
-              published = not release['draft'] and not release['prerelease']
-          except urllib.error.HTTPError as error:
-              if error.code != 404:
-                  raise SystemExit('Cannot check release publication: HTTP ' + str(error.code))
-              published = False
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('published=' + str(published).lower() + '\n')
-          if not published:
-              print(tag + ' is not published; keeping the existing website until release publication.')
-          PY
+        run: CGO_ENABLED=0 go run ./internal/cmd/docsite published-release
   build:
     needs: released-version
     if: needs.released-version.outputs.published == 'true'
@@ -80,14 +64,16 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: docs-requirements.txt
-      - run: python -m pip install -r docs-requirements.txt
-      - run: python -m unittest discover -s scripts -p 'test_release_version.py'
-      - run: python scripts/build_docs.py
+          go-version-file: go.mod
+          cache: true
+      - run: CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite
+      - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: ~/.cache/porcupine/hugo
+          key: docs-hugo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('internal/docsite/hugo.go') }}
+      - run: make docs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: bin/docs-web/porcupine/

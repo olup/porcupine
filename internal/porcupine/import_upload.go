@@ -2,109 +2,24 @@ package porcupine
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	stdhash "hash"
-	"path"
-	"sort"
-	"strings"
+	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/importer"
 	"time"
-	"unicode"
 )
 
-const importMaxChunkBytes = 256 << 10
-const importMaxRowBytes = 1 << 20
-const importMaxChunkRows = 1000
-const importMaxFiles = 4096
-const importMaxActiveJobs = 4
-const importMaxSamples = 20
-
-// Import progress is metadata only. The one incomplete row and hash state are
-// bounded private resumability state, removed on completion or cancellation.
-type ImportCounts struct {
-	Rows       int64 `json:"rows"`
-	Accepted   int64 `json:"accepted"`
-	Duplicates int64 `json:"duplicates"`
-	Ignored    int64 `json:"ignored"`
-	Unresolved int64 `json:"unresolved"`
-	Invalid    int64 `json:"invalid"`
-}
-
-type ImportUploadLimits struct {
-	MaxChunkBytes         int `json:"max_chunk_bytes"`
-	MaxRowsPerChunk       int `json:"max_rows_per_chunk"`
-	MaxRowBytes           int `json:"max_row_bytes"`
-	MaxFiles              int `json:"max_files"`
-	MaxActiveJobs         int `json:"max_active_jobs"`
-	MaxSamples            int `json:"max_samples"`
-	MaxConcurrentRequests int `json:"max_concurrent_requests"`
-}
-
-func importUploadLimits() ImportUploadLimits {
-	return ImportUploadLimits{importMaxChunkBytes, importMaxChunkRows, importMaxRowBytes, importMaxFiles, importMaxActiveJobs, importMaxSamples, 2}
-}
-
-type ImportRowSample struct {
-	FileID    string `json:"file_id"`
-	RowNumber int64  `json:"row_number"`
-	Reason    string `json:"reason"`
-}
-
-type ImportUploadFileSpec struct {
-	Path      string `json:"path" maxLength:"1024"`
-	Kind      string `json:"kind" enum:"events,persons"`
-	SizeBytes int64  `json:"size_bytes" minimum:"0"`
-	SHA256    string `json:"sha256" minLength:"64" maxLength:"64"`
-}
-
-type ImportUploadFile struct {
-	ID          string       `json:"id"`
-	Path        string       `json:"path"`
-	Kind        string       `json:"kind"`
-	SizeBytes   int64        `json:"size_bytes"`
-	OffsetBytes int64        `json:"offset_bytes"`
-	SHA256      string       `json:"sha256"`
-	State       string       `json:"state"`
-	Counts      ImportCounts `json:"counts"`
-	Error       string       `json:"error,omitempty"`
-}
-
-type ImportDelivery struct {
-	Enabled     bool  `json:"enabled"`
-	Pending     int64 `json:"pending" doc:"Undelivered project events up to the import acceptance cursor, including earlier work and quarantine. Later live events do not delay this count."`
-	Quarantined int64 `json:"quarantined"`
-	Ready       bool  `json:"ready"`
-}
-
-type ImportUploadJob struct {
-	Format      string             `json:"format"`
-	Delivery    *ImportDelivery    `json:"delivery,omitempty"`
-	ID          string             `json:"id"`
-	ProjectID   string             `json:"project_id"`
-	SourceID    string             `json:"source_id"`
-	State       string             `json:"state"`
-	Counts      ImportCounts       `json:"counts"`
-	Files       []ImportUploadFile `json:"files,omitempty"`
-	Samples     []ImportRowSample  `json:"samples,omitempty"`
-	Limits      ImportUploadLimits `json:"limits"`
-	Error       string             `json:"error,omitempty"`
-	CreatedAt   string             `json:"created_at"`
-	UpdatedAt   string             `json:"updated_at"`
-	CompletedAt string             `json:"completed_at,omitempty"`
-}
-
 type storedImportUpload struct {
-	ImportUploadJob
+	importer.ImportUploadJob
+
 	ActorID        string
 	DeliveryCursor int64
 }
 
 type storedImportUploadFile struct {
-	ImportUploadFile
+	importer.ImportUploadFile
+
 	Ordinal    int
 	SourceID   string
 	Format     string
@@ -117,59 +32,17 @@ type storedImportUploadFile struct {
 	LastSHA256 string
 }
 
-func normalizeImportManifest(files []ImportUploadFileSpec) ([]ImportUploadFileSpec, error) {
-	if len(files) == 0 || len(files) > importMaxFiles {
-		return nil, apiError(400, "manifest must contain 1 to 4096 files")
-	}
-	files = append([]ImportUploadFileSpec(nil), files...)
-	seen := map[string]bool{}
-	for i := range files {
-		file := &files[i]
-		if file.Path == "" || len(file.Path) > 1024 || strings.Contains(file.Path, "\\") || path.IsAbs(file.Path) || path.Clean(file.Path) != file.Path || file.Path == "." || strings.HasPrefix(file.Path, "../") || file.Path == ".." || strings.ContainsFunc(file.Path, unicode.IsControl) {
-			return nil, apiError(400, "manifest paths must be clean relative file labels")
-		}
-		if file.Kind != "events" && file.Kind != "persons" || file.SizeBytes < 0 || !validImportSHA256(file.SHA256) || seen[file.Path] {
-			return nil, apiError(400, "invalid file kind, size, SHA-256 or duplicate path")
-		}
-		file.SHA256 = strings.ToLower(file.SHA256)
-		seen[file.Path] = true
-	}
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].Kind != files[j].Kind {
-			return files[i].Kind == "persons"
-		}
-		return files[i].Path < files[j].Path
-	})
-	return files, nil
-}
-
-func validImportSHA256(value string) bool {
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(value) == 64 && len(decoded) == 32
-}
-
-func importHashState(h stdhash.Hash) ([]byte, error) {
-	return h.(encoding.BinaryMarshaler).MarshalBinary()
-}
-func restoreImportHash(state []byte) (stdhash.Hash, error) {
-	h := sha256.New()
-	if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(state); err != nil {
-		return nil, err
-	}
-	return h, nil
-}
-
 func importCheckAuthority(ctx context.Context, query oauthQueryer, actorID, project string) error {
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, actorID).Scan(&permissions, &projects)
 	if err != nil {
 		return apiError(403, "import credential is no longer authorized")
 	}
-	var a actor
+	var a auth.Principal
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return apiError(503, "import authorization unavailable")
 	}
-	if !authorize(a, "imports:write", project) || !authorize(a, "events:write", project) {
+	if !auth.Authorize(a, "imports:write", project) || !auth.Authorize(a, "events:write", project) {
 		return apiError(403, "import credential is no longer authorized")
 	}
 	return nil
@@ -187,7 +60,7 @@ const importJobColumns = `id,project_id,actor_id,source_id,state,created_at,upda
 func scanImportJob(row interface{ Scan(...any) error }) (storedImportUpload, error) {
 	var job storedImportUpload
 	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SourceID, &job.State, &job.CreatedAt, &job.UpdatedAt, &job.CompletedAt, &job.Error, &job.Format, &job.DeliveryCursor)
-	job.Limits = importUploadLimits()
+	job.Limits = importer.Limits()
 	return job, err
 }
 
@@ -199,20 +72,20 @@ func scanImportFile(row interface{ Scan(...any) error }) (storedImportUploadFile
 	return file, err
 }
 
-func (m *importManager) loadImportJob(ctx context.Context, project, id string) (ImportUploadJob, error) {
+func (m *importManager) loadImportJob(ctx context.Context, project, id string) (importer.ImportUploadJob, error) {
 	job, err := scanImportJob(m.db.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, id))
 	if err != nil {
-		return ImportUploadJob{}, importLookupError(err)
+		return importer.ImportUploadJob{}, importLookupError(err)
 	}
 	rows, err := m.db.QueryContext(ctx, `SELECT `+importFileColumns+` FROM import_upload_files WHERE job_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
-		return ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
 	for rows.Next() {
 		file, scanErr := scanImportFile(rows)
 		if scanErr != nil {
 			rows.Close()
-			return ImportUploadJob{}, apiError(503, "import storage unavailable")
+			return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 		}
 		job.Files = append(job.Files, file.ImportUploadFile)
 		addImportCounts(&job.Counts, file.Counts)
@@ -220,33 +93,33 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
-	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=$1 ORDER BY file_id,row_number LIMIT $2`, id, importMaxSamples)
+	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=$1 ORDER BY file_id,row_number LIMIT $2`, id, importer.MaxSamples)
 	if err != nil {
-		return ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
 	defer samples.Close()
 	for samples.Next() {
-		var sample ImportRowSample
+		var sample importer.ImportRowSample
 		if err := samples.Scan(&sample.FileID, &sample.RowNumber, &sample.Reason); err != nil {
-			return ImportUploadJob{}, apiError(503, "import storage unavailable")
+			return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 		}
 		job.Samples = append(job.Samples, sample)
 	}
 	if samples.Err() != nil {
-		return ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
 	}
-	job.Delivery = &ImportDelivery{}
+	job.Delivery = &importer.ImportDelivery{}
 	job.Delivery.Enabled = m.deliveryEnabled
 	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=$1 AND id<=$2 AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
-		return ImportUploadJob{}, apiError(503, "import delivery status unavailable")
+		return importer.ImportUploadJob{}, apiError(503, "import delivery status unavailable")
 	}
 	job.Delivery.Ready = job.State == "completed" && job.Delivery.Enabled && job.Delivery.Pending == 0
 	return job.ImportUploadJob, nil
 }
 
-func addImportCounts(target *ImportCounts, delta ImportCounts) {
+func addImportCounts(target *importer.ImportCounts, delta importer.ImportCounts) {
 	target.Rows += delta.Rows
 	target.Accepted += delta.Accepted
 	target.Duplicates += delta.Duplicates

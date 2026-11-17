@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/importer"
 )
 
 func TestDuckLakeCLIHistoricalFormatsAndInterruptedResume(t *testing.T) {
@@ -160,7 +162,7 @@ func TestDuckLakeCLIHistoricalFormatsAndInterruptedResume(t *testing.T) {
 			if deliveryErr != nil && deliveryErr != context.Canceled {
 				t.Fatal(deliveryErr)
 			}
-			var job ImportUploadJob
+			var job importer.ImportUploadJob
 			if err = json.Unmarshal(output.Bytes(), &job); err != nil {
 				t.Fatal(err)
 			}
@@ -190,7 +192,7 @@ func TestDuckLakeCLIHistoricalFormatsAndInterruptedResume(t *testing.T) {
 			if err = again.Run(); err != nil {
 				t.Fatal("explicit resume of completed job failed", err)
 			}
-			var replayed ImportUploadJob
+			var replayed importer.ImportUploadJob
 			json.Unmarshal(repeated.Bytes(), &replayed)
 			if replayed.ID != job.ID || replayed.Counts != job.Counts {
 				t.Fatal("completed-job resume changed counts")

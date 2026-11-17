@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/mail"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type HumanProjectGrant struct {
@@ -62,35 +63,6 @@ type ListHumansOutput struct {
 
 // Use the SMTP mailbox as the identity. DNS names are case-insensitive, while
 // a relay is allowed to distinguish the case of local parts.
-func normalizeEmail(raw string) (string, error) {
-	raw = strings.Trim(raw, " ")
-	address, err := mail.ParseAddress(raw)
-	if err != nil || len(raw) > 254 || address.Name != "" || address.Address != raw ||
-		strings.ContainsAny(raw, "\r\n\t <>[]\\\"") {
-		return "", errors.New("expected a single email address")
-	}
-	for i := range len(raw) {
-		if raw[i] < 33 || raw[i] > 126 {
-			return "", errors.New("expected an ASCII email address")
-		}
-	}
-	local, domain, ok := strings.Cut(raw, "@")
-	if !ok || len(local) > 64 || domain == "" || len(domain) > 253 {
-		return "", errors.New("invalid email address")
-	}
-	for _, label := range strings.Split(domain, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return "", errors.New("invalid email domain")
-		}
-		for _, r := range label {
-			if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
-				return "", errors.New("invalid email domain")
-			}
-		}
-	}
-	return local + "@" + strings.ToLower(domain), nil
-}
-
 func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 	if s.oauth == nil || s.oauth.config.Email == nil || s.oauth.config.Email.AdminEmail == "" {
 		return nil
@@ -98,7 +70,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 	if blocked, err := s.restoredIdentityBootstrapBlocked(ctx); err != nil || blocked {
 		return err
 	}
-	address, err := normalizeEmail(s.oauth.config.Email.AdminEmail)
+	address, err := auth.NormalizeEmail(s.oauth.config.Email.AdminEmail)
 	if err != nil {
 		return err
 	}
@@ -130,7 +102,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 		return errors.New("deployment admin email already belongs to an invited person")
 	}
 	admin := EmailHuman{
-		ID: newID(), Email: address, CreatedAt: now(), DeploymentAdmin: true,
+		ID: eventapi.NewID(), Email: address, CreatedAt: now(), DeploymentAdmin: true,
 		Permissions: []string{"instance:admin"}, Projects: []string{"*"},
 		Grants: []HumanProjectGrant{{ProjectID: "*", Permissions: []string{"instance:admin"}}},
 	}
@@ -153,30 +125,30 @@ func insertEmailHuman(ctx context.Context, tx *sql.Tx, human EmailHuman) error {
 	return err
 }
 
-func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (actor, error) {
+func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (auth.Principal, error) {
 	var permissionsJSON, projectsJSON, grantsJSON string
 	err := query.QueryRowContext(ctx, `SELECT k.permissions,k.projects,h.project_grants FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE k.id=$1 AND k.revoked_at IS NULL`, id).Scan(&permissionsJSON, &projectsJSON, &grantsJSON)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
-	a := actor{ID: id, emailHuman: true}
+	a := auth.Principal{ID: id, EmailHuman: true}
 	if json.Unmarshal([]byte(permissionsJSON), &a.Permissions) != nil || json.Unmarshal([]byte(projectsJSON), &a.Projects) != nil {
-		return actor{}, errors.New("invalid email account grants")
+		return auth.Principal{}, errors.New("invalid email account grants")
 	}
 	var grants []HumanProjectGrant
 	if err := json.Unmarshal([]byte(grantsJSON), &grants); err != nil {
-		return actor{}, errors.New("invalid email project grants")
+		return auth.Principal{}, errors.New("invalid email project grants")
 	}
-	a.projectPermissions = make(map[string][]string, len(grants))
+	a.ProjectPermissions = make(map[string][]string, len(grants))
 	for _, g := range grants {
-		a.projectPermissions[g.ProjectID] = g.Permissions
+		a.ProjectPermissions[g.ProjectID] = g.Permissions
 	}
 	return addTenantMembershipAuthority(ctx, query, a)
 }
 
 func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string, error) {
 	var id string
-	address, err := normalizeEmail(email)
+	address, err := auth.NormalizeEmail(email)
 	if err != nil {
 		return "", err
 	}
@@ -184,11 +156,11 @@ func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string
 	return id, err
 }
 
-func (s *Service) registerEmailAccounts(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+func (s *Service) registerEmailAccounts(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	if s.oauth == nil || s.oauth.config.Email == nil {
 		return
 	}
-	admin := operationAccess{Permission: "instance:admin"}
+	admin := auth.OperationAccess{Permission: "instance:admin"}
 	base := "/api/v1/humans"
 	huma.Register(api, op("invite-human", "POST", base, "Invite a project member or instance administrator. For an administrator use projects [*] and permissions [instance:admin].", admin, 201), s.inviteHuman)
 	huma.Register(api, op("list-humans", "GET", base, "List human accounts and project permissions", admin, 200), s.listHumans)
@@ -260,7 +232,7 @@ func sortedGrants(grants []string) []string {
 }
 
 func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*EmailHumanOutput, error) {
-	email, err := normalizeEmail(input.Body.Email)
+	email, err := auth.NormalizeEmail(input.Body.Email)
 	if err != nil {
 		return nil, apiError(400, "invalid email address")
 	}
@@ -268,7 +240,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	if err != nil {
 		return nil, err
 	}
-	h.ID, h.Email, h.CreatedAt = newID(), email, now()
+	h.ID, h.Email, h.CreatedAt = eventapi.NewID(), email, now()
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
@@ -301,7 +273,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 			if s.clock().UnixMilli() < retryAfter {
 				return nil, apiError(429, "invitation delivery in progress or cooling down; retry the same request")
 			}
-			attempt = newID()
+			attempt = eventapi.NewID()
 			if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET notice_attempt=$1, notice_retry_after_ms=$2 WHERE principal_id=$3`, attempt, s.clock().Add(time.Minute).UnixMilli(), h.ID); err != nil {
 				return nil, apiError(503, "invitation status unavailable")
 			}

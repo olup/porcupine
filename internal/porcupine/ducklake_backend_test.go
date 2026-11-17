@@ -4,13 +4,15 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeMissingArchiveDoesNotPoisonReopen(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 128, Threads: 1}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 128, Threads: 1}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

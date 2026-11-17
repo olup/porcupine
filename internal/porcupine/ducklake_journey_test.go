@@ -11,17 +11,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func duckLakeJourneyService(t *testing.T) *Service {
 	t.Helper()
 	s := service(t, 100)
-	lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.lake = lake
-	s.lakeMemoryMB = defaultDuckLakeMemoryMB
+	s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
 	s.imports.deliveryEnabled = true
 	return s
 }
@@ -54,15 +57,15 @@ func duckLakeJourneyQuery(t *testing.T, s *Service, project, token, sql string, 
 	return result["result"].(map[string]any)["data"].([]any)
 }
 
-func duckLakeJourneyProjections(t *testing.T, events []Event) []eventProjection {
+func duckLakeJourneyProjections(t *testing.T, events []eventapi.Event) []lakeapi.EventProjection {
 	t.Helper()
-	projections := make([]eventProjection, 0, len(events))
+	projections := make([]lakeapi.EventProjection, 0, len(events))
 	for _, event := range events {
-		snapshot, err := originalSnapshot(event)
+		snapshot, err := lakeapi.OriginalSnapshot(event)
 		if err != nil {
 			t.Fatal(err)
 		}
-		projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
+		projections = append(projections, lakeapi.EventProjection{Event: event, OriginalSnapshot: snapshot})
 	}
 	return projections
 }
@@ -188,7 +191,7 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 func TestDuckLakeJourneyConfiguredRestart(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
+	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +226,7 @@ func TestDuckLakeJourneyConfiguredRestart(t *testing.T) {
 func TestDuckLakeJourneyLostAcknowledgment(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
+	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake")}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

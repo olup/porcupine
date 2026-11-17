@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
@@ -48,7 +51,7 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 				w.WriteHeader(400)
 			}))
 			defer server.Close()
-			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
+			s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "pipeline.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{7}, 32), AllowedS3Endpoints: []string{server.URL}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +67,7 @@ func TestPipelineS3DeletionPreservesCommittedManifestFiles(t *testing.T) {
 			created := request(t, s, "POST", base, adminToken, string(body), 201)
 			id := created["id"].(string)
 			start, _ := time.Parse(time.RFC3339, spec.StartAt)
-			run := newID()
+			run := eventapi.NewID()
 			state := "queued"
 			if scenario == "running" {
 				state = "running"

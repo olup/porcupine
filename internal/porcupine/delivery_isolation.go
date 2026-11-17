@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strconv"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) deliveryCursor(ctx context.Context) (int64, error) {
@@ -32,14 +35,12 @@ func (s *Service) advanceDeliveryCursor(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool, error) {
-	projections := make([]eventProjection, 0, len(batch))
+func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []eventapi.Event) (bool, error) {
+	projections := make([]lakeapi.EventProjection, 0, len(batch))
 	for _, event := range batch {
-		snapshot, err := originalSnapshot(event)
-		if err != nil {
-			return false, err
-		}
-		projections = append(projections, eventProjection{Event: event, OriginalSnapshot: snapshot})
+		// Unedited events need no stored original: the first correction
+		// snapshots the current values, which are still the original.
+		projections = append(projections, lakeapi.EventProjection{Event: event})
 	}
 	if err := s.applyAnalyticalProjections(ctx, projections); err != nil {
 		return false, err
@@ -50,7 +51,7 @@ func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []Event) (bool
 	return true, nil
 }
 
-func (s *Service) quarantineOriginal(ctx context.Context, event Event, code int) (bool, error) {
+func (s *Service) quarantineOriginal(ctx context.Context, event eventapi.Event, code int) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `INSERT INTO delivery_quarantine(event_id,error_code,quarantined_at) SELECT id,$1,$2 FROM events WHERE id=$3 AND project_id=$4 AND uuid=$5 ON CONFLICT(event_id) DO NOTHING`, code, s.clock().UTC().Format(time.RFC3339Nano), event.ID, event.ProjectID, event.UUID)
 	if err != nil {
 		return false, errors.New("cannot quarantine rejected event")
@@ -75,7 +76,7 @@ func (s *Service) retryQuarantinedDelivery(ctx context.Context, project string, 
 
 // The positive replacement is already acknowledged by the analytical store. Its private
 // original snapshot preserves evidence unless this is an intentional deletion.
-func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.Tx, projection eventProjection) error {
+func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.Tx, projection lakeapi.EventProjection) error {
 	if projection.Revision == 0 {
 		return nil
 	}

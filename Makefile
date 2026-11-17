@@ -1,4 +1,10 @@
-.PHONY: build run test test-full test-race check check-full lint fmt integration integration-s3
+.PHONY: build run test test-core test-full test-race check check-full lint fmt integration integration-s3
+
+# Examples: make test PKG=./internal/porcupine RUN=TestTenant
+#           make test-core RUN=TestGuard
+PKG ?= ./...
+RUN ?= .
+CORE_PKGS := ./internal/auth ./internal/delivery ./internal/event ./internal/importer ./internal/ingest ./internal/s3client ./internal/exportstore ./internal/nativequery ./internal/apierr ./internal/syncx ./internal/docsite ./internal/cmd/docsite ./internal/cmd/package-cli ./internal/cmd/standalone-cli-check ./internal/cmd/sqlite-identities
 
 build:
 	CGO_ENABLED=1 go build -trimpath -o bin/porcupine ./cmd/porcupine
@@ -8,13 +14,17 @@ run:
 
 # Fast loop: skips the slowest journeys (testing.Short). CI runs everything.
 test:
-	CGO_ENABLED=1 go test -short ./... -timeout=300s
+	CGO_ENABLED=1 go test -short $(PKG) -run '$(RUN)' -timeout=300s
+
+# Pure Go rules and parsers can be checked without linking the native engine.
+test-core:
+	CGO_ENABLED=0 go test $(CORE_PKGS) -run '$(RUN)' -timeout=60s
 
 test-full:
-	CGO_ENABLED=1 go test ./... -timeout=600s
+	CGO_ENABLED=1 go test $(PKG) -run '$(RUN)' -timeout=600s
 
 test-race:
-	CGO_ENABLED=1 go test -race ./... -count=1 -timeout=600s
+	CGO_ENABLED=1 go test -race $(PKG) -run '$(RUN)' -count=1 -timeout=600s
 
 lint: api-check cli-check
 	CGO_ENABLED=1 go vet ./...
@@ -73,10 +83,10 @@ cli-check:
 
 .PHONY: docs docs-preview
 docs:
-	python3 scripts/build_docs.py
+	CGO_ENABLED=0 go run ./internal/cmd/docsite build
 
 docs-preview: docs
-	python3 scripts/serve_docs.py
+	CGO_ENABLED=0 go run ./internal/cmd/docsite preview
 
 .PHONY: ducklake-build ducklake-test ducklake-smoke ducklake-bench ducklake-batching-bench ducklake-architecture-test
 ducklake-build: build
@@ -103,7 +113,7 @@ ducklake-s3-test:
 .PHONY: ducklake-restore-drill
 ducklake-restore-drill: cli
 	docker build --build-arg VERSION=dev -t porcupine-native-restore-test .
-	PORCUPINE_RESTORE_DOCKER_IMAGE=porcupine-native-restore-test PORCUPINE_RESTORE_CLI=$(CURDIR)/bin/cli/porcupine CGO_ENABLED=1 go test ./internal/porcupine -run '^TestDuckLakeCLIRestoreDrill$$' -count=1 -timeout=120s
+	PORCUPINE_RESTORE_DOCKER_IMAGE=porcupine-native-restore-test PORCUPINE_RESTORE_CLI="$(CURDIR)/bin/cli/porcupine" CGO_ENABLED=1 go test ./internal/porcupine -run '^TestDuckLakeCLIRestoreDrill$$' -count=1 -timeout=120s
 
 .PHONY: shared-postgres-fixture-test shared-postgres-test
 shared-postgres-fixture-test:

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
@@ -224,7 +225,7 @@ func (s *Service) nextPipelineS3(ctx context.Context) (*s3PipelineWork, error) {
 			if s.pipelineWindowHasAdmissions(w.pipeline.ProjectID, w.start, w.end) {
 				continue
 			}
-			w.id = newID()
+			w.id = eventapi.NewID()
 			w.state = "queued"
 			if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM events WHERE project_id=$1 AND is_imported=0`, w.pipeline.ProjectID).Scan(&w.eventWatermark); err != nil {
 				return nil, err

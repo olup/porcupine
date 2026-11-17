@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func metadataProperties(t *testing.T, value any) json.RawMessage {
@@ -35,7 +37,7 @@ func TestMetadataNativeSQLColumnsAndProjectionRoundTrip(t *testing.T) {
 	}
 	event.Revision = 1
 	event.IsDeleted = true
-	if err := s.lake.Apply(context.Background(), []eventProjection{event}); err != nil {
+	if err := s.lake.Apply(context.Background(), []lakeapi.EventProjection{event}); err != nil {
 		t.Fatal(err)
 	}
 	deleted, err := s.lake.Load(context.Background(), projectID, "producer")

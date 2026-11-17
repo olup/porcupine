@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestProjectRenamePermissionsAndIdentity(t *testing.T) {
@@ -20,7 +22,7 @@ func TestProjectRenamePermissionsAndIdentity(t *testing.T) {
 	request(t, s, "PATCH", path, "", body, 401)
 	request(t, s, "PATCH", path, reader, body, 403)
 	request(t, s, "PATCH", "/api/v1/projects/"+other, manager, body, 403)
-	request(t, s, "PATCH", "/api/v1/projects/"+newID(), adminToken, body, 404)
+	request(t, s, "PATCH", "/api/v1/projects/"+eventapi.NewID(), adminToken, body, 404)
 	request(t, s, "PATCH", path, manager, `{"name":"   "}`, 400)
 	request(t, s, "PATCH", path, manager, `{"name":"`+strings.Repeat("a", 201)+`"}`, 422)
 	request(t, s, "PATCH", path, manager, `{"ingestion_mode":"server_only"}`, 422)
@@ -65,7 +67,7 @@ func TestMCPProjectLifecycleAndDiscovery(t *testing.T) {
 	mcpTestCall(t, ctx, admin, remove, 204)
 	mcpTestCall(t, ctx, admin, remove, 204)
 	mcpTestCall(t, ctx, admin, mcpCallInput{OperationID: "rename-project", Path: path, Body: body}, 404)
-	mcpTestCall(t, ctx, admin, mcpCallInput{OperationID: "delete-project", Path: map[string]string{"id": newID()}}, 404)
+	mcpTestCall(t, ctx, admin, mcpCallInput{OperationID: "delete-project", Path: map[string]string{"id": eventapi.NewID()}}, 404)
 	projects := mcpTestCall(t, ctx, admin, mcpCallInput{OperationID: "list-projects"}, 200)["projects"].([]any)
 	if len(projects) != 1 || projects[0].(map[string]any)["id"] != other {
 		t.Fatal("deletion affected another project")

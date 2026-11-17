@@ -29,18 +29,18 @@ type smtpDelivery struct {
 	from     *mail.Address
 }
 
-func emailConfiguration() (*porcupine.EmailConfig, error) {
-	host, port, mode := os.Getenv("PORCUPINE_SMTP_HOST"), os.Getenv("PORCUPINE_SMTP_PORT"), os.Getenv("PORCUPINE_SMTP_TLS")
-	from := os.Getenv("PORCUPINE_SMTP_FROM")
-	user, secretFile := os.Getenv("PORCUPINE_SMTP_USERNAME"), os.Getenv("PORCUPINE_SMTP_PASSWORD_FILE")
-	admin := os.Getenv("PORCUPINE_ADMIN_EMAIL")
+func (s settings) emailConfiguration() (*porcupine.EmailConfig, error) {
+	host, port, mode := s.get("PORCUPINE_SMTP_HOST"), s.get("PORCUPINE_SMTP_PORT"), s.get("PORCUPINE_SMTP_TLS")
+	from := s.get("PORCUPINE_SMTP_FROM")
+	user, secretFile := s.get("PORCUPINE_SMTP_USERNAME"), s.get("PORCUPINE_SMTP_PASSWORD_FILE")
+	admin := s.get("PORCUPINE_ADMIN_EMAIL")
 	if host == "" && port == "" && mode == "" && from == "" && user == "" && secretFile == "" && admin == "" {
 		return nil, nil
 	}
-	if host == "" && port == "" && mode == "" && from == "" && user == "" && secretFile == "" && os.Getenv("PORCUPINE_OIDC_ISSUER") != "" && os.Getenv("PORCUPINE_OAUTH_ISSUER") != "" {
+	if host == "" && port == "" && mode == "" && from == "" && user == "" && secretFile == "" && s.get("PORCUPINE_OIDC_ISSUER") != "" && s.get("PORCUPINE_OAUTH_ISSUER") != "" {
 		return &porcupine.EmailConfig{AdminEmail: admin}, nil
 	}
-	if os.Getenv("PORCUPINE_OAUTH_ISSUER") == "" || host == "" || from == "" {
+	if s.get("PORCUPINE_OAUTH_ISSUER") == "" || host == "" || from == "" {
 		return nil, errors.New("email login requires PORCUPINE_OAUTH_ISSUER, PORCUPINE_SMTP_HOST and PORCUPINE_SMTP_FROM")
 	}
 	if strings.ContainsAny(host, "/\\[]@ \r\n\t?#") || strings.Contains(host, ":") && net.ParseIP(host) == nil {
@@ -67,7 +67,7 @@ func emailConfiguration() (*porcupine.EmailConfig, error) {
 		return nil, errors.New("SMTP authentication requires both PORCUPINE_SMTP_USERNAME and PORCUPINE_SMTP_PASSWORD_FILE")
 	}
 	sender := smtpDelivery{
-		issuer:   strings.TrimSuffix(os.Getenv("PORCUPINE_OAUTH_ISSUER"), "/"),
+		issuer:   strings.TrimSuffix(s.get("PORCUPINE_OAUTH_ISSUER"), "/"),
 		address:  net.JoinHostPort(host, strconv.Itoa(portNum)),
 		tls:      &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host},
 		implicit: mode == "tls", user: user, from: address,

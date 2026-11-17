@@ -2,12 +2,14 @@ package porcupine
 
 import (
 	"context"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-type EventCatalogOutput struct{ Body EventCatalog }
+type EventCatalogOutput struct{ Body lakeapi.EventCatalog }
 
-func (s *Service) eventCatalog(ctx context.Context, input *EventCatalogInput) (*EventCatalogOutput, error) {
-	options, err := normalizeCatalogInput(*input)
+func (s *Service) eventCatalog(ctx context.Context, input *lakeapi.EventCatalogInput) (*EventCatalogOutput, error) {
+	options, err := lakeapi.NormalizeCatalogInput(*input)
 	if err != nil {
 		return nil, err
 	}

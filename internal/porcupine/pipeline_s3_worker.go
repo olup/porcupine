@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func pipelineManifestKey(w *s3PipelineWork) string {
@@ -70,7 +72,7 @@ func (s *Service) stepPipelineS3(ctx context.Context) (bool, error) {
 	if err != nil || !ready {
 		return false, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='running',attempts=attempts+1,attempt_id=CASE WHEN manifest='' THEN $1 ELSE attempt_id END,error_code='' WHERE id=$2 AND state='queued' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND state='active')`, newID(), w.id, w.pipeline.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='running',attempts=attempts+1,attempt_id=CASE WHEN manifest='' THEN $1 ELSE attempt_id END,error_code='' WHERE id=$2 AND state='queued' AND EXISTS(SELECT 1 FROM pipelines WHERE id=$3 AND state='active')`, eventapi.NewID(), w.id, w.pipeline.ID)
 	if err != nil {
 		return false, err
 	}
@@ -165,8 +167,8 @@ func (s *Service) executePipelineS3(ctx context.Context, w *s3PipelineWork) (res
 		<-monitorDone
 	}()
 	sink := newPipelineS3Sink(runCtx, s, w, store)
-	callbacks := exportStreamCallbacks{Columns: sink.columns, Row: sink.row}
-	_, err = s.lake.Export(runCtx, w.pipeline.ProjectID, w.spec.SQL, w.spec.Parameters, &analyticalWindow{StartMS: w.start, EndMS: w.end}, s.pipelines.config.ExportLimits.MaxRowBytes, callbacks)
+	callbacks := lakeapi.ExportStreamCallbacks{Columns: sink.columns, Row: sink.row}
+	_, err = s.lake.Export(runCtx, w.pipeline.ProjectID, w.spec.SQL, w.spec.Parameters, &lakeapi.AnalyticalWindow{StartMS: w.start, EndMS: w.end}, s.pipelines.config.ExportLimits.MaxRowBytes, callbacks)
 	if err != nil {
 		return err
 	}

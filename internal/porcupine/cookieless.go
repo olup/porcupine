@@ -15,8 +15,6 @@ import (
 	"strings"
 )
 
-const cookielessSentinel = "$posthog_cookieless"
-
 func parseTrustedProxies(values []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, 0, len(values))
 	for _, value := range values {

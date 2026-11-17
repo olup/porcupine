@@ -11,7 +11,7 @@ func TestAnalyticsConfiguration(t *testing.T) {
 	}
 	t.Run("build default", func(t *testing.T) {
 		t.Setenv("PORCUPINE_DB", "/srv/analytics/queue.db")
-		lake, err := analyticsConfiguration()
+		lake, err := (settings{}).analyticsConfiguration()
 		expected := defaultAnalyticsDirectory("/srv/analytics/queue.db")
 		if err != nil || lake == nil || lake.Directory != expected {
 			t.Fatalf("unexpected default: lake=%v err=%v", lake, err)
@@ -29,7 +29,7 @@ func TestAnalyticsConfiguration(t *testing.T) {
 		t.Run(field.name+field.value, func(t *testing.T) {
 			t.Setenv("PORCUPINE_DUCKLAKE_DIR", t.TempDir())
 			t.Setenv(field.name, field.value)
-			if _, err := analyticsConfiguration(); err == nil {
+			if _, err := (settings{}).analyticsConfiguration(); err == nil {
 				t.Fatal("invalid native budget accepted")
 			}
 		})
@@ -42,7 +42,7 @@ func TestAnalyticsCleanupConfiguration(t *testing.T) {
 	t.Setenv("PORCUPINE_DUCKLAKE_CLEANUP_GRACE", "72h")
 	t.Setenv("PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL", "2h")
 	t.Setenv("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED", "false")
-	lake, err := analyticsConfiguration()
+	lake, err := (settings{}).analyticsConfiguration()
 	if err != nil || lake.SnapshotRetention != 240*time.Hour || lake.CleanupGrace != 72*time.Hour || lake.CleanupInterval != 2*time.Hour || !lake.DisableCleanup {
 		t.Fatalf("cleanup policy not parsed: %+v %v", lake, err)
 	}

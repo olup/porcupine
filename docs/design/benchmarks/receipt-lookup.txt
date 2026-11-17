@@ -1,0 +1,42 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/olup/porcupine/internal/porcupine
+cpu: Apple M1 Pro
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1-10 	      10	      9442 ns/op	     20000 history_rows	         1.000 ids/op	    105914 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1-10 	      10	      8512 ns/op	     20000 history_rows	         1.000 ids/op	    117474 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1-10 	      10	      8967 ns/op	     20000 history_rows	         1.000 ids/op	    111524 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_100-10         	      10	     13358 ns/op	     20000 history_rows	       100.0 ids/op	   7485926 ids/s	       128.0 lake_memory_MiB	    5870 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_100-10         	      10	     12879 ns/op	     20000 history_rows	       100.0 ids/op	   7764457 ids/s	       128.0 lake_memory_MiB	    5865 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_100-10         	      10	     12683 ns/op	     20000 history_rows	       100.0 ids/op	   7884383 ids/s	       128.0 lake_memory_MiB	    5865 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1000-10        	      10	     45879 ns/op	     20000 history_rows	      1000 ids/op	  21796370 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1000-10        	      10	     42792 ns/op	     20000 history_rows	      1000 ids/op	  23369018 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/unpruned/batch_1000-10        	      10	     43388 ns/op	     20000 history_rows	      1000 ids/op	  23048113 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1-10             	      10	   6570979 ns/op	     20000 history_rows	         1.000 ids/op	       152.2 ids/s	       128.0 lake_memory_MiB	    4304 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1-10             	      10	   8723446 ns/op	     20000 history_rows	         1.000 ids/op	       114.6 ids/s	       128.0 lake_memory_MiB	    4312 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1-10             	      10	   6564417 ns/op	     20000 history_rows	         1.000 ids/op	       152.3 ids/s	       128.0 lake_memory_MiB	    4249 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_100-10           	      10	  14436850 ns/op	     20000 history_rows	       100.0 ids/op	      6927 ids/s	       128.0 lake_memory_MiB	   33920 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_100-10           	      10	  13998438 ns/op	     20000 history_rows	       100.0 ids/op	      7144 ids/s	       128.0 lake_memory_MiB	   33931 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_100-10           	      10	  13732329 ns/op	     20000 history_rows	       100.0 ids/op	      7282 ids/s	       128.0 lake_memory_MiB	   33950 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1000-10          	      10	  84212629 ns/op	     20000 history_rows	      1000 ids/op	     11875 ids/s	       128.0 lake_memory_MiB	  418857 B/op	    4151 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1000-10          	      10	  84998942 ns/op	     20000 history_rows	      1000 ids/op	     11765 ids/s	       128.0 lake_memory_MiB	  418883 B/op	    4151 allocs/op
+BenchmarkReceiptFreshIDLookup/history_20000/pruned/batch_1000-10          	      10	  84388004 ns/op	     20000 history_rows	      1000 ids/op	     11850 ids/s	       128.0 lake_memory_MiB	  419038 B/op	    4151 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1-10          	      10	      8604 ns/op	    100000 history_rows	         1.000 ids/op	    116222 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1-10          	      10	      9625 ns/op	    100000 history_rows	         1.000 ids/op	    103896 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1-10          	      10	      8912 ns/op	    100000 history_rows	         1.000 ids/op	    112202 ids/s	       128.0 lake_memory_MiB	     593 B/op	      17 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_100-10        	      10	     12962 ns/op	    100000 history_rows	       100.0 ids/op	   7714561 ids/s	       128.0 lake_memory_MiB	    5865 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_100-10        	      10	     14829 ns/op	    100000 history_rows	       100.0 ids/op	   6743452 ids/s	       128.0 lake_memory_MiB	    5865 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_100-10        	      10	     12417 ns/op	    100000 history_rows	       100.0 ids/op	   8053735 ids/s	       128.0 lake_memory_MiB	    5865 B/op	      20 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1000-10       	      10	     43646 ns/op	    100000 history_rows	      1000 ids/op	  22911660 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1000-10       	      10	     42488 ns/op	    100000 history_rows	      1000 ids/op	  23536334 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/unpruned/batch_1000-10       	      10	     44942 ns/op	    100000 history_rows	      1000 ids/op	  22251050 ids/s	       128.0 lake_memory_MiB	   71569 B/op	      22 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1-10            	      10	  15046350 ns/op	    100000 history_rows	         1.000 ids/op	        66.46 ids/s	       128.0 lake_memory_MiB	    4304 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1-10            	      10	  14989250 ns/op	    100000 history_rows	         1.000 ids/op	        66.71 ids/s	       128.0 lake_memory_MiB	    4248 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1-10            	      10	  15043629 ns/op	    100000 history_rows	         1.000 ids/op	        66.47 ids/s	       128.0 lake_memory_MiB	    4249 B/op	      98 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_100-10          	      10	  25232021 ns/op	    100000 history_rows	       100.0 ids/op	      3963 ids/s	       128.0 lake_memory_MiB	   33920 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_100-10          	      10	  24347358 ns/op	    100000 history_rows	       100.0 ids/op	      4107 ids/s	       128.0 lake_memory_MiB	   33924 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_100-10          	      10	  24014404 ns/op	    100000 history_rows	       100.0 ids/op	      4164 ids/s	       128.0 lake_memory_MiB	   33920 B/op	     505 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1000-10         	      10	 104719371 ns/op	    100000 history_rows	      1000 ids/op	      9549 ids/s	       128.0 lake_memory_MiB	  418857 B/op	    4151 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1000-10         	      10	 105136225 ns/op	    100000 history_rows	      1000 ids/op	      9511 ids/s	       128.0 lake_memory_MiB	  418976 B/op	    4151 allocs/op
+BenchmarkReceiptFreshIDLookup/history_100000/pruned/batch_1000-10         	      10	 104292083 ns/op	    100000 history_rows	      1000 ids/op	      9588 ids/s	       128.0 lake_memory_MiB	  418836 B/op	    4151 allocs/op
+PASS
+ok  	github.com/olup/porcupine/internal/porcupine	13.314s

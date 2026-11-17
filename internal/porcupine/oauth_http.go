@@ -5,22 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type mcpDispatchKey struct{}
 
-func bearerCredential(r *http.Request) (string, error) {
-	if len(r.Header.Values("Authorization")) != 1 {
-		return "", errors.New("one authorization header is required")
-	}
-	fields := strings.Fields(r.Header.Get("Authorization"))
-	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || len(fields[1]) > 512 {
-		return "", errors.New("invalid bearer authorization")
-	}
-	return fields[1], nil
-}
-
-func (s *Service) authenticateResource(ctx context.Context, raw, resource string) (actor, error) {
+func (s *Service) authenticateResource(ctx context.Context, raw, resource string) (auth.Principal, error) {
 	if s.oauth == nil {
 		return s.authenticate(ctx, raw)
 	}
@@ -33,7 +24,7 @@ func (s *Service) authenticateResource(ctx context.Context, raw, resource string
 	if s.oauth.config.AllowLegacyKeys {
 		return s.authenticate(ctx, raw)
 	}
-	return actor{}, errors.New("OAuth access token required")
+	return auth.Principal{}, errors.New("OAuth access token required")
 }
 
 func (s *Service) authChallenge(w http.ResponseWriter, resource string, invalid bool) {
@@ -67,12 +58,12 @@ func (s *Service) registerOAuth(m *http.ServeMux) {
 	}
 	metadata := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		metadata := map[string]any{"issuer": s.oauth.issuer, "token_endpoint": s.oauth.issuer + "/oauth/token", "grant_types_supported": []string{"client_credentials"}, "token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"}, "scopes_supported": append([]string(nil), validPermissions...), "resource_indicators_supported": true, "revocation_endpoint": s.oauth.issuer + "/oauth/revoke"}
+		metadata := map[string]any{"issuer": s.oauth.issuer, "token_endpoint": s.oauth.issuer + "/oauth/token", "grant_types_supported": []string{"client_credentials"}, "token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"}, "scopes_supported": append([]string(nil), auth.Permissions()...), "resource_indicators_supported": true, "revocation_endpoint": s.oauth.issuer + "/oauth/revoke"}
 		if s.interactiveOAuthEnabled() {
 			// MCP clients often request every scope returned by discovery. Point tools
 			// that need explicit write or administrator grants to the complete contract.
 			metadata["service_documentation"] = s.oauth.issuer + "/openapi.json"
-			metadata["scopes_supported"] = append([]string{}, interactiveOAuthScopes...)
+			metadata["scopes_supported"] = append([]string{}, auth.InteractiveReadScopes()...)
 			metadata["authorization_endpoint"] = s.oauth.issuer + "/oauth/authorize"
 			metadata["revocation_endpoint"] = s.oauth.issuer + "/oauth/revoke"
 			metadata["grant_types_supported"] = []string{"client_credentials", "authorization_code", "refresh_token"}
@@ -88,9 +79,9 @@ func (s *Service) registerOAuth(m *http.ServeMux) {
 		resource := s.oauth.issuer + suffix
 		m.HandleFunc("GET /.well-known/oauth-protected-resource"+suffix, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
-			scopes := append([]string(nil), validPermissions...)
+			scopes := append([]string(nil), auth.Permissions()...)
 			if s.interactiveOAuthEnabled() && s.interactiveResourceAllowed(resource) {
-				scopes = append([]string{}, interactiveOAuthScopes...)
+				scopes = append([]string{}, auth.InteractiveReadScopes()...)
 			}
 			write(w, 200, map[string]any{"resource": resource, "authorization_servers": []string{s.oauth.issuer}, "scopes_supported": scopes, "bearer_methods_supported": []string{"header"}})
 		})

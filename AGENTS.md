@@ -23,7 +23,7 @@ Agents connecting to a running instance should start with the
 - Test authorization boundaries, atomic batches, stable-ID retries, and recovery with
   real temporary SQLite databases. Use `make check` (fast, skips slow journeys) while iterating; run `make check-full` before claiming the build passes. New tests call `t.Parallel()`; mark journeys over a few seconds with `skipInShort(t)`.
 - Avoid speculative abstractions, new services, a UI, or a broker without a measured need.
-- Keep release labels generated from `VERSION`. Follow docs/releasing.md before tagging; run the release-version check and the documentation build. Feature claims still need review.
+- Keep release labels generated from `VERSION`. Follow docs/design/releasing.md before tagging; run the release-version check and the documentation build. Feature claims still need review.
 - SQL, MCP, identity projection and exports must enforce the same project boundaries.
 - Test project lifecycle changes with two projects. Check scoped grants,
   retries, restart recovery, and cleanup of the selected analytical store and export objects.

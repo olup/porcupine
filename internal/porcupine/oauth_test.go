@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/time/rate"
@@ -33,7 +35,7 @@ func oauthProtocolService(t *testing.T) (*Service, *atomic.Int64) {
 
 func oauthProtocolClient(t *testing.T, s *Service, permissions, projects []string) (string, string) {
 	t.Helper()
-	id := newID()
+	id := eventapi.NewID()
 	secret := "secret+percent:% reserved-character-value"
 	encodedPermissions, _ := json.Marshal(permissions)
 	encodedProjects, _ := json.Marshal(projects)
@@ -98,7 +100,7 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 		t.Fatal("access token lacks 256 random bits")
 	}
 	principal, err := s.authenticateOAuthToken(context.Background(), token.AccessToken, s.oauth.apiResource)
-	if err != nil || principal.ID != clientID || !authorize(principal, "events:read", projectID) || principal.admin() {
+	if err != nil || principal.ID != clientID || !auth.Authorize(principal, "events:read", projectID) || principal.Admin() {
 		t.Fatal("OAuth token lost original scoped principal", err)
 	}
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", token.AccessToken, "", 200)
@@ -149,17 +151,17 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 		t.Fatal(err)
 	}
 	actor, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
-	if err != nil || actor.admin() || !actor.can("events:read") || actor.can("events:write") {
+	if err != nil || actor.Admin() || !actor.Can("events:read") || actor.Can("events:write") {
 		t.Fatal("current admin grant escalated a downscoped token", err)
 	}
-	if !authorize(actor, "events:read", projectID) || authorize(actor, "events:read", otherProject) {
+	if !auth.Authorize(actor, "events:read", projectID) || auth.Authorize(actor, "events:read", otherProject) {
 		t.Fatal("new admin project grants widened an old token snapshot")
 	}
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", raw, "", 200)
 	request(t, s, "GET", "/api/v1/projects/"+otherProject+"/events", raw, "", 403)
 	newIssued := oauthProtocolRequest(t, s, id, secret, oauthGrantForm(), 200)["access_token"].(string)
 	newActor, err := s.authenticateOAuthToken(context.Background(), newIssued, s.oauth.apiResource)
-	if err != nil || !authorize(newActor, "events:read", otherProject) {
+	if err != nil || !auth.Authorize(newActor, "events:read", otherProject) {
 		t.Fatal("new token did not capture newly authorized scope", err)
 	}
 	if _, err = s.control.Exec(`UPDATE access_keys SET permissions='["events:write"]' WHERE id=?`, id); err != nil {
@@ -197,7 +199,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource)
-	if err != nil || principal.ID != bootstrapID || principal.admin() || !principal.can("events:read") || principal.can("management:write") {
+	if err != nil || principal.ID != bootstrapID || principal.Admin() || !principal.Can("events:read") || principal.Can("management:write") {
 		t.Fatal("bootstrap downscope changed actor identity or retained administration")
 	}
 	full := oauthProtocolRequest(t, s, "bootstrap", adminToken, oauthGrantForm(), 200)["access_token"].(string)
@@ -205,7 +207,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, err = s.authenticateOAuthToken(context.Background(), full, s.oauth.apiResource)
-	if err != nil || principal.admin() || !principal.can("events:read") || principal.can("events:delete") {
+	if err != nil || principal.Admin() || !principal.Can("events:read") || principal.Can("events:delete") {
 		t.Fatal("old admin token bypassed current grant reduction")
 	}
 	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), bootstrapID); err != nil {

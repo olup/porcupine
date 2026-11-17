@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 	t.Parallel()
 	f := newOAuthIntegration(t)
-	lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"slices"
 	"sort"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 type TenantProjectGrant struct {
@@ -43,7 +45,7 @@ func projectRolePermissions(role string) ([]string, error) {
 	case "contributor":
 		return []string{"events:read", "events:write", "identity:write", "imports:write", "management:read"}, nil
 	case "manager":
-		return slices.Clone(projectPermissionNames), nil
+		return slices.Clone(auth.ProjectPermissions()), nil
 	default:
 		return nil, apiError(400, "unknown project role")
 	}
@@ -60,7 +62,7 @@ func canonicalProjectPermissions(role string, permissions []string) ([]string, e
 		return nil, apiError(400, "expected 1 to 32 project permissions")
 	}
 	for _, p := range permissions {
-		if !slices.Contains(projectPermissionNames, p) {
+		if !slices.Contains(auth.ProjectPermissions(), p) {
 			return nil, apiError(400, "unknown or non-project permission")
 		}
 	}
@@ -77,7 +79,7 @@ func canonicalMembership(ctx context.Context, query oauthQueryer, tenantID strin
 			return m, apiError(400, "tenant administrators have fixed authority over all projects in their tenant")
 		}
 		m.ProjectScope = "all"
-		m.Permissions = sortedGrants(projectPermissionNames)
+		m.Permissions = sortedGrants(auth.ProjectPermissions())
 		return m, nil
 	}
 	if m.ProjectScope == "" {
@@ -135,36 +137,36 @@ func scanTenantMembership(row interface{ Scan(...any) error }) (TenantMembership
 	return m, nil
 }
 
-func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human actor) (actor, error) {
+func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human auth.Principal) (auth.Principal, error) {
 	rows, err := query.QueryContext(ctx, selectTenantMembers+` JOIN access_keys k ON k.id=m.human_id WHERE m.human_id=$1 AND m.revoked_at IS NULL AND k.revoked_at IS NULL ORDER BY m.tenant_id`, human.ID)
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
 	var memberships []TenantMembership
 	for rows.Next() {
 		m, err := scanTenantMembership(rows)
 		if err != nil {
 			rows.Close()
-			return actor{}, err
+			return auth.Principal{}, err
 		}
 		memberships = append(memberships, m)
 	}
 	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
-	if human.projectPermissions == nil {
-		human.projectPermissions = map[string][]string{}
+	if human.ProjectPermissions == nil {
+		human.ProjectPermissions = map[string][]string{}
 	}
 	for _, m := range memberships {
-		human.tenantIDs = append(human.tenantIDs, m.TenantID)
+		human.TenantIDs = append(human.TenantIDs, m.TenantID)
 		if m.Role == "admin" {
-			human.tenantAdmins = append(human.tenantAdmins, m.TenantID)
+			human.TenantAdmins = append(human.TenantAdmins, m.TenantID)
 			human.Permissions = append(human.Permissions, "tenant:admin")
-			human.Permissions = append(human.Permissions, projectPermissionNames...)
+			human.Permissions = append(human.Permissions, auth.ProjectPermissions()...)
 		}
 		if m.Role != "admin" && m.Role != "member" || m.ProjectScope != "all" && m.ProjectScope != "selected" {
-			return actor{}, errors.New("invalid membership role or scope")
+			return auth.Principal{}, errors.New("invalid membership role or scope")
 		}
 		overrides := map[string][]string{}
 		for _, g := range m.Grants {
@@ -172,17 +174,17 @@ func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human
 		}
 		projects, err := query.QueryContext(ctx, `SELECT id FROM projects WHERE tenant_id=$1 ORDER BY id`, m.TenantID)
 		if err != nil {
-			return actor{}, err
+			return auth.Principal{}, err
 		}
 		for projects.Next() {
 			var id string
 			if err := projects.Scan(&id); err != nil {
 				projects.Close()
-				return actor{}, err
+				return auth.Principal{}, err
 			}
 			perms, explicit := overrides[id]
 			if m.Role == "admin" {
-				perms = projectPermissionNames
+				perms = auth.ProjectPermissions()
 			} else if !explicit {
 				if m.ProjectScope == "selected" {
 					continue
@@ -190,17 +192,17 @@ func addTenantMembershipAuthority(ctx context.Context, query oauthQueryer, human
 				perms = m.Permissions
 			}
 			for _, p := range perms {
-				if !slices.Contains(projectPermissionNames, p) {
+				if !slices.Contains(auth.ProjectPermissions(), p) {
 					projects.Close()
-					return actor{}, errors.New("invalid project membership permission")
+					return auth.Principal{}, errors.New("invalid project membership permission")
 				}
 			}
 			human.Projects = append(human.Projects, id)
 			human.Permissions = append(human.Permissions, perms...)
-			human.projectPermissions[id] = sortedGrants(append(human.projectPermissions[id], perms...))
+			human.ProjectPermissions[id] = sortedGrants(append(human.ProjectPermissions[id], perms...))
 		}
 		if err := errors.Join(projects.Err(), projects.Close()); err != nil {
-			return actor{}, err
+			return auth.Principal{}, err
 		}
 	}
 	human.Projects = sortedGrants(human.Projects)

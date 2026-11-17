@@ -3,6 +3,8 @@ package porcupine
 import (
 	"net/http/httptest"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
@@ -18,11 +20,11 @@ func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "http://localhost/api/v1/projects", nil)
 	r.Header.Set("Authorization", "bearer token")
-	if token, err := bearerCredential(r); err != nil || token != "token" {
+	if token, err := auth.BearerCredential(r); err != nil || token != "token" {
 		t.Fatal("Bearer scheme should be case insensitive")
 	}
 	r.Header.Add("Authorization", "Bearer another")
-	if _, err := bearerCredential(r); err == nil {
+	if _, err := auth.BearerCredential(r); err == nil {
 		t.Fatal("accepted duplicate credentials")
 	}
 }

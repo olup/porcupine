@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 var tenantConsentPage = template.Must(template.New("tenant-consent").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize tenant administration</title><style>body{max-width:38rem;margin:3rem auto;padding:0 1rem;font:17px/1.5 system-ui;color:#161616;background:white}fieldset{margin:1rem 0}label{display:block;padding:.4rem}button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0}code{overflow-wrap:anywhere}</style><main><h1>Authorize tenant administration</h1><p><strong>{{.ClientName}}</strong> requests permission to manage one tenant.</p><p>Client: <code>{{.ClientID}}</code></p><p>Return address: <code>{{.RedirectURI}}</code></p><p>Resource: <code>{{.Resource}}</code></p><p>Permissions: <code>tenant:admin</code></p><p>This grants management of the selected tenant's members, service credentials, and current and future projects.</p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><fieldset><legend>Select one tenant</legend>{{range .Tenants}}<label><input type="radio" name="tenant" value="{{.ID}}"> {{.Name}} <code>{{.ID}}</code></label>{{end}}</fieldset><button type="submit" name="decision" value="approve">Approve access</button><button type="submit" name="decision" value="deny">Deny</button></form></main></html>`))
 
-func (s *Service) oauthTenantConsent(w http.ResponseWriter, r *http.Request, sessionKey string, session *oidcBrowserSession, request oauthAuthorizationRequest, human actor) {
+func (s *Service) oauthTenantConsent(w http.ResponseWriter, r *http.Request, sessionKey string, session *oidcBrowserSession, request oauthAuthorizationRequest, human auth.Principal) {
 	options, err := s.tenantAdminOptions(r.Context(), s.control, human)
 	if err != nil {
 		http.Error(w, "Tenant access unavailable", http.StatusServiceUnavailable)
@@ -71,7 +73,7 @@ func (s *Service) oauthTenantConsent(w http.ResponseWriter, r *http.Request, ses
 		http.Redirect(w, r, target.String(), http.StatusSeeOther)
 		return
 	}
-	approved := actor{ID: human.ID, Permissions: []string{tenantAdminScope}, Projects: []string{}, tenantAdmins: []string{tenant}}
+	approved := auth.Principal{ID: human.ID, Permissions: []string{tenantAdminScope}, Projects: []string{}, TenantAdmins: []string{tenant}}
 	location, err := s.issueOAuthAuthorizationCode(r.Context(), request, human.ID, session.proof, approved)
 	if err != nil {
 		http.Error(w, "Authorization could not be completed", http.StatusForbidden)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/nativequery"
 )
 
@@ -82,7 +83,7 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 	return &AnalyticsQueryOutput{Body: output}, nil
 }
 
-func (s *Service) lakeEventCatalog(ctx context.Context, input EventCatalogInput) (*EventCatalogOutput, error) {
+func (s *Service) lakeEventCatalog(ctx context.Context, input lakeapi.EventCatalogInput) (*EventCatalogOutput, error) {
 	ctx, limits, release, err := s.beginInteractiveQuery(ctx, input.ID)
 	if err != nil {
 		return nil, err

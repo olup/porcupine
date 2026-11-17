@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type architectureCrashState struct {
@@ -90,14 +92,14 @@ func TestArchitectureCrashHelper(t *testing.T) {
 	stage := os.Getenv("PORCUPINE_ARCH_CRASH_STAGE")
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 10000}
 	if stage == "resume" {
-		config.DuckLake = &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512}
+		config.DuckLake = &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512}
 	}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stage != "resume" {
-		lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512})
+		lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512})
 		if err != nil {
 			t.Fatal(err)
 		}

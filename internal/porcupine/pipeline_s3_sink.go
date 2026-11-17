@@ -10,7 +10,9 @@ import (
 	stdhash "hash"
 	"io"
 
+	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"golang.org/x/time/rate"
 )
 
@@ -22,16 +24,16 @@ type pipelineS3File struct {
 	SHA256       string `json:"sha256"`
 }
 type pipelineS3Manifest struct {
-	Version       int                     `json:"version"`
-	ProjectID     string                  `json:"project_id"`
-	PipelineID    string                  `json:"pipeline_id"`
-	RunID         string                  `json:"run_id"`
-	WindowStartMS int64                   `json:"window_start_ms"`
-	WindowEndMS   int64                   `json:"window_end_ms"`
-	Format        string                  `json:"format"`
-	Rows          int64                   `json:"rows"`
-	Columns       []AnalyticsResultColumn `json:"columns"`
-	Files         []pipelineS3File        `json:"files"`
+	Version       int                             `json:"version"`
+	ProjectID     string                          `json:"project_id"`
+	PipelineID    string                          `json:"pipeline_id"`
+	RunID         string                          `json:"run_id"`
+	WindowStartMS int64                           `json:"window_start_ms"`
+	WindowEndMS   int64                           `json:"window_end_ms"`
+	Format        string                          `json:"format"`
+	Rows          int64                           `json:"rows"`
+	Columns       []lakeapi.AnalyticsResultColumn `json:"columns"`
+	Files         []pipelineS3File                `json:"files"`
 }
 type pipelineS3Sink struct {
 	ctx                       context.Context
@@ -39,7 +41,8 @@ type pipelineS3Sink struct {
 	work                      *s3PipelineWork
 	store                     *exportstore.Store
 	config                    ExportConfig
-	encoder                   exportSink
+	encoder                   *delivery.RowEncoder
+	resultColumns             []lakeapi.AnalyticsResultColumn
 	limiter                   *rate.Limiter
 	current                   *pipelineS3File
 	upload                    *exportstore.Upload
@@ -51,18 +54,30 @@ type pipelineS3Sink struct {
 
 func newPipelineS3Sink(ctx context.Context, s *Service, w *s3PipelineWork, store *exportstore.Store) *pipelineS3Sink {
 	sink := &pipelineS3Sink{ctx: ctx, s: s, work: w, store: store, config: s.pipelines.config.ExportLimits, files: []pipelineS3File{}}
-	sink.encoder.job.Format = w.spec.Format
 	sink.limiter = rate.NewLimiter(rate.Limit(sink.config.BandwidthBytesPerSecond), 64<<10)
 	return sink
 }
-func (w *pipelineS3Sink) columns(columns []AnalyticsResultColumn) error {
-	return w.encoder.setColumns(columns)
+func (w *pipelineS3Sink) columns(columns []lakeapi.AnalyticsResultColumn) error {
+	if w.encoder != nil {
+		return errExportSink
+	}
+	names := make([]string, len(columns))
+	for i, column := range columns {
+		names[i] = column.Name
+	}
+	encoder, err := delivery.NewRowEncoder(w.work.spec.Format, names)
+	if err != nil {
+		return errExportSink
+	}
+	w.encoder = encoder
+	w.resultColumns = append([]lakeapi.AnalyticsResultColumn{}, columns...)
+	return nil
 }
 func (w *pipelineS3Sink) row(values []json.RawMessage) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
-	row, err := w.encoder.encodeRow(values)
+	row, err := w.encoder.Encode(values)
 	if err != nil {
 		return err
 	}
@@ -110,8 +125,8 @@ func (w *pipelineS3Sink) beginFile() error {
 	if err != nil {
 		return err
 	}
-	if len(w.encoder.header) > 0 {
-		return w.writeDecoded(w.encoder.header)
+	if len(w.encoder.Header()) > 0 {
+		return w.writeDecoded(w.encoder.Header())
 	}
 	return nil
 }
@@ -178,5 +193,5 @@ func (w *pipelineS3Sink) finish() (pipelineS3Manifest, error) {
 	if err := w.finishFile(); err != nil {
 		return pipelineS3Manifest{}, err
 	}
-	return pipelineS3Manifest{Version: 1, ProjectID: w.work.pipeline.ProjectID, PipelineID: w.work.pipeline.ID, RunID: w.work.id, WindowStartMS: w.work.start, WindowEndMS: w.work.end, Format: w.work.spec.Format, Rows: w.rows, Columns: w.encoder.columns, Files: w.files}, nil
+	return pipelineS3Manifest{Version: 1, ProjectID: w.work.pipeline.ProjectID, PipelineID: w.work.pipeline.ID, RunID: w.work.id, WindowStartMS: w.work.start, WindowEndMS: w.work.end, Format: w.work.spec.Format, Rows: w.rows, Columns: w.resultColumns, Files: w.files}, nil
 }

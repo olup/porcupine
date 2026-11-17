@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // ExportConfig is deployment-only; no HTTP or MCP operation can raise its budgets.
@@ -33,22 +34,22 @@ const (
 )
 
 type ExportJob struct {
-	ID           string                  `json:"id"`
-	ProjectID    string                  `json:"project_id"`
-	State        ExportState             `json:"state"`
-	Format       string                  `json:"format"`
-	Rows         int64                   `json:"rows"`
-	Bytes        int64                   `json:"bytes"`
-	DecodedBytes int64                   `json:"decoded_bytes"`
-	FileCount    int                     `json:"file_count"`
-	Attempts     int                     `json:"attempts"`
-	CreatedAt    string                  `json:"created_at"`
-	StartedAt    string                  `json:"started_at,omitempty"`
-	CompletedAt  string                  `json:"completed_at,omitempty"`
-	ExpiresAt    string                  `json:"expires_at,omitempty"`
-	Error        string                  `json:"error,omitempty"`
-	Columns      []AnalyticsResultColumn `json:"columns,omitempty"`
-	Consistency  string                  `json:"consistency"`
+	ID           string                          `json:"id"`
+	ProjectID    string                          `json:"project_id"`
+	State        ExportState                     `json:"state"`
+	Format       string                          `json:"format"`
+	Rows         int64                           `json:"rows"`
+	Bytes        int64                           `json:"bytes"`
+	DecodedBytes int64                           `json:"decoded_bytes"`
+	FileCount    int                             `json:"file_count"`
+	Attempts     int                             `json:"attempts"`
+	CreatedAt    string                          `json:"created_at"`
+	StartedAt    string                          `json:"started_at,omitempty"`
+	CompletedAt  string                          `json:"completed_at,omitempty"`
+	ExpiresAt    string                          `json:"expires_at,omitempty"`
+	Error        string                          `json:"error,omitempty"`
+	Columns      []lakeapi.AnalyticsResultColumn `json:"columns,omitempty"`
+	Consistency  string                          `json:"consistency"`
 }
 
 type storedExport struct {

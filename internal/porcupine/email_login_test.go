@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/olup/porcupine/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,40 +68,40 @@ func TestEmailSendAbuseLimits(t *testing.T) {
 	start := time.Now()
 	b := newOAuthBrowser(false)
 	for i := range 4 {
-		ok := b.reserveEmailDelivery(start, "a@example.test", "peer")
+		ok := b.emailDelivery.Reserve(start, "a@example.test", "peer")
 		if ok != (i < 3) {
 			t.Fatal("address budget")
 		}
 		if ok {
-			b.finishEmailDelivery()
+			b.emailDelivery.Finish()
 		}
 	}
 	for i := range 18 {
-		ok := b.reserveEmailDelivery(start, fmt.Sprint(i), "peer")
+		ok := b.emailDelivery.Reserve(start, fmt.Sprint(i), "peer")
 		if ok != (i < 17) {
 			t.Fatal("peer budget")
 		}
 		if ok {
-			b.finishEmailDelivery()
+			b.emailDelivery.Finish()
 		}
 	}
 	for i := range 101 {
-		ok := b.reserveEmailDelivery(start, fmt.Sprint(i+20), fmt.Sprint(i))
+		ok := b.emailDelivery.Reserve(start, fmt.Sprint(i+20), fmt.Sprint(i))
 		if ok != (i < 100) {
 			t.Fatal("global budget")
 		}
 		if ok {
-			b.finishEmailDelivery()
+			b.emailDelivery.Finish()
 		}
 	}
 	for i := range 9 {
-		ok := b.reserveEmailDelivery(start.Add(emailDeliveryPeriod), fmt.Sprint(i), "peer")
+		ok := b.emailDelivery.Reserve(start.Add(auth.EmailDeliveryPeriod), fmt.Sprint(i), "peer")
 		if ok != (i < 8) {
 			t.Fatal("in-flight budget")
 		}
 	}
 	for range 8 {
-		b.finishEmailDelivery()
+		b.emailDelivery.Finish()
 	}
 }
 

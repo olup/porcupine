@@ -6,10 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/olup/porcupine/internal/auth"
 	"golang.org/x/oauth2"
 )
 
@@ -141,32 +140,7 @@ func (s *Service) startOIDCLogin(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	o.cookie(w, raw, int(time.Until(expires).Seconds()))
-	http.Redirect(w, r, o.oauth.AuthCodeURL(session.state, oidc.Nonce(session.nonce), oauth2.S256ChallengeOption(session.verifier)), http.StatusSeeOther)
-}
-
-// A trusted provider proves identity; local human accounts supply all authority.
-type upstreamOIDCClaims struct {
-	AuthorizedParty string `json:"azp"`
-	Email           string `json:"email"`
-	EmailVerified   bool   `json:"email_verified"`
-	HostedDomain    string `json:"hd"`
-}
-
-func oidcVerifiedEmail(issuer string, claims upstreamOIDCClaims) (string, error) {
-	if !claims.EmailVerified {
-		return "", errors.New("identity provider did not verify email")
-	}
-	email, err := normalizeEmail(claims.Email)
-	if err != nil {
-		return "", errors.New("identity provider did not provide a valid email")
-	}
-	if issuer == "https://accounts.google.com" {
-		domain := email[strings.LastIndexByte(email, '@')+1:]
-		if domain != "gmail.com" && claims.HostedDomain == "" {
-			return "", errors.New("Google does not establish current email ownership; use email sign-in")
-		}
-	}
-	return email, nil
+	http.Redirect(w, r, o.provider.AuthorizationURL(session.state, session.nonce, session.verifier), http.StatusSeeOther)
 }
 
 func (s *Service) oauthOIDCCallback(w http.ResponseWriter, r *http.Request) {
@@ -183,37 +157,20 @@ func (s *Service) oauthOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o.cookie(w, "", -1)
-	if query.Get("error") != "" || query.Get("iss") != "" && query.Get("iss") != o.issuer || len(query["code"]) != 1 || query.Get("code") == "" || len(query.Get("code")) > 4096 {
+	if query.Get("error") != "" || query.Get("iss") != "" && query.Get("iss") != o.provider.Issuer() || len(query["code"]) != 1 || query.Get("code") == "" || len(query.Get("code")) > 4096 {
 		http.Error(w, "Login was not completed", 403)
 		return
 	}
-	ctx := oidc.ClientContext(r.Context(), o.client)
-	token, err := o.oauth.Exchange(ctx, query.Get("code"), oauth2.VerifierOption(session.verifier))
+	identity, err := o.provider.ExchangeIdentity(r.Context(), query.Get("code"), session.verifier, session.nonce)
 	if err != nil {
-		http.Error(w, "Login verification failed", 403)
+		message := "Login verification failed"
+		if errors.Is(err, auth.ErrOIDCEmail) {
+			message = "A verified invited email is required; use email sign-in if available"
+		}
+		http.Error(w, message, 403)
 		return
 	}
-	rawToken, ok := token.Extra("id_token").(string)
-	if !ok || len(rawToken) > 65536 {
-		http.Error(w, "Login verification failed", 403)
-		return
-	}
-	identity, err := o.verifier.Verify(ctx, rawToken)
-	if err != nil || identity.Subject == "" || len(identity.Subject) > 512 || subtle.ConstantTimeCompare([]byte(identity.Nonce), []byte(session.nonce)) != 1 {
-		http.Error(w, "Login verification failed", 403)
-		return
-	}
-	var claims upstreamOIDCClaims
-	if identity.Claims(&claims) != nil || claims.AuthorizedParty != "" && claims.AuthorizedParty != o.oauth.ClientID || len(identity.Audience) > 1 && claims.AuthorizedParty != o.oauth.ClientID {
-		http.Error(w, "Login verification failed", 403)
-		return
-	}
-	email, err := oidcVerifiedEmail(o.issuer, claims)
-	if err != nil {
-		http.Error(w, "A verified invited email is required; use email sign-in if available", 403)
-		return
-	}
-	human, err := s.oidcHuman(r.Context(), identity.Subject, email)
+	human, err := s.oidcHuman(r.Context(), identity.Subject, identity.Email)
 	if err != nil {
 		http.Error(w, "This account has no project access", 403)
 		return

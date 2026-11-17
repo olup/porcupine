@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type webhookRoundTrip func(*http.Request) (*http.Response, error)
@@ -26,7 +28,7 @@ func webhookTestService(t *testing.T, mode string) (*Service, string, string, st
 	p, token := project(t, s)
 	var creator string
 	s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&creator)
-	id := newID()
+	id := eventapi.NewID()
 	config, _ := json.Marshal(WebhookPipelineSpec{DeliveryMode: mode, IntervalSeconds: 60, IncludeEvents: []string{"test_event", "purchase"}, ExcludeEvents: []string{"blocked"}})
 	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://hooks.example.test/events?private=secret", Headers: map[string]string{"Authorization": "Bearer synthetic", "X-Custom-Key": "private"}})
 	encrypted, err := s.sealPipelineSecret(p, id, secret)
@@ -49,9 +51,9 @@ func TestWebhookBatchHundredAtomicMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	events := make([]Event, 0, 201)
+	events := make([]eventapi.Event, 0, 201)
 	for i := range 201 {
-		events = append(events, Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)})
+		events = append(events, eventapi.Event{ProjectID: p, UUID: fmt.Sprintf("event-%d", i), Event: "purchase", DistinctID: "visitor", Properties: json.RawMessage(`{"x":1}`), ReceivedAt: now.Format(time.RFC3339Nano)})
 	}
 	if err = s.acceptance.enqueueWebhooks(context.Background(), tx, events); err != nil {
 		t.Fatal(err)
@@ -122,8 +124,8 @@ func TestWebhookBatchUnicodeEscapesAndByteRotation(t *testing.T) {
 	tx, _ := s.db.Begin()
 	defer tx.Rollback()
 	for i := range 5 {
-		event := Event{ProjectID: p, UUID: fmt.Sprintf("unicode-%d", i), Event: "purchase", Properties: properties, ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{event}); err != nil {
+		event := eventapi.Event{ProjectID: p, UUID: fmt.Sprintf("unicode-%d", i), Event: "purchase", Properties: properties, ReceivedAt: now.Format(time.RFC3339Nano)}
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -176,8 +178,8 @@ func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T)
 	s.clock = func() time.Time { return now }
 	tx, _ := s.db.Begin()
 	for _, uuid := range []string{"deleted-before-send", "deleted-after-attempt", "survivor"} {
-		event := Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: now.Format(time.RFC3339Nano)}
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{event}); err != nil {
+		event := eventapi.Event{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: now.Format(time.RFC3339Nano)}
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{event}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -301,7 +303,7 @@ func TestWebhookManualRetryCannotAppendToFrozenBody(t *testing.T) {
 		t.Helper()
 		tx, _ := s.db.Begin()
 		defer tx.Rollback()
-		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []Event{{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}}); err != nil {
+		if err := s.acceptance.enqueueWebhooks(context.Background(), tx, []eventapi.Event{{ProjectID: p, UUID: uuid, Event: "purchase", Properties: json.RawMessage(`{}`), ReceivedAt: received.Format(time.RFC3339Nano)}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -350,7 +352,7 @@ func TestWebhookDestinationCooldownLetsHealthyReceiverAdvance(t *testing.T) {
 	s.clock = func() time.Time { return now }
 	var actorID string
 	s.db.QueryRow(`SELECT actor_id FROM pipelines WHERE id=?`, bad).Scan(&actorID)
-	healthy := newID()
+	healthy := eventapi.NewID()
 	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
 	encrypted, _ := s.sealPipelineSecret(p, healthy, secret)
 	if _, err := s.db.Exec(`INSERT INTO pipelines(id,project_id,actor_id,kind,name,state,config,secret,created_at_ms) SELECT ?,project_id,actor_id,kind,'healthy',state,config,?,created_at_ms FROM pipelines WHERE id=?`, healthy, encrypted, bad); err != nil {

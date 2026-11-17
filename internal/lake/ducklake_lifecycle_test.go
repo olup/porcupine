@@ -116,9 +116,15 @@ func TestDuckLakeProjectsReopenDuringMaintenance(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	s := openLakeStorageTest(t, t.TempDir(), 2)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	names := []string{"a", "b", "c", "d", "e"}
+	const rounds = 4
+	limits := DefaultQueryExecutionLimits()
+	// Budget the complete fixture separately from each query's unchanged limit.
+	// A fixed 30-second total imposed an incidental throughput requirement on
+	// twenty cold opens competing with the full race suite on smaller runners.
+	operations := len(names)*(rounds+1) + 1
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(operations)*limits.Timeout)
+	defer cancel()
 	for i, name := range names {
 		if err := s.Apply(ctx, []EventProjection{lakeStorageProjection(t, name, name, int64(i+1))}); err != nil {
 			t.Fatal(err)
@@ -148,9 +154,9 @@ func TestDuckLakeProjectsReopenDuringMaintenance(t *testing.T) {
 			t.Errorf("concurrent maintenance failed: %v", err)
 		}
 	}()
-	for round := 0; round < 4; round++ {
+	for round := 0; round < rounds; round++ {
 		for _, name := range names {
-			result, err := s.Query(ctx, name, "SELECT uuid FROM events", nil, DefaultQueryExecutionLimits())
+			result, err := s.Query(ctx, name, "SELECT uuid FROM events", nil, limits)
 			if err != nil {
 				t.Fatalf("round %d project %s failed on first query: %v", round, name, err)
 			}

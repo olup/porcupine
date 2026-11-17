@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeStoppedVolumeRestore(t *testing.T) {
@@ -12,7 +14,7 @@ func TestDuckLakeStoppedVolumeRestore(t *testing.T) {
 	root := t.TempDir()
 	live, backup := filepath.Join(root, "live"), filepath.Join(root, "backup")
 	config := Config{DBPath: filepath.Join(live, "queue.db"), BootstrapToken: adminToken,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(live, "lake"), MemoryLimitMB: 128, Threads: 1}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(live, "lake"), MemoryLimitMB: 128, Threads: 1}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

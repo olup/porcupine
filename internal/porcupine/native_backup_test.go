@@ -9,14 +9,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestNativeBackupConfigurationRequiresNativeFiles(t *testing.T) {
 	t.Parallel()
 	for _, config := range []Config{
-		{NativeBackup: &NativeBackupConfig{Directory: t.TempDir()}},
-		{DBPath: ":memory:", DuckLake: &DuckLakeConfig{Directory: t.TempDir()}, NativeBackup: &NativeBackupConfig{Directory: t.TempDir()}},
-		{DuckLake: &DuckLakeConfig{Directory: t.TempDir()}, NativeBackup: &NativeBackupConfig{Directory: t.TempDir(), Timeout: -time.Second}},
+		{NativeBackup: &lakeapi.NativeBackupConfig{Directory: t.TempDir()}},
+		{DBPath: ":memory:", DuckLake: &lakeapi.DuckLakeConfig{Directory: t.TempDir()}, NativeBackup: &lakeapi.NativeBackupConfig{Directory: t.TempDir()}},
+		{DuckLake: &lakeapi.DuckLakeConfig{Directory: t.TempDir()}, NativeBackup: &lakeapi.NativeBackupConfig{Directory: t.TempDir(), Timeout: -time.Second}},
 	} {
 		if s, err := Open(config); err == nil {
 			if s != nil {
@@ -26,7 +28,7 @@ func TestNativeBackupConfigurationRequiresNativeFiles(t *testing.T) {
 		}
 	}
 	root := t.TempDir()
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(root, "lake", "backup")}, filepath.Join(root, "db"), localControlPath(filepath.Join(root, "db")), &DuckLakeConfig{Directory: filepath.Join(root, "lake")}); err == nil {
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{Directory: filepath.Join(root, "lake", "backup")}, filepath.Join(root, "db"), localControlPath(filepath.Join(root, "db")), &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake")}); err == nil {
 		t.Fatal("backup destination inside analytical store accepted")
 	}
 }
@@ -43,21 +45,21 @@ func TestSQLiteCheckpointIntegrityCancellationAndImmutableDestination(t *testing
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "snapshot?quoted.db")
-	if err := snapshotSQLite(context.Background(), source, path); err != nil {
+	if err := lakeapi.SnapshotSQLite(context.Background(), source, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateBackupSQLite(context.Background(), path); err != nil {
+	if err := lakeapi.ValidateBackupSQLite(context.Background(), path); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := source.Exec("DELETE FROM event"); err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshotSQLite(context.Background(), source, path); err == nil {
+	if err := lakeapi.SnapshotSQLite(context.Background(), source, path); err == nil {
 		t.Fatal("checkpoint overwrote an existing destination")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := snapshotSQLite(ctx, source, filepath.Join(root, "cancelled.db")); err == nil {
+	if err := lakeapi.SnapshotSQLite(ctx, source, filepath.Join(root, "cancelled.db")); err == nil {
 		t.Fatal("checkpoint ignored cancellation")
 	}
 }
@@ -70,7 +72,7 @@ func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) 
 		if err := os.Mkdir(path, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeBackupManifest(path, nativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: item.source, CreatedAt: item.created}); err != nil {
+		if err := lakeapi.WriteBackupManifest(path, lakeapi.NativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: item.source, CreatedAt: item.created}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,7 +81,7 @@ func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) 
 	invalid := filepath.Join(root, "pc_backup_invalid")
 	os.Mkdir(invalid, 0700)
 	os.WriteFile(filepath.Join(invalid, "manifest.json"), []byte(`{"invalid":true}`), 0600)
-	if err := pruneNativeBackups(root, "source", 1, ""); err != nil {
+	if err := lakeapi.PruneNativeBackups(root, "source", 1, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "pc_backup_old")); !os.IsNotExist(err) {
@@ -92,13 +94,13 @@ func TestNativeBackupRetentionExcludesIncompleteAndForeignBundles(t *testing.T) 
 	}
 }
 
-func readNativeManifest(t *testing.T, directory string) nativeBackupManifest {
+func readNativeManifest(t *testing.T, directory string) lakeapi.NativeBackupManifest {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var manifest nativeBackupManifest
+	var manifest lakeapi.NativeBackupManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +113,7 @@ func minimalNativeBackupBundle(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(directory, "ducklake"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: "pc_backup_test", SourceID: "source", SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", CreatedAt: now(), CapturedAt: now(), SourceStorage: nativeBackupStorageIdentity{Mode: "local"}}
+	manifest := lakeapi.NativeBackupManifest{Format: "porcupine-native-v2", ID: "pc_backup_test", SourceID: "source", SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", CreatedAt: now(), CapturedAt: now(), SourceStorage: lakeapi.NativeBackupStorageIdentity{Mode: "local"}}
 	for _, item := range []struct{ path, statement string }{
 		{"acceptance.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('ducklake_source_id','source'),('journal_source_id','journal-source'),('local_control_source_id','control-source'),('journal_layout','separate-control-v1')"},
 		{"control.sqlite", "CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT); INSERT INTO metadata VALUES('local_control_source_id','control-source'),('local_journal_source_id','journal-source')"},
@@ -127,13 +129,13 @@ func minimalNativeBackupBundle(t *testing.T) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		file, err := hashBackupFile(context.Background(), path, item.path)
+		file, err := lakeapi.HashBackupFile(context.Background(), path, item.path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		manifest.Files = append(manifest.Files, file)
 	}
-	if err := writeBackupManifest(directory, manifest); err != nil {
+	if err := lakeapi.WriteBackupManifest(directory, manifest); err != nil {
 		t.Fatal(err)
 	}
 	return directory
@@ -201,7 +203,7 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 				}
 				for i, file := range manifest.Files {
 					if filepath.Join(directory, filepath.FromSlash(file.Path)) == path {
-						manifest.Files[i], err = hashBackupFile(context.Background(), path, file.Path)
+						manifest.Files[i], err = lakeapi.HashBackupFile(context.Background(), path, file.Path)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -215,7 +217,7 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 			if err := os.WriteFile(filepath.Join(directory, "manifest.json"), raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			_, err = verifyNativeBackup(context.Background(), directory)
+			_, err = lakeapi.VerifyNativeBackup(context.Background(), directory)
 			if strings.HasPrefix(scenario, "valid") && err != nil {
 				t.Fatal(err)
 			}
@@ -234,11 +236,11 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 		if err := os.Mkdir(directory, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeBackupManifest(directory, nativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: "source", CreatedAt: item.created}); err != nil {
+		if err := lakeapi.WriteBackupManifest(directory, lakeapi.NativeBackupManifest{Format: "porcupine-native-v2", ID: item.id, SourceID: "source", CreatedAt: item.created}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := pruneNativeBackups(root, "source", 1, "pc_backup_published"); err != nil {
+	if err := lakeapi.PruneNativeBackups(root, "source", 1, "pc_backup_published"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "pc_backup_published")); err != nil {
@@ -252,32 +254,32 @@ func TestNativeBackupRetentionProtectsPublishedBundleAfterClockRollback(t *testi
 func TestNativeBackupIndependentS3Configuration(t *testing.T) {
 	t.Parallel()
 	localRoot := t.TempDir()
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), localControlPath(filepath.Join(localRoot, "backups", "queue.db")), &DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{Directory: filepath.Join(localRoot, "backups")}, filepath.Join(localRoot, "backups", "queue.db"), localControlPath(filepath.Join(localRoot, "backups", "queue.db")), &lakeapi.DuckLakeConfig{Directory: filepath.Join(localRoot, "lake")}); err == nil {
 		t.Fatal("backup destination containing live SQLite accepted")
 	}
-	remote := &DuckLakeS3Config{Bucket: "backup-test", Prefix: "independent", Region: "us-east-1"}
+	remote := &lakeapi.DuckLakeS3Config{Bucket: "backup-test", Prefix: "independent", Region: "us-east-1"}
 	root := t.TempDir()
-	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1"}}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err != nil {
+	lake := &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &lakeapi.DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1"}}
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err != nil {
 		t.Fatal(err)
 	}
 	for _, prefix := range []string{"analytics", "analytics/backups"} {
 		copy := *remote
 		copy.Prefix = prefix
-		if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
+		if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 			t.Fatal("overlapping S3 destination accepted")
 		}
 	}
 	copy := *remote
 	copy.Prefix = "analytics-parent"
 	lake.S3.Prefix = "analytics-parent/child"
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{S3: &copy}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("ancestor S3 destination accepted")
 	}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir(), S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{Directory: t.TempDir(), S3: remote}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("ambiguous destination accepted")
 	}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{Directory: t.TempDir()}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("analytical S3 metadata-only local backup accepted")
 	}
 }
@@ -286,13 +288,13 @@ func TestNativeBackupLocalOwnerExcludesRestoredWriter(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
 	source := "00000000-0000-0000-0000-000000000000"
-	if err := claimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
+	if err := lakeapi.ClaimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
 		t.Fatal(err)
 	}
-	if err := claimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
+	if err := lakeapi.ClaimLocalNativeBackupOwner(directory, source, "original-writer"); err != nil {
 		t.Fatal(err)
 	}
-	if err := claimLocalNativeBackupOwner(directory, source, "restored-writer"); err == nil {
+	if err := lakeapi.ClaimLocalNativeBackupOwner(directory, source, "restored-writer"); err == nil {
 		t.Fatal("restored writer claimed original local backup directory")
 	}
 }
@@ -301,31 +303,31 @@ func TestNativeBackupNormalizesSourceBeforeS3OverlapCheck(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for _, prefix := range []string{"analytics/", "/analytics/"} {
-		lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: prefix, Region: "us-east-1"}}
-		destination := &NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics/nested", Region: "us-east-1"}}
+		lake := &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &lakeapi.DuckLakeS3Config{Bucket: "backup-test", Prefix: prefix, Region: "us-east-1"}}
+		destination := &lakeapi.NativeBackupConfig{S3: &lakeapi.DuckLakeS3Config{Bucket: "backup-test", Prefix: "analytics/nested", Region: "us-east-1"}}
 		if _, err := prepareNativeBackup(destination, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 			t.Fatal("raw source prefix bypassed overlap validation", prefix)
 		}
 	}
-	lake := &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &DuckLakeS3Config{Bucket: "source-test", Prefix: "../invalid", Region: "us-east-1"}}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "backup-test", Prefix: "separate", Region: "us-east-1"}}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
+	lake := &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &lakeapi.DuckLakeS3Config{Bucket: "source-test", Prefix: "../invalid", Region: "us-east-1"}}
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{S3: &lakeapi.DuckLakeS3Config{Bucket: "backup-test", Prefix: "separate", Region: "us-east-1"}}, filepath.Join(root, "queue.db"), localControlPath(filepath.Join(root, "queue.db")), lake); err == nil {
 		t.Fatal("invalid source config bypassed validation")
 	}
 }
 func TestNativeBackupStorageIdentityValidation(t *testing.T) {
 	t.Parallel()
-	valid := []nativeBackupStorageIdentity{{Mode: "local"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "http://127.0.0.1:9000"}}
+	valid := []lakeapi.NativeBackupStorageIdentity{{Mode: "local"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "http://127.0.0.1:9000"}}
 	for _, identity := range valid {
-		if err := validateNativeBackupStorageIdentity(identity, false); err != nil {
+		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity, false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, identity := range []nativeBackupStorageIdentity{{}, {Mode: "local", Bucket: "backup-test"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics/", Region: "us-east-1"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "https://secret:password@example.test"}, {Mode: "unexpected"}} {
-		if err := validateNativeBackupStorageIdentity(identity, false); err == nil {
+	for _, identity := range []lakeapi.NativeBackupStorageIdentity{{}, {Mode: "local", Bucket: "backup-test"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics/", Region: "us-east-1"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "https://secret:password@example.test"}, {Mode: "unexpected"}} {
+		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity, false); err == nil {
 			t.Fatalf("invalid storage identity accepted: %+v", identity)
 		}
 	}
-	if err := validateNativeBackupStorageIdentity(nativeBackupStorageIdentity{}, true); err != nil {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(lakeapi.NativeBackupStorageIdentity{}, true); err != nil {
 		t.Fatal("legacy local v1 identity rejected", err)
 	}
 }

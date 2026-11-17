@@ -27,7 +27,7 @@ Paste this into your coding agent:
 The example runs one Porcupine server with embedded DuckDB and DuckLake on your laptop. You’ll need Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or newer. Install the [standalone CLI](cli/README.md) and run this in a POSIX shell.
 
 ```sh
-git clone https://github.com/olup/porcupine.git
+git clone --branch v0.14.0 https://github.com/olup/porcupine.git
 cd porcupine
 umask 077
 (
@@ -55,13 +55,13 @@ Run `docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yam
 
 ## What runs on the server?
 
-One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/restore.md)
+One Go service accepts events over HTTP. SQLite holds accepted work on disk until DuckLake commits it. DuckDB queries each project's local catalog and Parquet files. No separate analytical database service is needed. [Storage](docs/storage.md) · [Recovery](docs/reference/restore.md)
 
-**Unreleased:** [tenants and usage budgets](docs/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. A fresh instance creates a `default` tenant. Keep it for one team, or create a tenant before adding its projects. The instance operator invites the team's first tenant administrator, who can create projects, invite readers or other members, and manage scoped team service accounts. Follow the [tenant setup](docs/tenant-access.md) after connecting the instance operator. This requires a fresh data directory and is not part of v0.14.0.
+**Unreleased:** [tenants and usage budgets](docs/reference/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. A fresh instance creates a `default` tenant. Keep it for one team, or create a tenant before adding its projects. The instance operator invites the team's first tenant administrator, who can create projects, invite readers or other members, and manage scoped team service accounts. Follow the [tenant setup](docs/reference/tenant-access.md) after connecting the instance operator. This requires a fresh data directory and is not part of v0.14.0.
 
-The optional [shared deployment](docs/shared-deployment.md) keeps event queues in owner-local SQLite, control and catalog metadata in PostgreSQL, and analytical payloads in S3 Parquet. It is unreleased and does not provide automatic owner failover.
+The optional [shared deployment](docs/reference/shared-deployment.md) keeps event queues in owner-local SQLite, control and catalog metadata in PostgreSQL, and analytical payloads in S3 Parquet. It is unreleased and does not provide automatic owner failover.
 
-I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. The standalone CLI imports native, PostHog, or Segment history from files or directories. [SDK compatibility](docs/compatibility.md) · [Native and Segment inputs](docs/native-and-segment-ingestion.md) · [Imports](docs/imports.md)
+I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. The standalone CLI imports native, PostHog, or Segment history from files or directories. [SDK compatibility](docs/reference/compatibility.md) · [Native and Segment inputs](docs/reference/native-and-segment-ingestion.md) · [Imports](docs/imports.md)
 
 For a customer who wants a file every morning, I can save a SQL query in a pipeline and point it at their S3 bucket. For something like a signup notification, a webhook will do. [Pipelines](docs/pipelines.md) · [One-off exports](docs/exports.md)
 
@@ -80,6 +80,6 @@ make compat-install
 make compat             # pinned PostHog SDKs
 ```
 
-For the local documentation preview, install `docs-requirements.txt` in a Python virtual environment and run `make docs-preview`. The preview is available at `http://127.0.0.1:8787/porcupine/docs/`.
+For the local documentation preview, run `make docs-preview`. Go downloads and verifies the pinned Hugo binary on the first build, then reuses it from your user cache. No other runtime is needed. The preview is available at `http://127.0.0.1:8787/porcupine/docs/`.
 
 [Architecture](docs/architecture.md) · [MIT license](LICENSE)

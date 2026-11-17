@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func tenantOAuthJSON(t *testing.T, value any) string {
@@ -49,7 +50,7 @@ func TestTenantAdminEmailOAuthEmptyTenantAndRoleBounds(t *testing.T) {
 		t.Fatal("tenant consent issued another OAuth scope")
 	}
 	current, err := s.authenticateResource(t.Context(), token.AccessToken, s.oauth.apiResource)
-	if err != nil || current.admin() || len(current.tenantAdmins) != 1 || current.tenantAdmins[0] != a || len(current.Projects) != 0 {
+	if err != nil || current.Admin() || len(current.TenantAdmins) != 1 || current.TenantAdmins[0] != a || len(current.Projects) != 0 {
 		t.Fatalf("empty tenant did not yield bounded administration: %+v %v", current, err)
 	}
 	request(t, s, "GET", "/api/v1/tenants/"+a, token.AccessToken, "", 200)
@@ -87,7 +88,7 @@ func TestTenantAdminEmailOAuthEmptyTenantAndRoleBounds(t *testing.T) {
 	if _, err := s.exchangeInteractiveRefresh(t.Context(), mustTenantOAuthClient(t, s), url.Values{"refresh_token": {refreshed.RefreshToken}}); err == nil {
 		t.Fatal("downgraded membership refreshed an administrative grant")
 	}
-	readerApp := j.client("porcupine-local", localOAuthCallback, interactiveOAuthScopes)
+	readerApp := j.client("porcupine-local", localOAuthCallback, auth.InteractiveReadScopes())
 	reader := j.browserLogin(t, readerApp, "lea@example.test", "/api/v1", projectB, "", 200)
 	request(t, s, "GET", "/api/v1/projects/"+projectB+"/schema", reader.AccessToken, "", 200)
 	request(t, s, "PATCH", "/api/v1/projects/"+projectB, reader.AccessToken, `{"name":"Cannot rename"}`, 403)
@@ -309,7 +310,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 	token := j.browserLoginSelection(t, app, "shared-admin@example.test", "/mcp", "tenant", defaultTenantID, "other", 200)
 	for _, s := range []*Service{a, b} {
 		current, err := s.authenticateResource(ctx, token.AccessToken, s.oauth.mcpResource)
-		if err != nil || current.admin() || !current.canAdminTenant(defaultTenantID) || current.canAdminTenant("other") {
+		if err != nil || current.Admin() || !current.CanAdminTenant(defaultTenantID) || current.CanAdminTenant("other") {
 			t.Fatalf("shared tenant administration lost its boundary: %+v %v", current, err)
 		}
 	}

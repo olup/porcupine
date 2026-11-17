@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 )
 
@@ -72,7 +74,7 @@ func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]a
 			t.Fatal(err)
 		}
 	}
-	human := EmailHuman{ID: newID(), Email: "operator@example.test", CreatedAt: now(), Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"events:read", "management:read"}}}}
+	human := EmailHuman{ID: eventapi.NewID(), Email: "operator@example.test", CreatedAt: now(), Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"events:read", "management:read"}}}}
 	tx, err := first.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +114,7 @@ func TestSharedOIDCInvitedIdentityAcrossWorkersAndRevocation(t *testing.T) {
 	access := fixture.issueToken(t, "project-a")
 	for _, worker := range []*Service{a, b} {
 		principal, err := worker.authenticateResource(ctx, access, issuer+"/mcp")
-		if err != nil || !authorize(principal, "events:read", "project-a") || authorize(principal, "events:read", "project-b") || authorize(principal, "events:write", "project-a") {
+		if err != nil || !auth.Authorize(principal, "events:read", "project-a") || auth.Authorize(principal, "events:read", "project-b") || auth.Authorize(principal, "events:write", "project-a") {
 			t.Fatalf("cross-worker OIDC grant escaped scope: %+v %v", principal, err)
 		}
 		linked, err := worker.oidcHuman(ctx, "operator-subject", human.Email)

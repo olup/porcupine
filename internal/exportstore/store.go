@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,13 +14,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/aws/smithy-go/logging"
+	"github.com/olup/porcupine/internal/s3client"
 )
 
 const (
@@ -67,52 +63,34 @@ type Upload struct {
 	completed bool
 }
 
-func New(ctx context.Context, c Config) (*Store, error) {
+// ValidateConfig checks storage settings without opening files or contacting S3.
+func ValidateConfig(c Config) error {
 	prefix := strings.TrimSuffix(c.Prefix, "/")
 	if !regionPattern.MatchString(c.Region) || !bucketPattern.MatchString(c.Bucket) || strings.Contains(c.Bucket, "..") || net.ParseIP(c.Bucket) != nil || !safePath(prefix) {
-		return nil, ErrConfig
+		return ErrConfig
 	}
 	if (c.AccessKeyID == "") != (c.SecretAccessKey == "") || c.SessionToken != "" && c.AccessKeyID == "" {
-		return nil, ErrConfig
+		return ErrConfig
 	}
 	if c.Endpoint != "" && !ValidEndpoint(c.Endpoint) {
-		return nil, ErrConfig
+		return ErrConfig
 	}
-	transport := &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-		ExpectContinueTimeout: time.Second,
-		IdleConnTimeout:       60 * time.Second,
-		MaxIdleConns:          16, MaxIdleConnsPerHost: 8, MaxResponseHeaderBytes: 64 << 10,
+	return nil
+}
+
+func New(ctx context.Context, c Config) (*Store, error) {
+	if err := ValidateConfig(c); err != nil {
+		return nil, err
 	}
-	httpClient := &http.Client{Transport: boundedResponses{transport}, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return ErrStorage }}
-	options := []func(*config.LoadOptions) error{
-		config.WithRegion(c.Region), config.WithHTTPClient(httpClient),
-		config.WithLogger(logging.Nop{}), config.WithLogConfigurationWarnings(false),
-		config.WithRetryer(func() aws.Retryer {
-			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 3; o.MaxBackoff = time.Second })
-		}),
-	}
-	if c.AccessKeyID != "" {
-		options = append(options, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken)))
-	}
-	cfg, err := config.LoadDefaultConfig(ctx, options...)
+	prefix := strings.TrimSuffix(c.Prefix, "/")
+	client, transport, err := s3client.New(ctx, s3client.Config{
+		Region: c.Region, Endpoint: c.Endpoint, AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, UsePathStyle: c.UsePathStyle,
+		Timeout: 60 * time.Second, ResponseBytes: 1 << 20, GetResponseBytes: MaxManifestBytes + 1,
+	})
 	if err != nil {
 		return nil, storageError(ctx)
 	}
-	// Credentials use the default chain, but endpoint overrides come only from Config.
-	cfg.BaseEndpoint = nil
-	cfg.ConfigSources = nil
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = c.UsePathStyle
-		if c.Endpoint != "" {
-			o.BaseEndpoint = aws.String(c.Endpoint)
-		}
-		// Avoid optional streaming checksum trailers unsupported by some S3-compatible stores.
-		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
-	})
+
 	return &Store{client: client, presigner: s3.NewPresignClient(client), bucket: c.Bucket, prefix: prefix + "/", transport: transport}, nil
 }
 
@@ -305,23 +283,4 @@ func (s *Store) Presign(ctx context.Context, key string, ttl time.Duration) (str
 		return "", storageError(ctx)
 	}
 	return out.URL, nil
-}
-
-type boundedResponses struct{ next http.RoundTripper }
-
-func (b boundedResponses) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := b.next.RoundTrip(request)
-	if err == nil && response.Body != nil {
-		limit := int64(1 << 20)
-		if request.Method == http.MethodGet && response.StatusCode >= 200 && response.StatusCode < 300 {
-			limit = MaxManifestBytes + 1
-		}
-		response.Body = &limitedBody{Reader: io.LimitReader(response.Body, limit), Closer: response.Body}
-	}
-	return response, err
-}
-
-type limitedBody struct {
-	io.Reader
-	io.Closer
 }

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) initializeLakeSource(ctx context.Context) error {
@@ -18,13 +20,6 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 			return errors.New("this SQLite database requires its configured DuckLake store")
 		}
 		return nil
-	}
-	var foreignBackendState bool
-	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM metadata WHERE key IN ('projection_table_uuid','query_master_key'))").Scan(&foreignBackendState); err != nil {
-		return err
-	}
-	if foreignBackendState {
-		return errors.New("DuckLake requires a dedicated SQLite database; automatic migration from another analytical backend is not implemented")
 	}
 	actual, err := s.lake.SourceID(ctx)
 	if err != nil || actual == "" || (expected != "" && expected != actual) {
@@ -46,6 +41,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 		defer close(s.lakeMaintenanceDone)
 		timer := time.NewTimer(interval)
 		defer timer.Stop()
+		var lastPrune time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -56,6 +52,12 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 				stop()
 				if ctx.Err() != nil {
 					return
+				}
+				if time.Since(lastPrune) >= time.Hour {
+					lastPrune = time.Now()
+					if pruneErr := s.pruneReceipts(ctx); pruneErr != nil && err == nil {
+						err = pruneErr
+					}
 				}
 				if err != nil {
 					s.db.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('ducklake_maintenance_error','maintenance failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
@@ -68,7 +70,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 	}()
 }
 
-func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []eventProjection) error {
+func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []lakeapi.EventProjection) error {
 	if s.lake == nil {
 		return errors.New("analytical delivery is disabled")
 	}
@@ -85,9 +87,9 @@ func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []
 	}
 	return s.lake.Apply(ctx, projections)
 }
-func (s *Service) loadAnalyticalProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
+func (s *Service) loadAnalyticalProjection(ctx context.Context, project, uuid string) (lakeapi.EventProjection, error) {
 	if s.lake == nil {
-		return eventProjection{}, errEventNotFound
+		return lakeapi.EventProjection{}, lakeapi.ErrEventNotFound
 	}
 	return s.lake.Load(ctx, project, uuid)
 }

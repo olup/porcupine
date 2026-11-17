@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (result error) {
@@ -16,7 +19,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 	if err != nil {
 		return err
 	}
-	var checkpoint *nativeCheckpoint
+	var checkpoint *lakeapi.NativeCheckpoint
 	func() {
 		defer release()
 		checkpoint, err = s.stageNativeCheckpoint(ctx)
@@ -25,10 +28,10 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		return err
 	}
 	defer func() { result = errors.Join(result, checkpoint.Close()) }()
-	if err := validateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
 		return err
 	}
-	destination, err := newNativeBackupS3(ctx, *runtime.config.S3, checkpoint.SourceID)
+	destination, err := lakeapi.NewNativeBackupS3(ctx, *runtime.config.S3, checkpoint.SourceID)
 	if err != nil {
 		return err
 	}
@@ -39,7 +42,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 	if err := destination.CleanupIncomplete(ctx); err != nil {
 		return err
 	}
-	id := "pc_backup_" + newID()
+	id := "pc_backup_" + eventapi.NewID()
 	published := false
 	defer func() {
 		if !published {
@@ -48,9 +51,9 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 			result = errors.Join(result, destination.Remove(cleanup, id))
 		}
 	}()
-	manifest := nativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: checkpoint.SourceID, CreatedAt: now(), CapturedAt: checkpoint.CapturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
+	manifest := lakeapi.NativeBackupManifest{Format: "porcupine-native-v2", ID: id, Version: Version, SourceID: checkpoint.SourceID, CreatedAt: now(), CapturedAt: checkpoint.CapturedAt, SQLitePath: "acceptance.sqlite", ControlSQLitePath: "control.sqlite", DuckLakeDirectory: "ducklake", Catalogs: checkpoint.Catalogs, SourceStorage: checkpoint.Storage}
 	for _, p := range []string{"acceptance.sqlite", "control.sqlite", "ducklake/registry.sqlite"} {
-		if err := validateBackupSQLite(ctx, filepath.Join(checkpoint.Directory, filepath.FromSlash(p))); err != nil {
+		if err := lakeapi.ValidateBackupSQLite(ctx, filepath.Join(checkpoint.Directory, filepath.FromSlash(p))); err != nil {
 			return err
 		}
 	}
@@ -68,7 +71,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		if !entry.Type().IsRegular() {
 			return errors.New("backup stage contains a non-regular file")
 		}
-		if len(manifest.Files) >= nativeBackupFileLimit {
+		if len(manifest.Files) >= lakeapi.NativeBackupFileLimit {
 			return errors.New("native backup file inventory limit reached")
 		}
 		relative, err := filepath.Rel(checkpoint.Directory, path)
@@ -102,7 +105,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		}
 		path := object.RelativePath
 		// Capture normalizes remote objects to the same bundle layout as local files.
-		if !strings.HasPrefix(path, "ducklake/") || paths[path] || len(manifest.Files) >= nativeBackupFileLimit {
+		if !strings.HasPrefix(path, "ducklake/") || paths[path] || len(manifest.Files) >= lakeapi.NativeBackupFileLimit {
 			return errors.New("invalid checkpoint object inventory")
 		}
 		body, err := checkpoint.OpenObject(ctx, object)

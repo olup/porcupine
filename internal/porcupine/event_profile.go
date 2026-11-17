@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-type EventProfileOutput struct{ Body EventProfile }
+type EventProfileOutput struct{ Body lakeapi.EventProfile }
 
-func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*EventProfileOutput, error) {
-	options, err := normalizeEventProfileInput(*input)
+func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileInput) (*EventProfileOutput, error) {
+	options, err := lakeapi.NormalizeEventProfileInput(*input)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +31,7 @@ func (s *Service) eventProfile(ctx context.Context, input *EventProfileInput) (*
 	if err != nil {
 		return nil, err
 	}
-	result, err := summarizeEventProfile(read, options, asOf)
+	result, err := lakeapi.SummarizeEventProfile(read, options, asOf)
 	if err != nil {
 		return nil, err
 	}

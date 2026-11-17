@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // deliverMutations retains exactly the same immutable projection across retries.
@@ -27,7 +29,7 @@ func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 		return false, errors.New("cannot read mutation queue")
 	}
 	var revisions []int64
-	var projections []eventProjection
+	var projections []lakeapi.EventProjection
 	bytes := 0
 	for rows.Next() {
 		var seq int64
@@ -39,7 +41,7 @@ func (s *Service) deliverMutations(ctx context.Context) (bool, error) {
 		if bytes+len(payload) > 4<<20 && len(projections) > 0 {
 			break
 		}
-		var projection eventProjection
+		var projection lakeapi.EventProjection
 		if json.Unmarshal([]byte(payload), &projection) != nil || projection.Revision != uint64(seq) {
 			rows.Close()
 			return false, errors.New("invalid queued mutation")

@@ -11,6 +11,9 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type TenantServiceAccountSpec struct {
@@ -75,11 +78,11 @@ type TenantServiceKeyIDInput struct {
 	KeyID    string `path:"key_id"`
 }
 
-func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string, string, string, string, operationAccess, int) huma.Operation) {
+func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	if s.oauth == nil {
 		return
 	}
-	access := operationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
+	access := auth.OperationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
 	base := "/api/v1/tenants/{tenant_id}/service-accounts"
 	huma.Register(api, op("create-tenant-service-account", "POST", base, "Create a team-owned machine account with fixed project permissions and a one-time secret", access, 201), s.createTenantServiceAccount)
 	huma.Register(api, op("list-tenant-service-accounts", "GET", base, "List this tenant's team machine accounts without secrets", access, 200), s.listTenantServiceAccounts)
@@ -90,36 +93,36 @@ func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string,
 	huma.Register(api, op("revoke-tenant-service-api-key", "DELETE", base+"/{id}/api-keys/{key_id}", "Revoke one key owned by this tenant's machine account", access, 204), s.revokeTenantServiceKey)
 }
 
-func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a actor) (actor, error) {
+func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a auth.Principal) (auth.Principal, error) {
 	var tenant string
 	err := query.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_credentials WHERE principal_id=$1`, a.ID).Scan(&tenant)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, nil
 	}
 	if err != nil {
-		return actor{}, err
+		return auth.Principal{}, err
 	}
-	if a.admin() || slices.Contains(a.Permissions, "tenant:admin") || len(a.Permissions) == 0 || len(a.Projects) == 0 || slices.Contains(a.Projects, "*") {
-		return actor{}, errors.New("invalid tenant machine authority")
+	if a.Admin() || slices.Contains(a.Permissions, "tenant:admin") || len(a.Permissions) == 0 || len(a.Projects) == 0 || slices.Contains(a.Projects, "*") {
+		return auth.Principal{}, errors.New("invalid tenant machine authority")
 	}
 	for _, permission := range a.Permissions {
-		if !slices.Contains(projectPermissionNames, permission) {
-			return actor{}, errors.New("invalid tenant machine permission")
+		if !slices.Contains(auth.ProjectPermissions(), permission) {
+			return auth.Principal{}, errors.New("invalid tenant machine permission")
 		}
 	}
 	for _, project := range a.Projects {
 		var owner string
 		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner); err != nil || owner != tenant {
-			return actor{}, errors.New("tenant machine project is unavailable")
+			return auth.Principal{}, errors.New("tenant machine project is unavailable")
 		}
 	}
-	a.tenantIDs = []string{tenant}
+	a.TenantIDs = []string{tenant}
 	return a, nil
 }
 
 func (s *Service) tenantMachineTransaction(ctx context.Context, tenant string) (*sql.Tx, error) {
 	caller := principal(ctx)
-	if !caller.canAdminTenant(tenant) {
+	if !caller.CanAdminTenant(tenant) {
 		return nil, apiError(403, "tenant administrator required")
 	}
 	tx, err := s.control.BeginTx(ctx, nil)
@@ -146,12 +149,12 @@ func (s *Service) tenantMachineTransaction(ctx context.Context, tenant string) (
 	return tx, nil
 }
 
-func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQueryer, caller actor, tenant string) error {
-	if !caller.canAdminTenant(tenant) {
+func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQueryer, caller auth.Principal, tenant string) error {
+	if !caller.CanAdminTenant(tenant) {
 		return apiError(403, "tenant administrator required")
 	}
 	current, err := s.loadCredentialActorFrom(ctx, query, caller.ID)
-	if err != nil || !current.canAdminTenant(tenant) {
+	if err != nil || !current.CanAdminTenant(tenant) {
 		return apiError(403, "current tenant administration required")
 	}
 	return nil
@@ -164,7 +167,7 @@ func tenantMachineGrant(ctx context.Context, query oauthQueryer, tenant string, 
 	}
 	spec.Permissions, spec.Projects = sortedGrants(spec.Permissions), sortedGrants(spec.Projects)
 	for _, permission := range spec.Permissions {
-		if !slices.Contains(projectPermissionNames, permission) {
+		if !slices.Contains(auth.ProjectPermissions(), permission) {
 			return spec, apiError(400, "machine accounts require project permissions without administration scopes")
 		}
 	}
@@ -227,7 +230,7 @@ func (s *Service) createTenantServiceAccount(ctx context.Context, input *TenantS
 	if _, err := rand.Read(bearerBytes[:]); err != nil {
 		return nil, apiError(503, "service account generation unavailable")
 	}
-	id, created := newID(), now()
+	id, created := eventapi.NewID(), now()
 	secret := base64.RawURLEncoding.EncodeToString(secretBytes[:])
 	permissions, _ := json.Marshal(spec.Permissions)
 	projects, _ := json.Marshal(spec.Projects)
@@ -247,7 +250,7 @@ func (s *Service) createTenantServiceAccount(ctx context.Context, input *TenantS
 }
 
 func (s *Service) listTenantServiceAccounts(ctx context.Context, input *TenantServiceAccountListInput) (*TenantServiceAccountListOutput, error) {
-	if !principal(ctx).canAdminTenant(input.TenantID) {
+	if !principal(ctx).CanAdminTenant(input.TenantID) {
 		return nil, apiError(403, "tenant administrator required")
 	}
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
@@ -349,7 +352,7 @@ func (s *Service) createTenantServiceKey(ctx context.Context, input *TenantServi
 	if body.Audience != "api" && body.Audience != "mcp" {
 		return nil, apiError(400, "invalid service key audience")
 	}
-	sourceID, err := delegatedSourceID(parent.actor, "", body.Permissions, body.Projects)
+	sourceID, err := delegatedSourceID(parent.Principal, "", body.Permissions, body.Projects)
 	if err != nil {
 		return nil, err
 	}
@@ -359,16 +362,16 @@ func (s *Service) createTenantServiceKey(ctx context.Context, input *TenantServi
 	}
 	for _, project := range spec.Projects {
 		for _, permission := range spec.Permissions {
-			if !authorize(parent.actor, permission, project) {
+			if !auth.Authorize(parent.Principal, permission, project) {
 				return nil, apiError(403, "key grants exceed its service account")
 			}
 		}
 	}
-	secret, err := oauthRandom(serviceKeyPrefix)
+	secret, err := auth.RandomSecret(serviceKeyPrefix)
 	if err != nil {
 		return nil, apiError(503, "service key generation unavailable")
 	}
-	id := newID()
+	id := eventapi.NewID()
 	permissions, _ := json.Marshal(spec.Permissions)
 	projects, _ := json.Marshal(spec.Projects)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, spec.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {
@@ -387,7 +390,7 @@ func (s *Service) createTenantServiceKey(ctx context.Context, input *TenantServi
 }
 
 func (s *Service) listTenantServiceKeys(ctx context.Context, input *TenantServiceKeyListInput) (*TenantServiceKeyListOutput, error) {
-	if !principal(ctx).canAdminTenant(input.TenantID) {
+	if !principal(ctx).CanAdminTenant(input.TenantID) {
 		return nil, apiError(403, "tenant administrator required")
 	}
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {

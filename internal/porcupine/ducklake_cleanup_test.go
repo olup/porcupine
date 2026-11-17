@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func cleanupParquetFiles(t *testing.T, directory string) []string {
@@ -52,7 +54,7 @@ func assertCleanupPayloadAbsent(t *testing.T, directory, marker string) {
 	}
 }
 
-func cleanupEventFiles(t *testing.T, s *duckLakeStore, id string) []string {
+func cleanupEventFiles(t *testing.T, s *lakeapi.DuckLakeStore, id string) []string {
 	t.Helper()
 	p, release, err := s.LeaseProject(context.Background(), id)
 	if err != nil {
@@ -81,14 +83,14 @@ func cleanupEventFiles(t *testing.T, s *duckLakeStore, id string) []string {
 	return paths
 }
 
-func flushCleanupProject(t *testing.T, s *duckLakeStore, id string) {
+func flushCleanupProject(t *testing.T, s *lakeapi.DuckLakeStore, id string) {
 	t.Helper()
 	p, release, err := s.LeaseProject(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	if err := p.MaintenanceCommand(context.Background(), "CALL ducklake_flush_inlined_data('lake')", &duckLakeMaintenanceStats{}); err != nil {
+	if err := p.MaintenanceCommand(context.Background(), "CALL ducklake_flush_inlined_data('lake')", &lakeapi.DuckLakeMaintenanceStats{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -102,7 +104,7 @@ func TestDuckLakeCleanupStatusAgentPermissionsAndLifecycle(t *testing.T) {
 	state := lakeMaintenanceLifecycle(t, s, a, ingest, "cleanup", true)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"other","actor_id":"other","name":"Other"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	lake := s.lake.(*duckLakeStore)
+	lake := s.lake.(*lakeapi.DuckLakeStore)
 	now := time.Now().Add(10 * 24 * time.Hour)
 	for range 2 {
 		if err := lake.CleanupDue(context.Background(), now); err != nil {

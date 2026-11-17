@@ -7,10 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/auth"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func mutationContext(id string) context.Context {
-	return context.WithValue(context.Background(), actorContextKey{}, actor{ID: id, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
+	return context.WithValue(context.Background(), actorContextKey{}, auth.Principal{ID: id, Permissions: []string{"instance:admin"}, Projects: []string{"*"}})
 }
 
 func mutationErrorStatus(t *testing.T, err error, status int) {
@@ -160,7 +164,7 @@ func TestMutationQueuedDeleteTombstoneAndDurableReceipt(t *testing.T) {
 	}
 	var payload string
 	s.db.QueryRow(`SELECT payload FROM mutation_outbox`).Scan(&payload)
-	var tombstone eventProjection
+	var tombstone lakeapi.EventProjection
 	if json.Unmarshal([]byte(payload), &tombstone) != nil || !tombstone.IsDeleted || tombstone.Event.Event != "" || tombstone.DistinctID != "" || tombstone.Timestamp != "" || string(tombstone.Properties) != `{}` || tombstone.OriginalSnapshot != "" {
 		t.Fatal("tombstone retained deleted content")
 	}
@@ -229,7 +233,7 @@ func TestMutationValidationAndAtomicWriteFailure(t *testing.T) {
 	for _, change := range []func(*EventEditInput){
 		func(i *EventEditInput) { i.Body.Snapshot.Event = "" },
 		func(i *EventEditInput) { i.Body.Snapshot.Event = "$identify" },
-		func(i *EventEditInput) { i.Body.Snapshot.DistinctID = cookielessSentinel },
+		func(i *EventEditInput) { i.Body.Snapshot.DistinctID = ingestfmt.CookielessSentinel },
 		func(i *EventEditInput) { i.Body.Snapshot.Properties = nil },
 		func(i *EventEditInput) { i.Body.Snapshot.Timestamp = "yesterday" },
 	} {

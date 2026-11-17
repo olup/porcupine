@@ -11,9 +11,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func lakeMaintenanceFileCount(ctx context.Context, p *projectLake, table string) (int, error) {
+func lakeMaintenanceFileCount(ctx context.Context, p *lakeapi.ProjectLake, table string) (int, error) {
 	var count int
 	err := p.DB.QueryRowContext(ctx, "SELECT count(*) FROM ducklake_list_files('lake',?)", table).Scan(&count)
 	return count, err
@@ -22,7 +24,7 @@ func lakeMaintenanceFileCount(ctx context.Context, p *projectLake, table string)
 func maintenanceOpenService(t *testing.T) (*Service, string, string) {
 	t.Helper()
 	directory := t.TempDir()
-	s, err := Open(Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 100000, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 512, MaintenanceInterval: 24 * time.Hour}})
+	s, err := Open(Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 100000, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 512, MaintenanceInterval: 24 * time.Hour}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +167,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 			t.Fatal("invalid soak duration")
 		}
 	}
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -409,7 +411,7 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	s, a, ingest := nativeBenchmarkServiceMemory(t, 256)
 	s.deliveryMaxEvents = 1000
 	s.queueMax = 10000
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := store.LeaseProject(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +472,7 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	lake, err := newDuckLake(store.Config)
+	lake, err := lakeapi.NewDuckLake(store.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +493,8 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 }
 
 type delayedMaintenanceStore struct {
-	lakeStore
+	lakeapi.LakeStore
+
 	started, finished chan time.Time
 	release           chan struct{}
 }
@@ -518,11 +521,11 @@ func (s *delayedMaintenanceStore) Maintain(ctx context.Context) error {
 func TestDuckLakeMaintenanceWaitsBetweenCompletedPasses(t *testing.T) {
 	t.Parallel()
 	s := service(t, 100)
-	lake, err := newDuckLake(DuckLakeConfig{Directory: t.TempDir()})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed := &delayedMaintenanceStore{lakeStore: lake, started: make(chan time.Time, 4), finished: make(chan time.Time, 4), release: make(chan struct{})}
+	observed := &delayedMaintenanceStore{LakeStore: lake, started: make(chan time.Time, 4), finished: make(chan time.Time, 4), release: make(chan struct{})}
 	s.lake = observed
 	interval := 20 * time.Millisecond
 	s.startLakeMaintenance(interval)

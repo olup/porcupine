@@ -2,54 +2,53 @@ package main
 
 import (
 	"errors"
-	"os"
 	"strconv"
 
 	"github.com/olup/porcupine/internal/exportstore"
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
-func exportConfiguration() (*porcupine.ExportConfig, error) {
+func (s settings) exportConfiguration() (*porcupine.ExportConfig, error) {
 	for _, name := range []string{"PORCUPINE_EXPORT_MAX_READ_BYTES", "PORCUPINE_EXPORT_MEMORY_BYTES", "PORCUPINE_EXPORT_TEMPORARY_BYTES"} {
-		if os.Getenv(name) != "" {
+		if s.get(name) != "" {
 			return nil, errors.New(name + " is not enforced by DuckDB and is no longer supported")
 		}
 	}
 
-	bucket := os.Getenv("PORCUPINE_EXPORT_S3_BUCKET")
+	bucket := s.get("PORCUPINE_EXPORT_S3_BUCKET")
 	if bucket == "" {
 		for _, name := range []string{"PORCUPINE_EXPORT_S3_PREFIX", "PORCUPINE_EXPORT_S3_ENDPOINT", "PORCUPINE_EXPORT_S3_ACCESS_KEY_ID", "PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY"} {
-			if os.Getenv(name) != "" {
+			if s.get(name) != "" {
 				return nil, errors.New("PORCUPINE_EXPORT_S3_BUCKET is required when exports are configured")
 			}
 		}
 		return nil, nil
 	}
 	c := &porcupine.ExportConfig{S3: exportstore.Config{
-		Bucket: bucket, Prefix: os.Getenv("PORCUPINE_EXPORT_S3_PREFIX"), Region: os.Getenv("PORCUPINE_EXPORT_S3_REGION"),
-		Endpoint: os.Getenv("PORCUPINE_EXPORT_S3_ENDPOINT"), AccessKeyID: os.Getenv("PORCUPINE_EXPORT_S3_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY"), SessionToken: os.Getenv("PORCUPINE_EXPORT_S3_SESSION_TOKEN"),
+		Bucket: bucket, Prefix: s.get("PORCUPINE_EXPORT_S3_PREFIX"), Region: s.get("PORCUPINE_EXPORT_S3_REGION"),
+		Endpoint: s.get("PORCUPINE_EXPORT_S3_ENDPOINT"), AccessKeyID: s.get("PORCUPINE_EXPORT_S3_ACCESS_KEY_ID"),
+		SecretAccessKey: s.get("PORCUPINE_EXPORT_S3_SECRET_ACCESS_KEY"), SessionToken: s.get("PORCUPINE_EXPORT_S3_SESSION_TOKEN"),
 	}}
 	if c.S3.Region == "" {
-		c.S3.Region = os.Getenv("AWS_REGION")
+		c.S3.Region = s.get("AWS_REGION")
 	}
 	if c.S3.Region == "" {
 		c.S3.Region = "us-east-1"
 	}
-	if raw := os.Getenv("PORCUPINE_EXPORT_S3_PATH_STYLE"); raw != "" {
+	if raw := s.get("PORCUPINE_EXPORT_S3_PATH_STYLE"); raw != "" {
 		value, err := strconv.ParseBool(raw)
 		if err != nil {
 			return nil, errors.New("invalid PORCUPINE_EXPORT_S3_PATH_STYLE")
 		}
 		c.S3.UsePathStyle = value
 	}
-	if err := readExportLimits(c); err != nil {
+	if err := s.readExportLimits(c); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-func readExportLimits(c *porcupine.ExportConfig) error {
+func (s settings) readExportLimits(c *porcupine.ExportConfig) error {
 
 	var seconds, queued, hours int64
 	fields := []struct {
@@ -66,7 +65,7 @@ func readExportLimits(c *porcupine.ExportConfig) error {
 		{"PORCUPINE_EXPORT_RETENTION_HOURS", &hours},
 	}
 	for _, field := range fields {
-		if raw := os.Getenv(field.name); raw != "" {
+		if raw := s.get(field.name); raw != "" {
 			value, err := strconv.ParseInt(raw, 10, 64)
 			if err != nil || value < 1 {
 				return errors.New("invalid " + field.name)

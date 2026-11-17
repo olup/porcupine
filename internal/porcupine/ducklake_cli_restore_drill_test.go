@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestDuckLakeCLIRestoreDrill(t *testing.T) {
@@ -31,11 +33,15 @@ func TestDuckLakeCLIRestoreDrill(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	volume := "porcupine-restore-drill-" + newID()
-	container := "porcupine-restored-drill-" + newID()
+	volume := "porcupine-restore-drill-" + eventapi.NewID()
+	container := "porcupine-restored-drill-" + eventapi.NewID()
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
 		defer stop()
+		if t.Failed() {
+			logs, _ := exec.CommandContext(cleanup, "docker", "logs", container).CombinedOutput()
+			t.Logf("recovered server logs: %s", logs)
+		}
 		_ = exec.CommandContext(cleanup, "docker", "rm", "-f", container).Run()
 		_ = exec.CommandContext(cleanup, "docker", "volume", "rm", volume).Run()
 	})

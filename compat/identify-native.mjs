@@ -1,3 +1,5 @@
+import { serverEnv } from './server-env.mjs';
+import { identityProbe } from './identity-probe.mjs';
 // Local-only real SDK -> Go/SQLite -> DuckLake -> project-scoped SQL proof.
 // Run after npm ci: node compat/identify-native.mjs
 import assert from 'node:assert/strict';
@@ -18,7 +20,7 @@ const bootstrap = randomBytes(32).toString('hex');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return 'http://127.0.0.1:' + server.address().port; };
 const close = server => server ? new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) : Promise.resolve();
-let directory, app, browser, site, api, origin, project, phase = 'local setup';
+let probe, directory, app, browser, site, api, origin, project, phase = 'local setup';
 const failures = [], external = [], transport = [];
 const report = { passed: false, production_connected: false, profile: identifiedBrowserProfile, analytics: 'duckdb' };
 async function request(path, body, token = bootstrap) {
@@ -30,6 +32,7 @@ async function request(path, body, token = bootstrap) {
 }
 try {
   directory = await mkdtemp(join(tmpdir(), 'porcupine-sdk-identify-'));
+  probe = identityProbe(root, directory);
   const binary = join(directory, 'porcupine');
   execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, env: { ...process.env, CGO_ENABLED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   site = createServer(async (req, res) => {
@@ -40,7 +43,7 @@ try {
   });
   origin = await listen(site);
   const reservation = createServer(); api = await listen(reservation); await close(reservation);
-  app = spawn(binary, [], { cwd: directory, env: { ...process.env, PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: bootstrap, PORCUPINE_ALLOWED_ORIGINS: origin, PORCUPINE_OAUTH_ISSUER: '', PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS: '', PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS: '' }, stdio: 'ignore' });
+  app = spawn(binary, [], { cwd: directory, env: serverEnv({ PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: bootstrap, PORCUPINE_ALLOWED_ORIGINS: origin }), stdio: 'ignore' });
   phase = 'Go readiness';
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(api + '/readyz')).ok) break; } catch {}
@@ -131,7 +134,7 @@ try {
   report.failed_check = phase;
   if (error.code === 'ERR_ASSERTION' && ['string', 'number', 'boolean'].includes(typeof error.actual)) report.failed_assertion = { actual: error.actual, expected: error.expected };
   if (directory) {
-    try { report.identity_state = JSON.parse(execFileSync('python3', [join(here, 'sqlite-identities.py'), join(directory, 'events.db'), project.project.id], { encoding: 'utf8' })); } catch {}
+    try { report.identity_state = probe(project.project.id); } catch {}
   }
 } finally {
   await browser?.close(); await close(site);

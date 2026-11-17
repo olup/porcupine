@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func nativeRequest(t *testing.T, s *Service, key, raw string, status int) map[string]any {
@@ -120,7 +122,7 @@ func TestNativeReceiptIsAddressableOverMCP(t *testing.T) {
 	response := nativeRequest(t, s, k, `{"type":"track","name":"inventory_restocked","message_id":"inventory-1"}`, 200)
 	receipt := response["receipts"].([]any)[0].(map[string]any)
 	physicalID := receipt["uuid"].(string)
-	if !validStoredEventUUID(physicalID) || len(physicalID) <= 128 {
+	if !lakeapi.ValidStoredEventUUID(physicalID) || len(physicalID) <= 128 {
 		t.Fatalf("new receipt UUID overlaps the legacy namespace: %q", physicalID)
 	}
 	host := httptest.NewServer(s.Handler())
@@ -131,7 +133,7 @@ func TestNativeReceiptIsAddressableOverMCP(t *testing.T) {
 	if event["uuid"] != physicalID || event["message_id"] != "inventory-1" {
 		t.Fatalf("MCP did not resolve receipt: %v", result)
 	}
-	for _, invalid := range []string{strings.Repeat("x", 129), sourceEventUUIDPrefix + strings.Repeat("!", 128)} {
+	for _, invalid := range []string{strings.Repeat("x", 129), lakeapi.SourceEventUUIDPrefix + strings.Repeat("!", 128)} {
 		mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event", Path: map[string]string{"id": p, "uuid": invalid}}, 400)
 	}
 }

@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 const (
-	emailCodeLifetime   = 5 * time.Minute
-	emailCodeAttempts   = 5
-	emailDeliveryPeriod = 10 * time.Minute
+	emailCodeLifetime = 5 * time.Minute
+	emailCodeAttempts = 5
 )
 
 // An OTP is valid only for one browser's outstanding OAuth authorization request.
@@ -27,39 +28,6 @@ type emailChallenge struct {
 	principal    string
 	attemptsLeft int
 	expires      time.Time
-}
-
-type emailDeliveryWindow struct {
-	until         time.Time
-	addressCounts map[string]int
-	peerCounts    map[string]int
-	total         int
-	inFlight      int
-}
-
-func (o *oauthBrowser) reserveEmailDelivery(now time.Time, address, peer string) bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	window := &o.emailDelivery
-	if !now.Before(window.until) {
-		*window = emailDeliveryWindow{until: now.Add(emailDeliveryPeriod), addressCounts: make(map[string]int), peerCounts: make(map[string]int), inFlight: window.inFlight}
-	}
-	// The global budget also bounds both maps, including entries for unknown addresses.
-	address = hash(address)
-	if window.total >= 120 || window.peerCounts[peer] >= 20 || window.addressCounts[address] >= 3 || window.inFlight >= 8 {
-		return false
-	}
-	window.addressCounts[address]++
-	window.peerCounts[peer]++
-	window.total++
-	window.inFlight++
-	return true
-}
-
-func (o *oauthBrowser) finishEmailDelivery() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.emailDelivery.inFlight--
 }
 
 var emailLoginPage = template.Must(template.New("email-login").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to Porcupine</title><main>
@@ -97,7 +65,7 @@ func (s *Service) startEmailLogin(w http.ResponseWriter, request oauthAuthorizat
 	provider := ""
 	if s.oauth.oidc != nil {
 		provider = "identity provider"
-		if s.oauth.oidc.issuer == "https://accounts.google.com" {
+		if s.oauth.oidc.provider.Issuer() == "https://accounts.google.com" {
 			provider = "Google"
 		}
 	}
@@ -144,7 +112,7 @@ func (s *Service) requestEmailCode(w http.ResponseWriter, r *http.Request) {
 		expiry = session.expires
 	}
 	challenge := emailChallenge{attemptsLeft: emailCodeAttempts, expires: expiry, digest: sha256.Sum256([]byte(session.csrf + code))}
-	email, err := normalizeEmail(r.PostForm.Get("email"))
+	email, err := auth.NormalizeEmail(r.PostForm.Get("email"))
 	ip, ipErr := s.clientIP(r)
 	send := false
 	var finishDelivery func()

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeCheckpointStageRestore(t *testing.T) {
@@ -15,7 +17,7 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	root := t.TempDir()
 	live := filepath.Join(root, "live")
 	backup := filepath.Join(root, "backup")
-	config := Config{DBPath: filepath.Join(live, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(live, "lake"), MemoryLimitMB: 128, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
+	config := Config{DBPath: filepath.Join(live, "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(live, "lake"), MemoryLimitMB: 128, Threads: 1, MaintenanceInterval: 24 * time.Hour}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +37,7 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	firstID := receiptFrom(t, nativeRequest(t, s, ingest, first, 200), 0)["event_id"]
 	duckLakeJourneyDrain(t, s)
 	ctx := context.Background()
-	lake := s.lake.(*duckLakeStore)
+	lake := s.lake.(*lakeapi.DuckLakeStore)
 	flushCleanupProject(t, lake, a)
 	queueID := receiptFrom(t, nativeRequest(t, s, ingest, queued, 200), 0)["event_id"]
 	source, err := lake.SourceID(ctx)
@@ -51,7 +53,7 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			err = errors.Join(snapshotSQLite(ctx, database, item.destination), database.Close())
+			err = errors.Join(lakeapi.SnapshotSQLite(ctx, database, item.destination), database.Close())
 			if err != nil {
 				return err
 			}
@@ -82,10 +84,10 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	if err := os.MkdirAll(live, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyCheckpointFile(ctx, filepath.Join(backup, "acceptance.sqlite"), config.DBPath); err != nil {
+	if err := lakeapi.CopyCheckpointFile(ctx, filepath.Join(backup, "acceptance.sqlite"), config.DBPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyCheckpointFile(ctx, filepath.Join(backup, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
+	if err := lakeapi.CopyCheckpointFile(ctx, filepath.Join(backup, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.CopyFS(config.DuckLake.Directory, os.DirFS(filepath.Join(backup, "ducklake"))); err != nil {

@@ -1,6 +1,7 @@
 package lake
 
 import (
+	"github.com/olup/porcupine/internal/event"
 	"net/url"
 	"reflect"
 	"strings"
@@ -77,7 +78,7 @@ func TestNativePostgresMetadataRejectsAmbiguousOptions(t *testing.T) {
 			t.Fatal("accepted invalid metadata timeout", seconds)
 		}
 	}
-	config := DuckLakeConfig{PostgresURL: base, SharedSourceID: NewID(), S3: &DuckLakeS3Config{}}
+	config := DuckLakeConfig{PostgresURL: base, SharedSourceID: event.NewID(), S3: &DuckLakeS3Config{}}
 	if err := ValidateSharedNativeConfig(&config); err != nil || config.MetadataTimeoutSeconds != 10 {
 		t.Fatal("native metadata default was not normalized", err)
 	}

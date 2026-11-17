@@ -1,3 +1,5 @@
+import { serverEnv } from '../server-env.mjs';
+import { identityProbe } from '../identity-probe.mjs';
 // Real pinned Segment SDK over HTTP, against a temporary Go/SQLite service.
 import assert from 'node:assert/strict';
 import { Analytics } from '@segment/analytics-node';
@@ -15,7 +17,7 @@ const token = randomBytes(32).toString('hex'), blocked = [], requests = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return 'http://127.0.0.1:' + server.address().port; };
 const close = server => server ? new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) : Promise.resolve();
-let directory, app, proxy, api, proxyURL, sdk, phase = 'setup';
+let probe, directory, app, proxy, api, proxyURL, sdk, phase = 'setup';
 const report = { passed: false, sdk: '@segment/analytics-node', version: '3.1.0', production_connected: false };
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (url, options) => {
@@ -29,10 +31,11 @@ async function management(path, body) {
 }
 try {
   directory = await mkdtemp(join(tmpdir(), 'porcupine-segment-sdk-'));
+  probe = identityProbe(root, directory);
   const binary = join(directory, 'porcupine');
   execFileSync('go', ['build', '-o', binary, './cmd/porcupine'], { cwd: root, env: { ...process.env, CGO_ENABLED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   const reservation = createServer(); api = await listen(reservation); await close(reservation);
-  app = spawn(binary, [], { cwd: directory, env: { ...process.env, PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: token, PORCUPINE_OAUTH_ISSUER: '', PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS: '', PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS: '' }, stdio: 'ignore' });
+  app = spawn(binary, [], { cwd: directory, env: serverEnv({ PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: token }), stdio: 'ignore' });
   phase = 'Go readiness';
   for (let attempt = 0; ; attempt++) { try { if ((await fetch(api + '/readyz')).ok) break; } catch {} if (attempt === 99) throw new Error('readiness'); await delay(50); }
   const project = await management('/api/v1/projects', { name: 'Segment SDK contract' });
@@ -84,7 +87,7 @@ try {
   assert.equal(page.context.page.name, 'Pricing'); assert.equal(page.context.page.category, 'Docs');
   assert.equal(page.context.page.url, 'https://example.test/pricing');
   for (const event of events) { assert.equal(event.source_id, 'segment-sdk'); assert.equal(event.timestamp, timestamp.toISOString()); assert.equal(JSON.stringify(event).includes('synthetic-vendor-secret'), false); assert.equal(JSON.stringify(event).includes(key.token), false); }
-  const snapshot = JSON.parse(execFileSync('python3', [join(root, 'compat/sqlite-identities.py'), join(directory, 'events.db'), project.project.id], { encoding: 'utf8' }));
+  const snapshot = probe(project.project.id);
   const person = snapshot.identity_profiles.find(row => row.identified_id === 'account-7');
   assert.deepEqual(person.traits, { campaign: 'docs', plan: 'pro' });
   assert.equal(snapshot.identity_links.find(row => row.anonymous_id === 'anonymous-device').identified_id, 'account-7');

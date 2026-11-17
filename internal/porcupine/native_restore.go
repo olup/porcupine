@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // NativeRestoreRequest is an offline operator contract. It is read from private
@@ -30,8 +33,8 @@ type NativeRestoreRequest struct {
 }
 type NativeRestoreConfig struct {
 	Request  NativeRestoreRequest
-	Backup   NativeBackupConfig
-	DuckLake DuckLakeConfig
+	Backup   lakeapi.NativeBackupConfig
+	DuckLake lakeapi.DuckLakeConfig
 }
 type NativeRestoreIngestionKey struct {
 	ProjectID string `json:"project_id"`
@@ -89,7 +92,7 @@ func validateNativeRestoreRequest(r NativeRestoreRequest) error {
 	if err := normalizeNativeRestorePaths(&r); err != nil {
 		return err
 	}
-	if !validNativeBackupID(r.BackupID) {
+	if !lakeapi.ValidNativeBackupID(r.BackupID) {
 		return errors.New("backup_id is required")
 	}
 	if !r.ResetCredentialsAcknowledged {
@@ -134,8 +137,8 @@ func nativeRestorePathsOverlap(a, b string) bool {
 
 // verifyRestoreInventory streams every object and only stages small catalog and
 // SQLite metadata. Analytical S3 data stays in the archive until queried.
-func verifyRestoreInventory(ctx context.Context, r nativeBackupReader, m nativeBackupManifest, stage string) error {
-	if remote, ok := r.(*nativeBackupS3); ok {
+func verifyRestoreInventory(ctx context.Context, r lakeapi.NativeBackupReader, m lakeapi.NativeBackupManifest, stage string) error {
+	if remote, ok := r.(*lakeapi.NativeBackupS3); ok {
 		prefix := remote.Namespace + m.ID + "/"
 		keys, err := remote.List(ctx, prefix)
 		if err != nil {
@@ -341,7 +344,7 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 		}
 	}
 
-	result.RecoveryAdminID = newID()
+	result.RecoveryAdminID = eventapi.NewID()
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'recovery bootstrap admin',?,'["instance:admin"]','["*"]',?)`, result.RecoveryAdminID, hash(bootstrap), now()); err != nil {
 		return result, err
 	}
@@ -358,7 +361,7 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 		}
 		raw := token()
 		scope, _ := json.Marshal([]string{key.project})
-		keyID := newID()
+		keyID := eventapi.NewID()
 		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, keyID, key.name, hash(raw), string(scope), now(), key.source); err != nil {
 			return result, err
 		}

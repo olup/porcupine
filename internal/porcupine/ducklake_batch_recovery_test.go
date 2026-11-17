@@ -10,6 +10,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
@@ -29,18 +30,18 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 	if err != nil || len(batch) != 3000 {
 		t.Fatalf("selected batch=%d error=%v", len(batch), err)
 	}
-	prepared := make([]preparedLakeProjection, len(batch))
+	prepared := make([]lakeapi.PreparedLakeProjection, len(batch))
 	for i, event := range batch {
-		snapshot, err := originalSnapshot(event)
+		snapshot, err := lakeapi.OriginalSnapshot(event)
 		if err != nil {
 			t.Fatal(err)
 		}
-		prepared[i], err = prepareLakeProjection(eventProjection{Event: event, OriginalSnapshot: snapshot})
+		prepared[i], err = lakeapi.PrepareLakeProjection(lakeapi.EventProjection{Event: event, OriginalSnapshot: snapshot})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	lake := s.lake.(*duckLakeStore)
+	lake := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := lake.LeaseProject(ctx, project)
 	if err != nil {
 		t.Fatal(err)
@@ -158,17 +159,17 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var prepared []preparedLakeProjection
+	var prepared []lakeapi.PreparedLakeProjection
 	for rows.Next() {
 		var payload string
-		var projection eventProjection
+		var projection lakeapi.EventProjection
 		if err := rows.Scan(&payload); err != nil {
 			t.Fatal(err)
 		}
 		if err := json.Unmarshal([]byte(payload), &projection); err != nil {
 			t.Fatal(err)
 		}
-		value, err := prepareLakeProjection(projection)
+		value, err := lakeapi.PrepareLakeProjection(projection)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +180,7 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 	if err != nil || len(prepared) != 100 {
 		t.Fatalf("queued mutations=%d error=%v", len(prepared), err)
 	}
-	lake := s.lake.(*duckLakeStore)
+	lake := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := lake.LeaseProject(context.Background(), project)
 	if err != nil {
 		t.Fatal(err)
@@ -227,18 +228,18 @@ func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
 			if err != nil || len(batch) == 0 {
 				t.Fatalf("selected rows=%d error=%v", len(batch), err)
 			}
-			prepared := make([]preparedLakeProjection, len(batch))
+			prepared := make([]lakeapi.PreparedLakeProjection, len(batch))
 			for i, event := range batch {
-				snapshot, err := originalSnapshot(event)
+				snapshot, err := lakeapi.OriginalSnapshot(event)
 				if err != nil {
 					t.Fatal(err)
 				}
-				prepared[i], err = prepareLakeProjection(eventProjection{Event: event, OriginalSnapshot: snapshot})
+				prepared[i], err = lakeapi.PrepareLakeProjection(lakeapi.EventProjection{Event: event, OriginalSnapshot: snapshot})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			lake := s.lake.(*duckLakeStore)
+			lake := s.lake.(*lakeapi.DuckLakeStore)
 			p, release, err := lake.LeaseProject(ctx, project)
 			if err != nil {
 				t.Fatal(err)

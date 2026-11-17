@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func nativeBackupService(t *testing.T) (*Service, Config) {
 	t.Helper()
 	root := t.TempDir()
-	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups"), Retain: 1}}
+	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &lakeapi.NativeBackupConfig{Directory: filepath.Join(root, "backups"), Retain: 1}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +45,7 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 	}
 	status := s.nativeBackupStatus()
 	bundle := filepath.Join(config.NativeBackup.Directory, status.LatestBundle)
-	manifest, err := verifyNativeBackup(ctx, bundle)
+	manifest, err := lakeapi.VerifyNativeBackup(ctx, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +89,13 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(config.DBPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyNativeBackup(ctx, bundle); err != nil {
+	if _, err := lakeapi.VerifyNativeBackup(ctx, bundle); err != nil {
 		t.Fatal("native source deletion damaged completed bundle", err)
 	}
-	if err := copyCheckpointFile(ctx, filepath.Join(bundle, "acceptance.sqlite"), config.DBPath); err != nil {
+	if err := lakeapi.CopyCheckpointFile(ctx, filepath.Join(bundle, "acceptance.sqlite"), config.DBPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyCheckpointFile(ctx, filepath.Join(bundle, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
+	if err := lakeapi.CopyCheckpointFile(ctx, filepath.Join(bundle, "control.sqlite"), localControlPath(config.DBPath)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.CopyFS(config.DuckLake.Directory, os.DirFS(filepath.Join(bundle, "ducklake"))); err != nil {
@@ -139,7 +141,7 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 		t.Fatal("old completed backup not pruned", err)
 	}
 	bundle := filepath.Join(config.NativeBackup.Directory, second)
-	_, release, err := s.lake.(*duckLakeStore).LeaseProject(ctx, a)
+	_, release, err := s.lake.(*lakeapi.DuckLakeStore).LeaseProject(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 	if err == nil {
 		t.Fatal("backup ignored active reader/deadline")
 	}
-	if _, err := verifyNativeBackup(ctx, bundle); err != nil {
+	if _, err := lakeapi.VerifyNativeBackup(ctx, bundle); err != nil {
 		t.Fatal("failed backup damaged last good bundle", err)
 	}
 	if status := s.nativeBackupStatus(); status.State != "failed" || status.LatestBundle != second {
@@ -169,19 +171,20 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 	if err := os.WriteFile(path, []byte("corrupted"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyNativeBackup(ctx, bundle); err == nil {
+	if _, err := lakeapi.VerifyNativeBackup(ctx, bundle); err == nil {
 		t.Fatal("corrupt backup accepted")
 	}
 }
 
 type pausedCheckpointStore struct {
-	lakeStore
+	lakeapi.LakeStore
+
 	captured chan struct{}
 	resume   chan struct{}
 }
 
-func (s *pausedCheckpointStore) StageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*nativeCheckpoint, error) {
-	return s.lakeStore.StageCheckpoint(ctx, func(ctx context.Context, path string) error {
+func (s *pausedCheckpointStore) StageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*lakeapi.NativeCheckpoint, error) {
+	return s.LakeStore.StageCheckpoint(ctx, func(ctx context.Context, path string) error {
 		if err := acceptance(ctx, path); err != nil {
 			return err
 		}
@@ -203,7 +206,7 @@ func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"before-checkpoint","actor_id":"user","name":"before"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	observer := &pausedCheckpointStore{lakeStore: s.lake, captured: make(chan struct{}), resume: make(chan struct{})}
+	observer := &pausedCheckpointStore{LakeStore: s.lake, captured: make(chan struct{}), resume: make(chan struct{})}
 	s.lake = observer
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -247,7 +250,7 @@ func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle := filepath.Join(config.NativeBackup.Directory, s.nativeBackupStatus().LatestBundle)
-	manifest, err := verifyNativeBackup(ctx, bundle)
+	manifest, err := lakeapi.VerifyNativeBackup(ctx, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +279,7 @@ func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"reuse-parquet","actor_id":"user","name":"kept"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	flushCleanupProject(t, s.lake.(*duckLakeStore), a)
+	flushCleanupProject(t, s.lake.(*lakeapi.DuckLakeStore), a)
 	ctx := context.Background()
 	if err := s.createNativeBackup(ctx); err != nil {
 		t.Fatal(err)
@@ -311,7 +314,7 @@ func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(config.NativeBackup.Directory, first)); !os.IsNotExist(err) {
 		t.Fatal("expired bundle not removed")
 	}
-	if _, err := verifyNativeBackup(ctx, filepath.Join(config.NativeBackup.Directory, second)); err != nil {
+	if _, err := lakeapi.VerifyNativeBackup(ctx, filepath.Join(config.NativeBackup.Directory, second)); err != nil {
 		t.Fatal("retention removed reused data", err)
 	}
 }
@@ -319,7 +322,7 @@ func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
 func TestDuckLakeBackupAutomaticScheduleAndShutdown(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 128, Threads: 1}, NativeBackup: &NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
+	config := Config{DBPath: filepath.Join(root, "live", "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "live", "lake"), MemoryLimitMB: 128, Threads: 1}, NativeBackup: &lakeapi.NativeBackupConfig{Directory: filepath.Join(root, "backups")}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +332,7 @@ func TestDuckLakeBackupAutomaticScheduleAndShutdown(t *testing.T) {
 	for {
 		status := s.nativeBackupStatus()
 		if status.State == "ok" {
-			if _, err := verifyNativeBackup(context.Background(), filepath.Join(config.NativeBackup.Directory, status.LatestBundle)); err != nil {
+			if _, err := lakeapi.VerifyNativeBackup(context.Background(), filepath.Join(config.NativeBackup.Directory, status.LatestBundle)); err != nil {
 				t.Fatal(err)
 			}
 			break

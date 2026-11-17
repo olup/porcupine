@@ -7,6 +7,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func validateLocalDatabasePaths(journal, control string) error {
@@ -93,11 +96,11 @@ func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, q
 		if len(bootstrap) < 16 {
 			return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization")
 		}
-		id := newID()
+		id := eventapi.NewID()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrap), now()); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1),('local_control_source_id',$2)`, id, newID()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('oauth_bootstrap_id',$1),('local_control_source_id',$2)`, id, eventapi.NewID()); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -117,7 +120,7 @@ func (s *Service) bindLocalControl(ctx context.Context) error {
 	var journal string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='journal_source_id'`).Scan(&journal)
 	if errors.Is(err, sql.ErrNoRows) {
-		journal = newID()
+		journal = eventapi.NewID()
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('journal_source_id',$1)`, journal); err != nil {
 			return err
 		}
@@ -144,7 +147,7 @@ func (s *Service) bindLocalControl(ctx context.Context) error {
 // The admission lock covers this refresh and the journal commit, so competing
 // requests cannot replace a newer policy snapshot with an older one.
 func (s *Service) prepareLocalAcceptance(ctx context.Context, project string) error {
-	return s.ensureProjectLocal(ctx, project, actor{})
+	return s.ensureProjectLocal(ctx, project, auth.Principal{})
 }
 
 // The journal is the durable accounting ledger. Control holds only its replayable

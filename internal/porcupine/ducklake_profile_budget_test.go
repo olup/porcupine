@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
@@ -19,16 +21,16 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	properties, err := json.Marshal(map[string]any{"app": "same-app", "padding": strings.Repeat("x", 15<<10)})
-	if err != nil || len(properties) >= eventProfileFieldBytes {
+	if err != nil || len(properties) >= lakeapi.EventProfileFieldBytes {
 		t.Fatalf("fixture must fit the individual field budget: bytes=%d error=%v", len(properties), err)
 	}
 	for start := 0; start < 1000; start += 10 {
-		batch := make([]eventProjection, 0, 10)
+		batch := make([]lakeapi.EventProjection, 0, 10)
 		for i := start; i < start+10; i++ {
 			projection := lakeStorageProjection(t, a, fmt.Sprintf("profile-budget-%04d", i), int64(i+1))
 			projection.Event.Event = "transfer-budget"
 			projection.Properties = properties
-			projection.OriginalSnapshot, err = originalSnapshot(projection.Event)
+			projection.OriginalSnapshot, err = lakeapi.OriginalSnapshot(projection.Event)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -38,8 +40,8 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	input := EventProfileInput{ID: a, Event: "transfer-budget", SampleLimit: 1000, ExampleLimit: 3, PropertyLimit: 20, PropertyKind: "custom", IncludeValues: true}
-	options, err := normalizeEventProfileInput(input)
+	input := lakeapi.EventProfileInput{ID: a, Event: "transfer-budget", SampleLimit: 1000, ExampleLimit: 3, PropertyLimit: 20, PropertyKind: "custom", IncludeValues: true}
+	options, err := lakeapi.NormalizeEventProfileInput(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,7 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 			t.Fatalf("original size was lost for a bounded row: got=%d want=%d", row.PropertyBytes, len(properties))
 		}
 	}
-	if len(read.Rows) != 1000 || retained <= 0 || retained > eventProfileSampleBytes || excluded == 0 {
+	if len(read.Rows) != 1000 || retained <= 0 || retained > lakeapi.EventProfileSampleBytes || excluded == 0 {
 		t.Fatalf("SQL did not bound cumulative transfer before Go decoding: rows=%d retained=%d excluded=%d", len(read.Rows), retained, excluded)
 	}
 	result, err := s.eventProfile(ctx, &input)
@@ -78,7 +80,7 @@ func TestDuckLakeEventProfileCumulativeSQLTransferBudget(t *testing.T) {
 		}
 	}
 	raw, err := json.Marshal(profile)
-	if err != nil || len(raw) > analyticsMaxBytes {
+	if err != nil || len(raw) > lakeapi.AnalyticsMaxBytes {
 		t.Fatalf("profile response exceeded its public JSON budget: bytes=%d error=%v", len(raw), err)
 	}
 	t.Logf("sampled=1000 profiled=%d byte_budget_excluded=%d retained_payload_bytes=%d response_bytes=%d", profile.Sampling.ProfiledEvents, excluded, retained, len(raw))

@@ -10,10 +10,10 @@ import (
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
-func pipelineConfiguration() (*porcupine.PipelineConfig, error) {
-	key := os.Getenv("PORCUPINE_PIPELINE_KEY")
-	path := os.Getenv("PORCUPINE_PIPELINE_KEY_FILE")
-	endpoints := os.Getenv("PORCUPINE_PIPELINE_S3_ENDPOINTS")
+func (s settings) pipelineConfiguration() (*porcupine.PipelineConfig, error) {
+	key := s.get("PORCUPINE_PIPELINE_KEY")
+	path := s.get("PORCUPINE_PIPELINE_KEY_FILE")
+	endpoints := s.get("PORCUPINE_PIPELINE_S3_ENDPOINTS")
 	if path != "" {
 		if key != "" {
 			return nil, errors.New("configure just one pipeline encryption key source")
@@ -43,7 +43,7 @@ func pipelineConfiguration() (*porcupine.PipelineConfig, error) {
 	if endpoints != "" {
 		cfg.AllowedS3Endpoints = strings.Split(endpoints, ",")
 	}
-	if err = readExportLimits(&cfg.ExportLimits); err != nil {
+	if err = s.readExportLimits(&cfg.ExportLimits); err != nil {
 		return nil, err
 	}
 	return cfg, nil

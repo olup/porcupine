@@ -14,23 +14,25 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func readProfileHTTP(t *testing.T, s *Service, project, event, token, options string) EventProfile {
+func readProfileHTTP(t *testing.T, s *Service, project, event, token, options string) lakeapi.EventProfile {
 	t.Helper()
 	result := request(t, s, http.MethodGet, profileRequestPath(project, event)+options, token, "", http.StatusOK)
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var profile EventProfile
+	var profile lakeapi.EventProfile
 	if err := json.Unmarshal(raw, &profile); err != nil {
 		t.Fatal(err)
 	}
 	return profile
 }
 
-func profileProperty(t *testing.T, profile EventProfile, key string) EventProfileProperty {
+func profileProperty(t *testing.T, profile lakeapi.EventProfile, key string) lakeapi.EventProfileProperty {
 	t.Helper()
 	for _, property := range profile.Properties {
 		if property.Key == key {
@@ -38,7 +40,7 @@ func profileProperty(t *testing.T, profile EventProfile, key string) EventProfil
 		}
 	}
 	t.Fatalf("property %q absent: %+v", key, profile)
-	return EventProfileProperty{}
+	return lakeapi.EventProfileProperty{}
 }
 
 func profileJourneyFixture(t *testing.T) (*Service, string, string, string, string, string, time.Time) {
@@ -162,7 +164,7 @@ func TestDuckLakeEventProfileLargePayloadsDoNotBecomeMissingProperties(t *testin
 	s.clock = func() time.Time { return now }
 	a, ingest := project(t, s)
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
-	large := strings.Repeat("é", eventProfileFieldBytes)
+	large := strings.Repeat("é", lakeapi.EventProfileFieldBytes)
 	longValue := strings.Repeat("é", 120)
 	identityCapture(t, s, ingest, []map[string]any{
 		{"uuid": "profile-small", "event": "bounded-profile", "distinct_id": "browser", "timestamp": now.Add(-2 * time.Minute).Format(time.RFC3339Nano), "properties": map[string]any{"app": "safe", "text": longValue}},
@@ -185,7 +187,7 @@ func TestDuckLakeEventProfileLargePayloadsDoNotBecomeMissingProperties(t *testin
 		t.Fatalf("oversized example was not explicitly omitted: %+v", profile.Examples)
 	}
 	raw, err := json.Marshal(profile)
-	if err != nil || len(raw) > analyticsMaxBytes || !utf8.Valid(raw) {
+	if err != nil || len(raw) > lakeapi.AnalyticsMaxBytes || !utf8.Valid(raw) {
 		t.Fatalf("invalid or oversized profile response: bytes=%d error=%v", len(raw), err)
 	}
 }
@@ -198,10 +200,10 @@ func TestDuckLakeEventProfileUsesOneSnapshotDuringConcurrentProjection(t *testin
 	base := lakeStorageProjection(t, a, "profile-snapshot-base", 900)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := s.lake.Apply(ctx, []eventProjection{base}); err != nil {
+	if err := s.lake.Apply(ctx, []lakeapi.EventProjection{base}); err != nil {
 		t.Fatal(err)
 	}
-	updates := make([]eventProjection, 24)
+	updates := make([]lakeapi.EventProjection, 24)
 	for i := range updates {
 		updates[i] = lakeStorageProjection(t, a, fmt.Sprintf("profile-snapshot-%02d", i), int64(1000+i))
 	}
@@ -211,13 +213,13 @@ func TestDuckLakeEventProfileUsesOneSnapshotDuringConcurrentProjection(t *testin
 	go func() {
 		defer close(done)
 		for _, update := range updates {
-			if err := s.lake.Apply(ctx, []eventProjection{update}); err != nil {
+			if err := s.lake.Apply(ctx, []lakeapi.EventProjection{update}); err != nil {
 				failure <- err
 				return
 			}
 			writes.Add(1)
 			update.IsDeleted, update.Revision = true, 1
-			if err := s.lake.Apply(ctx, []eventProjection{update}); err != nil {
+			if err := s.lake.Apply(ctx, []lakeapi.EventProjection{update}); err != nil {
 				failure <- err
 				return
 			}
@@ -231,7 +233,7 @@ func TestDuckLakeEventProfileUsesOneSnapshotDuringConcurrentProjection(t *testin
 	overlapped := false
 	for range 60 {
 		before := writes.Load()
-		result, err := s.eventProfile(ctx, &EventProfileInput{ID: a, Event: "page_viewed", SampleLimit: 1000, ExampleLimit: 5, PropertyLimit: 20, PropertyPrefix: "page", PropertyKind: "custom"})
+		result, err := s.eventProfile(ctx, &lakeapi.EventProfileInput{ID: a, Event: "page_viewed", SampleLimit: 1000, ExampleLimit: 5, PropertyLimit: 20, PropertyPrefix: "page", PropertyKind: "custom"})
 		if err != nil {
 			t.Fatalf("concurrent event profile failed after %d writes: %v", writes.Load(), err)
 		}

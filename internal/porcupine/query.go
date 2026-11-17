@@ -3,6 +3,8 @@ package porcupine
 import (
 	"context"
 	"regexp"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type AnalyticsSchemaInput struct {
@@ -41,7 +43,7 @@ type AnalyticsSchema struct {
 	SQL              AnalyticsSQL           `json:"sql"`
 	TenantBudgets    TenantBudgets          `json:"tenant_budgets" doc:"Configured tenant policy; effective limits are bounded by deployment ceilings. No aggregate tenant consumption is included."`
 	DeploymentLimits InteractiveQueryConfig `json:"deployment_limits" doc:"Worker safety ceilings, including analytical capacity shared with background work. Shared deployments additionally enforce tenant concurrency through PostgreSQL permits."`
-	Delivery         DeliveryStatus         `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
+	Delivery         lakeapi.DeliveryStatus `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
 }
 
 type AnalyticsSchemaOutput struct{ Body AnalyticsSchema }
@@ -62,16 +64,16 @@ type AnalyticsQueryInput struct {
 }
 
 type AnalyticsQuery struct {
-	Result   AnalyticsResult `json:"result"`
-	Delivery DeliveryStatus  `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
+	Result   lakeapi.AnalyticsResult `json:"result"`
+	Delivery lakeapi.DeliveryStatus  `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
 }
 
 type AnalyticsQueryOutput struct{ Body AnalyticsQuery }
 
 func analyticsLimits() AnalyticsLimits {
 	return AnalyticsLimits{
-		MaxSQLBytes: maxSQLBytes, MaxRows: analyticsMaxRows, MaxResultBytes: analyticsMaxBytes,
-		MaxExecutionMS: 5000, MaxExecutionSeconds: 5, RequestTimeoutSeconds: 10, MaxMemoryBytes: defaultDuckLakeMemoryMB << 20,
+		MaxSQLBytes: lakeapi.MaxSQLBytes, MaxRows: lakeapi.AnalyticsMaxRows, MaxResultBytes: lakeapi.AnalyticsMaxBytes,
+		MaxExecutionMS: 5000, MaxExecutionSeconds: 5, RequestTimeoutSeconds: 10, MaxMemoryBytes: lakeapi.DefaultDuckLakeMemoryMB << 20,
 		MemoryScope: "per_resident_project_engine", MaxConcurrentQueries: 2,
 	}
 }

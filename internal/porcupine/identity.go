@@ -7,32 +7,16 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-)
 
-const identityMaxTraitsBytes = 32 << 10
-const identityMaxTraitKeys = 128
+	eventapi "github.com/olup/porcupine/internal/event"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
+)
 
 func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
 
 func validIdentityID(id string) bool {
-	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != cookielessSentinel && !strings.HasPrefix(id, "cookieless_")
-}
-
-func identityTraits(raw any) (map[string]any, bool) {
-	if raw == nil {
-		return map[string]any{}, true
-	}
-	traits, ok := raw.(map[string]any)
-	if !ok || len(traits) > identityMaxTraitKeys {
-		return nil, false
-	}
-	for key := range traits {
-		if strings.TrimSpace(key) == "" || len(key) > 200 {
-			return nil, false
-		}
-	}
-	encoded, err := json.Marshal(traits)
-	return traits, err == nil && len(encoded) <= identityMaxTraitsBytes
+	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != ingestfmt.CookielessSentinel && !strings.HasPrefix(id, "cookieless_")
 }
 
 func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[string]any, bool, error) {
@@ -46,7 +30,7 @@ func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[s
 		return nil, false, err
 	}
 	var traits map[string]any
-	if err := decodeIngestionJSON([]byte(raw), &traits); err != nil || traits == nil {
+	if err := ingestfmt.DecodeJSON([]byte(raw), &traits); err != nil || traits == nil {
 		return nil, false, errors.New("invalid stored identity profile")
 	}
 	return traits, identified, nil
@@ -65,11 +49,11 @@ func identityLink(ctx context.Context, tx *sql.Tx, project, id string) (string, 
 // applyIdentityControl runs after stable UUID deduplication and insertion, in the
 // capture transaction. Invalid or conflicting controls retain a durable no-op
 // marker and cannot change any profile or link, including a competing target.
-func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, error) {
+func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *eventapi.Event) (bool, error) {
 	if !isIdentityControl(event.Event) {
 		return false, nil
 	}
-	snapshot := identitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []identityLinkSnapshot{}}
+	snapshot := lakeapi.IdentitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []lakeapi.IdentityLinkSnapshot{}}
 	ignored, err := applyIdentityState(ctx, tx, *event, &snapshot)
 	if err != nil {
 		return false, err
@@ -84,12 +68,12 @@ func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, 
 	return ignored, err
 }
 
-func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *identitySnapshot) (bool, error) {
+func applyIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, snapshot *lakeapi.IdentitySnapshot) (bool, error) {
 	if !validIdentityID(event.DistinctID) {
 		return true, nil
 	}
 	var properties map[string]any
-	if err := decodeIngestionJSON(event.Properties, &properties); err != nil {
+	if err := ingestfmt.DecodeJSON(event.Properties, &properties); err != nil {
 		return false, err
 	}
 	for _, key := range []string{"$set", "$set_once"} {
@@ -97,8 +81,8 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 			return true, nil
 		}
 	}
-	set, validSet := identityTraits(properties["$set"])
-	once, validOnce := identityTraits(properties["$set_once"])
+	set, validSet := ingestfmt.Traits(properties["$set"])
+	once, validOnce := ingestfmt.Traits(properties["$set_once"])
 	if !validSet || !validOnce {
 		return true, nil
 	}
@@ -156,7 +140,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 	for key, value := range set {
 		traits[key] = value
 	}
-	if _, valid := identityTraits(traits); !valid {
+	if _, valid := ingestfmt.Traits(traits); !valid {
 		return true, nil
 	}
 	encoded, err := json.Marshal(traits)
@@ -173,7 +157,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 				return false, err
 			}
 		}
-		snapshot.Links = append(snapshot.Links, identityLinkSnapshot{AnonymousID: anonymous, IdentifiedID: target, Version: strconv.FormatInt(linkVersion, 10)})
+		snapshot.Links = append(snapshot.Links, lakeapi.IdentityLinkSnapshot{AnonymousID: anonymous, IdentifiedID: target, Version: strconv.FormatInt(linkVersion, 10)})
 	}
 	snapshot.IdentifiedID, snapshot.Traits = target, traits
 	return false, nil

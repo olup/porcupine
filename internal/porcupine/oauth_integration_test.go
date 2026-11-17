@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/time/rate"
@@ -179,7 +180,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	selected["api_key"] = publicB
 	f.call(t, "POST", "/capture/", multiToken.AccessToken, selected, 200, nil)
 	var captured struct {
-		Events []Event `json:"events"`
+		Events []eventapi.Event `json:"events"`
 	}
 	f.call(t, "GET", path, read.AccessToken, nil, 200, &captured)
 	if len(captured.Events) != 3 {

@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func agentAnalyticsFixture(t *testing.T) (*Service, string, string, string, string) {
@@ -148,7 +150,7 @@ func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
 		t.Fatalf("missing export recovery: %v", limited)
 	}
 
-	doc, err := os.ReadFile("../../docs/duckdb-recipes.md")
+	doc, err := os.ReadFile("../../docs/reference/duckdb-recipes.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,10 +200,10 @@ func TestDuckLakeCatalogEmptyKeyCursorAndProjectBinding(t *testing.T) {
 	s := openLakeStorageTest(t, t.TempDir(), 2)
 	p := lakeStorageProjection(t, "a", "one", 1)
 	p.Properties = json.RawMessage(`{"":"secret","a":1,"b":true}`)
-	if err := s.Apply(context.Background(), []eventProjection{p}); err != nil {
+	if err := s.Apply(context.Background(), []lakeapi.EventProjection{p}); err != nil {
 		t.Fatal(err)
 	}
-	input := EventCatalogInput{ID: "a", Event: p.Event.Event, PropertyLimit: 1}
+	input := lakeapi.EventCatalogInput{ID: "a", Event: p.Event.Event, PropertyLimit: 1}
 	first, err := s.Catalog(context.Background(), input)
 	if err != nil || len(first.Properties) != 1 || first.Properties[0].Key != "" || first.NextPropertyCursor == "" {
 		t.Fatalf("empty-key cursor: %v %v", first, err)
@@ -222,10 +224,10 @@ func TestDuckLakeParameterDependentScalarMetadata(t *testing.T) {
 	s := openLakeStorageTest(t, t.TempDir(), 1)
 	p := lakeStorageProjection(t, "a", "one", 1)
 	p.Properties = json.RawMessage(`{"language":"fr"}`)
-	if err := s.Apply(context.Background(), []eventProjection{p}); err != nil {
+	if err := s.Apply(context.Background(), []lakeapi.EventProjection{p}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.Query(context.Background(), "a", `WITH extracted AS (SELECT json_extract_string(properties,$path) AS value FROM events) SELECT count(*) AS total,count_if(value IS NULL) AS missing,count(DISTINCT value) AS distinct_values FROM extracted`, map[string]string{"path": "$.language"}, defaultQueryExecutionLimits())
+	result, err := s.Query(context.Background(), "a", `WITH extracted AS (SELECT json_extract_string(properties,$path) AS value FROM events) SELECT count(*) AS total,count_if(value IS NULL) AS missing,count(DISTINCT value) AS distinct_values FROM extracted`, map[string]string{"path": "$.language"}, lakeapi.DefaultQueryExecutionLimits())
 	if err != nil || string(result.Data[0]["total"]) != `"1"` || string(result.Data[0]["missing"]) != `"0"` || string(result.Data[0]["distinct_values"]) != `"1"` {
 		t.Fatalf("resolved scalar metadata lost types or values: %+v %v", result, err)
 	}

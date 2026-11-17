@@ -17,6 +17,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
@@ -45,7 +47,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	backup.Endpoint = proxy.URL
 	backup.CACertFile = ""
 	root := t.TempDir()
-	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &NativeBackupConfig{S3: &backup, Retain: 1}}
+	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour}, NativeBackup: &lakeapi.NativeBackupConfig{S3: &backup, Retain: 1}}
 	s, err := Open(config)
 	s3FixtureError(t, fixture, "open backup source", err)
 	defer s.Close()
@@ -54,7 +56,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	other, _ := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"offhost-copy","actor_id":"user","name":"original"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	fixture.flush(t, store, projectID)
 	fixture.flush(t, store, other)
 	// Historical, currently unreferenced files are part of the conservative source-prefix copy.
@@ -69,7 +71,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	s3FixtureError(t, fixture, "complete offhost backup", err)
 	source, err := s.lake.SourceID(ctx)
 	s3FixtureError(t, fixture, "source ID", err)
-	reader, err := newNativeBackupS3(ctx, backup, source)
+	reader, err := lakeapi.NewNativeBackupS3(ctx, backup, source)
 	s3FixtureError(t, fixture, "backup reader", err)
 	defer reader.Close()
 	first := s.nativeBackupStatus().LatestBundle
@@ -98,7 +100,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	if err := s.db.QueryRow("SELECT value FROM metadata WHERE key='native_backup_writer_id'").Scan(&writer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec("UPDATE metadata SET value=? WHERE key='native_backup_writer_id'", newID()); err != nil {
+	if _, err := s.db.Exec("UPDATE metadata SET value=? WHERE key='native_backup_writer_id'", eventapi.NewID()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.createNativeBackup(ctx); err == nil {
@@ -169,18 +171,18 @@ func TestDuckLakeS3BackupLocalSourceStreamsOffhost(t *testing.T) {
 	projectID, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"local-offhost","actor_id":"u","name":"kept"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	flushCleanupProject(t, s.lake.(*duckLakeStore), projectID)
+	flushCleanupProject(t, s.lake.(*lakeapi.DuckLakeStore), projectID)
 	s.backups.config.Directory = ""
 	s.backups.config.S3 = &fixture.storage
 	s3FixtureError(t, fixture, "local source offhost backup", s.createNativeBackup(context.Background()))
 	source, err := s.lake.SourceID(context.Background())
 	s3FixtureError(t, fixture, "source ID", err)
-	reader, err := newNativeBackupS3(context.Background(), fixture.storage, source)
+	reader, err := lakeapi.NewNativeBackupS3(context.Background(), fixture.storage, source)
 	s3FixtureError(t, fixture, "offhost reader", err)
 	defer reader.Close()
 	m, err := reader.Manifest(context.Background(), s.nativeBackupStatus().LatestBundle)
 	s3FixtureError(t, fixture, "local offhost manifest", err)
-	if m.SourceStorage != (nativeBackupStorageIdentity{Mode: "local"}) {
+	if m.SourceStorage != (lakeapi.NativeBackupStorageIdentity{Mode: "local"}) {
 		t.Fatal("local source storage identity missing", m.SourceStorage)
 	}
 	parquet := false

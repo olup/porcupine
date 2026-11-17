@@ -13,31 +13,36 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	_ "modernc.org/sqlite"
 )
 
 type Config struct {
-	DBPath             string
-	ControlDBPath      string
-	BootstrapToken     string
-	QueueMaxEvents     int
-	QueueMaxBytes      int64
+	DBPath         string
+	ControlDBPath  string
+	BootstrapToken string
+	QueueMaxEvents int
+	QueueMaxBytes  int64
+	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
+	// Zero keeps every receipt.
+	ReceiptRetention   time.Duration
 	AllowedOrigins     []string
 	TrustedProxies     []string
 	Clock              func() time.Time
-	DuckLake           *DuckLakeConfig
+	DuckLake           *lakeapi.DuckLakeConfig
 	Pipelines          *PipelineConfig
 	Exports            *ExportConfig
 	OAuth              *OAuthConfig
-	NativeBackup       *NativeBackupConfig
+	NativeBackup       *lakeapi.NativeBackupConfig
 	InteractiveQueries *InteractiveQueryConfig
 	Shared             *SharedConfig
 }
@@ -62,7 +67,7 @@ type Service struct {
 	imports               *importManager
 	allowedOrigins        map[string]bool
 	trustedProxies        []netip.Prefix
-	lake                  lakeStore
+	lake                  lakeapi.LakeStore
 	lakeMemoryMB          int
 	lakeMaintenanceCancel context.CancelFunc
 	lakeMaintenanceDone   chan struct{}
@@ -86,6 +91,9 @@ type Service struct {
 }
 
 func Open(c Config) (*Service, error) {
+	if err := ValidateConfig(c); err != nil {
+		return nil, err
+	}
 	if err := validateSharedConfiguration(c); err != nil {
 		return nil, err
 	}
@@ -95,7 +103,7 @@ func Open(c Config) (*Service, error) {
 	}
 	if c.DuckLake != nil {
 		cleanup := *c.DuckLake
-		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
+		if err := lakeapi.NormalizeDuckLakeCleanup(&cleanup); err != nil {
 			return nil, err
 		}
 	}
@@ -171,14 +179,9 @@ func Open(c Config) (*Service, error) {
 	if c.Clock == nil {
 		c.Clock = time.Now
 	}
-	origins := map[string]bool{}
-	for _, origin := range c.AllowedOrigins {
-		origin = strings.TrimSpace(origin)
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(origin, "*") || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errors.New("allowed origins must be exact http(s) origins without paths or wildcards")
-		}
-		origins[origin] = true
+	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	if err != nil {
+		return nil, err
 	}
 	db, err := openLocalSQLite(c.DBPath)
 	if err != nil {
@@ -201,7 +204,7 @@ func Open(c Config) (*Service, error) {
 			return nil, err
 		}
 	}
-	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock}, allowedOrigins: origins, trustedProxies: proxies,
+	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
 		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.control = control
 	if c.Shared != nil {
@@ -209,6 +212,7 @@ func Open(c Config) (*Service, error) {
 		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
 		s.shared = &sharedRuntime{config: copyConfig}
 	}
+	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
 	if pipelines != nil {
 		webhooks := &webhookAcceptance{config: &pipelines.config, rules: s.eventRules}
@@ -325,7 +329,7 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	if c.DuckLake != nil {
-		s.lake, err = newDuckLake(*c.DuckLake)
+		s.lake, err = lakeapi.NewDuckLake(*c.DuckLake)
 		if err != nil {
 			return fail(err)
 		}
@@ -344,7 +348,7 @@ func Open(c Config) (*Service, error) {
 			}
 		}
 		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = defaultDuckLakeMemoryMB
+			s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
 		}
 		s.deliveryMaxEvents = 1000
 	}
@@ -423,8 +427,8 @@ func token() string {
 }
 func hash(v string) string { b := sha256.Sum256([]byte(v)); return hex.EncodeToString(b[:]) }
 
-func (s *Service) authenticate(ctx context.Context, raw string) (actor, error) {
-	var a actor
+func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal, error) {
+	var a auth.Principal
 	var permissions, projects string
 	if raw == "" || strings.HasPrefix(raw, serviceKeyPrefix) {
 		return a, errors.New("invalid access key")
@@ -585,7 +589,7 @@ type eventInput struct {
 	Timestamp  string          `json:"timestamp"`
 	Set        json.RawMessage `json:"$set,omitempty"`
 	SetOnce    json.RawMessage `json:"$set_once,omitempty"`
-	ingestion  *ingestionMetadata
+	ingestion  *ingestfmt.Metadata
 }
 type ingestInput struct {
 	eventInput
@@ -663,24 +667,24 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			}
 		}
 	}
-	var a actor
+	var a auth.Principal
 	var err error
 	authenticatedAPI := false
 	if len(r.Header.Values("Authorization")) != 0 {
 		var access string
-		access, err = bearerCredential(r)
+		access, err = auth.BearerCredential(r)
 		if err == nil {
 			resource := ""
 			if s.oauth != nil {
 				resource = s.oauth.apiResource
 			}
 			a, err = s.authenticateResource(r.Context(), access, resource)
-			authenticatedAPI = err == nil && s.oauth != nil && (a.serviceKey || strings.HasPrefix(access, "pc_at_"))
+			authenticatedAPI = err == nil && s.oauth != nil && (a.ServiceKey || strings.HasPrefix(access, "pc_at_"))
 		}
 		if err == nil && rawKey != "" {
-			var selector actor
+			var selector auth.Principal
 			selector, err = s.authenticate(r.Context(), rawKey)
-			if err == nil && selector.can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
+			if err == nil && selector.Can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && auth.Authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
 				a.Projects = []string{selector.Projects[0]}
 				if selector.SourceID != "" {
 					a.SourceID = selector.SourceID
@@ -696,7 +700,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 401, "invalid ingestion credential")
 		return
 	}
-	if !a.can("events:write") || len(a.Projects) != 1 || a.Projects[0] == "*" {
+	if !a.Can("events:write") || len(a.Projects) != 1 || a.Projects[0] == "*" {
 		problem(w, 403, "ingestion requires a key scoped to one project with events:write")
 		return
 	}

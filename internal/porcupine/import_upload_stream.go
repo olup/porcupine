@@ -5,96 +5,48 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+
+	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/importer"
+	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type importChunkWork struct {
 	file      storedImportUploadFile
-	rows      []ImportRow
+	rows      []importer.Row
 	positions []int64
-	samples   []ImportRowSample
+	samples   []importer.ImportRowSample
 }
 
 func parseImportUploadChunk(ctx context.Context, file storedImportUploadFile, data []byte, final bool) (importChunkWork, error) {
-	work := importChunkWork{file: file}
-	addSample := func(reason string) {
-		if len(work.samples) < importMaxSamples {
-			work.samples = append(work.samples, ImportRowSample{FileID: file.ID, RowNumber: work.file.LineNumber + 1, Reason: reason})
-		}
+	chunk, err := importer.ParseChunk(ctx, importer.ChunkState{FileID: file.ID, Kind: file.Kind, Format: file.Format, LineNumber: file.LineNumber, Tail: file.Tail, Discarding: file.Discarding, Counts: file.Counts}, data, final)
+	if errors.Is(err, importer.ErrChunkRows) {
+		return importChunkWork{}, apiError(413, err.Error())
 	}
-	parse := func(raw []byte) error {
-		raw = bytes.TrimSpace(raw)
-		if len(raw) == 0 {
-			return nil
-		}
-		work.file.Counts.Rows++
-		if work.file.Counts.Rows-file.Counts.Rows > importMaxChunkRows {
-			return apiError(413, "chunk exceeds 1000 JSONL rows")
-		}
-		row, err := parseHistoricalImportRow(raw, file.Kind, file.Format)
-		if err != nil {
-			work.file.Counts.Invalid++
-			addSample("invalid_row")
-			return nil
-		}
-		work.rows = append(work.rows, row)
-		work.positions = append(work.positions, work.file.LineNumber+1)
-		return nil
-	}
-	for len(data) > 0 {
-		if ctx.Err() != nil {
-			return work, ctx.Err()
-		}
-		end := bytes.IndexByte(data, '\n')
-		complete := end >= 0
-		if !complete {
-			end = len(data)
-		}
-		segment := data[:end]
-		if work.file.Discarding {
-			if complete {
-				work.file.Discarding = false
-				work.file.LineNumber++
-			}
-		} else if len(work.file.Tail)+len(segment) > importMaxRowBytes {
-			work.file.Tail = nil
-			work.file.Counts.Rows++
-			work.file.Counts.Invalid++
-			if work.file.Counts.Rows-file.Counts.Rows > importMaxChunkRows {
-				return work, apiError(413, "chunk exceeds 1000 JSONL rows")
-			}
-			addSample("row_too_large")
-			work.file.Discarding = !complete
-			if complete {
-				work.file.LineNumber++
-			}
-		} else {
-			work.file.Tail = append(work.file.Tail, segment...)
-			if complete {
-				if err := parse(work.file.Tail); err != nil {
-					return work, err
-				}
-				work.file.Tail = nil
-				work.file.LineNumber++
-			}
-		}
-		data = data[end:]
-		if complete {
-			data = data[1:]
-		}
-	}
-	if final {
-		if !work.file.Discarding {
-			if err := parse(work.file.Tail); err != nil {
-				return work, err
-			}
-		}
-		work.file.Tail = nil
-		work.file.Discarding = false
-	}
-	return work, nil
+	file.LineNumber, file.Tail, file.Discarding, file.Counts = chunk.State.LineNumber, chunk.State.Tail, chunk.State.Discarding, chunk.State.Counts
+	return importChunkWork{file: file, rows: chunk.Rows, positions: chunk.Positions, samples: chunk.Samples}, err
 }
 
-func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor actor, complete bool) error {
+func (m *importManager) commitImportChunk(ctx context.Context, project, jobID string, original storedImportUploadFile, work importChunkWork, actor auth.Principal, complete bool) error {
+	release, err := m.rules.receiptGates.lock(ctx, project)
+	if err != nil {
+		return err
+	}
+	defer release()
+	events := make([]eventapi.Event, 0, len(work.rows))
+	for _, row := range work.rows {
+		// Person snapshots have stable producer UUIDs too. Their receipts must
+		// participate in the same cold deduplication as ordinary events.
+		events = append(events, row.Event)
+	}
+	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
+	known, err := m.rules.coldKnown(lookup, project, events)
+	cancel()
+	if err != nil {
+		return apiError(503, "import storage unavailable; retry the same chunk")
+	}
 	if m.rules.admission != nil {
 		if err := m.rules.admission.Lock(ctx); err != nil {
 			return err
@@ -121,7 +73,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
 		return err
 	}
-	if job.ActorID != actor.ID && !actor.admin() {
+	if job.ActorID != actor.ID && !actor.Admin() {
 		return apiError(403, "only the import creator or an administrator can upload")
 	}
 	if job.State != "uploading" {
@@ -145,14 +97,14 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT import_row`); err != nil {
 			return apiError(503, "import storage unavailable")
 		}
-		result, err := m.rules.AcceptHistoricalTx(ctx, tx, project, row)
-		if errors.Is(err, errImportRow) {
+		result, err := m.rules.AcceptHistoricalTx(ctx, tx, project, row, known)
+		if errors.Is(err, importer.ErrRow) {
 			if _, err := tx.ExecContext(ctx, `ROLLBACK TO import_row; RELEASE import_row`); err != nil {
 				return apiError(503, "import storage unavailable")
 			}
 			work.file.Counts.Invalid++
-			if len(work.samples) < importMaxSamples {
-				work.samples = append(work.samples, ImportRowSample{FileID: file.ID, RowNumber: work.positions[i], Reason: "invalid_row"})
+			if len(work.samples) < importer.MaxSamples {
+				work.samples = append(work.samples, importer.ImportRowSample{FileID: file.ID, RowNumber: work.positions[i], Reason: "invalid_row"})
 			}
 			continue
 		}
@@ -166,7 +118,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		if _, err := tx.ExecContext(ctx, `RELEASE import_row`); err != nil {
 			return apiError(503, "import storage unavailable")
 		}
-		if len(work.samples) < importMaxSamples {
+		if len(work.samples) < importer.MaxSamples {
 			reason := ""
 			if result.Unresolved > 0 {
 				reason = "unresolved_identity"
@@ -174,7 +126,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 				reason = "ignored_row"
 			}
 			if reason != "" {
-				work.samples = append(work.samples, ImportRowSample{FileID: file.ID, RowNumber: work.positions[i], Reason: reason})
+				work.samples = append(work.samples, importer.ImportRowSample{FileID: file.ID, RowNumber: work.positions[i], Reason: reason})
 			}
 		}
 		work.file.Counts.Accepted += result.Accepted
@@ -195,7 +147,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		return apiError(503, "import checkpoint unavailable")
 	}
 	for _, sample := range work.samples {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_samples(job_id,file_id,row_number,reason) SELECT $1,$2,$3,$4 WHERE (SELECT count(*) FROM import_upload_samples WHERE job_id=$5)<$6 ON CONFLICT(job_id,file_id,row_number) DO NOTHING`, jobID, sample.FileID, sample.RowNumber, sample.Reason, jobID, importMaxSamples); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_samples(job_id,file_id,row_number,reason) SELECT $1,$2,$3,$4 WHERE (SELECT count(*) FROM import_upload_samples WHERE job_id=$5)<$6 ON CONFLICT(job_id,file_id,row_number) DO NOTHING`, jobID, sample.FileID, sample.RowNumber, sample.Reason, jobID, importer.MaxSamples); err != nil {
 			return apiError(503, "import checkpoint unavailable")
 		}
 	}
@@ -208,7 +160,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	return nil
 }
 
-func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fileID string, actor actor) error {
+func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fileID string, actor auth.Principal) error {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiError(503, "import storage unavailable")
@@ -224,7 +176,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	if err != nil {
 		return importLookupError(err)
 	}
-	if job.ActorID != actor.ID && !actor.admin() {
+	if job.ActorID != actor.ID && !actor.Admin() {
 		return apiError(403, "only the import creator or an administrator can complete it")
 	}
 	if job.State != "uploading" {
@@ -244,18 +196,18 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 }
 
 func importDigestMatches(state []byte, expected string) bool {
-	h, err := restoreImportHash(state)
+	h, err := importer.RestoreHash(state)
 	return err == nil && hex.EncodeToString(h.Sum(nil)) == expected
 }
 
 // Resolve source-scoped keys before transaction-local deduplication and acceptance.
 // The raw PostHog namespace is retained only for an unbound import creator.
-func prepareImportUploadSource(project, source string, rows []ImportRow) error {
+func prepareImportUploadSource(project, source string, rows []importer.Row) error {
 	for i := range rows {
-		if rows[i].ingestion != nil {
+		if rows[i].Ingestion != nil {
 			event := rows[i].Event
 			event.ProjectID = project
-			if err := prepareIngestionMetadata(&event, rows[i].ingestion, source); err != nil {
+			if err := prepareIngestionMetadata(&event, rows[i].Ingestion, source); err != nil {
 				return err
 			}
 			rows[i].Event = event
@@ -264,12 +216,12 @@ func prepareImportUploadSource(project, source string, rows []ImportRow) error {
 		if source == "posthog" {
 			continue
 		}
-		event := eventWithMetadata(rows[i].Event)
+		event := lakeapi.EventWithMetadata(rows[i].Event)
 		event.ProjectID = project
 		if rows[i].Kind == "persons" {
 			event.EventType = "identify"
 		}
-		metadata := ingestionMetadata{Protocol: "posthog", MessageID: event.UUID, EventType: event.EventType, Context: event.Context}
+		metadata := ingestfmt.Metadata{Protocol: "posthog", MessageID: event.UUID, EventType: event.EventType, Context: event.Context}
 		if err := prepareIngestionMetadata(&event, &metadata, source); err != nil {
 			return err
 		}
@@ -290,8 +242,8 @@ func prepareImportUploadWork(project, source string, work *importChunkWork) erro
 	for i := range rows {
 		if err := prepareImportUploadSource(project, source, rows[i:i+1]); err != nil {
 			work.file.Counts.Invalid++
-			if len(work.samples) < importMaxSamples {
-				work.samples = append(work.samples, ImportRowSample{FileID: work.file.ID, RowNumber: positions[i], Reason: "invalid_metadata"})
+			if len(work.samples) < importer.MaxSamples {
+				work.samples = append(work.samples, importer.ImportRowSample{FileID: work.file.ID, RowNumber: positions[i], Reason: "invalid_metadata"})
 			}
 			continue
 		}

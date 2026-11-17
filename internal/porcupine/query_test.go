@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func queryInput(projectID, sql string) *AnalyticsQueryInput {
@@ -28,7 +30,7 @@ func TestAnalyticsValidationSchemaAndDisabledStorage(t *testing.T) {
 		t.Fatalf("incorrect disabled discovery: %#v %v", schema, err)
 	}
 	limits := schema.Body.Limits
-	if schema.Body.SQL.Dialect != "duckdb" || limits.MaxMemoryBytes != defaultDuckLakeMemoryMB<<20 || limits.MemoryScope != "per_resident_project_engine" {
+	if schema.Body.SQL.Dialect != "duckdb" || limits.MaxMemoryBytes != lakeapi.DefaultDuckLakeMemoryMB<<20 || limits.MemoryScope != "per_resident_project_engine" {
 		t.Fatal("native discovery advertised unsupported guarantees", schema.Body)
 	}
 	if _, err = s.analyticsQuery(context.Background(), queryInput(id, "SELECT count(*) FROM events")); queryStatus(err) != 503 {

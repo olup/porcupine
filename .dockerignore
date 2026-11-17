@@ -1,4 +1,9 @@
 .git
+.claude
+.codex
+.audit
+/porcupine
+/porcupine.json
 data
 bin
 .env

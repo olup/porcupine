@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 // Requests and workers for a project register until all their external writes
@@ -153,7 +155,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		return apiError(503, "local deletion state unavailable")
 	}
 	if !staged {
-		if err := s.ensureProjectLocal(ctx, id, actor{}); err != nil {
+		if err := s.ensureProjectLocal(ctx, id, auth.Principal{}); err != nil {
 			return err
 		}
 	}
