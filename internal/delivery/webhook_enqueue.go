@@ -10,23 +10,6 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
-func webhookMatches(spec WebhookRule, event string) bool {
-	for _, name := range spec.ExcludeEvents {
-		if name == event {
-			return false
-		}
-	}
-	if len(spec.IncludeEvents) == 0 {
-		return true
-	}
-	for _, name := range spec.IncludeEvents {
-		if name == event {
-			return true
-		}
-	}
-	return false
-}
-
 // WebhookEnqueuer joins the producer's transaction without owning the journal
 // connection, the destination worker or the rest of the application.
 type WebhookEnqueuer struct {
@@ -84,7 +67,7 @@ func (p *WebhookEnqueuer) Enqueue(ctx context.Context, tx *sql.Tx, events []even
 			if event.ProjectID != projectID {
 				return errors.New("mixed webhook projects")
 			}
-			if webhookMatches(d.spec, event.Event) {
+			if d.spec.Matches(event.Event) {
 				matching = append(matching, event)
 			}
 		}
