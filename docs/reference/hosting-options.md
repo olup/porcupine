@@ -1,53 +1,10 @@
-# Host Porcupine 0.14.0
+# Hosting options
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
+Use the [quickstart](../../README.md#quickstart) to start a new v0.15.0 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
 
-The default server embeds DuckDB and DuckLake. One container holds the Go service, SQLite acceptance database, project catalogs, and Parquet data. No separate analytical database is required. Use persistent local storage and one application writer per data directory.
+The release overlay selects the tagged image and removes the source build. Keep it after `compose.yaml`. Set `PORCUPINE_IMAGE` to an explicit digest when pinning a deployment.
 
-The [v0.14.0 release](https://github.com/olup/porcupine/releases/tag/v0.14.0) provides Linux amd64 and arm64 server images, plus six standalone CLI archives for macOS, Linux, and Windows. The server image bundles its compatible DuckLake, HTTPFS and AWS extensions. The CLI is a separate executable and needs no native database libraries.
-
-## Choose local SQLite or shared PostgreSQL (unreleased)
-
-The published v0.14.0 image supports standalone storage. Development builds also support shared PostgreSQL. The canonical [storage mode comparison](../storage.md#unreleased-separate-control-and-journal) describes each database, its paths, and recovery boundary. Use the [recommended profiles](../hosting.md#configure-the-development-build) for a new development installation, and [tenant setup](tenant-access.md) to invite its first administrator.
-
-The tagged-release procedure below remains separate. Do not point that image at the unreleased tenant-enabled layout.
-
-## Laptop with Docker Compose
-
-Install Git, curl, OpenSSL, jq, the [standalone CLI](../../cli/README.md), Docker, and Docker Compose 2.24.4 or newer. Use a POSIX shell, such as WSL on Windows.
-
-```sh
-git clone --branch v0.14.0 https://github.com/olup/porcupine.git
-cd porcupine
-umask 077
-(
-    set -eu
-    set -C
-    bootstrap_token=$(openssl rand -hex 32)
-    cat > .env <<EOF
-PORCUPINE_BOOTSTRAP_TOKEN=$bootstrap_token
-PORCUPINE_OAUTH_ISSUER=http://localhost:8080
-EOF
-)
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
-curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 http://localhost:8080/readyz
-sh examples/hello.sh
-```
-
-The setup refuses to overwrite `.env`. Preserve that file privately. The example creates a project, sends a synthetic `hello` event, and waits until SQL counts it. Each run creates another project. [Project management](projects.md)
-
-The release overlay removes the source build and selects `ghcr.io/olup/porcupine:0.14.0`. Set `PORCUPINE_IMAGE` to a different explicit tag or digest when needed. Keep the overlay after `compose.yaml`.
-
-Only `127.0.0.1:8080` is published. The `porcupine-data` named volume contains the complete `/data` directory, including SQLite and DuckLake. Keep the same Compose project name and volume when replacing a container.
-
-```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml ps
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml stop
-```
-
-`stop` and `down` preserve named volumes unless `--volumes` is added. Do not remove a volume containing data you intend to retain.
-
-### Load an image without registry access
+## Load an image without registry access
 
 Choose the Docker server's architecture and verify the archive before loading it:
 
@@ -57,8 +14,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.14.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.14.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.15.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.15.0
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -68,82 +25,15 @@ test -n "$expected" && test "$actual" = "$expected" || {
     exit 1
 }
 docker load -i "$PORCUPINE_RELEASE_ARCHIVE"
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml up -d
+docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
+docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
 The server image includes its native extension. An offline host also needs any optional proxy image transferred separately.
 
 ## Single Linux VM with HTTPS
 
-Use the same Compose deployment on a Linux VPS or Lightsail instance. Install Docker and Compose first. Create a DNS record for your own hostname pointing to the VM. Allow inbound TCP 80 and 443 to the proxy, restrict SSH to your administrative access, and keep API port 8080 private.
-
-Start with the private `.env` above. Change its issuer and add your hostname:
-
-```dotenv
-PORCUPINE_PUBLIC_HOST=analytics.example.com
-PORCUPINE_OAUTH_ISSUER=https://analytics.example.com
-```
-
-Use your real hostname in both entries. Keep the hostname without a scheme in `PORCUPINE_PUBLIC_HOST`. Create `Caddyfile` in the repository root:
-
-```caddyfile
-{$PORCUPINE_PUBLIC_HOST} {
-    reverse_proxy porcupine:8080 {
-        header_up Host 127.0.0.1:8080
-    }
-}
-```
-
-Create `compose.vm.yaml` alongside it:
-
-```yaml
-services:
-  porcupine:
-    environment:
-      PORCUPINE_TRUSTED_PROXIES: 172.30.86.10/32
-  caddy:
-    image: caddy:2.11.9
-    restart: unless-stopped
-    environment:
-      PORCUPINE_PUBLIC_HOST: ${PORCUPINE_PUBLIC_HOST:?Set your public hostname}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      default:
-        ipv4_address: 172.30.86.10
-networks:
-  default:
-    ipam:
-      config:
-        - subnet: 172.30.86.0/24
-          gateway: 172.30.86.1
-volumes:
-  caddy-data:
-  caddy-config:
-```
-
-Choose a subnet that does not overlap your LAN, VPN, or existing Docker networks. If changing it, update the subnet, gateway, proxy address, and trusted-proxy entry together. The higher static address avoids Docker's first dynamic container addresses. Only that proxy address is trusted for forwarded client IPs.
-
-Caddy uses the public hostname to obtain and renew certificates. DNS and public ports must work for its certificate challenges. See [Caddy HTTPS setup](https://caddyserver.com/docs/quick-starts/https). This recipe assumes clients reach Caddy directly; adding a CDN or another proxy requires a separate review of forwarded headers.
-
-The fixed upstream Host preserves the MCP SDK's loopback-host protection. OAuth metadata still uses the configured public issuer. Caddy supplies forwarded client information; it does not trust arbitrary incoming forwarded headers by default. See [reverse-proxy header behavior](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
-
-Validate and start with the complete overlay set:
-
-```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.vm.yaml \
-  run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.release.yaml -f compose.vm.yaml up -d
-curl --fail https://analytics.example.com/readyz
-curl --fail https://analytics.example.com/.well-known/oauth-authorization-server
-```
-
-Replace the example hostname in the checks. Keep Caddy's volumes across restarts so certificate state persists. The laptop-only `hello.sh` deliberately refuses a public issuer; use the [OAuth](oauth.md) and [analytics](analytics.md) requests for remote setup and verification.
+Follow the [VM deployment guide](../hosting.md#one-vm) for TLS, a trusted proxy, and a public OAuth issuer. Run the server under a supervisor. To deploy with Docker, use the [configuration file and container setup](configuration.md#container-setup). If the proxy runs in another container, put it on the same private Docker network as Porcupine. Point it at the server service, configure its address in `trusted_proxies`, and forward the fixed upstream Host shown in the VM guide. Publish ports 80 and 443 only on the proxy.
 
 ## Persistent storage and resources
 
@@ -168,34 +58,18 @@ Maintenance leaves a two-second gap after each pass by default. It flushes small
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. The published v0.14.0 release and current development defaults keep replay receipts permanently. Unreleased builds support [optional receipt pruning](receipts.md#bounded-receipts); review its acceptance tradeoff before enabling it. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
+Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. SQLite-journal deployments keep replay receipts permanently by default. They support [optional receipt pruning](receipts.md#bounded-receipts); review its acceptance tradeoff before enabling it. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
 
-`/readyz` checks SQLite, not the analytical catalogs or a drained queue. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
+`/readyz` checks the operational store. Verify the analytical path separately. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
 
-### Unreleased interactive query ceilings
+### Interactive query ceilings {#unreleased-interactive-query-ceilings}
 
-The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Shared execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation renewal, automatic expiry, and project quarantine. These development features are not part of the published v0.14.0 image.
+The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Hosted execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation renewal, automatic expiry, and project quarantine.
 
 ## Optional destinations
 
-| Capability | Configuration |
-| --- | --- |
-| One-time SQL downloads | Add `compose.exports.yaml` with a private export bucket and prefix |
-| Webhooks and scheduled S3 query pipelines | Set a stable `PORCUPINE_PIPELINE_KEY` or mounted key file, then create project-scoped destinations |
-| Human sign-in | Add the OAuth and email overlays with an SMTP provider and initial admin email |
+Configure the `export.s3`, `ducklake.s3`, and `backup.s3` destinations separately. A stable private pipeline key encrypts destination credentials. Mount secret files explicitly where the server can read them. [Server configuration](configuration.md)
 
-Keep the release and OAuth overlays when adding another overlay. Pipeline key files need an explicit container mount; a host pathname alone does not mount the file. Keep encryption keys privately with deployment recovery material. [Exports](../exports.md) · [Pipelines](../pipelines.md) · [Team sign-in](connect-your-team.md)
+## Backups and upgrades
 
-S3 destinations store query results. For analytical files, a fresh DuckLake deployment can use the [native S3 option](ducklake-s3.md). SQLite and project catalogs stay local. This does not migrate an existing SSD archive or apply a hot-to-cold age policy. [Storage options](../storage.md)
-
-## Authentication, backups, and upgrades
-
-Keep the original bootstrap secret privately for recovery. Changing `.env` after initialization does not replace the stored credential. Humans authorize their CLI or MCP tools using email verification or optional upstream OIDC. Backends and shared agents can use scoped service keys or OAuth client credentials. [Connect your team](connect-your-team.md) · [Service keys](service-keys.md)
-
-Before storing important history, configure [scheduled native backups](native-backups.md) or exercise a [coordinated stopped-volume backup and restore](restore.md). Preserve the complete data volume, private configuration, pipeline encryption key, and matching image version off the host. A live file copy or query-result export is not a consistent instance checkpoint.
-
-Before upgrading, record the image digest and overlay list, stop the application, and take a complete matching checkpoint. Replace the single writer with the new image using the same volume and overlays. Review release notes before reopening traffic. Early releases do not promise online schema upgrades or cross-version rollback.
-
-**Unreleased tenant schema:** start with an empty data directory. The server rejects pre-tenant SQLite databases rather than assigning existing projects automatically. There is no in-place migration or compatibility mode for this pre-launch change. Keep an older instance and its matching recovery material separately if you need to export data into a fresh tenant-enabled instance.
-
-Version v0.14.0 supports only DuckDB/DuckLake. It refuses legacy analytical configuration rather than silently creating a fresh archive. An earlier external-database deployment needs a fresh native target and an explicit export/import migration. Keep its matching backup until validation succeeds. A changed image tag alone does not convert stored history or SQL. See [storage and migration boundaries](../storage.md#earlier-analytical-backends).
+Take a complete checkpoint and record the image digest and private configuration. For a v0.14.0 deployment, follow the [fresh-storage cutover procedure](../hosting.md#move-from-v0140). For a recoverable checkpoint, follow the [backup guide](../backup-and-restore.md).

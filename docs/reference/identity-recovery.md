@@ -1,6 +1,6 @@
 # Recover an upstream sign-in identity
 
-**Unreleased.** These operator operations accompany tenant access and optional Google/OIDC sign-in. Use a CLI built from the same version as the server.
+These operator operations accompany tenant access and optional Google/OIDC sign-in. Use a CLI built from the same version as the server.
 
 An upstream identity binds a trusted provider's issuer and subject to an invited Porcupine human. The human can belong to several tenants. Changing that binding affects the person's tool connections across those tenants, so only an instance operator can perform recovery. Tenant administrators and project readers cannot list or unlink global identities.
 

@@ -1,6 +1,6 @@
 # Remote backups and offline recovery
 
-**Unreleased storage layout.** This guide describes the two-database `porcupine-native-v2` format in the tenant-enabled development build. Use a server image and standalone CLI built from the same checkout. The published v0.14.0 image and CLI use the earlier single-database format; this development version does not migrate or restore those bundles. Local recovery bundles are also supported; see [local backups](native-backups.md).
+Native v0.15.0 backups use the two-database `porcupine-native-v2` format. Use the same image version and matching CLI to restore. Use v0.14.0 tools for the earlier single-database format. For local scheduling, see [local backups](native-backups.md).
 
 ## Choose a backup destination
 
@@ -17,7 +17,7 @@ PORCUPINE_BACKUP_TIMEOUT=30m
 PORCUPINE_BACKUP_RETAIN=7
 ```
 
-Leave `PORCUPINE_BACKUP_DIR` unset. Use `compose.native-backup-s3.yaml` with the matching release overlay. Preserve the instance's analytical storage, sign-in and proxy overlays.
+Leave `backup.directory` and its environment override unset. Put the S3 settings in `backup.s3` in the private [server configuration](configuration.md), or pass the variables directly to the server process.
 
 Backup S3 settings use the same suffixes as [analytical S3](ducklake-s3.md), including `ENDPOINT`, `PATH_STYLE`, `CA_CERT_FILE`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` and `SESSION_TOKEN`. Empty explicit credentials use the AWS credential chain. The destination needs object read, write, list and delete permissions, including conditional creation. Keep its bucket and prefix disjoint from analytical data.
 
@@ -41,7 +41,7 @@ S3 backups are sequential full copies. Account for storage and transfer costs. L
 
 ## Restore a local bundle
 
-Use the same server image version that created the bundle. The examples use `porcupine:dev`; replace it with the exact matching image. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
+Use the same server image version that created the bundle. The examples use the v0.15.0 release image. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
 
 For builtin authentication, create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository. External authentication uses the mode-specific procedure below instead.
 
@@ -51,10 +51,10 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image porcupine:dev
+  --image ghcr.io/olup/porcupine:0.15.0
 ```
 
-The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container installs the journal at `/data/porcupine.db`, the control database at `/data/porcupine.db.control`, and analytics under `/data/ducklake`, then gives installed files to the normal nonroot server user. It does not start an HTTP service. Failed attempts retain the volume for inspection. The incomplete marker remains until both SQLite files and the reconstructed analytical state are published; normal startup refuses an incomplete installation.
+The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container installs the journal at `/data/porcupine.db`, the control database at `/data/porcupine.db.control`, and analytics under `/data/ducklake`, then gives installed files to the normal nonroot server user. It leaves the HTTP service stopped. Before starting it, install the private server configuration in the recovered volume. Preserve the pipeline encryption key and match the restored storage paths and authentication mode. In builtin mode, keep the bootstrap secret supplied to restore. Failed attempts retain the volume for inspection. The incomplete marker remains until both SQLite files and the reconstructed analytical state are published; normal startup refuses an incomplete installation.
 
 ## Restore an S3 bundle
 
@@ -67,7 +67,7 @@ porcupine restore \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
   --reset-access \
-  --image porcupine:dev
+  --image ghcr.io/olup/porcupine:0.15.0
 ```
 
 To recover into S3, also set `PORCUPINE_DUCKLAKE_S3_*` for a fresh analytical bucket or prefix. Original analytical storage and archive storage are forbidden targets, including empty namespaces. Without target S3 settings, recovery uses the new volume's SSD. The CLI mounts custom CA and AWS credential files read-only.
@@ -88,14 +88,14 @@ porcupine restore \
   --volume porcupine-recovered \
   --auth-mode external \
   --reset-access \
-  --image porcupine:dev
+  --image ghcr.io/olup/porcupine:0.15.0
 ```
 
 The offline JSON request uses `auth_mode: "external"` and no `bootstrap_token`. A destination authentication configuration takes precedence; a conflicting request or archived mode is rejected before credential reset. An omitted mode defaults to builtin only when no destination mode is provided. Restore does not convert authentication modes.
 
 External restore creates no local recovery administrator and does not prune builtin human, browser, or consent state. Reconfigure the trusted external issuer on the destination and recover administration with its operator JWT. Native machine keys are revoked, public ingestion keys are rotated, pipelines are paused, and exports and pending imports are canceled. Finite external execution snapshots are removed. Recreate native service keys explicitly.
 
-Both modes preserve opaque references to unfinished export and pipeline artifacts before clearing checkpoints. Those references keep tenant deletion pending until reconciled, without contacting the source buckets. This reset/clone workflow is separate from the planned hosted PITR workflow that preserves secrets and restores shared operational state.
+Both modes preserve opaque references to unfinished export and pipeline artifacts before clearing checkpoints. Those references keep tenant deletion pending until reconciled, without contacting the source buckets. This reset/clone workflow is separate from the hosted PITR workflow that preserves secrets and restores shared operational state.
 
 When replacing backend credentials, keep the producer's logical `source_id` so retries use the same event namespace.
 

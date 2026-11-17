@@ -2,13 +2,13 @@
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-## Invite a tenant member (unreleased)
+## Invite a tenant member {#invite-a-tenant-member-unreleased}
 
 Tenant administrators invite people with `invite-tenant-member`, scoped to their own tenant. A durable human identity can have independent memberships in several tenants. Revoking one membership removes that team's access without disabling the human elsewhere or revoking independent team service accounts.
 
 Use `list-tenant-members`, `update-tenant-member`, and `revoke-tenant-member` to manage that membership. A tenant administrator cannot remove or demote the last active administrator. An instance operator can recover the team. The [tenant access guide](tenant-access.md) includes request bodies and the operator-to-team setup sequence.
 
-This feature is not in the published v0.14.0 release. The operator-wide human operations below remain separate: `revoke-human` disables the identity across all its tenants and tool connections. Tenant administrators cannot use that global action.
+The operator-wide human operations apply across tenants. `revoke-human` disables the identity across all its tenants and tool connections. Tenant administrators cannot use that global action.
 
 ## Invite a person with the operator API
 

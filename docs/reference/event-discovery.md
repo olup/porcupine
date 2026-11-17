@@ -63,7 +63,7 @@ A successful empty profile means no matching delivered event was found. An unava
 
 ## Document an event or property
 
-Catalog descriptions are available in the development build. A project editor with `management:write` can document the meaning of an event or one of its top-level properties. Set text for a property with the CLI:
+A project editor with `management:write` can document the meaning of an event or one of its top-level properties. Set text for a property with the CLI:
 
 ```sh
 porcupine set-catalog-description --id "$PROJECT_ID" \

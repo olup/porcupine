@@ -1,7 +1,5 @@
 # SQL result exports
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
-
 Use an export when a query result is too large for an interactive response. For recurring delivery to a customer's bucket or webhook, use a [pipeline](../pipelines.md).
 
 Exports run a validated project-scoped SQL query asynchronously and stream its result to private S3-compatible storage. Clients receive download links only after the entire query succeeds. Exports use the same project SQL grammar, parameters, isolation, current revisions, and deletion rules as [interactive analytics](analytics.md), with separate operator budgets. Select `person_id` to include the resolved user and `person_properties` for the latest projected profile.
@@ -152,7 +150,7 @@ After interruption or process restart, incomplete attempt objects are cleaned up
 
 ## Operator configuration
 
-Exports require a configured analytical backend and S3 result storage. Use [compose.exports.yaml](https://github.com/olup/porcupine/blob/v0.14.0/compose.exports.yaml) alongside the base Compose file and private environment values. Export credentials go to the Go process and remain separate from analytical storage credentials. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
+Exports require a configured analytical backend and S3 result storage. Set `export.s3` in the private [server configuration](configuration.md). Export credentials go to the Go process and remain separate from analytical storage credentials. Clients choose SQL and format, never a bucket, prefix, endpoint, credential, or resource budget.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |

@@ -1,9 +1,5 @@
 # Sign in with Google or another OpenID Connect provider
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
-
-**Unreleased.** Use a development server and CLI from the same version. The published v0.14.0 OIDC configuration does not provide this combined login model.
-
 Porcupine can verify an invited person's identity through Google or an operator-configured OpenID Connect provider. Email OTP remains available when SMTP is configured. Both methods use the same Porcupine human account, tenant memberships, and project permissions. The identity provider authenticates the person; it does not assign their Porcupine access.
 
 Google sign-in requests `openid email profile`. It does not request Gmail access or permission to read mail. Tools still connect through Porcupine's OAuth server with PKCE. A Google access token or ID token is not a Porcupine API credential.
@@ -28,13 +24,7 @@ PORCUPINE_ADMIN_EMAIL=operator@example.com
 
 The secret file contains the Google client secret, with an optional trailing newline. `PORCUPINE_OIDC_CLIENT_SECRET` accepts the value directly instead; configure exactly one of the direct value and the `_FILE` variant. The secret is used only for the upstream code exchange and is not returned by status or management APIs.
 
-For a development build with Compose, set these values in the private environment file, then run:
-
-```sh
-docker compose -f compose.yaml -f compose.oauth.yaml -f compose.oidc.yaml up -d --build
-```
-
-The OIDC overlay mounts the host secret file at `/run/secrets/porcupine_oidc_client_secret`. The image runs as UID 65532; that user must be able to read the mounted file. Keep its host directory private. Add `-f compose.email.yaml` to the same command if SMTP OTP and invitation delivery are configured. Do not add the v0.14.0 release image overlay for this unreleased feature.
+For Docker, mount the secret file read-only at the container path in `oidc.client_secret_file`. UID 65532 must be able to read it. Apply the [configuration replacement procedure](configuration.md#replace-an-existing-configuration) and restart the server.
 
 Keep the issuer at a canonical origin: lowercase scheme and hostname, canonical IP and port spelling, and no default port such as `:443`. HTTPS is required except for loopback development. Register the exact development callback separately at the provider if it permits loopback.
 
@@ -89,7 +79,7 @@ The provider's signature, issuer, audience, expiry, authorized party, nonce, and
 
 Use the human and membership APIs to revoke an account or its access to one tenant. Use `revoke-oauth-grant` to disconnect one tool, or revoke the downstream client to disable that application. Current local permissions remain authoritative even if the person can still sign in to Google. Removing a login provider does not transfer its identities to another issuer.
 
-Pending browser sessions use the deployment's control database in shared mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
+Pending browser sessions use the deployment's control database in hosted mode, so login may complete through a different public worker. Revocation is checked against current authority on subsequent requests and token exchanges. Do not use ingestion-budget caches to decide authentication rights.
 
 Instance operators can [list and unlink upstream identities](identity-recovery.md) for account recovery. Unlinking revokes that human's existing interactive connections and pending local sign-in proofs, while keeping their account and memberships. A fresh verified login can relink.
 

@@ -6,7 +6,7 @@ This pre-launch change supports two configurations of the same published server.
 The default keeps separate control and journal SQLite files with local DuckLake catalogs. Shared deployment adds
 PostgreSQL control metadata and PostgreSQL DuckLake catalogs with S3 data files.
 No existing-data migration, commercial fork or billing service is introduced.
-See [shared deployment](../reference/shared-deployment.md) for the operator instructions.
+For the release setup, see [hosted workers](hosted-profile-composition.md).
 
 ## The storage boundary
 
@@ -63,7 +63,7 @@ five seconds until the call returns. Renewal and release use its random token.
 Failed renewal or unresponsive native work quarantines the project's interactive
 engine without terminating the worker. Automatic expiry can reassign a place
 while a partitioned worker still runs native work. Local mode has no shared
-keeper. The [runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
+keeper. The [hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
 owns the current timing, shutdown, and failure semantics.
 
 Project deletion fences all workers before cleanup. Local work registers before

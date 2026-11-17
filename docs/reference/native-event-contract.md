@@ -119,13 +119,13 @@ The first accepted message wins. A retry with changed properties does not edit t
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
-Success confirms the SQLite acceptance transaction. It does not mean analytical delivery has completed. Readers check delivery progress before validating a complete batch.
+In SQLite-journal deployments, success confirms the acceptance transaction. Readers check delivery progress separately.
 
-### Unreleased acknowledgment metadata
+### Acknowledgment metadata {#unreleased-acknowledgment-metadata}
 
-Development builds add the required response field `durability: "durable"` to the existing standalone response. All existing counts and receipt fields retain their meaning. The published v0.14.0 response predates this field.
+The SQLite-journal response includes `durability: "durable"` and retains the committed receipt fields.
 
-The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted architecture target](../design/hosted-architecture.md). Buffered production configuration is unavailable until its durable writer and shared state providers are implemented. It uses the same route and HTTP 200, with this response:
+The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](../design/hosted-profile-composition.md). It uses the same route and HTTP 200 with the following response.
 
 ```json
 {"status":1,"durability":"buffered","received":1,"receipts":[{"message_id":"msg-001","uuid":"opaque-server-uuid"}]}

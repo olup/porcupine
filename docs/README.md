@@ -2,7 +2,7 @@
 
 Porcupine stores product events and lets you query them through SQL, MCP, or a standalone CLI. It has no analytics dashboard. Your agent can explore the data and turn query results into a report or chart.
 
-The published release is **v0.14.0**. Sections marked **Unreleased** describe the development build. Use a matching server and CLI; the running instance's contracts tell you which operations it supports.
+This guide covers **v0.15.0**. Start with the [hosting guide](hosting.md) for deployment and v0.14.0 upgrade steps. Use a matching server and CLI; the running instance's contracts tell you which operations it supports.
 
 ## Get started
 
@@ -26,6 +26,6 @@ Every guide has a **View Markdown** link. It opens the source text in the browse
 
 ## Run an instance
 
-[Hosting](hosting.md) covers a laptop or VM. [People and permissions](access.md) covers invitations, tool connections, and service credentials. [Storage](storage.md) explains local files, S3, and the unreleased shared PostgreSQL mode. Configure [backups](backup-and-restore.md) before storing important data.
+[Hosting](hosting.md) covers a laptop or VM. [People and permissions](access.md) covers invitations, tool connections, and service credentials. [Storage](storage.md) explains local files, S3, and the hosted profile with PostgreSQL and S3. Configure [backups](backup-and-restore.md) before storing important data.
 
 Detailed request fields and configuration options live in the [reference](reference/README.md). Development decisions and benchmark records live in [design and validation](design/README.md). The [roadmap](roadmap.md) separates completed work from proposals.

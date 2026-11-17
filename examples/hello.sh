@@ -1,21 +1,15 @@
 #!/bin/sh
 # Create an isolated local demo project and query one event with the released CLI.
 set -eu
-. ./.env
-if [ "$PORCUPINE_OAUTH_ISSUER" != http://localhost:8080 ]; then
-    echo "Use the local quickstart issuer http://localhost:8080" >&2
-    exit 1
-fi
-export PORCUPINE_URL="$PORCUPINE_OAUTH_ISSUER"
+export PORCUPINE_URL=http://localhost:8080
 command -v porcupine >/dev/null
 command -v jq >/dev/null
 
-# Pass the bootstrap credential through stdin, keeping it out of process arguments.
-PORCUPINE_API_KEY=$(
-    printf 'user = "bootstrap:%s"\n' "$PORCUPINE_BOOTSTRAP_TOKEN" |
-        curl --fail --silent --show-error --config - "$PORCUPINE_URL/oauth/token"             --data-urlencode grant_type=client_credentials             --data-urlencode scope=instance:admin             --data-urlencode "resource=$PORCUPINE_URL/api/v1" |
-        jq -er '.access_token'
-)
+umask 077
+config_dir=$(mktemp -d)
+trap 'rm -f "$config_dir/porcupine.json"; rmdir "$config_dir"' EXIT
+docker compose -f compose.yaml -f compose.release.yaml cp porcupine:/data/porcupine.json "$config_dir/porcupine.json"
+PORCUPINE_API_KEY=$(jq -er '.bootstrap_token' "$config_dir/porcupine.json")
 export PORCUPINE_API_KEY
 project=$(porcupine create-project --body '{"name":"Quickstart"}')
 project_id=$(printf '%s' "$project" | jq -er '.project.id')

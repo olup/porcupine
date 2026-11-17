@@ -1,14 +1,12 @@
 # Configure native backups
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
-
-**Unreleased storage layout.** Tenant-enabled development builds keep control metadata and the ingestion journal in separate SQLite files. Their `porcupine-native-v2` backups require the matching development server and CLI. This version does not restore the single-database bundles produced by v0.14.0.
+Native v0.15.0 backups use the two-database `porcupine-native-v2` format. Restore single-database v0.14.0 bundles using the v0.14.0 CLI and image.
 
 Porcupine supports local backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.
 
 Version v0.14.0 also supports an independent S3 destination and an offline restore command. See [remote backups and recovery](native-backup-recovery.md).
 
-The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains independent copies of the control SQLite database and the ingestion journal, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed. These complete-instance backups apply to the local SQLite control mode; shared PostgreSQL deployments require a separate coordinated recovery procedure.
+The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains independent copies of the control SQLite database and the ingestion journal, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed. These complete-instance backups apply to the local SQLite control mode; hosted uses [PostgreSQL and S3 recovery](../design/hosted-restore-drill.md).
 
 Backups are disabled until the deployment operator sets a private destination directory. Copy completed bundles to independent off-host storage to protect against loss of the server.
 
@@ -21,15 +19,7 @@ export PORCUPINE_BACKUP_HOST_DIR=/srv/porcupine-backups/native
 sudo install -d -m 0700 -o 65532 -g 65532 "$PORCUPINE_BACKUP_HOST_DIR"
 ```
 
-Add `compose.native-backup.yaml` to the deployment's existing overlay list. For a new release deployment:
-
-```sh
-docker compose -f compose.yaml -f compose.release.yaml -f compose.native-backup.yaml up -d
-```
-
-Keep the OAuth, proxy and other overlays already used by your instance. This overlay selects `/backups` inside the container and mounts the private host directory there. The scheduler runs in the same process as ingestion and analytics.
-
-For a directly hosted binary, set the environment variables below. The destination must be outside the managed DuckLake directory and accessible only to the server's owner. Use a dedicated backup directory.
+Mount that directory as `/backups` in the server container and set `backup.directory` to `/backups` in the private [server configuration](configuration.md). For a directly hosted binary, set `backup.directory` to the host path instead. Keep the destination outside the analytical root. The scheduler runs in the server process.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -38,7 +28,7 @@ For a directly hosted binary, set the environment variables below. The destinati
 | `PORCUPINE_BACKUP_TIMEOUT` | `5m` | Deadline for coordination, copying and verification. Range `1s` through `1h`. |
 | `PORCUPINE_BACKUP_RETAIN` | `7` | Completed bundles retained for this native source. Range 1 through 1,000. |
 
-To disable backups for a directly hosted binary, unset all four settings. For Compose, remove the native backup overlay.
+To disable local backups, remove `backup.directory` or unset its environment override, then restart the server.
 
 The first backup starts about one second after startup when no recent success is recorded. Restarting after a successful backup preserves its next due time. A failure or interrupted attempt retries after at most one minute. Settings belong to the deployment; an agent cannot change them through project permissions.
 
