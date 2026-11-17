@@ -158,12 +158,16 @@ func (s *Service) beginUsageQuery(ctx context.Context, project, operation string
 	// Freeze the authoritative control scope rather than manufacturing an anchor.
 	tenant, err := s.projectTenant(native, project)
 	if err != nil {
-		finish()
+		if stopped := finish(); stopped != nil {
+			err = interactiveQueryResultError(native, stopped, nil)
+		}
 		return nil, InteractiveQueryConfig{}, nil, err
 	}
 	execution, err := s.usage.recorder.StartExecution(native, tenant.ID, project, operation)
 	if err != nil {
-		finish()
+		if stopped := finish(); stopped != nil {
+			return nil, InteractiveQueryConfig{}, nil, interactiveQueryResultError(native, stopped, nil)
+		}
 		return nil, InteractiveQueryConfig{}, nil, apiError(503, "usage admission unavailable; query was not executed")
 	}
 	return native, limits, &usageQueryScope{execution: execution, finish: finish}, nil

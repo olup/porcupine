@@ -107,6 +107,38 @@ func TestUsageQueryNativeLifecycleCountsFailuresAndOperations(t *testing.T) {
 		t.Fatal(operations, e)
 	}
 }
+func TestUsageQueryAdmissionPreservesTimeoutAndMeterFailure(t *testing.T) {
+	t.Parallel()
+	for _, blocked := range []bool{true, false} {
+		t.Run(fmt.Sprintf("blocked=%t", blocked), func(t *testing.T) {
+			t.Parallel()
+			s := service(t, 20)
+			id, _ := project(t, s)
+			want := 503
+			if blocked {
+				if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=20 WHERE id=?`, defaultTenantID); err != nil {
+					t.Fatal(err)
+				}
+				conn, err := s.db.Conn(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+				want = 429
+			} else if _, err := s.db.Exec(`DROP TABLE usage_executions`); err != nil {
+				t.Fatal(err)
+			}
+			_, _, scope, err := s.beginUsageQuery(t.Context(), id, "sql")
+			if queryStatus(err) != want || scope != nil {
+				t.Fatalf("usage admission status=%d scope=%v err=%v, want %d", queryStatus(err), scope, err, want)
+			}
+			if len(s.querySlots) != 0 || len(s.tenantQueries.active) != 0 {
+				t.Fatal("failed usage admission leaked query capacity")
+			}
+		})
+	}
+}
+
 func TestUsageMCPDiscoveryAndRead(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
