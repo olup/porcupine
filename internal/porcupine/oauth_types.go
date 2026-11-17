@@ -32,8 +32,6 @@ type OAuthConfig struct {
 type oauthRuntime struct {
 	config            OAuthConfig
 	issuer            string
-	apiResource       string
-	mcpResource       string
 	limiter           *rate.Limiter
 	browser           *auth.Login
 	authorizationGate auth.AuthorizationGate
@@ -90,5 +88,5 @@ func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
 			return nil, err
 		}
 	}
-	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, apiResource: c.Issuer + "/api/v1", mcpResource: c.Issuer + "/mcp", limiter: rate.NewLimiter(5, 10)}, nil
+	return &oauthRuntime{browser: browser, config: c, issuer: c.Issuer, limiter: rate.NewLimiter(5, 10)}, nil
 }

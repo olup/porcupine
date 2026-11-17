@@ -99,14 +99,14 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 	if err != nil || len(random) != 32 {
 		t.Fatal("access token lacks 256 random bits")
 	}
-	principal, err := s.authenticateOAuthToken(context.Background(), token.AccessToken, s.oauth.apiResource)
+	principal, err := s.authenticateOAuthToken(context.Background(), token.AccessToken, s.resources.apiResource)
 	if err != nil || principal.ID != clientID || !auth.Authorize(principal, "events:read", projectID) || principal.Admin() {
 		t.Fatal("OAuth token lost original scoped principal", err)
 	}
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", token.AccessToken, "", 200)
 	other, _ := project(t, s)
 	request(t, s, "GET", "/api/v1/projects/"+other+"/events", token.AccessToken, "", 403)
-	if _, err = s.authenticateResource(context.Background(), secret, s.oauth.apiResource); err == nil {
+	if _, err = s.authenticateResource(context.Background(), secret, s.resources.apiResource); err == nil {
 		t.Fatal("client secret worked as a bearer key")
 	}
 	var storedHash, storedClient, resource, scope string
@@ -114,7 +114,7 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 	if err = s.control.QueryRow(`SELECT token_hash,client_id,resource,scope,issued_at_ms,expires_at_ms FROM oauth_tokens`).Scan(&storedHash, &storedClient, &resource, &scope, &issued, &expires); err != nil {
 		t.Fatal(err)
 	}
-	if storedHash != hash(token.AccessToken) || storedHash == token.AccessToken || storedClient != clientID || resource != s.oauth.apiResource || scope != "events:read" || expires-issued != 900000 {
+	if storedHash != hash(token.AccessToken) || storedHash == token.AccessToken || storedClient != clientID || resource != s.resources.apiResource || scope != "events:read" || expires-issued != 900000 {
 		t.Fatal("unsafe or incorrect persisted token")
 	}
 	var secretHash, principalHash string
@@ -136,21 +136,21 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 	form.Set("scope", "events:read")
 	issued := oauthProtocolRequest(t, s, id, secret, form, 200)
 	raw := issued["access_token"].(string)
-	if _, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.mcpResource); err == nil {
+	if _, err := s.authenticateOAuthToken(context.Background(), raw, s.resources.mcpResource); err == nil {
 		t.Fatal("API token accepted at MCP resource")
 	}
-	form.Set("resource", s.oauth.mcpResource)
+	form.Set("resource", s.resources.mcpResource)
 	mcp := oauthProtocolRequest(t, s, id, secret, form, 200)["access_token"].(string)
-	if _, err := s.authenticateOAuthToken(context.Background(), mcp, s.oauth.mcpResource); err != nil {
+	if _, err := s.authenticateOAuthToken(context.Background(), mcp, s.resources.mcpResource); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.authenticateOAuthToken(context.Background(), mcp, s.oauth.apiResource); err == nil {
+	if _, err := s.authenticateOAuthToken(context.Background(), mcp, s.resources.apiResource); err == nil {
 		t.Fatal("MCP token accepted at API resource")
 	}
 	if _, err := s.control.Exec(`UPDATE access_keys SET permissions='["instance:admin"]',projects='["*"]' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	actor, err := s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
+	actor, err := s.authenticateOAuthToken(context.Background(), raw, s.resources.apiResource)
 	if err != nil || actor.Admin() || !actor.Can("events:read") || actor.Can("events:write") {
 		t.Fatal("current admin grant escalated a downscoped token", err)
 	}
@@ -160,26 +160,26 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", raw, "", 200)
 	request(t, s, "GET", "/api/v1/projects/"+otherProject+"/events", raw, "", 403)
 	newIssued := oauthProtocolRequest(t, s, id, secret, oauthGrantForm(), 200)["access_token"].(string)
-	newActor, err := s.authenticateOAuthToken(context.Background(), newIssued, s.oauth.apiResource)
+	newActor, err := s.authenticateOAuthToken(context.Background(), newIssued, s.resources.apiResource)
 	if err != nil || !auth.Authorize(newActor, "events:read", otherProject) {
 		t.Fatal("new token did not capture newly authorized scope", err)
 	}
 	if _, err = s.control.Exec(`UPDATE access_keys SET permissions='["events:write"]' WHERE id=?`, id); err != nil {
 		t.Fatal(err)
 	}
-	actor, err = s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource)
+	actor, err = s.authenticateOAuthToken(context.Background(), raw, s.resources.apiResource)
 	if err != nil || len(actor.Permissions) != 0 {
 		t.Fatal("removed grant remained effective")
 	}
 	clock.Add(900000)
-	if _, err = s.authenticateResource(context.Background(), raw, s.oauth.apiResource); err == nil {
+	if _, err = s.authenticateResource(context.Background(), raw, s.resources.apiResource); err == nil {
 		t.Fatal("expired OAuth token fell back to legacy auth")
 	}
 	clock.Add(-900000)
 	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.authenticateOAuthToken(context.Background(), raw, s.oauth.apiResource); err == nil {
+	if _, err = s.authenticateOAuthToken(context.Background(), raw, s.resources.apiResource); err == nil {
 		t.Fatal("revoked client retained access")
 	}
 	oauthProtocolRequest(t, s, id, secret, form, 401)
@@ -198,7 +198,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrapID); err != nil {
 		t.Fatal(err)
 	}
-	principal, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource)
+	principal, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.resources.apiResource)
 	if err != nil || principal.ID != bootstrapID || principal.Admin() || !principal.Can("events:read") || principal.Can("management:write") {
 		t.Fatal("bootstrap downscope changed actor identity or retained administration")
 	}
@@ -206,7 +206,7 @@ func TestOAuthBootstrapAliasAndAdminDownscope(t *testing.T) {
 	if _, err = s.control.Exec(`UPDATE access_keys SET permissions='["events:read"]' WHERE id=?`, bootstrapID); err != nil {
 		t.Fatal(err)
 	}
-	principal, err = s.authenticateOAuthToken(context.Background(), full, s.oauth.apiResource)
+	principal, err = s.authenticateOAuthToken(context.Background(), full, s.resources.apiResource)
 	if err != nil || principal.Admin() || !principal.Can("events:read") || principal.Can("events:delete") {
 		t.Fatal("old admin token bypassed current grant reduction")
 	}
@@ -299,10 +299,10 @@ func TestOAuthIgnoresUnknownParametersWithoutLibrarySideEffects(t *testing.T) {
 	form.Set("code", "not-an-authorization-code")
 	form.Set("client_id", id)
 	issued := oauthProtocolRequest(t, s, id, secret, form, 200)
-	if issued["resource"] != s.oauth.apiResource || issued["scope"] != "events:read" {
+	if issued["resource"] != s.resources.apiResource || issued["scope"] != "events:read" {
 		t.Fatal("unrecognized fields changed token authority")
 	}
-	if _, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.oauth.apiResource); err != nil {
+	if _, err := s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.resources.apiResource); err != nil {
 		t.Fatal(err)
 	}
 	form["extension_future"] = []string{"one", "two"}

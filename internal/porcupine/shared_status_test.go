@@ -65,8 +65,13 @@ func TestSharedInstanceStatusControlRegistrationAndPrivacy(t *testing.T) {
 func TestSharedInstanceStatusDetectsLostRegistrationSession(t *testing.T) {
 	t.Parallel()
 	a, _ := sharedJourneyPair(t, nil)
-	if _, err := a.service.control.Exec(`SELECT pg_terminate_backend($1)`, a.service.shared.routing.backendPID); err != nil {
-		t.Fatal(err)
+	// A positive timeout waits for termination, rather than just sending SIGTERM.
+	var terminated bool
+	if err := a.service.control.QueryRowContext(t.Context(), `SELECT pg_terminate_backend($1, 1000)`, a.service.shared.routing.backendPID).Scan(&terminated); err != nil {
+		t.Fatal("terminate dedicated registration session", err)
+	}
+	if !terminated {
+		t.Fatal("dedicated registration session did not terminate within one second")
 	}
 	result := sharedStatusRead(t, a.service)
 	if result.Status != "degraded" || result.Checks.SharedControl != dependencyOK || result.Checks.WorkerRegistration != dependencyUnavailable {

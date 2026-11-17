@@ -42,6 +42,9 @@ func (s *Service) authenticateOAuthEndpoint(r *http.Request, form url.Values) (*
 	}
 	client, err := loadOAuthClient(r.Context(), s.control, id)
 	if err != nil {
+		if authenticationUnavailable(err) {
+			return nil, 503, "temporarily_unavailable"
+		}
 		return nil, 401, "invalid_client"
 	}
 	switch client.AuthMethod {

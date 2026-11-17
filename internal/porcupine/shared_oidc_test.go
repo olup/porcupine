@@ -29,7 +29,7 @@ func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]a
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := initializeSharedControl(ctx, first, adminToken, queries); err != nil {
+	if err := initializeSharedControl(ctx, first, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
 	second, err := openSharedControl(ctx, SharedConfig{DatabaseURL: dsn})
@@ -59,7 +59,7 @@ func newSharedOIDCFixture(t *testing.T) (*oidcFixture, *Service, *Service, *[2]a
 		if err != nil {
 			t.Fatal(err)
 		}
-		service := &Service{db: local, control: control, shared: &sharedRuntime{}, oauth: runtime, eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
+		service := &Service{db: local, control: control, shared: &sharedRuntime{}, oauth: runtime, resources: newResourceRuntime(runtime.issuer), eventRules: &eventRules{clock: time.Now}, tokenSlots: make(chan struct{}, 8)}
 		if err := service.initializeOAuthClients(ctx); err != nil {
 			t.Fatal(err)
 		}

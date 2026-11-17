@@ -49,6 +49,9 @@ func (s *Service) tenantAdminOptions(ctx context.Context, query oauthQueryer, hu
 
 func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, human auth.Principal, tenantID string) (auth.Principal, error) {
 	if err := requireTenantActive(ctx, query, tenantID); err != nil {
+		if authenticationUnavailable(err) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
 		return auth.Principal{}, errInteractiveGrant
 	}
 	if !human.EmailHuman || tenantID == "" || tenantID == "*" {
@@ -62,7 +65,10 @@ func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, huma
 		statement = `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1)`
 		args = []any{tenantID}
 	}
-	if err := query.QueryRowContext(ctx, statement, args...).Scan(&allowed); err != nil || !allowed {
+	if err := query.QueryRowContext(ctx, statement, args...).Scan(&allowed); err != nil {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if !allowed {
 		return auth.Principal{}, errInteractiveGrant
 	}
 	a := auth.Principal{
@@ -74,16 +80,19 @@ func (s *Service) tenantAdminActor(ctx context.Context, query oauthQueryer, huma
 	rows, err := query.QueryContext(ctx, `SELECT p.id FROM projects p WHERE p.tenant_id=$1
 		AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id) ORDER BY p.id`, tenantID)
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var project string
 		if err := rows.Scan(&project); err != nil {
-			return auth.Principal{}, err
+			return auth.Principal{}, auth.ErrUnavailable
 		}
 		a.Projects = append(a.Projects, project)
 		a.ProjectPermissions[project] = slices.Clone(auth.ProjectPermissions())
 	}
-	return a, rows.Err()
+	if rows.Err() != nil {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	return a, nil
 }

@@ -75,7 +75,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if err != nil {
 		return importLookupError(err)
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
 		return err
 	}
 	if job.ActorID != actor.ID && !actor.Admin() {
@@ -159,6 +159,11 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if _, err := tx.ExecContext(ctx, `UPDATE import_uploads SET updated_at=$1,delivery_cursor=CASE WHEN delivery_cursor<coalesce((SELECT max(id) FROM events WHERE project_id=$2),0) THEN coalesce((SELECT max(id) FROM events WHERE project_id=$2),0) ELSE delivery_cursor END WHERE id=$3`, m.importTime(), project, jobID); err != nil {
 		return apiError(503, "import checkpoint unavailable")
 	}
+	if actor.External != nil {
+		if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return apiError(503, "import checkpoint unavailable")
 	}
@@ -174,7 +179,7 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	if err := importWriteLock(ctx, tx); err != nil {
 		return err
 	}
-	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor.ID, project); err != nil {
+	if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
 		return err
 	}
 	job, err := scanImportJob(tx.QueryRowContext(ctx, `SELECT `+importJobColumns+` FROM import_uploads WHERE project_id=$1 AND id=$2`, project, jobID))
@@ -193,6 +198,11 @@ func (m *importManager) failImportDigest(ctx context.Context, project, jobID, fi
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE import_upload_files SET tail=X'',hash_state=X'',discarding=0,error=CASE WHEN id=$1 THEN $2 ELSE error END,state=CASE WHEN id=$3 THEN 'failed' ELSE state END WHERE job_id=$4`, fileID, code, fileID, jobID); err != nil {
 		return apiError(503, "import storage unavailable")
+	}
+	if actor.External != nil {
+		if err := importCheckAuthority(ctx, m.authorityQuery(tx), actor, project, m.rules.clock()); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return apiError(503, "import storage unavailable")

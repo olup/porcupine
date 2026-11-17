@@ -79,12 +79,16 @@ type TenantServiceKeyIDInput struct {
 }
 
 func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
-	if s.oauth == nil {
+	if s.resources == nil {
 		return
 	}
 	access := auth.OperationAccess{Permission: "tenant:admin", TenantParameter: "tenant_id", TenantAdmin: true}
 	base := "/api/v1/tenants/{tenant_id}/service-accounts"
-	huma.Register(api, op("create-tenant-service-account", "POST", base, "Create a team-owned machine account with fixed project permissions and a one-time secret", access, 201), s.createTenantServiceAccount)
+	createSummary := "Create a team-owned machine account with fixed project permissions and a one-time secret"
+	if s.externalAuthEnabled() {
+		createSummary = "Create a team-owned native machine account; issue API or MCP keys separately, without a local OAuth secret"
+	}
+	huma.Register(api, op("create-tenant-service-account", "POST", base, createSummary, access, 201), s.createTenantServiceAccount)
 	huma.Register(api, op("list-tenant-service-accounts", "GET", base, "List this tenant's team machine accounts without secrets", access, 200), s.listTenantServiceAccounts)
 	huma.Register(api, op("update-tenant-service-account", "PUT", base+"/{id}", "Replace a team machine account's name and project grants; grant changes revoke its existing keys", access, 200), s.updateTenantServiceAccount)
 	huma.Register(api, op("revoke-tenant-service-account", "DELETE", base+"/{id}", "Revoke this tenant's machine account and all its tokens and keys", access, 204), s.revokeTenantServiceAccount)
@@ -100,7 +104,7 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 		return a, nil
 	}
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	if err := requireTenantActive(ctx, query, tenant); err != nil {
 		return auth.Principal{}, err
@@ -115,7 +119,11 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 	}
 	for _, project := range a.Projects {
 		var owner string
-		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner); err != nil || owner != tenant {
+		err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
+		if err != nil || owner != tenant {
 			return auth.Principal{}, errors.New("tenant machine project is unavailable")
 		}
 	}
@@ -159,7 +167,7 @@ func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQuer
 	if !caller.CanAdminTenant(tenant) {
 		return apiError(403, "tenant administrator required")
 	}
-	current, err := s.loadCredentialActorFrom(ctx, query, caller.ID)
+	current, err := s.currentAuthority(ctx, query, caller)
 	if err != nil || !current.CanAdminTenant(tenant) {
 		return apiError(403, "current tenant administration required")
 	}
@@ -251,6 +259,9 @@ func (s *Service) createTenantServiceAccount(ctx context.Context, input *TenantS
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, apiError(503, "team credential storage unavailable")
+	}
+	if s.externalAuthEnabled() {
+		secret = ""
 	}
 	return &OAuthClientCreateOutput{CacheControl: "no-store", Body: OAuthClientCreated{TenantID: input.TenantID, ClientID: id, ClientSecret: secret, Name: spec.Name, SourceID: spec.SourceID, Permissions: spec.Permissions, Projects: spec.Projects, CreatedAt: created, GrantTypes: []string{"client_credentials"}, RedirectURIs: []string{}, TokenEndpointAuthMethod: "client_secret_basic"}}, nil
 }

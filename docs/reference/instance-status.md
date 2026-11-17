@@ -58,6 +58,8 @@ In shared deployments, `checks.query_execution` is `unavailable` when this worke
 
 Fields under `configuration` describe deployment configuration. They do not prove remote connectivity or grant the caller permission to use that service. The check sends no email, writes no S3 objects, and makes no requests to project destinations or the identity provider. Analytical S3 configuration does not prove bucket connectivity.
 
+**Unreleased external authentication:** `configuration.external_authentication` identifies the replacement of builtin sign-in. `checks.external_authentication` reports whether the configured signing-key cache is fresh and its last refresh succeeded, without making a provider request. A missing or expired cache, or a failed refresh, reports `unavailable` and degrades this report. Public ingestion and native machine keys remain available; `/readyz` does not depend on the external issuer. See the [external authentication contract](external-auth.md).
+
 Read query syntax and execution limits through the project's [schema operation](analytics.md#event-schema). Inspect project delivery and pipeline runs through their own APIs.
 
 ## Health and readiness endpoints

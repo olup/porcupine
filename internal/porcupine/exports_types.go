@@ -54,15 +54,18 @@ type ExportJob struct {
 
 type storedExport struct {
 	ExportJob
-	ActorID           string
-	SQL               string
-	Parameters        map[string]string
-	AttemptID         string
-	EventWatermark    int64
-	MutationWatermark int64
-	CancelRequested   bool
-	ExpiresAtMS       int64
-	CleanupPending    bool
+	ActorID             string
+	SQL                 string
+	Parameters          map[string]string
+	AttemptID           string
+	EventWatermark      int64
+	MutationWatermark   int64
+	CancelRequested     bool
+	ExpiresAtMS         int64
+	CleanupPending      bool
+	ExternalTenantID    string
+	ExternalIssuer      string
+	ExternalExpiresAtMS int64
 }
 
 type exportArtifact struct {

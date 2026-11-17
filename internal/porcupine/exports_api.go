@@ -13,6 +13,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/exportstore"
 )
 
 type ExportCreateBody struct {
@@ -173,6 +174,19 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	}
 	job := ExportJob{ID: eventapi.NewID(), ProjectID: input.ID, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
 	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
+	if err == nil && principal(ctx).External != nil {
+		actor, authorityErr := s.currentAuthority(ctx, s.control, principal(ctx))
+		if authenticationUnavailable(authorityErr) {
+			return nil, apiError(503, "export authorization unavailable")
+		}
+		if authorityErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
+			return nil, apiError(403, "external export authorization expired or changed")
+		}
+		var tenant string
+		if err = s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO export_external_authority(job_id,tenant_id,issuer,expires_at_ms) VALUES($1,$2,$3,$4)`, job.ID, tenant, actor.External.Issuer(), actor.External.Expires().UnixMilli())
+		}
+	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "export storage unavailable")
 	}
@@ -335,19 +349,23 @@ func (s *Service) eventExportFiles(ctx context.Context, input *ExportFilesInput)
 		result.NextOffset = &next
 		artifacts = artifacts[:input.Limit]
 	}
-	ttl := exportLinkTTL
-	if job.ExpiresAtMS > 0 {
-		ttl = min(ttl, time.UnixMilli(job.ExpiresAtMS).Sub(now))
-	}
-	if ttl < time.Second {
-		return nil, apiError(410, "export has expired")
-	}
 	for _, artifact := range artifacts {
-		url, err := s.exports.store.Presign(ctx, artifact.Key, ttl)
+		deadline := time.UnixMilli(job.ExpiresAtMS)
+		if caller := principal(ctx); caller.External != nil && caller.External.Expires().Before(deadline) {
+			deadline = caller.External.Expires()
+		}
+		ttl := min(exportLinkTTL, deadline.Sub(s.clock()))
+		if ttl < time.Second {
+			return nil, apiError(410, "export download authorization has expired")
+		}
+		url, expires, err := s.exports.store.PresignUntil(ctx, artifact.Key, deadline, ttl)
+		if errors.Is(err, exportstore.ErrExpired) {
+			return nil, apiError(410, "export download authorization has expired")
+		}
 		if err != nil {
 			return nil, apiError(503, "export download link unavailable")
 		}
-		result.Files = append(result.Files, ExportFile{Index: artifact.Index, Name: fmt.Sprintf("part-%06d.%s.gz", artifact.Index, job.Format), Rows: artifact.Rows, Bytes: artifact.Bytes, DecodedBytes: artifact.DecodedBytes, SHA256: artifact.SHA256, URL: url, ExpiresAt: now.Add(ttl).Format(time.RFC3339Nano)})
+		result.Files = append(result.Files, ExportFile{Index: artifact.Index, Name: fmt.Sprintf("part-%06d.%s.gz", artifact.Index, job.Format), Rows: artifact.Rows, Bytes: artifact.Bytes, DecodedBytes: artifact.DecodedBytes, SHA256: artifact.SHA256, URL: url, ExpiresAt: expires.Format(time.RFC3339Nano)})
 	}
 	return &ExportFilesOutput{Body: result}, nil
 }

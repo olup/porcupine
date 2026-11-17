@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"errors"
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"net/url"
@@ -11,6 +12,24 @@ import (
 // ValidateConfig checks operator settings without opening a database, contacting
 // an identity provider, or starting workers. File credentials are read by the caller.
 func ValidateConfig(c Config) error {
+	if c.Auth != nil {
+		if c.Auth.Mode != "builtin" && c.Auth.Mode != "external" {
+			return errors.New("auth.mode must be builtin or external")
+		}
+		if c.Auth.Mode == "external" {
+			if c.OAuth != nil || c.BootstrapToken != "" {
+				return errors.New("external auth cannot configure builtin OAuth, email, OIDC or a bootstrap token")
+			}
+			if _, err := auth.NormalizeIssuer(c.Auth.PublicURL, false); err != nil {
+				return err
+			}
+			if _, err := auth.NormalizeExternalConfig(c.Auth.External); err != nil {
+				return err
+			}
+		} else if c.Auth.PublicURL != "" || c.Auth.External.Issuer != "" {
+			return errors.New("external settings require auth.mode external")
+		}
+	}
 	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
 		return err
 	}

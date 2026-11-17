@@ -32,7 +32,7 @@ func tenantServiceFixture(t *testing.T) (*oauthIntegration, string, string, stri
 	f.host.Start()
 	f.ctx = context.WithValue(context.Background(), oauth2.HTTPClient, f.client)
 	t.Cleanup(func() { f.host.Close(); f.client.CloseIdleConnections(); f.s.Close() })
-	admin := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	tenant := func(name string) string {
 		var out struct {
 			Tenant Tenant `json:"tenant"`
@@ -78,7 +78,7 @@ func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 	if len(listed.ServiceAccounts) != 0 {
 		t.Fatal("another tenant's service account leaked")
 	}
-	reader := f.token(t, account.ClientID, account.ClientSecret, f.s.oauth.apiResource, "events:read").AccessToken
+	reader := f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource, "events:read").AccessToken
 	f.call(t, "GET", "/api/v1/projects/"+projectA+"/events", reader, nil, 200, nil)
 	f.call(t, "GET", "/api/v1/projects/"+projectB+"/events", reader, nil, 403, nil)
 	f.call(t, "POST", "/capture/", reader, map[string]string{"event": "forbidden", "distinct_id": "test"}, 403, nil)
@@ -151,7 +151,7 @@ func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T
 	if updated.CreatedAt == "" || updated.ClientSecret != "" {
 		t.Fatal("update must preserve creation metadata without returning a secret")
 	}
-	if _, err := f.s.authenticateResource(f.ctx, mcp.Token, f.s.oauth.mcpResource); err == nil {
+	if _, err := f.s.authenticateResource(f.ctx, mcp.Token, f.s.resources.mcpResource); err == nil {
 		t.Fatal("parent grant reduction left its MCP key active")
 	}
 }
@@ -180,7 +180,7 @@ func TestTenantServiceActorRejectsChangedOwnershipAndParent(t *testing.T) {
 	f.call(t, "POST", base, admin, TenantServiceAccountSpec{Name: "fixed", Projects: []string{project}, Permissions: []string{"events:read"}}, 201, &account)
 	var key AccessKeyCreated
 	f.call(t, "POST", base+"/"+account.ClientID+"/api-keys", admin, ServiceKeySpec{Name: "fixed key", Audience: "api", Projects: []string{project}, Permissions: []string{"events:read"}}, 201, &key)
-	token := f.token(t, account.ClientID, account.ClientSecret, f.s.oauth.apiResource).AccessToken
+	token := f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource).AccessToken
 	if _, err := f.s.control.Exec(`UPDATE tenant_credentials SET tenant_id=? WHERE principal_id=?`, other, account.ClientID); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
 	t.Parallel()
 	f, _, tenant, other, project, _ := tenantServiceFixture(t)
 	ctx := f.ctx
-	root := f.token(t, "bootstrap", adminToken, f.s.oauth.apiResource).AccessToken
+	root := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource).AccessToken
 	var member struct {
 		HumanID string `json:"human_id"`
 	}
@@ -219,7 +219,7 @@ func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := out.Body
-	machine := f.token(t, account.ClientID, account.ClientSecret, f.s.oauth.apiResource).AccessToken
+	machine := f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource).AccessToken
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), id); err != nil {
 		t.Fatal(err)
 	}

@@ -23,20 +23,32 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 	var principalID, humanID, clientID, resource string
 	var expires int64
 	err := query.QueryRowContext(ctx, `SELECT principal_id,human_id,client_id,resource,expires_at_ms FROM oauth_interactive_grants WHERE id=$1`, grantID).Scan(&principalID, &humanID, &clientID, &resource, &expires)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
 	if err != nil || expires <= s.clock().UnixMilli() {
 		return auth.Principal{}, errInteractiveGrant
 	}
 	var a auth.Principal
 	var permissions, projects string
 	err = query.QueryRowContext(ctx, `SELECT id,permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, principalID).Scan(&a.ID, &permissions, &projects)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
 	if err != nil || json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
 		return auth.Principal{}, errInteractiveGrant
 	}
 	human, err := s.loadOAuthHuman(ctx, query, humanID)
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, auth.ErrUnavailable
+		}
 		return auth.Principal{}, errInteractiveGrant
 	}
 	client, err := loadOAuthClient(ctx, query, clientID)
+	if authenticationUnavailable(err) {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
 	if err != nil || !slices.Contains(client.GrantTypes, "authorization_code") {
 		return auth.Principal{}, errInteractiveGrant
 	}
@@ -46,10 +58,16 @@ func (s *Service) loadInteractiveOAuthActor(ctx context.Context, query oauthQuer
 		}
 		var tenantID string
 		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM oauth_grant_tenants WHERE grant_id=$1`, grantID).Scan(&tenantID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return auth.Principal{}, auth.ErrUnavailable
+			}
 			return auth.Principal{}, errInteractiveGrant
 		}
 		narrowed, err := s.tenantAdminActor(ctx, query, human, tenantID)
 		if err != nil {
+			if authenticationUnavailable(err) {
+				return auth.Principal{}, auth.ErrUnavailable
+			}
 			return auth.Principal{}, errInteractiveGrant
 		}
 		narrowed.ID = principalID
@@ -340,7 +358,7 @@ func (s *Service) validateInteractivePrincipal(ctx context.Context, query oauthQ
 		return principal, nil
 	}
 	if err != nil {
-		return auth.Principal{}, err
+		return auth.Principal{}, auth.ErrUnavailable
 	}
 	return s.loadInteractiveOAuthActor(ctx, query, grantID)
 }

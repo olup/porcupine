@@ -105,14 +105,14 @@ func TestRawHTTPRouteProtectionInventory(t *testing.T) {
 		"POST /oauth/token":      "oauth-token-exchange",
 		"POST /oauth/revoke":     "oauth-token-revocation",
 		"GET /oauth/authorize":   "oauth-authorization-request",
-		"GET /.well-known/oauth-authorization-server":          "public-oauth-discovery",
-		`"GET /.well-known/oauth-protected-resource" + suffix`: "public-oauth-discovery",
-		"POST /oauth/email/request":                            "browser-session-origin-csrf",
-		"POST /oauth/email/verify":                             "browser-session-origin-csrf-otp",
-		"POST /oauth/oidc/start":                               "browser-session-origin-csrf",
-		"GET /oauth/oidc/callback":                             "oidc-state-pkce-nonce-verified-identity",
-		"GET /oauth/consent":                                   "verified-browser-session",
-		"POST /oauth/consent":                                  "verified-session-origin-csrf-current-authority",
+		"GET /.well-known/oauth-authorization-server":                "public-oauth-discovery",
+		`"GET /.well-known/oauth-protected-resource" + entry.suffix`: "public-oauth-discovery",
+		"POST /oauth/email/request":                                  "browser-session-origin-csrf",
+		"POST /oauth/email/verify":                                   "browser-session-origin-csrf-otp",
+		"POST /oauth/oidc/start":                                     "browser-session-origin-csrf",
+		"GET /oauth/oidc/callback":                                   "oidc-state-pkce-nonce-verified-identity",
+		"GET /oauth/consent":                                         "verified-browser-session",
+		"POST /oauth/consent":                                        "verified-session-origin-csrf-current-authority",
 	}
 	entries, err := os.ReadDir(".")
 	if err != nil {

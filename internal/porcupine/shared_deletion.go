@@ -44,7 +44,7 @@ ON CONFLICT(project_id) DO UPDATE SET tenant_id=excluded.tenant_id WHERE project
 	if recordedTenant != tenant {
 		return apiError(409, "project deletion tenant ownership is inconsistent")
 	}
-	if err := purgeProjectGrants(ctx, tx, id); err != nil {
+	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -77,7 +77,7 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	if completed {
 		return tx.Commit()
 	}
-	if err := purgeProjectGrants(ctx, tx, id); err != nil {
+	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=$1`, id); err != nil {

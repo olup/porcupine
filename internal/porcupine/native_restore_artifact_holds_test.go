@@ -52,7 +52,7 @@ func TestRestoreArtifactHoldsPreventFalseTenantCompletionWithoutSourceCalls(t *t
 		t.Fatal(err)
 	}
 	bootstrap := strings.Repeat("fresh-recovery-token", 2)
-	if _, err := resetNativeRestoreCredentials(t.Context(), s.db, s.control, bootstrap); err == nil {
+	if _, err := resetNativeRestoreCredentials(t.Context(), s.db, s.control, bootstrap, "builtin"); err == nil {
 		t.Fatal("fixture did not interrupt reset")
 	}
 	var count int
@@ -62,7 +62,7 @@ func TestRestoreArtifactHoldsPreventFalseTenantCompletionWithoutSourceCalls(t *t
 	if _, err := s.db.Exec(`DROP TRIGGER fail_reset`); err != nil {
 		t.Fatal(err)
 	}
-	result, err := resetNativeRestoreCredentials(t.Context(), s.db, s.control, bootstrap)
+	result, err := resetNativeRestoreCredentials(t.Context(), s.db, s.control, bootstrap, "builtin")
 	if err != nil {
 		t.Fatal(err)
 	}

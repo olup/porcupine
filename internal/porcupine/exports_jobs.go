@@ -11,14 +11,17 @@ import (
 
 const exportConsistency = "delivery_barrier_nontransactional"
 
-const exportJobColumns = `id,project_id,actor_id,sql,parameters,format,state,attempt_id,event_watermark,mutation_watermark,cancel_requested,rows,bytes,decoded_bytes,file_count,attempts,created_at,started_at,completed_at,expires_at,expires_at_ms,error,columns_json,cleanup_pending`
+const exportJobColumns = `id,project_id,actor_id,sql,parameters,format,state,attempt_id,event_watermark,mutation_watermark,cancel_requested,rows,bytes,decoded_bytes,file_count,attempts,created_at,started_at,completed_at,expires_at,expires_at_ms,error,columns_json,cleanup_pending,
+coalesce((SELECT tenant_id FROM export_external_authority a WHERE a.job_id=export_jobs.id),''),
+coalesce((SELECT issuer FROM export_external_authority a WHERE a.job_id=export_jobs.id),''),
+coalesce((SELECT expires_at_ms FROM export_external_authority a WHERE a.job_id=export_jobs.id),0)`
 
 type exportScanner interface{ Scan(...any) error }
 
 func scanExport(row exportScanner) (storedExport, error) {
 	var job storedExport
 	var parameters, columns string
-	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SQL, &parameters, &job.Format, &job.State, &job.AttemptID, &job.EventWatermark, &job.MutationWatermark, &job.CancelRequested, &job.Rows, &job.Bytes, &job.DecodedBytes, &job.FileCount, &job.Attempts, &job.CreatedAt, &job.StartedAt, &job.CompletedAt, &job.ExpiresAt, &job.ExpiresAtMS, &job.Error, &columns, &job.CleanupPending)
+	err := row.Scan(&job.ID, &job.ProjectID, &job.ActorID, &job.SQL, &parameters, &job.Format, &job.State, &job.AttemptID, &job.EventWatermark, &job.MutationWatermark, &job.CancelRequested, &job.Rows, &job.Bytes, &job.DecodedBytes, &job.FileCount, &job.Attempts, &job.CreatedAt, &job.StartedAt, &job.CompletedAt, &job.ExpiresAt, &job.ExpiresAtMS, &job.Error, &columns, &job.CleanupPending, &job.ExternalTenantID, &job.ExternalIssuer, &job.ExternalExpiresAtMS)
 	if err != nil {
 		return job, err
 	}
@@ -35,6 +38,32 @@ func (s *Service) loadExport(ctx context.Context, projectID, jobID string) (stor
 
 func (s *Service) exportActor(ctx context.Context, keyID string) (auth.Principal, error) {
 	return s.loadCredentialActor(ctx, keyID)
+}
+
+func (s *Service) exportJobActor(ctx context.Context, job storedExport) (auth.Principal, error) {
+	if job.ExternalExpiresAtMS == 0 {
+		return s.exportActor(ctx, job.ActorID)
+	}
+	if !s.externalAuthEnabled() || job.ExternalExpiresAtMS <= s.clock().UnixMilli() {
+		return auth.Principal{}, errExportAuthorizationExpired
+	}
+	if job.ExternalIssuer != s.resources.external.Config().Issuer {
+		return auth.Principal{}, errExportRevoked
+	}
+	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
+		return auth.Principal{}, err
+	}
+	var tenant string
+	if err := s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return auth.Principal{}, errExportRevoked
+		}
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if tenant != job.ExternalTenantID {
+		return auth.Principal{}, errExportRevoked
+	}
+	return auth.Principal{ID: job.ActorID, TenantIDs: []string{tenant}, Projects: []string{job.ProjectID}, Permissions: []string{"events:read"}}, nil
 }
 
 func (s *Service) exportArtifacts(ctx context.Context, jobID, attemptID string) ([]exportArtifact, error) {

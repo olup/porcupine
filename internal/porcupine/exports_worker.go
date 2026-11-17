@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	errExportPressure = errors.New("export delivery pressure")
-	errExportRevoked  = errors.New("export creator revoked")
-	errExportCanceled = errors.New("export canceled")
+	errExportPressure             = errors.New("export delivery pressure")
+	errExportRevoked              = errors.New("export creator revoked")
+	errExportCanceled             = errors.New("export canceled")
+	errExportAuthorizationExpired = errors.New("external export authorization expired")
 )
 
 func (s *Service) startExports() {
@@ -79,7 +80,17 @@ func (s *Service) exportsLoop(ctx context.Context) {
 			s.terminalExport(job, ExportCanceled, "canceled")
 			continue
 		}
-		actor, err := s.exportActor(ctx, job.ActorID)
+		actor, err := s.exportJobActor(ctx, job)
+		if errors.Is(err, errExportAuthorizationExpired) {
+			s.terminalExport(job, ExportExpired, "authorization_expired")
+			continue
+		}
+		if authenticationUnavailable(err) {
+			if !s.waitExports(ctx, time.Second) {
+				return
+			}
+			continue
+		}
 		if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 			s.terminalExport(job, ExportCanceled, "creator_revoked")
 			continue
@@ -190,7 +201,13 @@ func (s *Service) runExport(parent context.Context, job storedExport) {
 		s.failExport(parent, job, errors.New("invalid export start"))
 		return
 	}
-	ctx, cancel := context.WithDeadlineCause(parent, started.Add(time.Duration(s.exports.config.MaxExecutionSeconds)*time.Second), context.DeadlineExceeded)
+	deadline := started.Add(time.Duration(s.exports.config.MaxExecutionSeconds) * time.Second)
+	deadlineCause := error(context.DeadlineExceeded)
+	if job.ExternalExpiresAtMS > 0 && time.UnixMilli(job.ExternalExpiresAtMS).Before(deadline) {
+		deadline = time.UnixMilli(job.ExternalExpiresAtMS)
+		deadlineCause = errExportAuthorizationExpired
+	}
+	ctx, cancel := context.WithDeadlineCause(parent, deadline, deadlineCause)
 	ctx, cancelCause := context.WithCancelCause(ctx)
 	s.exports.activeMu.Lock()
 	s.exports.activeJob = job.ID
@@ -247,7 +264,13 @@ func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error
 	if current.CancelRequested || current.State != ExportRunning || current.AttemptID != job.AttemptID {
 		return errExportCanceled
 	}
-	actor, err := s.exportActor(ctx, job.ActorID)
+	actor, err := s.exportJobActor(ctx, job)
+	if errors.Is(err, errExportAuthorizationExpired) {
+		return err
+	}
+	if authenticationUnavailable(err) {
+		return err
+	}
 	if err != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
 		return errExportRevoked
 	}
@@ -298,7 +321,10 @@ func (s *Service) publishExport(ctx context.Context, job storedExport, result la
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return errExportSink
 	}
-	current, err := s.exportActor(ctx, job.ActorID)
+	current, err := s.exportJobActor(ctx, job)
+	if errors.Is(err, errExportAuthorizationExpired) {
+		return err
+	}
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, errInteractiveGrant) {
 		return errExportRevoked
 	}
@@ -329,10 +355,17 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 	defer cancel()
 	state, code := ExportFailed, "export_failed"
 	current, err := s.loadExport(ctx, job.ProjectID, job.ID)
-	actor, actorErr := s.exportActor(ctx, job.ActorID)
+	actor, actorErr := s.exportJobActor(ctx, job)
 	switch {
+	case errors.Is(failure, errExportAuthorizationExpired) || errors.Is(actorErr, errExportAuthorizationExpired):
+		state, code = ExportExpired, "authorization_expired"
 	case err == nil && current.CancelRequested:
 		state, code = ExportCanceled, "canceled"
+	case authenticationUnavailable(actorErr) || authenticationUnavailable(failure):
+		code = "authorization_unavailable"
+		if job.Attempts < 3 {
+			state = ExportQueued
+		}
 	case actorErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID):
 		state, code = ExportCanceled, "creator_revoked"
 	case errors.Is(failure, errExportRevoked):
@@ -379,6 +412,7 @@ func (s *Service) terminalExport(job storedExport, state ExportState, code strin
 }
 
 func (s *Service) expireExports(ctx context.Context) {
+	s.db.ExecContext(ctx, `UPDATE export_jobs SET state='expired',error='authorization_expired',cleanup_pending=1,sql='',parameters='{}' WHERE state='queued' AND id IN (SELECT job_id FROM export_external_authority WHERE expires_at_ms<=$1)`, s.clock().UnixMilli())
 	s.db.ExecContext(ctx, `UPDATE export_jobs SET state='expired',cleanup_pending=1,sql='',parameters='{}' WHERE state='succeeded' AND expires_at_ms>0 AND expires_at_ms<=$1`, s.clock().UnixMilli())
 }
 

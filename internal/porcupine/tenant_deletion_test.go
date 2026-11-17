@@ -212,7 +212,7 @@ func TestTenantDeletionMixedHumanGrantKeepsBTokenAndFutureConsent(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshed, err := s.exchangeInteractiveRefresh(t.Context(), client, url.Values{"refresh_token": {token.RefreshToken}, "resource": {s.oauth.apiResource}})
+	refreshed, err := s.exchangeInteractiveRefresh(t.Context(), client, url.Values{"refresh_token": {token.RefreshToken}, "resource": {s.resources.apiResource}})
 	if err != nil {
 		t.Fatal("B refresh was unnecessarily revoked", err)
 	}
@@ -259,7 +259,7 @@ func TestTenantDeletionRemovesOwnedMachinesAndTenantAdminGrantOnly(t *testing.T)
 	machine := request(t, s, "POST", base, admin.AccessToken, tenantTestBody(t, TenantServiceAccountSpec{Name: "A machine", Permissions: []string{"events:read"}, Projects: []string{pa}}), 201)
 	machineID := machine["client_id"].(string)
 	static := request(t, s, "POST", base+"/"+machineID+"/api-keys", admin.AccessToken, tenantTestBody(t, ServiceKeySpec{Name: "A static", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{pa}}), 201)
-	machineToken := oauthProtocolRequest(t, s, machineID, machine["client_secret"].(string), url.Values{"grant_type": {"client_credentials"}, "resource": {s.oauth.apiResource}}, 200)["access_token"].(string)
+	machineToken := oauthProtocolRequest(t, s, machineID, machine["client_secret"].(string), url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 200)["access_token"].(string)
 	readerApp := j.register(t, operator, "reader-b", []string{"events:read", "management:read"}, []string{pb})
 	bToken := j.browserLogin(t, readerApp, "lea@example.test", "/api/v1", pb, "", 200)
 	request(t, s, "GET", "/api/v1/projects/"+pa+"/schema", static["token"].(string), "", 200)

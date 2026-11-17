@@ -46,7 +46,7 @@ func openAccountTest(t *testing.T, dbpath, adminEmail string) *Service {
 }
 func accountTestToken(t *testing.T, s *Service) string {
 	t.Helper()
-	return oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {s.oauth.apiResource}}, 200)["access_token"].(string)
+	return oauthProtocolRequest(t, s, "bootstrap", adminToken, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 200)["access_token"].(string)
 }
 func TestEmailHumansGrantLifecycle(t *testing.T) {
 	t.Parallel()
@@ -232,7 +232,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.control.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,created_at_ms,expires_at_ms,resource) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, id, principal(oauthManagementAdmin(t, s)).ID, s.clock().UnixMilli(), s.clock().Add(time.Hour).UnixMilli(), s.oauth.mcpResource)
+	_, err = s.control.Exec(`INSERT INTO oauth_interactive_grants(id,principal_id,human_id,client_id,created_at_ms,expires_at_ms,resource) VALUES(?,?,?,?,?,?,?)`, grantID, grantID, id, principal(oauthManagementAdmin(t, s)).ID, s.clock().UnixMilli(), s.clock().Add(time.Hour).UnixMilli(), s.resources.mcpResource)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,14 @@ import (
 	"time"
 )
 
+func exchangeToken(ctx context.Context, origin, clientID string, form url.Values, allowed []string) (oauthSession, error) {
+	return exchangeProviderToken(ctx, origin, builtinProvider(origin), clientID, form, allowed)
+}
+
+func browserLogin(ctx context.Context, origin, clientID string, scopes []string, path string, listener net.Listener, open func(string)) error {
+	return browserProviderLogin(ctx, origin, builtinProvider(origin), clientID, scopes, path, listener, open)
+}
+
 func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 	for _, tc := range []struct{ name, client, scope string }{
 		{"reader", analyticsClient, oauthScope(analyticsClient)},
@@ -155,7 +163,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 }
 
 func TestTokenEndpointRejectsUnsafeResponses(t *testing.T) {
-	for _, kind := range []string{"wrong-resource", "expanded-scope", "expanded-project-scope", "expired", "invalid-grant", "redirect"} {
+	for _, kind := range []string{"wrong-resource", "missing-resource", "missing-refresh", "missing-scope", "expanded-scope", "expanded-project-scope", "expired", "invalid-grant", "redirect"} {
 		t.Run(kind, func(t *testing.T) {
 			leaked := false
 			attacker := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { leaked = true }))
@@ -165,6 +173,12 @@ func TestTokenEndpointRejectsUnsafeResponses(t *testing.T) {
 				switch kind {
 				case "wrong-resource":
 					reply["resource"] = "https://other.example/api/v1"
+				case "missing-resource":
+					delete(reply, "resource")
+				case "missing-refresh":
+					delete(reply, "refresh_token")
+				case "missing-scope":
+					delete(reply, "scope")
 				case "expanded-scope":
 					reply["scope"] = "instance:admin"
 				case "expanded-project-scope":

@@ -63,6 +63,13 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 		if err != nil {
 			return apiError(503, "local job ownership unavailable")
 		}
+		if a.External != nil {
+			// Native ownership lives in control storage. External subjects have only
+			// this inert journal link, derived from the authoritative project row.
+			if _, err = tx.ExecContext(ctx, `INSERT INTO journal_actor_tenants(actor_id,tenant_id) VALUES($1,$2) ON CONFLICT(actor_id,tenant_id) DO NOTHING`, a.ID, p.TenantID); err != nil {
+				return apiError(503, "local audit ownership unavailable")
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return apiError(503, "local project metadata commit unavailable")

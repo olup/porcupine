@@ -41,20 +41,30 @@ func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string)
 	return nil
 }
 
-func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error {
+func (s *Service) purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error {
+	return purgeProjectGrants(ctx, tx, projectID, !s.externalAuthEnabled())
+}
+
+func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string, builtin bool) error {
 	var deletingTenant bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_id WHERE p.id=$1)`, projectID).Scan(&deletingTenant); err != nil {
 		return err
 	}
-	if !deletingTenant {
+	if builtin && !deletingTenant {
 		if err := purgeProjectHumanGrants(ctx, tx, projectID); err != nil {
 			return err
 		}
 	}
-	if err := purgeProjectTenantMemberships(ctx, tx, projectID); err != nil {
-		return err
+	if builtin {
+		if err := purgeProjectTenantMemberships(ctx, tx, projectID); err != nil {
+			return err
+		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects,h.project_grants FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id`)
+	statement := `SELECT id,permissions,projects,NULL FROM access_keys`
+	if builtin {
+		statement = `SELECT k.id,k.permissions,k.projects,h.project_grants FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id`
+	}
+	rows, err := tx.QueryContext(ctx, statement)
 	if err != nil {
 		return err
 	}
@@ -82,7 +92,11 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 			// revoke every derived connection, including unrelated tenants.
 			// Keep inert historical IDs here and prune each tool/token instead.
 			var sharedParent bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1 UNION ALL SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`, p.id).Scan(&sharedParent); err != nil {
+			parentQuery := `SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`
+			if builtin {
+				parentQuery = `SELECT EXISTS(SELECT 1 FROM email_humans WHERE principal_id=$1 UNION ALL SELECT 1 FROM oauth_clients WHERE client_id=$1 AND NOT EXISTS(SELECT 1 FROM tenant_credentials WHERE principal_id=$1))`
+			}
+			if err := tx.QueryRowContext(ctx, parentQuery, p.id).Scan(&sharedParent); err != nil {
 				return err
 			}
 			if sharedParent {
@@ -134,9 +148,11 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string) error
 			return err
 		}
 	}
-	for _, table := range []string{"oauth_tokens", "oauth_refresh_tokens"} {
-		if err := purgeProjectTokenScopes(ctx, tx, table, projectID); err != nil {
-			return err
+	if builtin {
+		for _, table := range []string{"oauth_tokens", "oauth_refresh_tokens"} {
+			if err := purgeProjectTokenScopes(ctx, tx, table, projectID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
