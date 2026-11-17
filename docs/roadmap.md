@@ -15,7 +15,7 @@ Completed on the development branch, not yet released:
 - Faster short tests and full race/integration checks, with versioned operational schema migrations.
 - A separate `internal/lake` engine package.
 
-Integrated on the stabilization branch, pending final combined validation:
+Integrated on the stabilization branch and validated locally:
 
 - Bounded local retry receipts with timestamp-independent historical deduplication, including import retries and refusal during analytical lookup failures.
 - DuckLake schema v2 with monthly partitions, no full duplicated current payload, format checks, and interrupted-upgrade recovery.
@@ -23,7 +23,7 @@ Integrated on the stabilization branch, pending final combined validation:
 - One typed self-host configuration file, private init/check/install commands, and a single Compose entry point. Real image tests cover nonroot setup, file overrides, custom storage paths, configuration replacement, and restart.
 - Focused product guides, detailed references, and separate design records.
 
-Authentication-mode removal remains a proposal rather than part of the extraction. The combined branch still needs its final validation before release.
+Authentication-mode removal remains a proposal rather than part of the extraction. The [validation record](design/stabilization-validation.md) records local results; release CI must still check the candidate.
 
 ## Validate the complete team workflow
 
@@ -43,7 +43,8 @@ Audit management coverage at the same time. No step should require SSH or databa
 - [ ] Limit pending queue occupancy per project so one producer cannot fill the whole worker queue. Tenant monthly budgets do not provide this protection.
 - [ ] Evaluate tenant-wide rate limiting across workers, separately from monthly allowances.
 - [ ] Measure sustained ingestion, freshness, memory, disk growth, maintenance, and recovery with many quiet tenants and one noisy tenant.
-- [ ] Validate safe receipt pruning and retries after edits/deletes, storage failure, and restart. Never use a storage lookup failure as evidence that an event is new.
+- [x] Validate receipt pruning and retries after edits/deletes, storage failure, and restart, including person snapshots and two-project concurrency.
+- [ ] Reduce and measure the admission cost after receipt pruning, particularly single-event sends and S3 lookup failures. Preserve stable IDs and atomic side effects; do not infer freshness from producer timestamps. See the [lookup benchmark](design/stabilization-validation.md#cost-of-historical-id-lookup).
 - [ ] Measure DuckLake schema savings and query behavior on representative payloads and larger data sets. Profile JSON extraction before promoting common properties to typed columns. Source timestamp text remains for precision; a small fixture is not a capacity benchmark.
 
 ## Hosted architecture to evaluate
