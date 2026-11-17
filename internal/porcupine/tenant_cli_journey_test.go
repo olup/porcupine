@@ -65,4 +65,15 @@ func TestTenantGeneratedCLIManagementJourney(t *testing.T) {
 	run(scoped, true, "list-projects", "--tenant-id", tenantID)
 	run(scoped, false, "get-tenant-usage", "--tenant-id", tenantID)
 	run(scoped, false, "update-tenant", "--tenant-id", tenantID, "--body", `{"ingestion_allowed":false}`)
+	run(scoped, false, "delete-tenant", "--tenant-id", tenantID)
+	run(scoped, false, "get-tenant-deletion", "--tenant-id", tenantID)
+	result = run(adminToken, true, "delete-tenant", "--tenant-id", tenantID)
+	if result["tenant_id"] != tenantID || result["physical_purge"] != "pending_verification" {
+		t.Fatal("CLI deletion lost status semantics", result)
+	}
+	waitTenantDeletion(t, s, tenantID, "logically_deleted")
+	result = run(adminToken, true, "get-tenant-deletion", "--tenant-id", tenantID)
+	if result["state"] != "logically_deleted" {
+		t.Fatal("CLI could not inspect removed tenant", result)
+	}
 }

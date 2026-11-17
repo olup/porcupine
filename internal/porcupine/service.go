@@ -61,6 +61,7 @@ type Service struct {
 	deletionMu                  contextMutex
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
+	deletionWake                chan struct{}
 	db                          *sql.DB
 	*eventRules
 	acceptance            *eventAcceptance
@@ -713,6 +714,10 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		return
 	}
 	projectID := a.Projects[0]
+	if err := s.requireProjectActive(r.Context(), projectID); err != nil {
+		writeSharedRouteProblem(w, err)
+		return
+	}
 	if s.forwardSharedProject(w, r, projectID) {
 		return
 	}

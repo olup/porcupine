@@ -115,6 +115,10 @@ func loadOAuthClient(ctx context.Context, query oauthQueryer, id string) (*oauth
 	if err != nil {
 		return nil, err
 	}
+	client.Projects, err = activeProjects(ctx, query, client.Projects)
+	if err != nil {
+		return nil, err
+	}
 	return client, nil
 }
 

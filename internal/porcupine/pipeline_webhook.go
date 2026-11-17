@@ -11,6 +11,9 @@ import (
 )
 
 func (s *Service) pipelineCreatorAuthorized(ctx context.Context, id, project string) (bool, error) {
+	if err := s.requireProjectActive(ctx, project); err != nil {
+		return false, err
+	}
 	if err := s.requireSharedProjectOwner(ctx, project); err != nil {
 		return false, err
 	}

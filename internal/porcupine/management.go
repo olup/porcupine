@@ -198,6 +198,18 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			problem(w, http.StatusForbidden, "required permission and project access missing")
 			return
 		}
+		if access.ProjectParameter != "" && ctx.Operation().OperationID != "delete-project" {
+			if err := s.requireProjectActive(ctx.Context(), ctx.Param(access.ProjectParameter)); err != nil {
+				writeSharedRouteProblem(w, err)
+				return
+			}
+		}
+		if access.TenantParameter != "" {
+			if err := requireTenantActive(ctx.Context(), s.control, tenantID); err != nil {
+				writeSharedRouteProblem(w, err)
+				return
+			}
+		}
 		if s.shared != nil && access.ProjectParameter != "" && projectOperationNeedsOwner(ctx.Operation().OperationID) {
 			project := ctx.Param(access.ProjectParameter)
 			if ctx.Operation().OperationID == "delete-project" {
@@ -341,7 +353,7 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 	}
 	out := &ProjectRenameOutput{}
 	p := &out.Body.Project
-	err = s.control.QueryRowContext(ctx, `UPDATE projects SET name=$1 WHERE id=$2 RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
+	err = s.control.QueryRowContext(ctx, `UPDATE projects SET name=$1 WHERE id=$2 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=projects.id) AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=projects.tenant_id) RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apiError(404, "project not found")
 	}
@@ -454,6 +466,13 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	if rows.Err() != nil {
 		return nil, apiError(500, "storage error")
 	}
+	rows.Close()
+	for i := range items {
+		items[i].Projects, err = activeProjects(ctx, s.control, items[i].Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
+	}
 	return &AccessKeyListOutput{Body: AccessKeyList{AccessKeys: items}}, nil
 }
 
@@ -485,6 +504,9 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a auth.Principal,
 			}
 			if n == 0 {
 				return apiError(400, "unknown project")
+			}
+			if err := s.requireProjectActive(ctx, project); err != nil {
+				return err
 			}
 		}
 	}
@@ -528,10 +550,13 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		return nil, apiError(503, "credential storage unavailable")
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return nil, apiError(503, "credential storage unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
+		return nil, err
+	}
 	if len(body.Permissions) == 1 && body.Permissions[0] == "events:write" && len(body.Projects) == 1 && body.Projects[0] != "*" {
-		if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-			return nil, apiError(503, "credential storage unavailable")
-		}
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, body.Projects[0]).Scan(&tenantID); err != nil {
 			return nil, apiError(404, "project not found")
 		}

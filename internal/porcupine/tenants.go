@@ -60,12 +60,21 @@ func tenantName(raw string) (string, error) {
 }
 
 func (s *Service) initializeTenants(ctx context.Context) error {
+	deleted, err := tenantDeletionExists(ctx, s.control, defaultTenantID)
+	if err != nil || deleted {
+		return err
+	}
 	b := s.defaultTenantBudgets()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,$2,$3,1,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,$2,$3,1,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, defaultTenantID, "Default", s.clock().UTC().Format(time.RFC3339Nano), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes)
 	return err
 }
 
 func (s *Service) loadTenant(ctx context.Context, id string) (Tenant, error) {
+	if cleanup, _ := ctx.Value(sharedDeletedProjectContextKey{}).(bool); !cleanup {
+		if err := requireTenantActive(ctx, s.control, id); err != nil {
+			return Tenant{}, err
+		}
+	}
 	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Tenant{}, apiError(404, "tenant not found")

@@ -234,6 +234,9 @@ func (s *Service) monitorExport(ctx context.Context, job storedExport, cancel co
 }
 
 func (s *Service) exportCanContinue(ctx context.Context, job storedExport) error {
+	if err := s.requireProjectActive(ctx, job.ProjectID); err != nil {
+		return err
+	}
 	if err := s.requireSharedProjectOwner(ctx, job.ProjectID); err != nil {
 		return err
 	}

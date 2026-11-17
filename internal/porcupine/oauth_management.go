@@ -179,6 +179,12 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apiError(500, "storage error")
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		return nil, apiError(503, "credential storage unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
+		return nil, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID); err != nil {
 		return nil, apiError(500, "storage error")
 	}
@@ -223,6 +229,13 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id LEFT JOIN tenant_cre
 	}
 	if rows.Err() != nil {
 		return nil, apiError(500, "storage error")
+	}
+	rows.Close()
+	for i := range items {
+		items[i].Projects, err = activeProjects(ctx, s.control, items[i].Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
 	}
 	return &OAuthClientListOutput{Body: OAuthClientList{Enabled: s.oauth != nil, OAuthClients: items}}, nil
 }

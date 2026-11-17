@@ -63,6 +63,7 @@ type TenantUsage struct {
 type TenantUsageOutput struct{ Body TenantUsage }
 
 func (s *Service) registerTenants(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
+	s.registerTenantDeletion(api, op)
 	operator := auth.OperationAccess{Permission: "instance:admin"}
 	tenantAdmin := auth.OperationAccess{Permission: tenantAdminScope, TenantParameter: "tenant_id", TenantAdmin: true}
 	huma.Register(api, op("list-tenants", "GET", "/api/v1/tenants", "List tenants administered by this caller; operators can list the deployment", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 200), s.managementListTenants)
@@ -105,7 +106,7 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 		filter = " AND id IN (" + strings.Join(markers, ",") + ")"
 	}
 	args = append(args, limit+1)
-	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1`+filter+` ORDER BY id LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
+	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1 AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=tenants.id)`+filter+` ORDER BY id LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
 	if err != nil {
 		return nil, apiError(503, "tenant storage unavailable")
 	}

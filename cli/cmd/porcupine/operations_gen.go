@@ -194,6 +194,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "delete-tenant", Method: "DELETE", Path: "/api/v1/tenants/{tenant_id}",
+		Summary: "Block this tenant immediately and start resumable deletion; deployment operator only",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
 		ID: "edit-event", Method: "PATCH", Path: "/api/v1/projects/{id}/events/{uuid}",
 		Summary: "Queue an audited full event correction with expected_revision and idempotency_key",
 		Params: []parameter{
@@ -305,6 +312,13 @@ var operations = []operation{
 	{
 		ID: "get-tenant", Method: "GET", Path: "/api/v1/tenants/{tenant_id}",
 		Summary: "Read configuration of a tenant administered by this caller",
+		Params: []parameter{
+			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
+		ID: "get-tenant-deletion", Method: "GET", Path: "/api/v1/tenants/{tenant_id}/deletion",
+		Summary: "Read deletion progress after tenant removal; deployment operator only",
 		Params: []parameter{
 			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
 		},

@@ -143,7 +143,11 @@ func loadEmailHuman(ctx context.Context, query oauthQueryer, id string) (auth.Pr
 	for _, g := range grants {
 		a.ProjectPermissions[g.ProjectID] = g.Permissions
 	}
-	return addTenantMembershipAuthority(ctx, query, a)
+	a, err = addTenantMembershipAuthority(ctx, query, a)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	return activeHumanAuthority(ctx, query, a)
 }
 
 func (s *Service) lookupActiveEmailID(ctx context.Context, email string) (string, error) {
@@ -364,6 +368,23 @@ func (s *Service) listHumans(ctx context.Context, input *ListHumansInput) (*List
 	}
 	if rows.Err() != nil {
 		return nil, apiError(503, "human account storage unavailable")
+	}
+	rows.Close()
+	for i := range out.Body.Humans {
+		h := &out.Body.Humans[i]
+		h.Projects, err = activeProjects(ctx, s.control, h.Projects)
+		if err != nil {
+			return nil, apiError(503, "project authority unavailable")
+		}
+		grants := []HumanProjectGrant{}
+		permissions := []string{}
+		for _, grant := range h.Grants {
+			if slices.Contains(h.Projects, grant.ProjectID) {
+				grants = append(grants, grant)
+				permissions = append(permissions, grant.Permissions...)
+			}
+		}
+		h.Grants, h.Permissions = grants, sortedGrants(permissions)
 	}
 	return out, nil
 }

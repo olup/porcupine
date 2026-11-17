@@ -41,13 +41,20 @@ CREATE INDEX event_receipts_recorded ON event_receipts(recorded_at_ms)`,
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
 
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+const tenantDeletionSchema = `CREATE TABLE tenant_deletions (
+tenant_id TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('deleting','logically_deleted','purged')),
+started_at TEXT NOT NULL,updated_at TEXT NOT NULL,error_code TEXT NOT NULL DEFAULT '');
+CREATE TABLE tenant_deletion_usage (
+tenant_id TEXT NOT NULL,project_id TEXT NOT NULL DEFAULT '',period_start TEXT NOT NULL,
+accepted_events BIGINT NOT NULL CHECK(accepted_events>=0),PRIMARY KEY(tenant_id,project_id,period_start));`
+
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
 // sharedControlSteps follow the same rules for shared PostgreSQL control.
 // Version 1 is idempotent because workers of that build reapplied it on start.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {
