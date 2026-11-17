@@ -528,6 +528,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("pause changed an unintended definition", n, err)
 	}
 
+	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
+
 	blocked := batch("blocked")
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
 		t.Fatal("full queue admitted", err)

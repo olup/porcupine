@@ -374,3 +374,58 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal("sealed import recovery", err)
 	}
 }
+
+// The caller owns a real paused live backlog. Only its configured limit changes;
+// no fabricated used counters or output reservations establish this regression.
+func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher, node *sharedJourneyNode, limits output.PipelineDemand) {
+	t.Helper()
+	ctx := t.Context()
+	var before, after output.PipelineDemand
+	var originalLimit int64
+	if err := node.service.control.QueryRowContext(ctx, `SELECT limit_refs,used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&originalLimit, &before.References, &before.QueuedBytes, &before.MetadataRows, &before.ArtifactBytes, &before.ProofSlots); err != nil {
+		t.Fatal(err)
+	}
+	if before.References < 2 {
+		t.Fatal("fixture has no real backlog to exceed reduced limit", before)
+	}
+	if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=used_refs-1 WHERE scope_kind='instance' AND scope_id=''`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=$1 WHERE scope_kind='instance' AND scope_id=''`, originalLimit); err != nil {
+			t.Error(err)
+		}
+	}()
+	project, _ := sharedJourneyProject(t, node.host.URL, defaultTenantID, "import over output backlog")
+	scope, err := f.native.InitializeHostedProject(ctx, lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+		return f.publisher.effects.ConfigureCapacityTx(ctx, tx, "project", project, limits)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := f.native.Remote.PutImmutableImportCheckpoint(ctx, scope, "capacity-import", "empty", []byte(`{"Generation":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyDigest := sha256.Sum256(nil)
+	hash := hex.EncodeToString(emptyDigest[:])
+	input := lakeapi.ImportChunkInput{Key: lakeapi.ImportChunkKey{Scope: scope, JobID: "capacity-import", FileID: "empty", Phase: "finalize"}, TenantID: defaultTenantID, SourceID: "archive", Format: "native", ManifestSHA256: hash, InputSHA256: hash, Parser: ref}
+	proof, err := f.CommitImport(ctx, input)
+	if err != nil {
+		t.Fatal("first import borrowed exhausted webhook capacity", err)
+	}
+	if proof.Sequence != 1 || proof.AcceptedImport != 0 {
+		t.Fatal(proof)
+	}
+	if err = node.service.control.QueryRowContext(ctx, `SELECT used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&after.References, &after.QueuedBytes, &after.MetadataRows, &after.ArtifactBytes, &after.ProofSlots); err != nil {
+		t.Fatal(err)
+	}
+	expected := before
+	expected.MetadataRows++
+	if after != expected {
+		t.Fatal("import charged output backlog", before, after)
+	}
+}

@@ -62,8 +62,9 @@ The disabled `hostedLiveFlusher.CommitImport` holds the common project session
 through original lookup, reconciliation, cursor preflight, native commit and
 publication. `PrepareNoOutputStreamTx` admits and charges the one shared cursor
 row before native data commits. Exhausted metadata capacity therefore rejects a
-first import without creating an unpublished native outcome. It reserves no
-webhook references, body bytes, artifacts or proof slots.
+first import without creating an unpublished native outcome. It admits only metadata rows and reserves no webhook references, body bytes,
+artifacts or proof slots. Lowered webhook limits below an existing output backlog
+do not reject first-import cursor admission.
 
 The publisher dispatches by kind before live reservation validation. Live proofs
 retain actual output plans, immutable body verification and reservation

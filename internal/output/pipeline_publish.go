@@ -254,12 +254,20 @@ func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql
 		return ErrPipelineConflict
 	}
 	if created > 0 {
-		b.Demand = PipelineDemand{MetadataRows: 1}
-		if err = p.lockCapacity(ctx, tx, b, true); err != nil {
-			return err
+		// The capacity rows are already locked. Only cursor metadata is admitted;
+		// lowered webhook limits cannot reject a zero-demand import dimension.
+		for _, quotaScope := range [][2]string{{"instance", ""}, {"tenant", tenant}, {"project", scope.ProjectID}} {
+			var available int64
+			if err = tx.QueryRowContext(ctx, `SELECT limit_rows-used_rows FROM pipeline_capacity WHERE scope_kind=$1 AND scope_id=$2`, quotaScope[0], quotaScope[1]).Scan(&available); err != nil {
+				return err
+			}
+			if available < 1 {
+				return ErrPipelineCapacity
+			}
 		}
-		return p.charge(ctx, tx, b, b.Demand, 1)
+		return p.charge(ctx, tx, b, PipelineDemand{MetadataRows: 1}, 1)
 	}
+
 	return nil
 }
 
