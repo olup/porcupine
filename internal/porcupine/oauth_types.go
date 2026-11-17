@@ -35,26 +35,45 @@ type oauthRuntime struct {
 	limiter           *rate.Limiter
 	oidc              *interactiveOIDC
 	browser           *oauthBrowser
-	authorizationGate oauthAuthorizationGate
+	authorizationGate auth.AuthorizationGate
 }
 
-func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
+// ValidateOAuthConfig checks startup settings without network requests or database writes.
+func ValidateOAuthConfig(config OAuthConfig) error {
+	_, err := normalizeOAuthSettings(config)
+	return err
+}
+
+func normalizeOAuthSettings(c OAuthConfig) (OAuthConfig, error) {
 	issuer, err := auth.NormalizeIssuer(c.Issuer, c.OIDC != nil || c.Email != nil)
 	if err != nil {
-		return nil, err
+		return OAuthConfig{}, err
 	}
 	c.Issuer = issuer
 	if c.OIDC != nil && c.Email == nil {
 		c.Email = &EmailConfig{}
 	}
 	if c.Email != nil && c.Email.SendCode == nil && c.OIDC == nil {
-		return nil, errors.New("email login requires a configured sender")
+		return OAuthConfig{}, errors.New("email login requires a configured sender")
 	}
 	if c.AccessTokenLifetimeSeconds == 0 {
 		c.AccessTokenLifetimeSeconds = 900
 	}
 	if c.AccessTokenLifetimeSeconds < 60 || c.AccessTokenLifetimeSeconds > 3600 {
-		return nil, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
+		return OAuthConfig{}, errors.New("OAuth token lifetime must be 60 to 3600 seconds")
+	}
+	if c.OIDC != nil {
+		if err := auth.ValidateOIDCConfig(auth.OIDCConfig{Issuer: c.OIDC.Issuer, ClientID: c.OIDC.ClientID, ClientSecret: c.OIDC.ClientSecret}, c.Issuer); err != nil {
+			return OAuthConfig{}, err
+		}
+	}
+	return c, nil
+}
+
+func normalizeOAuthConfig(c OAuthConfig) (*oauthRuntime, error) {
+	c, err := normalizeOAuthSettings(c)
+	if err != nil {
+		return nil, err
 	}
 	interactive, err := newInteractiveOIDC(c.OIDC, c.Issuer)
 	if err != nil {

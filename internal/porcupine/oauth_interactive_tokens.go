@@ -296,7 +296,7 @@ func (s *Service) exchangeInteractiveRefresh(ctx context.Context, client *oauthC
 func (s *Service) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
-	form, status, code := readOAuthForm(w, r)
+	form, status, code := auth.ReadOAuthForm(w, r)
 	if code != "" {
 		oauthTokenError(w, status, code)
 		return

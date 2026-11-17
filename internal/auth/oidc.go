@@ -49,13 +49,21 @@ func oidcEndpoint(raw string) bool {
 	return u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())
 }
 
-func NewOIDCProvider(ctx context.Context, config OIDCConfig, issuer string) (*OIDCProvider, error) {
+// ValidateOIDCConfig checks local settings without contacting the provider.
+func ValidateOIDCConfig(config OIDCConfig, issuer string) error {
 	if !oidcEndpoint(config.Issuer) || strings.ContainsAny(config.Issuer, "?#") || config.ClientID == "" || len(config.ClientID) > 512 || config.ClientSecret == "" || len(config.ClientSecret) > 16<<10 || strings.ContainsAny(config.ClientSecret, "\x00\r\n\t") {
-		return nil, errors.New("OIDC requires issuer, client ID and client secret")
+		return errors.New("OIDC requires issuer, client ID and client secret")
 	}
 	issuerURL, err := url.Parse(issuer)
 	if err != nil || issuerURL.Scheme != "https" && issuerURL.Scheme != "http" {
-		return nil, errors.New("invalid OIDC callback issuer")
+		return errors.New("invalid OIDC callback issuer")
+	}
+	return nil
+}
+
+func NewOIDCProvider(ctx context.Context, config OIDCConfig, issuer string) (*OIDCProvider, error) {
+	if err := ValidateOIDCConfig(config, issuer); err != nil {
+		return nil, err
 	}
 	runtime := &OIDCProvider{issuer: config.Issuer}
 	runtime.client = &http.Client{Transport: oidcTransport{base: http.DefaultTransport}, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("OIDC HTTP redirects are disabled") }}

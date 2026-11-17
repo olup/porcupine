@@ -23,7 +23,7 @@ func newOAuthBrowser(secure bool) *oauthBrowser {
 
 type oauthBrowser struct {
 	sharedDB      *sql.DB
-	emailDelivery emailDeliveryWindow
+	emailDelivery auth.EmailDeliveryLimiter
 	mu            sync.Mutex
 	sessions      map[string]*oidcBrowserSession
 	secure        bool
