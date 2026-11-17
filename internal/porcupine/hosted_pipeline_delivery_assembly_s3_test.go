@@ -24,7 +24,7 @@ func TestDuckLakeS3HostedWebhookRecomposition(t *testing.T) {
 		Target: output.PipelineTarget{ID: h.target.PipelineID},
 		Body:   pipelineRef(original.Body),
 		Spec:   output.PipelineFragmentSpec{WindowStartMS: claim.WindowStartMS, WindowEndMS: claim.WindowEndMS, Rule: h.target.Rule},
-		Count:  3, Recompose: true,
+		Count:  3, Recompose: true, Frozen: true,
 	}
 	for _, event := range events {
 		raw, err := delivery.EncodeJSON(event)
@@ -63,5 +63,4 @@ func TestDuckLakeS3HostedWebhookRecomposition(t *testing.T) {
 	if err != nil || unfrozen.ID != original.DeliveryID || unfrozen.Body.SHA256 == original.Body.SHA256 || unfrozen.Count != 2 {
 		t.Fatal(unfrozen, err)
 	}
-
 }
