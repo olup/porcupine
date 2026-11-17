@@ -20,6 +20,11 @@ func mustConfigureTestPipelines(s *Service, c *output.PipelineConfig) {
 	if err := s.configurePipelines(c); err != nil {
 		panic(err)
 	}
+	if c != nil {
+		if err := s.pipelines.Initialize(context.Background()); err != nil {
+			panic(err)
+		}
+	}
 }
 func testPipelineConfig(s *Service) *output.PipelineConfig {
 	c := s.pipelines.Config()

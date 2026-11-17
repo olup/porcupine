@@ -59,6 +59,8 @@ func (s *PipelineJobs) cleanupRetired(ctx context.Context, project string) (bool
 	if !s.Enabled() {
 		return false, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	var p storedPipeline
 	var id, config, manifest string
 	var start int64

@@ -301,6 +301,18 @@ func TestSQLitePipelineStopWaitsForActualNativeReturn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("native call did not begin")
 	}
+	var pipelineID string
+	if err := p.db.QueryRow(`SELECT id FROM pipelines WHERE kind='s3'`).Scan(&pipelineID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Replace(t.Context(), "project", pipelineID, PipelineChange{Credentials: PipelineCredentials{AccessKeyID: "new-access", SecretAccessKey: "new-secret"}}); err == nil {
+		t.Fatal("replacement proceeded during actual native call")
+	} else {
+		var status interface{ GetStatus() int }
+		if !errors.As(err, &status) || status.GetStatus() != 409 {
+			t.Fatal("native replacement conflict was not retryable", err)
+		}
+	}
 	stopped := make(chan struct{})
 	go func() { p.Stop(); close(stopped) }()
 	select {
