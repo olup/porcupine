@@ -1,4 +1,4 @@
-package porcupine
+package auth
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,7 +16,7 @@ import (
 	"time"
 )
 
-func sharedBrowserPair(t *testing.T) (*oauthBrowser, *oauthBrowser) {
+func sharedBrowserPair(t *testing.T) (*Login, *Login) {
 	t.Helper()
 	dsn := sharedPostgresDSN(t)
 	first, err := sql.Open("pgx", dsn)
@@ -27,31 +29,38 @@ func sharedBrowserPair(t *testing.T) (*oauthBrowser, *oauthBrowser) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { first.Close(); second.Close() })
-	queries, _ := normalizeInteractiveQueries(nil)
-	if err := initializeSharedControl(context.Background(), first, adminToken, queries); err != nil {
-		t.Fatal(err)
+	// Use the production DDL, without importing the native server into pure Go
+	// auth tests. Service-level shared journeys separately verify initialization.
+	for _, file := range []string{"control_schema.sql", "shared_control_schema.sql"} {
+		schema, err := os.ReadFile(filepath.Join("..", "porcupine", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		_, err = first.ExecContext(ctx, string(schema))
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	a, b := newOAuthBrowser(false), newOAuthBrowser(false)
-	s := &Service{control: first, shared: &sharedRuntime{}, oauth: &oauthRuntime{browser: a}}
-	if err := s.initializeSharedBrowser(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	b.sharedDB = second
+	a, b := newLoginTest(t, false), newLoginTest(t, false)
+	a.ShareSessions(first)
+	b.ShareSessions(second)
 	return a, b
 }
 
 func TestSharedBrowserSessionTransferAndConsume(t *testing.T) {
 	t.Parallel()
 	a, b := sharedBrowserPair(t)
-	want := &oidcBrowserSession{requestID: "request-a", state: "state-a", nonce: "nonce-a", verifier: "verifier-a", csrf: "csrf-a", expires: time.Now().Add(time.Minute)}
+	want := &browserSession{RequestID: "request-a", state: "state-a", nonce: "nonce-a", verifier: "verifier-a", CSRF: "csrf-a", Expires: time.Now().Add(time.Minute)}
 	raw, ok := a.save(want)
 	if !ok {
 		t.Fatal("first worker could not save browser session")
 	}
 	request := httptest.NewRequest("GET", "http://localhost/oauth/oidc/callback", nil)
-	request.AddCookie(&http.Cookie{Name: b.cookieName(), Value: raw})
-	key, got := b.session(request)
-	if got == nil || got.requestID != want.requestID || got.state != want.state || got.nonce != want.nonce || got.verifier != want.verifier || key != hash(raw) {
+	request.AddCookie(&http.Cookie{Name: b.CookieName(), Value: raw})
+	key, got := b.browserSession(request)
+	if got == nil || got.RequestID != want.RequestID || got.state != want.state || got.nonce != want.nonce || got.verifier != want.verifier || key != loginHash(raw) {
 		t.Fatal("second worker could not recover complete OIDC session")
 	}
 	var storedKey string
@@ -60,11 +69,11 @@ func TestSharedBrowserSessionTransferAndConsume(t *testing.T) {
 	}
 	var consumed atomic.Int32
 	var wg sync.WaitGroup
-	for _, browser := range []*oauthBrowser{a, b} {
+	for _, browser := range []*Login{a, b} {
 		wg.Add(1)
-		go func(o *oauthBrowser) {
+		go func(o *Login) {
 			defer wg.Done()
-			if o.consume(key) {
+			if o.Consume(key) {
 				consumed.Add(1)
 			}
 		}(browser)
@@ -73,10 +82,10 @@ func TestSharedBrowserSessionTransferAndConsume(t *testing.T) {
 	if consumed.Load() != 1 || a.loadSharedSession(context.Background(), key) != nil {
 		t.Fatal("browser state could be consumed twice across workers")
 	}
-	if _, ok := a.save(&oidcBrowserSession{expires: time.Now().Add(-time.Second)}); ok {
+	if _, ok := a.save(&browserSession{Expires: time.Now().Add(-time.Second)}); ok {
 		t.Fatal("expired browser session accepted")
 	}
-	if _, err := a.sharedDB.Exec(`INSERT INTO oauth_browser_sessions(session_hash,payload,expires_at_ms) SELECT 'capacity-'||i,'{}',$1 FROM generate_series(1,$2) i`, time.Now().Add(time.Minute).UnixMilli(), oidcSessionCapacity); err != nil {
+	if _, err := a.sharedDB.Exec(`INSERT INTO oauth_browser_sessions(session_hash,payload,expires_at_ms) SELECT 'capacity-'||i,'{}',$1 FROM generate_series(1,$2) i`, time.Now().Add(time.Minute).UnixMilli(), loginSessionCapacity); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := b.save(want); ok {
@@ -89,13 +98,13 @@ func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
 	a, b := sharedBrowserPair(t)
 	now := time.Now()
 	const code = "82345678"
-	session := &oidcBrowserSession{requestID: "oauth-request", csrf: "challenge", expires: now.Add(time.Minute), emailChallenge: emailChallenge{
-		digest: sha256.Sum256([]byte("challenge" + code)), principal: "human-a", attemptsLeft: emailCodeAttempts, expires: now.Add(time.Minute)}}
+	session := &browserSession{RequestID: "oauth-request", CSRF: "challenge", Expires: now.Add(time.Minute), emailChallenge: emailChallenge{
+		digest: sha256.Sum256([]byte("challenge" + code)), principal: "human-a", attemptsLeft: emailCodeAttempts, Expires: now.Add(time.Minute)}}
 	raw, ok := a.save(session)
 	if !ok {
 		t.Fatal("could not save OTP session")
 	}
-	key := hash(raw)
+	key := loginHash(raw)
 	var persisted string
 	if err := a.sharedDB.QueryRow(`SELECT payload FROM oauth_browser_sessions WHERE session_hash=$1`, key).Scan(&persisted); err != nil || strings.Contains(persisted, code) {
 		t.Fatal("plaintext code persisted", err)
@@ -112,7 +121,7 @@ func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
 			}
 			next, ok := browser.redeemEmailCode(key, code, now)
 			if ok {
-				if next.humanID != "human-a" || next.requestID != "oauth-request" || next.csrf == session.csrf {
+				if next.HumanID != "human-a" || next.RequestID != "oauth-request" || next.CSRF == session.CSRF {
 					t.Error("verified session lost identity or CSRF rotation")
 				}
 				successes.Add(1)
@@ -127,7 +136,7 @@ func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
 	if !ok {
 		t.Fatal("could not save attempts session")
 	}
-	key = hash(raw)
+	key = loginHash(raw)
 	for i := 0; i < emailCodeAttempts; i++ {
 		browser := a
 		if i%2 == 1 {
@@ -144,7 +153,7 @@ func TestSharedBrowserOTPAtomicAttemptsAndOneUse(t *testing.T) {
 	if !ok {
 		t.Fatal("could not save expiry session")
 	}
-	if _, ok := b.redeemEmailCode(hash(raw), code, now.Add(2*time.Minute)); ok {
+	if _, ok := b.redeemEmailCode(loginHash(raw), code, now.Add(2*time.Minute)); ok {
 		t.Fatal("expired OTP accepted")
 	}
 }

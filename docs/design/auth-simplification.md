@@ -6,17 +6,24 @@ It changes package ownership, without changing the HTTP, CLI, or MCP contract.
 ## Current ownership
 
 `internal/auth` owns principals, project and tenant authorization, consent
-attenuation, OAuth input validation, upstream OIDC verification, and local login
-admission limits. It has no access to the event journal or analytical store.
+attenuation, OAuth input validation, and upstream OIDC verification. `auth.Login`
+also owns browser OTP/OIDC sign-in, temporary sessions, cookies, CSRF and provider
+state, and local/shared email-delivery admission. It has no access to the event
+journal or analytical store.
 An upstream identity proves an email and subject; it never grants project access.
 
-`internal/porcupine` owns account persistence and HTTP orchestration. It rechecks
+`internal/porcupine` owns account persistence, route wiring, and consent. It rechecks
 current memberships and credential authority in the control database. Identity
 linking, recovery, consent issuance, and token revocation retain their existing
-transactions and login-version checks. Moving these transactions into callbacks
-would conceal the authority checks, so this extraction leaves them together.
-Browser-session storage remains beside those transactions, with its existing
-in-memory and shared PostgreSQL behavior.
+transactions and login-version checks. A three-operation `LoginAccounts` adapter
+looks up an invited email, validates a current proof, or links a verified provider
+identity. It returns the account ID and proof version, never cached permissions.
+Consent rereads authority and verifies the proof again when issuing a grant.
+
+Temporary browser-session storage lives in `auth.Login`. It keeps the existing
+in-memory and shared PostgreSQL behavior. Schema creation remains in the core's
+numbered migrations; Login only uses the existing tables. Provider initialization
+and offline configuration validation keep their original startup order.
 
 The authorization-start gate and local email-delivery limiter own their locks.
 They do not take the browser-session lock. Shared delivery budgets continue to
@@ -57,3 +64,8 @@ binding, consent attenuation, OTP replay, OIDC claims, project isolation, and
 recovery invalidation. Pure authorization tests also check that grants from two
 projects cannot combine into wider access and that callers cannot mutate the
 shared permission catalog.
+
+The browser extraction moves six session/OTP tests to `internal/auth` without
+renaming them. Both shared integration runners include that package, so its
+cross-worker tests still run against actual PostgreSQL. The browser and recovery
+journeys remain in `internal/porcupine`.

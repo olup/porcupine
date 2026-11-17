@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/olup/porcupine/internal/auth"
 	"slices"
 	"strings"
 	"testing"
@@ -212,20 +213,24 @@ func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := newOIDCMock(t)
-	upstream, err := newInteractiveOIDC(&OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"}, "http://127.0.0.1:9000")
+	upstream, err := auth.NewLogin(t.Context(), auth.LoginConfig{Issuer: "http://127.0.0.1:9000", OIDC: &auth.OIDCConfig{Issuer: provider.host.URL, ClientID: "upstream-client", ClientSecret: "mock-client-secret"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, oidc: upstream}}
-	if _, err := seeder.oidcHuman(t.Context(), "member", human.Email); err != nil {
+	seeder := &Service{db: s.db, control: s.control, oauth: &oauthRuntime{config: OAuthConfig{Email: &EmailConfig{}}, browser: upstream}}
+	if _, err := seeder.loginAccounts().LinkOIDCIdentity(t.Context(), "member", human.Email); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.control.Exec("INSERT INTO project_deletions(project_id,completed) VALUES(?,1)", removed); err != nil {
 		t.Fatal(err)
 	}
 	runProjectPurge(t, s, removed, true)
-	got, err := seeder.oidcHuman(t.Context(), "member", human.Email)
-	if err != nil || !slices.Equal(got.Projects, []string{keep}) {
+	got, err := seeder.loginAccounts().LinkOIDCIdentity(t.Context(), "member", human.Email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := loadEmailHuman(t.Context(), s.control, got.ID)
+	if err != nil || !slices.Equal(current.Projects, []string{keep}) {
 		t.Fatal("identity link restored deleted project", got, err)
 	}
 }

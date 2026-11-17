@@ -1,4 +1,4 @@
-package porcupine
+package auth
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
-	"github.com/olup/porcupine/internal/auth"
 	"sync"
 	"time"
 )
@@ -16,47 +15,40 @@ const sharedBrowserTimeout = 3 * time.Second
 // Browser state contains only temporary OAuth verifier material and OTP hashes.
 // The cookie itself and the emailed code are never persisted.
 type sharedBrowserSession struct {
-	Proof              humanLoginProof `json:"proof"`
-	ChallengeVersion   int64           `json:"challenge_version"`
-	RequestID          string          `json:"request_id"`
-	State              string          `json:"state,omitempty"`
-	Nonce              string          `json:"nonce,omitempty"`
-	Verifier           string          `json:"verifier,omitempty"`
-	CSRF               string          `json:"csrf"`
-	HumanID            string          `json:"human_id,omitempty"`
-	Expires            time.Time       `json:"expires"`
-	ChallengeDigest    [32]byte        `json:"challenge_digest"`
-	ChallengePrincipal string          `json:"challenge_principal,omitempty"`
-	ChallengeAttempts  int             `json:"challenge_attempts"`
-	ChallengeExpires   time.Time       `json:"challenge_expires"`
+	Proof              LoginProof `json:"proof"`
+	ChallengeVersion   int64      `json:"challenge_version"`
+	RequestID          string     `json:"request_id"`
+	State              string     `json:"state,omitempty"`
+	Nonce              string     `json:"nonce,omitempty"`
+	Verifier           string     `json:"verifier,omitempty"`
+	CSRF               string     `json:"csrf"`
+	HumanID            string     `json:"human_id,omitempty"`
+	Expires            time.Time  `json:"expires"`
+	ChallengeDigest    [32]byte   `json:"challenge_digest"`
+	ChallengePrincipal string     `json:"challenge_principal,omitempty"`
+	ChallengeAttempts  int        `json:"challenge_attempts"`
+	ChallengeExpires   time.Time  `json:"challenge_expires"`
 }
 
-func encodeBrowserSession(s *oidcBrowserSession) ([]byte, error) {
-	return json.Marshal(sharedBrowserSession{Proof: s.proof, ChallengeVersion: s.emailChallenge.loginVersion, RequestID: s.requestID, State: s.state, Nonce: s.nonce, Verifier: s.verifier, CSRF: s.csrf, HumanID: s.humanID, Expires: s.expires,
-		ChallengeDigest: s.emailChallenge.digest, ChallengePrincipal: s.emailChallenge.principal, ChallengeAttempts: s.emailChallenge.attemptsLeft, ChallengeExpires: s.emailChallenge.expires})
+func encodeBrowserSession(s *browserSession) ([]byte, error) {
+	return json.Marshal(sharedBrowserSession{Proof: s.Proof, ChallengeVersion: s.emailChallenge.loginVersion, RequestID: s.RequestID, State: s.state, Nonce: s.nonce, Verifier: s.verifier, CSRF: s.CSRF, HumanID: s.HumanID, Expires: s.Expires,
+		ChallengeDigest: s.emailChallenge.digest, ChallengePrincipal: s.emailChallenge.principal, ChallengeAttempts: s.emailChallenge.attemptsLeft, ChallengeExpires: s.emailChallenge.Expires})
 }
 
-func decodeBrowserSession(raw string) (*oidcBrowserSession, error) {
+func decodeBrowserSession(raw string) (*browserSession, error) {
 	var s sharedBrowserSession
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return nil, err
 	}
-	return &oidcBrowserSession{proof: s.Proof, requestID: s.RequestID, state: s.State, nonce: s.Nonce, verifier: s.Verifier, csrf: s.CSRF, humanID: s.HumanID, expires: s.Expires,
-		emailChallenge: emailChallenge{loginVersion: s.ChallengeVersion, digest: s.ChallengeDigest, principal: s.ChallengePrincipal, attemptsLeft: s.ChallengeAttempts, expires: s.ChallengeExpires}}, nil
+	return &browserSession{Proof: s.Proof, RequestID: s.RequestID, state: s.State, nonce: s.Nonce, verifier: s.Verifier, CSRF: s.CSRF, HumanID: s.HumanID, Expires: s.Expires,
+		emailChallenge: emailChallenge{loginVersion: s.ChallengeVersion, digest: s.ChallengeDigest, principal: s.ChallengePrincipal, attemptsLeft: s.ChallengeAttempts, Expires: s.ChallengeExpires}}, nil
 }
 
-func (s *Service) initializeSharedBrowser(ctx context.Context) error {
-	if s.shared != nil && s.oauth != nil && s.oauth.browser != nil {
-		s.oauth.browser.sharedDB = s.control
-	}
-	return nil
-}
-
-func (o *oauthBrowser) saveSharedSession(session *oidcBrowserSession) (string, bool) {
+func (o *Login) saveSharedSession(session *browserSession) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), sharedBrowserTimeout)
 	defer cancel()
 	now := time.Now()
-	if !now.Before(session.expires) {
+	if !now.Before(session.Expires) {
 		return "", false
 	}
 	raw, err := encodeBrowserSession(session)
@@ -76,17 +68,17 @@ func (o *oauthBrowser) saveSharedSession(session *oidcBrowserSession) (string, b
 		return "", false
 	}
 	var count int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM oauth_browser_sessions`).Scan(&count); err != nil || count >= oidcSessionCapacity {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM oauth_browser_sessions`).Scan(&count); err != nil || count >= loginSessionCapacity {
 		return "", false
 	}
-	cookie := oidcRandom()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_browser_sessions(session_hash,payload,expires_at_ms) VALUES($1,$2,$3)`, hash(cookie), string(raw), session.expires.UnixMilli()); err != nil {
+	cookie := RandomNonce()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_browser_sessions(session_hash,payload,expires_at_ms) VALUES($1,$2,$3)`, loginHash(cookie), string(raw), session.Expires.UnixMilli()); err != nil {
 		return "", false
 	}
 	return cookie, tx.Commit() == nil
 }
 
-func (o *oauthBrowser) loadSharedSession(parent context.Context, key string) *oidcBrowserSession {
+func (o *Login) loadSharedSession(parent context.Context, key string) *browserSession {
 	ctx, cancel := context.WithTimeout(parent, sharedBrowserTimeout)
 	defer cancel()
 	var raw string
@@ -101,7 +93,7 @@ func (o *oauthBrowser) loadSharedSession(parent context.Context, key string) *oi
 	return session
 }
 
-func (o *oauthBrowser) consumeSharedSession(key string) bool {
+func (o *Login) consumeSharedSession(key string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), sharedBrowserTimeout)
 	defer cancel()
 	result, err := o.sharedDB.ExecContext(ctx, `DELETE FROM oauth_browser_sessions WHERE session_hash=$1 AND expires_at_ms>$2`, key, time.Now().UnixMilli())
@@ -112,7 +104,7 @@ func (o *oauthBrowser) consumeSharedSession(key string) bool {
 	return err == nil && count == 1
 }
 
-func (o *oauthBrowser) redeemSharedEmailCode(key, code string, now time.Time) (*oidcBrowserSession, bool) {
+func (o *Login) redeemSharedEmailCode(key, code string, now time.Time) (*browserSession, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), sharedBrowserTimeout)
 	defer cancel()
 	tx, err := o.sharedDB.BeginTx(ctx, nil)
@@ -129,16 +121,16 @@ func (o *oauthBrowser) redeemSharedEmailCode(key, code string, now time.Time) (*
 		return nil, false
 	}
 	challenge := &session.emailChallenge
-	if challenge.expires.IsZero() {
+	if challenge.Expires.IsZero() {
 		return nil, false
 	}
-	if !now.Before(challenge.expires) || !now.Before(session.expires) {
+	if !now.Before(challenge.Expires) || !now.Before(session.Expires) {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM oauth_browser_sessions WHERE session_hash=$1`, key); err == nil {
 			_ = tx.Commit()
 		}
 		return nil, false
 	}
-	sum := sha256.Sum256([]byte(session.csrf + code))
+	sum := sha256.Sum256([]byte(session.CSRF + code))
 	if subtle.ConstantTimeCompare(sum[:], challenge.digest[:]) != 1 || challenge.principal == "" {
 		challenge.attemptsLeft--
 		if challenge.attemptsLeft <= 0 {
@@ -161,10 +153,10 @@ func (o *oauthBrowser) redeemSharedEmailCode(key, code string, now time.Time) (*
 	if tx.Commit() != nil {
 		return nil, false
 	}
-	return &oidcBrowserSession{requestID: session.requestID, expires: session.expires, humanID: challenge.principal, proof: humanLoginProof{Version: challenge.loginVersion, Verified: true}, csrf: oidcRandom()}, true
+	return &browserSession{RequestID: session.RequestID, Expires: session.Expires, HumanID: challenge.principal, Proof: LoginProof{Version: challenge.loginVersion, Verified: true}, CSRF: RandomNonce()}, true
 }
 
-func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) (func(), bool) {
+func (o *Login) reserveEmailAttempt(now time.Time, address, peer string) (func(), bool) {
 	if o.sharedDB == nil {
 		if !o.emailDelivery.Reserve(now, address, peer) {
 			return nil, false
@@ -182,7 +174,7 @@ func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) 
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(2081294132)`); err != nil {
 		return nil, false
 	}
-	period := now.UnixMilli() / auth.EmailDeliveryPeriod.Milliseconds()
+	period := now.UnixMilli() / EmailDeliveryPeriod.Milliseconds()
 	if _, err = tx.ExecContext(ctx, `DELETE FROM oauth_email_delivery_counts WHERE period<$1`, period); err != nil {
 		return nil, false
 	}
@@ -196,19 +188,19 @@ func (o *oauthBrowser) reserveEmailAttempt(now time.Time, address, peer string) 
 	for _, budget := range []struct {
 		scope string
 		limit int
-	}{{"instance", 120}, {"address:" + hash(address), 3}, {"peer:" + peer, 20}} {
+	}{{"instance", 120}, {"address:" + loginHash(address), 3}, {"peer:" + peer, 20}} {
 		var used int
 		err = tx.QueryRowContext(ctx, `SELECT count FROM oauth_email_delivery_counts WHERE period=$1 AND scope=$2`, period, budget.scope).Scan(&used)
 		if err != nil && err != sql.ErrNoRows || used >= budget.limit {
 			return nil, false
 		}
 	}
-	for _, scope := range []string{"instance", "address:" + hash(address), "peer:" + peer} {
+	for _, scope := range []string{"instance", "address:" + loginHash(address), "peer:" + peer} {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_email_delivery_counts(period,scope,count) VALUES($1,$2,1) ON CONFLICT(period,scope) DO UPDATE SET count=oauth_email_delivery_counts.count+1`, period, scope); err != nil {
 			return nil, false
 		}
 	}
-	id := oidcRandom()
+	id := RandomNonce()
 	// Sending itself has a 15-second deadline. Expiry recovers a crashed sender.
 	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_email_delivery_attempts(id,expires_at_ms) VALUES($1,$2)`, id, now.Add(20*time.Second).UnixMilli()); err != nil {
 		return nil, false

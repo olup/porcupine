@@ -63,7 +63,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			Analytics: s.lake != nil, NativeS3Storage: s.lakeS3Storage, QueryExports: s.exports != nil, WebhookPipelines: s.pipelines != nil,
 			S3QueryPipelines: s.pipelines != nil && s.lake != nil,
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil && s.oauth.config.Email.SendCode != nil,
-			OIDCSignIn:       s.oauth != nil && s.oauth.oidc != nil,
+			OIDCSignIn:       s.oauth != nil && s.oauth.browser != nil && s.oauth.browser.HasOIDC(),
 			SharedControl:    s.shared != nil,
 			OwnerRouting:     s.shared != nil,
 		},

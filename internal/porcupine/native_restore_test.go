@@ -176,7 +176,7 @@ func TestNativeRestoreOAuthCredentialsAndRevokedHumanOTPStayInvalid(t *testing.T
 		t.Fatal("fresh admin could not invite a fresh human")
 	}
 	start := httptest.NewRecorder()
-	s.startEmailLogin(start, oauthAuthorizationRequest{ID: "recovery-otp-check", ClientName: "Fresh recovery tool"})
+	s.oauth.browser.Start(start, httptest.NewRequest("GET", j.issuer+"/oauth/authorize", nil), auth.LoginRequest{ID: "recovery-otp-check", ClientName: "Fresh recovery tool"})
 	csrf := csrfFromJourneyForm(t, start.Body.String())
 	cookie := start.Result().Cookies()[0]
 	form := url.Values{"email": {"revoked@example.test"}, "csrf": {csrf}}
