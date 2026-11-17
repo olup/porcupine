@@ -63,6 +63,8 @@ Uploading, completing, or cancelling an existing job requires its creator or an 
 
 Network errors and temporary server pressure trigger bounded retries. Redirects are rejected. If retries are exhausted, the command prints the import ID and exits with an error. Repeating the command preserves already acknowledged progress. Concurrent writers can cause an offset conflict; rerun after the other writer stops.
 
+In the development server, each chunk commit is bounded to 30 seconds, or the caller's earlier deadline. A shared worker validates its ingestion policy before the atomic commit. Crossing the policy refresh interval during that commit does not invalidate already processed rows. Every new chunk checks policy again, and a failed commit preserves the previous checkpoint for retry.
+
 ## Check the result
 
 The summary contains accepted and duplicate counts, invalid-row counts, and bounded diagnostic samples with file IDs and line numbers. It does not print event contents. CLI preflight errors identify the filename, line, and missing field.

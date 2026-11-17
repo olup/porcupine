@@ -65,6 +65,9 @@ WHERE p.id=$1 AND c.period_start=$2 AND c.refreshed_at_ms>=$3)`, project, period
 	return s.syncSharedIngestion(ctx)
 }
 
+// Both acceptance owners call prepareSharedAcceptance before opening the
+// journal transaction. Budget debits use that validated snapshot for the whole
+// transaction; policy freshness is an admission check, not a per-row deadline.
 func (s *Service) consumeSharedTenantEvents(ctx context.Context, tx *sql.Tx, project string, acceptedAt time.Time, count int64) error {
 	if count == 0 {
 		return nil
@@ -77,17 +80,14 @@ func (s *Service) consumeSharedTenantEvents(ctx context.Context, tx *sql.Tx, pro
 	var tenant string
 	var allowed bool
 	var allowance sql.NullInt64
-	var local, global, own, refreshed int64
+	var local, global, own int64
 	err := tx.QueryRowContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,
-coalesce(u.accepted_events,0),c.global_accepted,c.own_published,c.refreshed_at_ms
+coalesce(u.accepted_events,0),c.global_accepted,c.own_published
 FROM projects p JOIN tenants t ON t.id=p.tenant_id
 JOIN shared_tenant_cache c ON c.tenant_id=t.id AND c.period_start=$1
-LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE p.id=$2`, period, project).Scan(&tenant, &allowed, &allowance, &local, &global, &own, &refreshed)
+LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE p.id=$2`, period, project).Scan(&tenant, &allowed, &allowance, &local, &global, &own)
 	if err != nil {
 		return err
-	}
-	if refreshed < time.Now().Add(-sharedIngestionRefreshInterval).UnixMilli() {
-		return errors.New("shared ingestion policy expired")
 	}
 	if !allowed {
 		return &tenantIngestionError{code: "ingestion_suspended", message: "tenant ingestion is suspended", periodEnd: end.Format(time.RFC3339)}

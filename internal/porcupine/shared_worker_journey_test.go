@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -320,6 +321,21 @@ func TestSharedWorkerNativeCLIInterruptedImportResume(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
+	// Advance the cached policy's age after the first row without sleeping.
+	// The admitted chunk must finish against its transaction snapshot; its
+	// retry/resume must refresh policy before starting another transaction.
+	var aged atomic.Bool
+	consume := a.service.eventRules.consumeTenant
+	a.service.eventRules.consumeTenant = func(ctx context.Context, tx *sql.Tx, project string, at time.Time, count int64) error {
+		if err := consume(ctx, tx, project, at, count); err != nil {
+			return err
+		}
+		if aged.CompareAndSwap(false, true) {
+			_, err := tx.ExecContext(ctx, `UPDATE shared_tenant_cache SET refreshed_at_ms=0`)
+			return err
+		}
+		return nil
+	}
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Historical owner")
 	_, token := sharedJourneyKey(t, b.host.URL, project, []string{"imports:write", "events:write", "events:read"})
 	binary := filepath.Join(t.TempDir(), "porcupine")
