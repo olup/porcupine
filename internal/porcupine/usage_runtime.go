@@ -30,6 +30,9 @@ func usageMetadata(ctx context.Context, db *sql.DB, key, value string) (string, 
 	return current, err
 }
 func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
+	if s.hosted != nil {
+		return s.initializeHostedUsage(ctx, c)
+	}
 	config, err := usage.Normalize(c)
 	if err != nil {
 		return err

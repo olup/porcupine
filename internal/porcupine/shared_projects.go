@@ -12,6 +12,9 @@ import (
 // credentials are authenticated against control storage, never against these
 // uncredentialed local actor records.
 func (s *Service) ensureProjectLocal(ctx context.Context, project string, a auth.Principal) error {
+	if s.hosted != nil {
+		return s.requireProjectActive(ctx, project)
+	}
 	if s.shared != nil {
 		owner, _, err := s.sharedProjectOwner(ctx, project)
 		if err != nil {
@@ -78,6 +81,9 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 }
 
 func (s *Service) projectOperationNeedsOwner(operation string) bool {
+	if s.hosted != nil {
+		return false
+	}
 	switch operation {
 	case "get-event-schema":
 		return s.hostedQueries == nil

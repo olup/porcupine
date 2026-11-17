@@ -2,6 +2,8 @@
 
 Decision record, 17 November 2026. **Target, not implemented.** The published release is v0.14.0. Current shared deployments still require owner-local SQLite volumes. This design replaces the hosted proposal in [the earlier SaaS notes](saas-and-compute-plans.md#future-saas-architecture-to-evaluate); it does not change the standalone durability contract.
 
+See [hosted profile composition](hosted-profile-composition.md) for the gated startup candidate and its fixture.
+
 ## Two acceptance contracts
 
 | Contract | Standalone | Hosted target |

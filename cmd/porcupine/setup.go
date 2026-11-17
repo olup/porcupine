@@ -74,6 +74,9 @@ func run(args []string, input io.Reader, output io.Writer) error {
 		return err
 	}
 	if restore {
+		if s.get("PORCUPINE_PROFILE") == string(porcupine.ProfileHosted) {
+			return errors.New("hosted profile recovery uses PostgreSQL and S3")
+		}
 		return s.runNativeRestore(context.Background(), input, output)
 	}
 	addr, config, err := s.serviceConfig()

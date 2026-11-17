@@ -19,7 +19,7 @@ const (
 
 type InstanceChecks struct {
 	ExternalAuthentication DependencyStatus `json:"external_authentication,omitempty" enum:"ok,unavailable" doc:"Configured external signing-key cache freshness. This check does not contact the issuer. Unavailable does not block public ingestion or native machine keys."`
-	SQLite                 DependencyStatus `json:"sqlite" enum:"ok,unavailable" doc:"Live SQLite connection check, bounded to one second."`
+	SQLite                 DependencyStatus `json:"sqlite" enum:"ok,unavailable,not_configured" doc:"Live SQLite connection check, bounded to one second."`
 	DuckLake               DependencyStatus `json:"ducklake" enum:"ok,unavailable,not_configured" doc:"DuckLake registry identity and configured PostgreSQL metadata connection check, bounded to one second."`
 	SharedControl          DependencyStatus `json:"shared_control,omitempty" enum:"ok,unavailable" doc:"Configured shared PostgreSQL control connection check, bounded to one second. Omitted for a local installation."`
 	WorkerRegistration     DependencyStatus `json:"worker_registration,omitempty" enum:"ok,unavailable" doc:"Current worker registration and its dedicated PostgreSQL session lock, bounded to one second. Omitted for a local installation."`
@@ -70,7 +70,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			EmailSignIn:      s.oauth != nil && s.oauth.config.Email != nil && s.oauth.config.Email.SendCode != nil,
 			OIDCSignIn:       s.oauth != nil && s.oauth.browser != nil && s.oauth.browser.HasOIDC(),
 			SharedControl:    s.shared != nil,
-			OwnerRouting:     s.shared != nil,
+			OwnerRouting:     s.shared != nil && s.hosted == nil,
 		},
 	}
 	if s.externalAuthEnabled() {
@@ -91,12 +91,16 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 			result.QueryExecution = &health
 		}
 	}
-	probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
-	err := s.db.PingContext(probe)
-	cancel()
-	if err != nil {
-		result.Checks.SQLite = dependencyUnavailable
-		result.Status = "degraded"
+	if s.db == nil {
+		result.Checks.SQLite = dependencyNotConfigured
+	} else {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		err := s.db.PingContext(probe)
+		cancel()
+		if err != nil {
+			result.Checks.SQLite = dependencyUnavailable
+			result.Status = "degraded"
+		}
 	}
 	if s.shared == nil {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
@@ -109,7 +113,9 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 	}
 	if s.shared != nil {
 		result.Checks.SharedControl = dependencyUnavailable
-		result.Checks.WorkerRegistration = dependencyUnavailable
+		if result.Configuration.OwnerRouting {
+			result.Checks.WorkerRegistration = dependencyUnavailable
+		}
 		if s.control != nil {
 			probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
 			err := s.control.PingContext(probe)
@@ -131,7 +137,7 @@ AND EXISTS(SELECT 1 FROM pg_locks WHERE pid=$3 AND locktype='advisory' AND grant
 				}
 			}
 		}
-		if result.Checks.SharedControl != dependencyOK || result.Checks.WorkerRegistration != dependencyOK {
+		if result.Checks.SharedControl != dependencyOK || result.Configuration.OwnerRouting && result.Checks.WorkerRegistration != dependencyOK {
 			result.Status = "degraded"
 		}
 	}

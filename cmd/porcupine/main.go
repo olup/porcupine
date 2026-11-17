@@ -26,12 +26,12 @@ func main() {
 	}
 }
 
-func serve(config porcupine.Config, addr string) error {
+func serve(config porcupine.Config, addr string) (result error) {
 	s, err := porcupine.Open(config)
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	defer func() { result = errors.Join(result, s.Close()) }()
 	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(config.DuckLake) + time.Duration(config.InteractiveQueries.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -39,7 +39,7 @@ func serve(config porcupine.Config, addr string) error {
 	go func() {
 		defer close(drained)
 		<-ctx.Done()
-		s.BeginQueryDrain()
+		s.BeginDrain()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {
@@ -110,6 +110,9 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	sharedConfig, err := s.sharedConfiguration()
 	if err != nil {
 		return "", porcupine.Config{}, err
+	}
+	if s.get("PORCUPINE_PROFILE") == string(porcupine.ProfileHosted) && sharedConfig != nil && duckLake.PostgresURL == "" {
+		duckLake.PostgresURL = sharedConfig.DatabaseURL
 	}
 	retention, err := s.receiptRetention()
 	if err != nil {

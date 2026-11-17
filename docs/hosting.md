@@ -78,6 +78,8 @@ Analytical S3 is separate from export results, pipeline destinations, and backup
 
 The same binary supports both modes. Keep the default local mode for one server. Shared mode adds PostgreSQL control and catalog metadata, S3 Parquet, and stable worker identities. Each project still depends on its owner's local journal and volume; there is no automatic owner failover. The [storage mode comparison](storage.md#unreleased-separate-control-and-journal) and [shared setup](reference/shared-deployment.md) describe the boundary and required settings.
 
+The [stateless hosted candidate](design/hosted-profile-composition.md) can validate configuration in development builds. Public startup remains gated.
+
 A fresh development installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
 
 ## Keep data and resources safe

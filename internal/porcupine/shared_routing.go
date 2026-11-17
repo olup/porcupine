@@ -346,7 +346,7 @@ func readSharedRouteBody(r *http.Request) ([]byte, bool, error) {
 }
 
 func (s *Service) forwardSharedProject(w http.ResponseWriter, r *http.Request, project string) bool {
-	if s.shared == nil {
+	if s.shared == nil || s.hosted != nil {
 		return false
 	}
 	owner, epoch, err := s.sharedProjectOwner(r.Context(), project)
@@ -457,7 +457,7 @@ func writeSharedRouteProblem(w http.ResponseWriter, err error) {
 
 func (s *Service) sharedRoutingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.shared == nil {
+		if s.shared == nil || s.hosted != nil {
 			stripSharedRouteHeaders(r.Header)
 			next.ServeHTTP(w, r)
 			return

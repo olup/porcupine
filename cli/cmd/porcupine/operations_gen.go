@@ -447,7 +447,7 @@ var operations = []operation{
 	},
 	{
 		ID: "list-project-events", Method: "GET", Path: "/api/v1/projects/{id}/events",
-		Summary: "Inspect recent queued events awaiting delivery; use query-events for analytical history",
+		Summary: "Inspect recent events in the configured storage profile; use query-events for analytical history",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 100)", Required: false},

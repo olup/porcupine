@@ -2099,7 +2099,8 @@
             "description": "Live SQLite connection check, bounded to one second.",
             "enum": [
               "ok",
-              "unavailable"
+              "unavailable",
+              "not_configured"
             ],
             "type": "string"
           },
@@ -21590,7 +21591,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Inspect recent queued events awaiting delivery; use query-events for analytical history"
+        "summary": "Inspect recent events in the configured storage profile; use query-events for analytical history"
       }
     },
     "/api/v1/projects/{id}/events/{uuid}": {

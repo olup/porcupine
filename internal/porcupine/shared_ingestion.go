@@ -263,7 +263,24 @@ func (s *Service) sharedCookielessKey(ctx context.Context, tx *sql.Tx, day strin
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	shared, err := s.control.BeginTx(ctx, nil)
+	secret, err = (hostedCookielessKeys{s.control}).CookielessKey(ctx, day)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO cookieless_keys(day,secret) VALUES($1,$2)`, day, secret); err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM cookieless_keys WHERE day<$1`, day); err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
+type hostedCookielessKeys struct{ db *sql.DB }
+
+func (k hostedCookielessKeys) CookielessKey(ctx context.Context, day string) ([]byte, error) {
+	var latest sql.NullString
+	shared, err := k.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +294,7 @@ func (s *Service) sharedCookielessKey(ctx context.Context, tx *sql.Tx, day strin
 	if latest.Valid && latest.String > day {
 		return nil, errors.New("cookieless clock moved before the active identity day")
 	}
-	secret = make([]byte, 32)
+	secret := make([]byte, 32)
 	if _, err = rand.Read(secret); err != nil {
 		return nil, err
 	}
@@ -291,12 +308,6 @@ func (s *Service) sharedCookielessKey(ctx context.Context, tx *sql.Tx, day strin
 		return nil, err
 	}
 	if err = shared.Commit(); err != nil {
-		return nil, err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cookieless_keys(day,secret) VALUES($1,$2)`, day, secret); err != nil {
-		return nil, err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM cookieless_keys WHERE day<$1`, day); err != nil {
 		return nil, err
 	}
 	return secret, nil

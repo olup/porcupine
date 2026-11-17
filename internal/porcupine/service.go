@@ -28,13 +28,14 @@ import (
 )
 
 type Config struct {
-	Profile        DeploymentProfile
-	DBPath         string
-	ControlDBPath  string
-	BootstrapToken string
-	QueueMaxEvents int
-	QueueMaxBytes  int64
-	AcceptanceMode AcceptanceMode
+	allowUnreleasedHostedFixture bool
+	Profile                      DeploymentProfile
+	DBPath                       string
+	ControlDBPath                string
+	BootstrapToken               string
+	QueueMaxEvents               int
+	QueueMaxBytes                int64
+	AcceptanceMode               AcceptanceMode
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
 	ReceiptRetention   time.Duration
@@ -55,6 +56,7 @@ type Config struct {
 }
 
 type Service struct {
+	hosted                      *hostedRuntime
 	control                     *sql.DB
 	localAdmission              contextMutex
 	shared                      *sharedRuntime
@@ -105,12 +107,81 @@ type Service struct {
 	usage                 *usageRuntime
 }
 
+func newServiceRuntime(c Config, interactiveConfig InteractiveQueryConfig) (*Service, error) {
+	var err error
+	var oauth *oauthRuntime
+	var resources *resourceRuntime
+	if c.Auth != nil && c.Auth.Mode == "external" {
+		resources, err = normalizeExternalRuntime(*c.Auth)
+		if err != nil {
+			return nil, err
+		}
+	} else if c.OAuth != nil {
+		var err error
+		oauth, err = normalizeOAuthConfig(*c.OAuth)
+		if err != nil {
+			return nil, err
+		}
+		resources = newResourceRuntime(oauth.issuer)
+	}
+	proxies, err := parseTrustedProxies(c.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+	if c.Clock == nil {
+		c.Clock = time.Now
+	}
+	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
+		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+	s.captureSlots = make(chan struct{}, 32)
+	s.deliveryMaxEvents = 100
+	s.deliveryMaxBytes = 4 << 20
+	s.importSlots = make(chan struct{}, 2)
+	s.tokenSlots = make(chan struct{}, 8)
+	s.statusSlots = make(chan struct{}, 1)
+	return s, nil
+}
+
+func (s *Service) initializeDuckLake(config lakeapi.DuckLakeConfig) error {
+	var err error
+	s.lake, err = lakeapi.NewDuckLake(config)
+	if err != nil {
+		return err
+	}
+	s.lakeS3Storage = config.S3 != nil
+	if s.lakeS3Storage {
+		s.lakeS3RequestTimeoutSeconds = config.S3.RequestTimeoutSeconds
+		if s.lakeS3RequestTimeoutSeconds == 0 {
+			s.lakeS3RequestTimeoutSeconds = 5
+		}
+	}
+	s.lakeMemoryMB = config.MemoryLimitMB
+	if config.PostgresURL != "" {
+		s.lakeMetadataTimeoutSeconds = config.MetadataTimeoutSeconds
+		if s.lakeMetadataTimeoutSeconds == 0 {
+			s.lakeMetadataTimeoutSeconds = 10
+		}
+	}
+	if s.lakeMemoryMB == 0 {
+		s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
+	}
+	s.deliveryMaxEvents = 1000
+	return nil
+}
+
 func Open(c Config) (*Service, error) {
 	if err := ValidateConfig(c); err != nil {
 		return nil, err
 	}
 	if c.Profile == ProfileHosted {
-		return nil, errors.New("hosted profile startup is unavailable pending shared job and lifecycle verification")
+		if !c.allowUnreleasedHostedFixture {
+			return nil, errors.New("hosted profile startup is unavailable pending physical deletion and recovery verification")
+		}
+		return openHostedProfile(c)
 	}
 	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
 	if err != nil {
@@ -155,21 +226,6 @@ func Open(c Config) (*Service, error) {
 	if c.QueueMaxBytes == 0 {
 		c.QueueMaxBytes = DefaultQueueMaxBytes
 	}
-	var oauth *oauthRuntime
-	var resources *resourceRuntime
-	if c.Auth != nil && c.Auth.Mode == "external" {
-		resources, err = normalizeExternalRuntime(*c.Auth)
-		if err != nil {
-			return nil, err
-		}
-	} else if c.OAuth != nil {
-		var err error
-		oauth, err = normalizeOAuthConfig(*c.OAuth)
-		if err != nil {
-			return nil, err
-		}
-		resources = newResourceRuntime(oauth.issuer)
-	}
 	if c.Exports != nil && c.DuckLake == nil {
 		return nil, errors.New("exports require an analytical store")
 	}
@@ -178,14 +234,7 @@ func Open(c Config) (*Service, error) {
 			return nil, err
 		}
 	}
-	proxies, err := parseTrustedProxies(c.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
-	if c.Clock == nil {
-		c.Clock = time.Now
-	}
-	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	s, err := newServiceRuntime(c, interactiveConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -210,9 +259,7 @@ func Open(c Config) (*Service, error) {
 			return nil, err
 		}
 	}
-	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
-	s.control = control
+	s.db, s.control, s.backups = db, control, backups
 	if c.Shared != nil {
 		copyConfig := *c.Shared
 		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
@@ -222,12 +269,6 @@ func Open(c Config) (*Service, error) {
 	durable := &durableAcceptance{db: db, rules: s.eventRules}
 	s.acceptance = durable
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
-	s.captureSlots = make(chan struct{}, 32)
-	s.deliveryMaxEvents = 100
-	s.deliveryMaxBytes = 4 << 20
-	s.importSlots = make(chan struct{}, 2)
-	s.tokenSlots = make(chan struct{}, 8)
-	s.statusSlots = make(chan struct{}, 1)
 	fail := func(err error) (*Service, error) {
 		if s.lake != nil {
 			s.lake.Close()
@@ -332,28 +373,9 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	if c.DuckLake != nil {
-		s.lake, err = lakeapi.NewDuckLake(*c.DuckLake)
-		if err != nil {
+		if err := s.initializeDuckLake(*c.DuckLake); err != nil {
 			return fail(err)
 		}
-		s.lakeS3Storage = c.DuckLake.S3 != nil
-		if s.lakeS3Storage {
-			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
-			if s.lakeS3RequestTimeoutSeconds == 0 {
-				s.lakeS3RequestTimeoutSeconds = 5
-			}
-		}
-		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
-		if c.DuckLake.PostgresURL != "" {
-			s.lakeMetadataTimeoutSeconds = c.DuckLake.MetadataTimeoutSeconds
-			if s.lakeMetadataTimeoutSeconds == 0 {
-				s.lakeMetadataTimeoutSeconds = 10
-			}
-		}
-		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
-		}
-		s.deliveryMaxEvents = 1000
 	}
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
 		return fail(err)
@@ -412,6 +434,9 @@ func Open(c Config) (*Service, error) {
 }
 
 func (s *Service) Close() error {
+	if s.hosted != nil {
+		return s.closeHosted()
+	}
 	if s.shared != nil {
 		s.BeginQueryDrain()
 		if s.sharedQueries.status().Active != 0 {
@@ -583,7 +608,11 @@ func (s *Service) Handler() http.Handler {
 			problem(w, 503, "analytics execution unavailable")
 			return
 		}
-		if err := s.db.PingContext(r.Context()); err != nil {
+		if s.hosted != nil && !s.hosted.buffer.available() {
+			problem(w, 503, "ingestion buffer unavailable")
+			return
+		}
+		if s.db != nil && s.db.PingContext(r.Context()) != nil {
 			problem(w, 503, "storage unavailable")
 			return
 		}
@@ -794,6 +823,20 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		peer.address, err = s.clientIP(r)
 		if err != nil {
 			problem(w, 400, "invalid cookieless client address")
+			return
+		}
+	}
+	if s.hosted != nil {
+		tenant, err := s.projectTenant(ctx, projectID)
+		if err != nil {
+			writeSharedRouteProblem(w, err)
+			return
+		}
+		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID); err != nil {
+			if !writeTenantIngestionError(w, r, err, nativeResponse) {
+				w.Header().Set("Retry-After", "1")
+				problem(w, 503, "tenant ingestion policy unavailable")
+			}
 			return
 		}
 	}

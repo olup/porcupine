@@ -29,6 +29,7 @@ type bufferedFlushBatch struct {
 	id, projectID string
 	events        []bufferedLiveEvent
 	oldest        time.Time
+	admitted      bool
 	bytes         int64
 }
 
@@ -302,10 +303,7 @@ func readyOldest(batch *bufferedFlushBatch) time.Time {
 	return batch.oldest
 }
 func (b *bufferedAcceptance) Drain(ctx context.Context) error {
-	b.mu.Lock()
-	b.draining = true
-	b.mu.Unlock()
-	b.wake()
+	b.stopAdmission()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -338,7 +336,7 @@ func (b *bufferedAcceptance) run() {
 			if p.ready == nil && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.flushInterval)
 				if b.draining || p.pendingBytes >= b.config.flushBytes || !now.Before(due) {
-					p.ready = &bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}
+					p.ready = &bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: p.pending, admitted: true, oldest: p.oldest, bytes: p.pendingBytes}
 					p.pending = nil
 					p.pendingBytes = 0
 					p.oldest = time.Time{}
@@ -449,4 +447,17 @@ func (b *bufferedAcceptance) checkCapacityLocked(projectID string, size int64, c
 		return nil, 0, &acceptanceFailure{message: "buffer is full", retry: true}
 	}
 	return p, overhead, nil
+}
+
+func (b *bufferedAcceptance) stopAdmission() {
+	b.mu.Lock()
+	b.draining = true
+	b.mu.Unlock()
+	b.wake()
+}
+
+func (b *bufferedAcceptance) available() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ctx.Err() == nil && !b.draining && !b.failedLocked()
 }

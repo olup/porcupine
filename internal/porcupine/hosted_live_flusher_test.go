@@ -687,7 +687,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	var final int64
 	var proof string
 	err = a.service.control.QueryRow(`SELECT final_sequence,proof_sha FROM hosted_project_seals WHERE project_id=$1`, project).Scan(&final, &proof)
-	if err != nil || last.BatchID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
+	if err != nil || last.OperationID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
 		t.Fatalf("seal did not preserve and confirm the final native proof: %d, %q, %+v, %v", final, proof, last, err)
 	}
 	other.id = "other-tenant-after-a-seal"

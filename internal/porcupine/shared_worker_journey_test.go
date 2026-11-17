@@ -416,6 +416,7 @@ type sharedJourneyProcessConfig struct {
 	DBPath      string
 	WorkerID    string
 	ReadyFile   string
+	HostedLake  *lakeapi.DuckLakeConfig
 }
 
 func TestSharedWorkerProcessHelper(t *testing.T) {
@@ -433,13 +434,22 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	origin := "http://" + listener.Addr().String()
-	s, err := Open(Config{DBPath: input.DBPath, BootstrapToken: adminToken,
-		Shared: &SharedConfig{DatabaseURL: input.DatabaseURL, WorkerID: input.WorkerID, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)}})
+	cfg := Config{DBPath: input.DBPath, BootstrapToken: adminToken,
+		Shared: &SharedConfig{DatabaseURL: input.DatabaseURL, WorkerID: input.WorkerID, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)}}
+	if input.HostedLake != nil {
+		cfg = Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
+			Shared: &SharedConfig{DatabaseURL: input.DatabaseURL}, DuckLake: input.HostedLake, allowUnreleasedHostedFixture: true}
+	}
+	s, err := Open(cfg)
 	if err != nil {
 		listener.Close()
 		t.Fatal("start shared subprocess", err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Error("worker close:", err)
+		}
+	}()
 	server := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
 	done := make(chan error, 1)
@@ -452,6 +462,7 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 	defer signal.Stop(interrupt)
 	select {
 	case <-interrupt:
+		s.BeginDrain()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		server.Shutdown(ctx)
@@ -465,6 +476,8 @@ type sharedJourneyProcess struct {
 	cmd    *exec.Cmd
 	done   chan struct{}
 	stop   atomic.Bool
+	err    error
+	log    string
 }
 
 func startSharedJourneyProcess(t *testing.T, config sharedJourneyProcessConfig) *sharedJourneyProcess {
@@ -486,8 +499,8 @@ func startSharedJourneyProcess(t *testing.T, config sharedJourneyProcessConfig) 
 		logfile.Close()
 		t.Fatal(err)
 	}
-	worker := &sharedJourneyProcess{cmd: command, done: make(chan struct{})}
-	go func() { command.Wait(); logfile.Close(); close(worker.done) }()
+	worker := &sharedJourneyProcess{cmd: command, done: make(chan struct{}), log: logfile.Name()}
+	go func() { worker.err = command.Wait(); logfile.Close(); close(worker.done) }()
 	t.Cleanup(func() { worker.stopProcess(t, false) })
 	deadline := time.NewTimer(15 * time.Second)
 	defer deadline.Stop()
@@ -520,9 +533,14 @@ func (worker *sharedJourneyProcess) stopProcess(t *testing.T, crash bool) {
 	}
 	select {
 	case <-worker.done:
-	case <-time.After(5 * time.Second):
+		if !crash && worker.err != nil {
+			diagnostic, _ := os.ReadFile(worker.log)
+			t.Error("worker did not stop cleanly", worker.err, string(diagnostic))
+		}
+	case <-time.After(35 * time.Second):
 		worker.cmd.Process.Kill()
 		<-worker.done
+		t.Error("worker did not stop before the shutdown deadline")
 	}
 }
 

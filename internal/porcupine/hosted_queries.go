@@ -18,7 +18,7 @@ type interactiveReader interface {
 }
 
 type hostedQueryRuntime struct {
-	reader   interactiveReader
+	reader   *lakeapi.HostedReader
 	recorder *usage.Recorder
 	register func(context.Context, *sql.Tx, string, string) error
 	finish   func(context.Context, *sql.DB, string, string) error
