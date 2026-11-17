@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/olup/porcupine/internal/porcupine"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func (s settings) nativeBackupConfiguration() (*porcupine.NativeBackupConfig, error) {
+func (s settings) nativeBackupConfiguration() (*lakeapi.NativeBackupConfig, error) {
 	directory := s.get("PORCUPINE_BACKUP_DIR")
 	remote, err := s.nativeBackupS3Configuration()
 	if err != nil {
@@ -25,7 +25,7 @@ func (s settings) nativeBackupConfiguration() (*porcupine.NativeBackupConfig, er
 		}
 		return nil, nil
 	}
-	config := &porcupine.NativeBackupConfig{Directory: directory, S3: remote}
+	config := &lakeapi.NativeBackupConfig{Directory: directory, S3: remote}
 	for _, field := range []struct {
 		name     string
 		target   *time.Duration
@@ -52,7 +52,7 @@ func (s settings) nativeBackupConfiguration() (*porcupine.NativeBackupConfig, er
 	return config, nil
 }
 
-func (s settings) nativeBackupS3Configuration() (*porcupine.DuckLakeS3Config, error) {
+func (s settings) nativeBackupS3Configuration() (*lakeapi.DuckLakeS3Config, error) {
 	const prefix = "PORCUPINE_BACKUP_S3_"
 	configured := false
 	for _, suffix := range analyticalS3Environment {
@@ -61,7 +61,7 @@ func (s settings) nativeBackupS3Configuration() (*porcupine.DuckLakeS3Config, er
 	if !configured {
 		return nil, nil
 	}
-	c := &porcupine.DuckLakeS3Config{Bucket: s.get(prefix + "BUCKET"), Prefix: s.get(prefix + "PREFIX"), Region: s.get(prefix + "REGION"), Endpoint: s.get(prefix + "ENDPOINT"), AccessKeyID: s.get(prefix + "ACCESS_KEY_ID"), SecretAccessKey: s.get(prefix + "SECRET_ACCESS_KEY"), SessionToken: s.get(prefix + "SESSION_TOKEN"), CACertFile: s.get(prefix + "CA_CERT_FILE")}
+	c := &lakeapi.DuckLakeS3Config{Bucket: s.get(prefix + "BUCKET"), Prefix: s.get(prefix + "PREFIX"), Region: s.get(prefix + "REGION"), Endpoint: s.get(prefix + "ENDPOINT"), AccessKeyID: s.get(prefix + "ACCESS_KEY_ID"), SecretAccessKey: s.get(prefix + "SECRET_ACCESS_KEY"), SessionToken: s.get(prefix + "SESSION_TOKEN"), CACertFile: s.get(prefix + "CA_CERT_FILE")}
 	if c.Bucket == "" || c.Prefix == "" || c.Region == "" {
 		return nil, errors.New("backup S3 requires PORCUPINE_BACKUP_S3_BUCKET, PREFIX and REGION")
 	}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/olup/porcupine/internal/importer"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func importRowsForTest(t *testing.T, s *Service, project, kind string, raw ...string) []ImportRowResult {
@@ -138,7 +139,7 @@ func TestImportIdentityNeedsExplicitEvidenceAndPreservesLiveProfiles(t *testing.
 	}
 	var raw string
 	s.db.QueryRow(`SELECT identity_snapshot FROM events WHERE uuid='stripped-set'`).Scan(&raw)
-	var snapshot identitySnapshot
+	var snapshot lakeapi.IdentitySnapshot
 	if json.Unmarshal([]byte(raw), &snapshot) != nil || snapshot.IdentifiedID != "" {
 		t.Fatal("stripped archived control made up profile state")
 	}

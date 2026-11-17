@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
@@ -22,7 +25,7 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 		w.Write(committed)
 	}))
 	defer endpoint.Close()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "history.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "history.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Pipelines: &PipelineConfig{Key: bytes.Repeat([]byte{9}, 32), AllowedS3Endpoints: []string{endpoint.URL}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +43,7 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 	}
 	json.Unmarshal(p.Config, &spec)
 	start, _ := time.Parse(time.RFC3339, spec.StartAt)
-	run := newID()
+	run := eventapi.NewID()
 	_, err = s.db.Exec(`WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1001) INSERT INTO pipeline_s3_runs(id,pipeline_id,window_start_ms,window_end_ms,state,created_at_ms,completed_at_ms) SELECT 'history-'||i,?,?-i*60000,?-(i-1)*60000,'succeeded',1,2 FROM n`, id, start.UnixMilli(), start.UnixMilli())
 	if err != nil {
 		t.Fatal(err)

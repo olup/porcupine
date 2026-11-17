@@ -8,7 +8,9 @@ import (
 	"errors"
 	"strings"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type storedIngestionMetadata struct {
@@ -18,13 +20,13 @@ type storedIngestionMetadata struct {
 	Context   json.RawMessage `json:"context"`
 }
 
-func prepareIngestionMetadata(event *Event, input *ingestfmt.Metadata, configuredSource string) error {
+func prepareIngestionMetadata(event *eventapi.Event, input *ingestfmt.Metadata, configuredSource string) error {
 	if input.Protocol != "native" && input.Protocol != "segment" && !(input.Protocol == "posthog" && configuredSource != "" && configuredSource != "posthog") {
 		return errors.New("invalid ingestion protocol")
 	}
 	messageID := input.MessageID
 	if messageID == "" {
-		messageID = newID()
+		messageID = eventapi.NewID()
 	}
 	if strings.TrimSpace(messageID) == "" || len(messageID) > 1024 {
 		return errors.New("message_id must contain 1 to 1024 bytes")
@@ -61,11 +63,11 @@ func prepareIngestionMetadata(event *Event, input *ingestfmt.Metadata, configure
 	}
 	// Every legacy PostHog UUID is at most 128 bytes. This namespace is longer,
 	// so it remains disjoint even when an old producer chose a matching prefix.
-	event.UUID = sourceEventUUIDPrefix + hex.EncodeToString(digest.Sum(nil))
+	event.UUID = lakeapi.SourceEventUUIDPrefix + hex.EncodeToString(digest.Sum(nil))
 	return nil
 }
 
-func encodeIngestionMetadata(event Event) string {
+func encodeIngestionMetadata(event eventapi.Event) string {
 	if event.SourceID == "" {
 		return ""
 	}
@@ -73,7 +75,7 @@ func encodeIngestionMetadata(event Event) string {
 	return string(raw)
 }
 
-func decodeIngestionMetadata(event *Event, raw string) error {
+func decodeIngestionMetadata(event *eventapi.Event, raw string) error {
 	if raw == "" {
 		return nil
 	}

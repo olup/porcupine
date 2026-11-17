@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func databaseFile(t *testing.T, db *sql.DB) string {
@@ -162,7 +164,7 @@ func TestLocalControlFailureBlocksAcceptanceAndReadiness(t *testing.T) {
 	if err := s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	batch := preparedLiveBatch{projectID: projectID, events: []Event{{ProjectID: projectID, UUID: "not-accepted", Event: "hello", DistinctID: "actor", Properties: []byte(`{}`), Timestamp: now(), ReceivedAt: now()}}}
+	batch := preparedLiveBatch{projectID: projectID, events: []eventapi.Event{{ProjectID: projectID, UUID: "not-accepted", Event: "hello", DistinctID: "actor", Properties: []byte(`{}`), Timestamp: now(), ReceivedAt: now()}}}
 	if _, err := s.acceptance.Accept(context.Background(), batch, ingestionPeer{}, false); err == nil {
 		t.Fatal("accepted an event without authoritative control")
 	}

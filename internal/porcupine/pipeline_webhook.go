@@ -9,6 +9,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 var errWebhookCapacity = errors.New("webhook queue is full")
@@ -50,7 +51,7 @@ type webhookAcceptance struct {
 	rules  *eventRules
 }
 
-func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []Event) error {
+func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []eventapi.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -95,7 +96,7 @@ func (p *webhookAcceptance) Enqueue(ctx context.Context, tx *sql.Tx, events []Ev
 	}
 	cfg := *p.config
 	for _, d := range destinations {
-		matching := make([]Event, 0, len(events))
+		matching := make([]eventapi.Event, 0, len(events))
 		for _, event := range events {
 			if event.ProjectID != projectID {
 				return errors.New("mixed webhook projects")

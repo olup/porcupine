@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type identityRecoveryTokens struct{ access, refresh string }
@@ -74,7 +75,7 @@ func identityRecoveryVersion(t *testing.T, f *oidcFixture) int64 {
 
 func identityRecoveryOtherHuman(t *testing.T, f *oidcFixture) string {
 	t.Helper()
-	human := EmailHuman{ID: newID(), Email: "unaffected@example.test", CreatedAt: now(), Projects: []string{"project-b"}, Permissions: []string{"events:read", "management:read"}, Grants: []HumanProjectGrant{{ProjectID: "project-b", Permissions: []string{"events:read", "management:read"}}}}
+	human := EmailHuman{ID: eventapi.NewID(), Email: "unaffected@example.test", CreatedAt: now(), Projects: []string{"project-b"}, Permissions: []string{"events:read", "management:read"}, Grants: []HumanProjectGrant{{ProjectID: "project-b", Permissions: []string{"events:read", "management:read"}}}}
 	tx, err := f.s.control.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)

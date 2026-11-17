@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 const oauthRequestTTL = 10 * time.Minute
@@ -258,7 +259,7 @@ func (s *Service) issueOAuthAuthorizationCode(ctx context.Context, request oauth
 	if tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE g.human_id=$1) FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id WHERE k.revoked_at IS NULL AND g.expires_at_ms>$2`, human.ID, s.clock().UnixMilli()).Scan(&count, &perHuman) != nil || count >= 1000 || perHuman >= 64 {
 		return "", errOAuthCapacity
 	}
-	grantID := newID()
+	grantID := eventapi.NewID()
 	code, err := auth.RandomSecret("pc_ac_")
 	if err != nil {
 		return "", err

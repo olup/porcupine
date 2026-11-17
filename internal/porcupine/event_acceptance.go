@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // eventRules is the shared policy for live and historical acceptance. Its clock
@@ -31,7 +33,7 @@ type eventRules struct {
 
 type preparedLiveBatch struct {
 	projectID  string
-	events     []Event
+	events     []eventapi.Event
 	cookieless bool
 }
 
@@ -57,12 +59,12 @@ func (e *acceptanceFailure) Error() string { return e.message }
 type eventAcceptance struct {
 	db              *sql.DB
 	rules           *eventRules
-	enqueueWebhooks func(context.Context, *sql.Tx, []Event) error
+	enqueueWebhooks func(context.Context, *sql.Tx, []eventapi.Event) error
 }
 
 func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time) (preparedLiveBatch, error) {
 	received := receiptTime.Format(time.RFC3339Nano)
-	events := make([]Event, 0, len(batch))
+	events := make([]eventapi.Event, 0, len(batch))
 	cookieless := false
 	for _, e := range batch {
 		if e.DistinctID == "" && e.ingestion == nil {
@@ -80,7 +82,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 			return preparedLiveBatch{}, errors.New("unsupported reserved control event")
 		}
 		if e.UUID == "" && e.ingestion == nil {
-			e.UUID = newID()
+			e.UUID = eventapi.NewID()
 		}
 		if e.ingestion == nil && len(e.UUID) > 128 {
 			return preparedLiveBatch{}, errors.New("uuid exceeds 128 characters")
@@ -117,10 +119,10 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		if err != nil {
 			return preparedLiveBatch{}, errors.New("invalid properties")
 		}
-		prepared := Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
+		prepared := eventapi.Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
 		metadata := e.ingestion
 		if metadata == nil && source != "" {
-			enriched := eventWithMetadata(prepared)
+			enriched := lakeapi.EventWithMetadata(prepared)
 			metadata = &ingestfmt.Metadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
 		}
 		if metadata != nil {
@@ -184,7 +186,7 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	accepted, duplicates, identityIgnored := 0, 0, 0
 	var receipts []ingestionReceipt
 	var acceptedBytes int64
-	var webhookEvents []Event
+	var webhookEvents []eventapi.Event
 	for _, e := range batch.events {
 		exists, lookupErr := localReceipt(ctx, tx, batch.projectID, e.UUID)
 		if lookupErr != nil {
@@ -282,7 +284,7 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 	return liveAcceptanceResult{accepted: accepted, duplicates: duplicates, identityIgnored: identityIgnored, receipts: receipts}, nil
 }
 
-func (r *eventRules) insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event Event) (int64, error) {
+func (r *eventRules) insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event eventapi.Event) (int64, error) {
 	args := []any{event.ProjectID, event.UUID, event.Event, event.DistinctID, string(event.Properties), event.Timestamp, event.ReceivedAt, encodeIngestionMetadata(event), event.Imported}
 	query := `INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata,is_imported) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`
 	if r.allocateID != nil {

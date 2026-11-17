@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) dbPathForReceiptTest(t *testing.T) string {
@@ -19,7 +21,7 @@ func (s *Service) dbPathForReceiptTest(t *testing.T) string {
 func TestPermanentReceiptsKeepNativeIDsAcrossRestart(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
+	config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -77,10 +79,10 @@ func TestReceiptAndHeadNumericIDRemainAtomic(t *testing.T) {
 	}
 }
 
-func attachCoreLake(t *testing.T, s *Service) *DuckLakeConfig {
+func attachCoreLake(t *testing.T, s *Service) *lakeapi.DuckLakeConfig {
 	t.Helper()
-	config := &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1}
-	lake, err := newDuckLake(*config)
+	config := &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 128, Threads: 1}
+	lake, err := lakeapi.NewDuckLake(*config)
 	if err != nil {
 		t.Fatal(err)
 	}

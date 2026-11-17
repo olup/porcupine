@@ -8,15 +8,18 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *duckLakeStore {
+func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *lakeapi.DuckLakeStore {
 	t.Helper()
-	lake, err := newDuckLake(DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := lake.(*duckLakeStore)
+	s := lake.(*lakeapi.DuckLakeStore)
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)
@@ -25,17 +28,17 @@ func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *duckLakeS
 	return s
 }
 
-func lakeStorageProjection(t *testing.T, project, uuid string, id int64) eventProjection {
+func lakeStorageProjection(t *testing.T, project, uuid string, id int64) lakeapi.EventProjection {
 	t.Helper()
-	e := Event{ID: id, ProjectID: project, UUID: uuid, Event: "page_viewed", DistinctID: "anonymous", Properties: json.RawMessage(`{"page":"/home"}`), Timestamp: "2026-11-13T10:00:00Z", ReceivedAt: "2026-11-13T10:00:01Z"}
-	snapshot, err := originalSnapshot(e)
+	e := eventapi.Event{ID: id, ProjectID: project, UUID: uuid, Event: "page_viewed", DistinctID: "anonymous", Properties: json.RawMessage(`{"page":"/home"}`), Timestamp: "2026-11-13T10:00:00Z", ReceivedAt: "2026-11-13T10:00:01Z"}
+	snapshot, err := lakeapi.OriginalSnapshot(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return eventProjection{Event: e, OriginalSnapshot: snapshot}
+	return lakeapi.EventProjection{Event: e, OriginalSnapshot: snapshot}
 }
 
-func lakeStorageCount(t *testing.T, s *duckLakeStore, project, table string) int {
+func lakeStorageCount(t *testing.T, s *lakeapi.DuckLakeStore, project, table string) int {
 	t.Helper()
 	p, release, err := s.LeaseProject(context.Background(), project)
 	if err != nil {

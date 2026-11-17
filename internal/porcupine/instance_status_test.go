@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
@@ -61,7 +62,7 @@ func instanceStatusReaderContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: "status-reader", Permissions: []string{"management:read"}, Projects: []string{"*"}})
 }
 
-func instanceStatusNativeStore(t *testing.T, s *Service) *duckLakeStore {
+func instanceStatusNativeStore(t *testing.T, s *Service) *lakeapi.DuckLakeStore {
 	t.Helper()
 	store := openLakeStorageTest(t, filepath.Join(t.TempDir(), "private-native-archive"), 1)
 	s.lake = store

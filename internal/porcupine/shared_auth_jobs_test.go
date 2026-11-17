@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
@@ -29,7 +30,7 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT actor_id FROM pipelines WHERE id=$1`, expiredPipeline).Scan(&operatorID); err != nil {
 		t.Fatal(err)
 	}
-	healthy := newID()
+	healthy := eventapi.NewID()
 	secret, _ := json.Marshal(WebhookPipelineSecret{Endpoint: "https://healthy.example.test/events"})
 	encrypted, err := s.sealPipelineSecret(project, healthy, secret)
 	if err != nil {
@@ -41,8 +42,8 @@ func TestSharedAuthExpiredConsentDoesNotStarveWebhookQueue(t *testing.T) {
 	scopes := []string{"events:read", "pipelines:write"}
 	grants, _ := json.Marshal(scopes)
 	projects, _ := json.Marshal([]string{project})
-	human := EmailHuman{ID: newID(), Email: "pipeline-owner@example.test", CreatedAt: now.Format(time.RFC3339Nano), Permissions: scopes, Projects: []string{project}, Grants: []HumanProjectGrant{{ProjectID: project, Permissions: scopes}}}
-	client, consent := newID(), newID()
+	human := EmailHuman{ID: eventapi.NewID(), Email: "pipeline-owner@example.test", CreatedAt: now.Format(time.RFC3339Nano), Permissions: scopes, Projects: []string{project}, Grants: []HumanProjectGrant{{ProjectID: project, Permissions: scopes}}}
+	client, consent := eventapi.NewID(), eventapi.NewID()
 	tx, err := s.control.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)

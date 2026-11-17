@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
@@ -121,7 +123,7 @@ func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {
 		if created["project"].(map[string]any)["ingestion_mode"] != ingestionMixed || created["ingest_token"] == "" {
 			t.Fatal("mixed project lost public ingestion compatibility")
 		}
-		request(t, s, "POST", "/capture/", "", captureBody(created["ingest_token"].(string), newID()), 200)
+		request(t, s, "POST", "/capture/", "", captureBody(created["ingest_token"].(string), eventapi.NewID()), 200)
 	}
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"invalid","ingestion_mode":"browser_only"}`, 422)
 	request(t, s, "POST", "/api/v1/projects", adminToken, `{"name":"server","ingestion_mode":"server_only"}`, 503)

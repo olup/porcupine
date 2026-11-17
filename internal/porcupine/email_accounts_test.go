@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestEmailAddressIdentity(t *testing.T) {
@@ -226,7 +227,7 @@ func TestEmailHumanProjectGrantChanges(t *testing.T) {
 	request(t, s, "POST", "/api/v1/humans", admin, `{"email":"lea@example.test","grants":`+all+`,"projects":["`+a+`"]}`, 400)
 
 	// Observe the durable consent principal used by OAuth token validation.
-	grantID := newID()
+	grantID := eventapi.NewID()
 	_, err = s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'test grant',?,'["events:read"]',?,?)`, grantID, hash(token()), `["`+a+`"]`, now())
 	if err != nil {
 		t.Fatal(err)

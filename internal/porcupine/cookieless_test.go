@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
@@ -39,9 +40,9 @@ func cookielessRawRequest(t *testing.T, s *Service, body []byte, peer, ua string
 	return w
 }
 
-func storedCookieless(t *testing.T, s *Service, uuid string) Event {
+func storedCookieless(t *testing.T, s *Service, uuid string) eventapi.Event {
 	t.Helper()
-	var e Event
+	var e eventapi.Event
 	var props string
 	if err := s.db.QueryRow(`SELECT distinct_id,properties,timestamp,received_at FROM events WHERE uuid=?`, uuid).Scan(&e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt); err != nil {
 		t.Fatal(err)

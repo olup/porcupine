@@ -22,6 +22,7 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const sharedJourneySecret = "shared-worker-journey-routing-secret-test-only"
@@ -548,7 +549,7 @@ func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture) (*sharedJo
 		directory := t.TempDir()
 		config := Config{DBPath: filepath.Join(directory, "queue.db"), BootstrapToken: adminToken,
 			Shared:   &SharedConfig{DatabaseURL: control, WorkerID: worker, RouteURL: "http://" + host.Listener.Addr().String(), RoutingSecret: []byte(sharedJourneySecret)},
-			DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), PostgresURL: catalogs, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true, MaintenanceInterval: 24 * time.Hour}}
+			DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), PostgresURL: catalogs, S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true, MaintenanceInterval: 24 * time.Hour}}
 		if fixture.storage.CACertFile == "" {
 			config.Exports = &ExportConfig{S3: exportstore.Config{Endpoint: fixture.storage.Endpoint, Region: fixture.storage.Region, Bucket: fixture.storage.Bucket,
 				Prefix: fixture.storage.Prefix + "/exports", AccessKeyID: fixture.storage.AccessKeyID, SecretAccessKey: fixture.storage.SecretAccessKey, UsePathStyle: true},
@@ -626,7 +627,7 @@ func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
 	if replay := sharedJourneyNative(t, b.host.URL, ingestA, page, 200); replay["duplicates"] != float64(1) || sharedJourneyReceipt(t, replay) != eventID {
 		t.Fatal("native deletion changed the permanent retry receipt", replay)
 	}
-	storeA, storeB := a.service.lake.(*duckLakeStore), b.service.lake.(*duckLakeStore)
+	storeA, storeB := a.service.lake.(*lakeapi.DuckLakeStore), b.service.lake.(*lakeapi.DuckLakeStore)
 	prefixA, prefixB := fixture.projectPrefix(t, storeA, projectA), fixture.projectPrefix(t, storeB, projectB)
 	if len(fixture.keys(t, prefixA)) == 0 || len(fixture.keys(t, prefixB)) == 0 {
 		t.Fatal("shared native events were not written into isolated S3 project prefixes")
@@ -636,7 +637,7 @@ func TestDuckLakeS3SharedPostgresWorkerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := sharedNativeSchema(sharedNativeCatalogID(source, projectA))
+	schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(source, projectA))
 	if err := storeA.SharedCatalog.QueryRowContext(t.Context(), "SELECT count(*) FROM "+schema+".ducklake_inlined_data_tables").Scan(&inlined); err != nil || inlined != 0 {
 		t.Fatal("event rows were inlined into PostgreSQL rather than Parquet/S3", inlined, err)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"golang.org/x/time/rate"
 )
 
@@ -45,7 +46,7 @@ func newExportSink(ctx context.Context, s *Service, job storedExport) *exportSin
 	return &exportSink{s: s, ctx: ctx, job: job, limiter: rate.NewLimiter(rate.Limit(s.exports.config.BandwidthBytesPerSecond), 64<<10), lastProgress: time.Now()}
 }
 
-func (w *exportSink) setColumns(columns []AnalyticsResultColumn) error {
+func (w *exportSink) setColumns(columns []lakeapi.AnalyticsResultColumn) error {
 	if w.encoder != nil {
 		return errExportSink
 	}

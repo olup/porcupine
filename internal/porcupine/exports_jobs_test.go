@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func exportContext(t *testing.T, s *Service, token string) context.Context {
@@ -35,7 +36,7 @@ func exportInput(project, key string) *ExportCreateInput {
 func enableTestExports(t *testing.T, s *Service, maxQueued int) {
 	t.Helper()
 	if s.lake == nil {
-		lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 256})
+		lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 256})
 		if err != nil {
 			t.Fatal(err)
 		}

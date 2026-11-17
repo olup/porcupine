@@ -23,6 +23,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	_ "modernc.org/sqlite"
 )
 
@@ -38,11 +39,11 @@ type Config struct {
 	AllowedOrigins     []string
 	TrustedProxies     []string
 	Clock              func() time.Time
-	DuckLake           *DuckLakeConfig
+	DuckLake           *lakeapi.DuckLakeConfig
 	Pipelines          *PipelineConfig
 	Exports            *ExportConfig
 	OAuth              *OAuthConfig
-	NativeBackup       *NativeBackupConfig
+	NativeBackup       *lakeapi.NativeBackupConfig
 	InteractiveQueries *InteractiveQueryConfig
 	Shared             *SharedConfig
 }
@@ -67,7 +68,7 @@ type Service struct {
 	imports               *importManager
 	allowedOrigins        map[string]bool
 	trustedProxies        []netip.Prefix
-	lake                  lakeStore
+	lake                  lakeapi.LakeStore
 	lakeMemoryMB          int
 	lakeMaintenanceCancel context.CancelFunc
 	lakeMaintenanceDone   chan struct{}
@@ -100,7 +101,7 @@ func Open(c Config) (*Service, error) {
 	}
 	if c.DuckLake != nil {
 		cleanup := *c.DuckLake
-		if err := normalizeDuckLakeCleanup(&cleanup); err != nil {
+		if err := lakeapi.NormalizeDuckLakeCleanup(&cleanup); err != nil {
 			return nil, err
 		}
 	}
@@ -331,7 +332,7 @@ func Open(c Config) (*Service, error) {
 		}
 	}
 	if c.DuckLake != nil {
-		s.lake, err = newDuckLake(*c.DuckLake)
+		s.lake, err = lakeapi.NewDuckLake(*c.DuckLake)
 		if err != nil {
 			return fail(err)
 		}
@@ -350,7 +351,7 @@ func Open(c Config) (*Service, error) {
 			}
 		}
 		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = defaultDuckLakeMemoryMB
+			s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
 		}
 		s.deliveryMaxEvents = 1000
 	}

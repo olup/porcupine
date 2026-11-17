@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"strconv"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
 )
 
@@ -175,7 +177,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 	if active >= importer.MaxActiveJobs {
 		return nil, apiError(503, "active import limit reached")
 	}
-	id = newID()
+	id = eventapi.NewID()
 	source := a.SourceID
 	if source == "" {
 		source = format
@@ -189,7 +191,7 @@ func (m *importManager) createImportUpload(ctx context.Context, input *ImportUpl
 		return nil, apiError(503, "import checksum unavailable")
 	}
 	for index, file := range files {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_files(id,job_id,ordinal,path,kind,size_bytes,sha256,hash_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, newID(), id, index, file.Path, file.Kind, file.SizeBytes, file.SHA256, hashState); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO import_upload_files(id,job_id,ordinal,path,kind,size_bytes,sha256,hash_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, eventapi.NewID(), id, index, file.Path, file.Kind, file.SizeBytes, file.SHA256, hashState); err != nil {
 			return nil, apiError(503, "import manifest unavailable")
 		}
 	}

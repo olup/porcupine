@@ -7,8 +7,10 @@ import (
 	"errors"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type importChunkWork struct {
@@ -39,7 +41,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 			return apiError(503, "ingestion policy unavailable; retry the same chunk")
 		}
 	}
-	events := make([]Event, 0, len(work.rows))
+	events := make([]eventapi.Event, 0, len(work.rows))
 	for _, row := range work.rows {
 		if row.Kind == "events" {
 			events = append(events, row.Event)
@@ -207,7 +209,7 @@ func prepareImportUploadSource(project, source string, rows []importer.Row) erro
 		if source == "posthog" {
 			continue
 		}
-		event := eventWithMetadata(rows[i].Event)
+		event := lakeapi.EventWithMetadata(rows[i].Event)
 		event.ProjectID = project
 		if rows[i].Kind == "persons" {
 			event.EventType = "identify"

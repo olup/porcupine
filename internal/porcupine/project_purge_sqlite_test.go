@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func runProjectPurge(t *testing.T, s *Service, project string, commit bool) {
@@ -119,7 +121,7 @@ func TestProjectPurgeCredentialScopes(t *testing.T) {
 	one, oneToken := key(t, s, []string{"events:read"}, []string{remove})
 	_, bothToken := key(t, s, []string{"events:read"}, []string{remove, keep})
 	_, manager := key(t, s, []string{"management:read"}, []string{keep})
-	h := EmailHuman{ID: newID(), Email: "dev@example.org", CreatedAt: now(), Projects: []string{remove, keep}, Permissions: []string{"events:edit", "events:read"}, Grants: []HumanProjectGrant{{remove, []string{"events:edit"}}, {keep, []string{"events:read"}}}}
+	h := EmailHuman{ID: eventapi.NewID(), Email: "dev@example.org", CreatedAt: now(), Projects: []string{remove, keep}, Permissions: []string{"events:edit", "events:read"}, Grants: []HumanProjectGrant{{remove, []string{"events:edit"}}, {keep, []string{"events:read"}}}}
 	tx, err := s.control.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +197,7 @@ func TestProjectPurgeOIDCIdentityDoesNotRestoreDeletedProject(t *testing.T) {
 	s := service(t, 20)
 	removed, _ := project(t, s)
 	keep, _ := project(t, s)
-	human := EmailHuman{ID: newID(), Email: "member@example.test", CreatedAt: now(), Permissions: []string{"events:read"}, Projects: []string{removed, keep}, Grants: []HumanProjectGrant{
+	human := EmailHuman{ID: eventapi.NewID(), Email: "member@example.test", CreatedAt: now(), Permissions: []string{"events:read"}, Projects: []string{removed, keep}, Grants: []HumanProjectGrant{
 		{ProjectID: removed, Permissions: []string{"events:read"}}, {ProjectID: keep, Permissions: []string{"events:read"}},
 	}}
 	tx, err := s.control.BeginTx(t.Context(), nil)

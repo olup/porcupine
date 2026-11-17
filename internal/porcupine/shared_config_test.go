@@ -3,13 +3,15 @@ package porcupine
 import (
 	"strings"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func sharedConfigurationFixture() Config {
 	return Config{Shared: &SharedConfig{
 		DatabaseURL: "postgres://fixture:private-shared-dsn-password@control.internal/metadata?sslmode=require",
 		WorkerID:    "worker-one", RouteURL: "https://worker-one.internal", RoutingSecret: []byte("private-routing-secret-at-least-32-bytes"),
-	}, DuckLake: &DuckLakeConfig{Directory: "/srv/worker-one/lake", PostgresURL: "postgres://fixture:private-lake-dsn-password@lake.internal/catalogs?sslmode=require", S3: &DuckLakeS3Config{Bucket: "analytical-fixture", Prefix: "data", Region: "eu-west-3"}}}
+	}, DuckLake: &lakeapi.DuckLakeConfig{Directory: "/srv/worker-one/lake", PostgresURL: "postgres://fixture:private-lake-dsn-password@lake.internal/catalogs?sslmode=require", S3: &lakeapi.DuckLakeS3Config{Bucket: "analytical-fixture", Prefix: "data", Region: "eu-west-3"}}}
 }
 
 func assertPrivateSharedConfigError(t *testing.T, err error) {
@@ -31,8 +33,8 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 		config Config
 	}{
 		{"local default", Config{}},
-		{"local analytics", Config{DuckLake: &DuckLakeConfig{Directory: "/srv/lake"}}},
-		{"local S3", Config{DuckLake: &DuckLakeConfig{Directory: "/srv/lake", S3: &DuckLakeS3Config{Bucket: "fixture", Prefix: "analytics", Region: "eu-west-3"}}}},
+		{"local analytics", Config{DuckLake: &lakeapi.DuckLakeConfig{Directory: "/srv/lake"}}},
+		{"local S3", Config{DuckLake: &lakeapi.DuckLakeConfig{Directory: "/srv/lake", S3: &lakeapi.DuckLakeS3Config{Bucket: "fixture", Prefix: "analytics", Region: "eu-west-3"}}}},
 		{"complete shared", sharedConfigurationFixture()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,9 +70,11 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 		{"short routing key", func(c *Config) { c.Shared.RoutingSecret = make([]byte, 31) }},
 		{"missing lake PostgreSQL", func(c *Config) { c.DuckLake.PostgresURL = "" }},
 		{"missing lake S3", func(c *Config) { c.DuckLake.S3 = nil }},
-		{"local analytics in shared mode", func(c *Config) { c.DuckLake = &DuckLakeConfig{Directory: "/srv/local-only"} }},
-		{"local backup", func(c *Config) { c.NativeBackup = &NativeBackupConfig{Directory: "/srv/backup"} }},
-		{"S3 backup", func(c *Config) { c.NativeBackup = &NativeBackupConfig{S3: &DuckLakeS3Config{Bucket: "fixture-backup"}} }},
+		{"local analytics in shared mode", func(c *Config) { c.DuckLake = &lakeapi.DuckLakeConfig{Directory: "/srv/local-only"} }},
+		{"local backup", func(c *Config) { c.NativeBackup = &lakeapi.NativeBackupConfig{Directory: "/srv/backup"} }},
+		{"S3 backup", func(c *Config) {
+			c.NativeBackup = &lakeapi.NativeBackupConfig{S3: &lakeapi.DuckLakeS3Config{Bucket: "fixture-backup"}}
+		}},
 		{"native PostgreSQL without shared control", func(c *Config) { c.Shared = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,24 +96,24 @@ func TestSharedNativeConfigurationValidationWithoutEngine(t *testing.T) {
 	t.Parallel()
 	c := sharedConfigurationFixture().DuckLake
 	c.SharedSourceID = "12345678-1234-1234-1234-123456789abc"
-	if err := validateSharedNativeConfig(c); err != nil {
+	if err := lakeapi.ValidateSharedNativeConfig(c); err != nil {
 		t.Fatal("valid shared native configuration rejected", err)
 	}
 	for _, tc := range []struct {
 		name   string
-		change func(*DuckLakeConfig)
+		change func(*lakeapi.DuckLakeConfig)
 	}{
-		{"missing source", func(c *DuckLakeConfig) { c.SharedSourceID = "" }},
-		{"invalid source", func(c *DuckLakeConfig) { c.SharedSourceID = strings.Repeat("/", 36) }},
-		{"missing PostgreSQL", func(c *DuckLakeConfig) { c.PostgresURL = "" }},
-		{"wrong scheme", func(c *DuckLakeConfig) { c.PostgresURL = "https://private-lake-dsn-password@lake.internal" }},
-		{"missing host", func(c *DuckLakeConfig) { c.PostgresURL = "postgres:///metadata" }},
-		{"missing S3", func(c *DuckLakeConfig) { c.S3 = nil }},
+		{"missing source", func(c *lakeapi.DuckLakeConfig) { c.SharedSourceID = "" }},
+		{"invalid source", func(c *lakeapi.DuckLakeConfig) { c.SharedSourceID = strings.Repeat("/", 36) }},
+		{"missing PostgreSQL", func(c *lakeapi.DuckLakeConfig) { c.PostgresURL = "" }},
+		{"wrong scheme", func(c *lakeapi.DuckLakeConfig) { c.PostgresURL = "https://private-lake-dsn-password@lake.internal" }},
+		{"missing host", func(c *lakeapi.DuckLakeConfig) { c.PostgresURL = "postgres:///metadata" }},
+		{"missing S3", func(c *lakeapi.DuckLakeConfig) { c.S3 = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			copy := *c
 			tc.change(&copy)
-			assertPrivateSharedConfigError(t, validateSharedNativeConfig(&copy))
+			assertPrivateSharedConfigError(t, lakeapi.ValidateSharedNativeConfig(&copy))
 		})
 	}
 }

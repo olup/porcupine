@@ -7,10 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"slices"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 // initializeOAuthClients preserves principal IDs shared by grants and async jobs.
@@ -169,7 +171,7 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if authMethod == "none" {
 		secret = ""
 	}
-	id, created := newID(), now()
+	id, created := eventapi.NewID(), now()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	tx, err := s.control.BeginTx(ctx, nil)

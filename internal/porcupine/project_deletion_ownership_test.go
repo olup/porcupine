@@ -3,6 +3,8 @@ package porcupine
 import (
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestSharedControlProjectDeletionRetainsTenantForRetries(t *testing.T) {
@@ -21,7 +23,7 @@ func TestSharedControlProjectDeletionRetainsTenantForRetries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id := newID()
+			id := eventapi.NewID()
 			if _, err := s.control.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,'Target','now','mixed')`, id, tenant.ID); err != nil {
 				t.Fatal(err)
 			}

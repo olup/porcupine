@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const mutationMaxBytes = 64 << 20
@@ -28,9 +30,9 @@ type EventGetInput struct {
 }
 
 type EventCurrent struct {
-	Event    Event  `json:"event"`
-	Revision string `json:"revision" doc:"Current revision as a decimal string. Pass this as expected_revision to edit or delete."`
-	Pending  bool   `json:"pending" doc:"True until the current mutation is acknowledged by DuckLake."`
+	Event    eventapi.Event `json:"event"`
+	Revision string         `json:"revision" doc:"Current revision as a decimal string. Pass this as expected_revision to edit or delete."`
+	Pending  bool           `json:"pending" doc:"True until the current mutation is acknowledged by DuckLake."`
 }
 
 type EventGetOutput struct{ Body EventCurrent }
@@ -146,51 +148,51 @@ func (s *Service) getEvent(ctx context.Context, input *EventGetInput) (*EventGet
 	return &EventGetOutput{Body: EventCurrent{Event: projection.Event, Revision: strconv.FormatUint(projection.Revision, 10), Pending: pending}}, nil
 }
 
-func (s *Service) currentEvent(ctx context.Context, project, uuid string) (eventProjection, bool, error) {
+func (s *Service) currentEvent(ctx context.Context, project, uuid string) (lakeapi.EventProjection, bool, error) {
 	var revision int64
 	var deleted, pending bool
 	err := s.db.QueryRowContext(ctx, `SELECT revision,is_deleted,pending FROM event_heads WHERE project_id=$1 AND uuid=$2`, project, uuid).Scan(&revision, &deleted, &pending)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return eventProjection{}, false, apiError(503, "mutation storage unavailable")
+		return lakeapi.EventProjection{}, false, apiError(503, "mutation storage unavailable")
 	}
 	if err == nil && pending {
 		var payload string
 		if err := s.db.QueryRowContext(ctx, `SELECT payload FROM mutation_outbox WHERE seq=$1 AND project_id=$2 AND uuid=$3`, revision, project, uuid).Scan(&payload); err != nil {
-			return eventProjection{}, false, apiError(503, "mutation storage unavailable")
+			return lakeapi.EventProjection{}, false, apiError(503, "mutation storage unavailable")
 		}
-		var projection eventProjection
+		var projection lakeapi.EventProjection
 		if json.Unmarshal([]byte(payload), &projection) != nil {
-			return eventProjection{}, false, apiError(503, "mutation storage unavailable")
+			return lakeapi.EventProjection{}, false, apiError(503, "mutation storage unavailable")
 		}
 		return projection, true, nil
 	}
 	if deleted {
-		return eventProjection{Event: Event{ProjectID: project, UUID: uuid}, Revision: uint64(revision), IsDeleted: true}, false, nil
+		return lakeapi.EventProjection{Event: eventapi.Event{ProjectID: project, UUID: uuid}, Revision: uint64(revision), IsDeleted: true}, false, nil
 	}
 	if revision == 0 {
-		var event Event
+		var event eventapi.Event
 		var properties, ingestion string
 		err := s.db.QueryRowContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,identity_snapshot,ingestion_metadata,is_imported FROM events WHERE project_id=$1 AND uuid=$2`, project, uuid).Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.Delivered, &event.IdentitySnapshot, &ingestion, &event.Imported)
 		if err == nil {
 			if err := decodeIngestionMetadata(&event, ingestion); err != nil {
-				return eventProjection{}, false, apiError(503, "event storage unavailable")
+				return lakeapi.EventProjection{}, false, apiError(503, "event storage unavailable")
 			}
 			event.Properties = json.RawMessage(properties)
-			return eventProjection{Event: event}, false, nil
+			return lakeapi.EventProjection{Event: event}, false, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return eventProjection{}, false, apiError(503, "event storage unavailable")
+			return lakeapi.EventProjection{}, false, apiError(503, "event storage unavailable")
 		}
 	}
 	if s.lake == nil {
-		return eventProjection{}, false, apiError(404, "event not found")
+		return lakeapi.EventProjection{}, false, apiError(404, "event not found")
 	}
 	projection, err := s.loadAnalyticalProjection(ctx, project, uuid)
-	if errors.Is(err, errEventNotFound) && revision == 0 {
-		return eventProjection{}, false, apiError(404, "event not found")
+	if errors.Is(err, lakeapi.ErrEventNotFound) && revision == 0 {
+		return lakeapi.EventProjection{}, false, apiError(404, "event not found")
 	}
 	if err != nil || projection.Revision < uint64(revision) {
-		return eventProjection{}, false, apiError(503, "event storage unavailable")
+		return lakeapi.EventProjection{}, false, apiError(503, "event storage unavailable")
 	}
 	return projection, false, nil
 }
@@ -258,7 +260,7 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	if current.Revision != revision {
 		return nil, apiError(409, "expected_revision does not match the current event")
 	}
-	current.Event = eventWithMetadata(current.Event)
+	current.Event = lakeapi.EventWithMetadata(current.Event)
 	if snapshot != nil && strings.TrimSpace(snapshot.DistinctID) == "" && !(current.DistinctID == "" && current.SourceID != "posthog" && (current.EventType == "track" || current.EventType == "pageview")) {
 		return nil, apiError(400, "distinct_id is required for this event")
 	}
@@ -275,7 +277,7 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 		if json.Unmarshal(current.Properties, &originalProperties) != nil {
 			return nil, apiError(503, "event storage unavailable")
 		}
-		if current.SourceID != "posthog" && snapshot.Event != current.Event.Event && eventWithMetadata(Event{Event: snapshot.Event}).EventType != current.EventType {
+		if current.SourceID != "posthog" && snapshot.Event != current.Event.Event && lakeapi.EventWithMetadata(eventapi.Event{Event: snapshot.Event}).EventType != current.EventType {
 			return nil, apiError(400, "event category cannot be changed")
 		}
 		if current.SourceID == "posthog" {
@@ -301,7 +303,7 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 		projection.Event.Event, projection.DistinctID = snapshot.Event, snapshot.DistinctID
 		projection.Properties, projection.Timestamp = properties, snapshot.Timestamp
 		if projection.OriginalSnapshot == "" {
-			projection.OriginalSnapshot, err = originalSnapshot(current.Event)
+			projection.OriginalSnapshot, err = lakeapi.OriginalSnapshot(current.Event)
 			if err != nil {
 				return nil, apiError(503, "event storage unavailable")
 			}
@@ -310,7 +312,7 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	return s.commitMutation(ctx, projection, actorID, operation, keyHash, requestHash, revision)
 }
 
-func (s *Service) commitMutation(ctx context.Context, projection eventProjection, actorID, operation, keyHash, requestHash string, expected uint64) (*MutationOutput, error) {
+func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventProjection, actorID, operation, keyHash, requestHash string, expected uint64) (*MutationOutput, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "mutation storage unavailable")
@@ -350,7 +352,7 @@ func (s *Service) commitMutation(ctx context.Context, projection eventProjection
 			return nil, apiError(503, "mutation revision unavailable")
 		}
 	}
-	response := MutationResponse{MutationID: newID(), ProjectID: projection.ProjectID, UUID: projection.UUID, Operation: operation, State: "pending", CreatedAt: now()}
+	response := MutationResponse{MutationID: eventapi.NewID(), ProjectID: projection.ProjectID, UUID: projection.UUID, Operation: operation, State: "pending", CreatedAt: now()}
 	result, err := tx.ExecContext(ctx, `INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, response.MutationID, response.ProjectID, response.UUID, actorID, operation, keyHash, requestHash, int64(expected), response.State, response.CreatedAt)
 	if err != nil {
 		return nil, apiError(409, "mutation request conflicts with an existing request")

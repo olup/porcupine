@@ -3,6 +3,8 @@ package porcupine
 import (
 	"context"
 	"fmt"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 const DefaultQueueMaxBytes int64 = 256 << 20
@@ -10,7 +12,7 @@ const queueEventOverheadBytes int64 = 64
 
 // queueEventBytes charges stored UTF-8 payload bytes plus a fixed row allowance.
 // SQLite page/index overhead, WAL, receipts, and mutation snapshots are separate.
-func queueEventBytes(event Event) int64 {
+func queueEventBytes(event eventapi.Event) int64 {
 	return queueEventOverheadBytes + int64(len(event.ProjectID)) + int64(len(event.UUID)) +
 		int64(len(event.Event)) + int64(len(event.DistinctID)) + int64(len(event.Properties)) +
 		int64(len(event.Timestamp)) + int64(len(event.ReceivedAt)) + int64(len(event.IdentitySnapshot)) + int64(len(encodeIngestionMetadata(event)))

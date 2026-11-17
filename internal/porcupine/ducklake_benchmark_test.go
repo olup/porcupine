@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // Run bounded microbenchmarks with:
@@ -22,7 +24,7 @@ func duckLakeBenchmarkService(b *testing.B) (*Service, string, string) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { s.Close() })
-	lake, err := newDuckLake(DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake")})
+	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(b.TempDir(), "lake")})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 	}
 	s, projectID, token := duckLakeBenchmarkService(b)
 	// Open the project engine before timing, so this measures the hot path.
-	if _, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits()); err != nil {
+	if _, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, lakeapi.DefaultQueryExecutionLimits()); err != nil {
 		b.Fatal(err)
 	}
 	payloads := make([][]byte, b.N)
@@ -93,7 +95,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 	b.StopTimer()
 	b.ReportMetric(100, "events/op")
 	b.ReportMetric(float64(b.N*100)/b.Elapsed().Seconds(), "events/s")
-	result, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, defaultQueryExecutionLimits())
+	result, err := s.lake.Query(context.Background(), projectID, "SELECT count(*) AS total FROM events", nil, lakeapi.DefaultQueryExecutionLimits())
 	if err != nil || len(result.Data) != 1 || string(result.Data[0]["total"]) != fmt.Sprintf("\"%d\"", b.N*100) {
 		b.Fatalf("projection count does not match accepted batches: %+v, %v", result, err)
 	}
@@ -105,7 +107,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 
 func BenchmarkDuckLakeWarmAggregation10000(b *testing.B) {
 	s, projectID, _ := duckLakeBenchmarkService(b)
-	store := s.lake.(*duckLakeStore)
+	store := s.lake.(*lakeapi.DuckLakeStore)
 	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		b.Fatal(err)
@@ -126,13 +128,13 @@ FROM fixture`, projectID)
 		b.Fatal(err)
 	}
 	query := "SELECT event,date_trunc('hour',event_time) AS hour,count(*) AS total,sum(CAST(json_extract_string(properties,'$.amount') AS DOUBLE)) AS amount FROM events GROUP BY event,hour ORDER BY hour,event"
-	if _, err := s.lake.Query(context.Background(), projectID, query, nil, defaultQueryExecutionLimits()); err != nil {
+	if _, err := s.lake.Query(context.Background(), projectID, query, nil, lakeapi.DefaultQueryExecutionLimits()); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		result, err := s.lake.Query(context.Background(), projectID, query, nil, defaultQueryExecutionLimits())
+		result, err := s.lake.Query(context.Background(), projectID, query, nil, lakeapi.DefaultQueryExecutionLimits())
 		if err != nil || result.Rows != 9 {
 			b.Fatalf("aggregation result: %d rows, %v", result.Rows, err)
 		}

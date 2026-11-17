@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -14,8 +13,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/olup/porcupine/internal/auth"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 const maxMCPResponseBytes = 2 << 20
@@ -328,7 +330,7 @@ func mcpCall(ctx context.Context, native http.Handler, operations map[string]*hu
 			pathNames = append(pathNames, parameter.Name)
 			value := input.Path[parameter.Name]
 			if parameter.Name == "uuid" {
-				if !validStoredEventUUID(value) {
+				if !lakeapi.ValidStoredEventUUID(value) {
 					return mcpCallFailure(400, "invalid event uuid")
 				}
 				value = strings.ReplaceAll(url.PathEscape(value), ".", "%2E")

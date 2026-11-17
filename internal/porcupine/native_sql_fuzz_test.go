@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/nativequery"
 )
 
@@ -32,7 +33,7 @@ func FuzzValidateNativeSQL(f *testing.F) {
 		f.Add(query)
 	}
 	f.Fuzz(func(t *testing.T, query string) {
-		if len(query) > maxSQLBytes {
+		if len(query) > lakeapi.MaxSQLBytes {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)

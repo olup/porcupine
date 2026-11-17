@@ -5,12 +5,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/olup/porcupine/internal/porcupine"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 var analyticalS3Environment = []string{"BUCKET", "PREFIX", "REGION", "ENDPOINT", "ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN", "PATH_STYLE", "CA_CERT_FILE", "REQUEST_TIMEOUT_SECONDS"}
 
-func (s settings) duckLakeS3Configuration() (*porcupine.DuckLakeS3Config, error) {
+func (s settings) duckLakeS3Configuration() (*lakeapi.DuckLakeS3Config, error) {
 	configured := false
 	for _, suffix := range analyticalS3Environment {
 		if s.get("PORCUPINE_DUCKLAKE_S3_"+suffix) != "" {
@@ -20,7 +20,7 @@ func (s settings) duckLakeS3Configuration() (*porcupine.DuckLakeS3Config, error)
 	if !configured {
 		return nil, nil
 	}
-	c := &porcupine.DuckLakeS3Config{Bucket: s.get("PORCUPINE_DUCKLAKE_S3_BUCKET"), Prefix: s.get("PORCUPINE_DUCKLAKE_S3_PREFIX"), Region: s.get("PORCUPINE_DUCKLAKE_S3_REGION"), Endpoint: s.get("PORCUPINE_DUCKLAKE_S3_ENDPOINT"), AccessKeyID: s.get("PORCUPINE_DUCKLAKE_S3_ACCESS_KEY_ID"), SecretAccessKey: s.get("PORCUPINE_DUCKLAKE_S3_SECRET_ACCESS_KEY"), SessionToken: s.get("PORCUPINE_DUCKLAKE_S3_SESSION_TOKEN"), CACertFile: s.get("PORCUPINE_DUCKLAKE_S3_CA_CERT_FILE")}
+	c := &lakeapi.DuckLakeS3Config{Bucket: s.get("PORCUPINE_DUCKLAKE_S3_BUCKET"), Prefix: s.get("PORCUPINE_DUCKLAKE_S3_PREFIX"), Region: s.get("PORCUPINE_DUCKLAKE_S3_REGION"), Endpoint: s.get("PORCUPINE_DUCKLAKE_S3_ENDPOINT"), AccessKeyID: s.get("PORCUPINE_DUCKLAKE_S3_ACCESS_KEY_ID"), SecretAccessKey: s.get("PORCUPINE_DUCKLAKE_S3_SECRET_ACCESS_KEY"), SessionToken: s.get("PORCUPINE_DUCKLAKE_S3_SESSION_TOKEN"), CACertFile: s.get("PORCUPINE_DUCKLAKE_S3_CA_CERT_FILE")}
 	if c.Bucket == "" || c.Prefix == "" || c.Region == "" {
 		return nil, errors.New("analytical S3 requires PORCUPINE_DUCKLAKE_S3_BUCKET, PREFIX and REGION")
 	}
@@ -39,7 +39,7 @@ func (s settings) duckLakeS3Configuration() (*porcupine.DuckLakeS3Config, error)
 	return c, nil
 }
 
-func analyticsHTTPWriteTimeout(lake *porcupine.DuckLakeConfig) time.Duration {
+func analyticsHTTPWriteTimeout(lake *lakeapi.DuckLakeConfig) time.Duration {
 	timeout := 30 * time.Second
 	if lake != nil && lake.S3 != nil {
 		requestTimeout := lake.S3.RequestTimeoutSeconds

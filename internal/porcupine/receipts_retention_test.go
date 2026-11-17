@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestBoundedReceiptsFallBackToDuckLake(t *testing.T) {
@@ -69,7 +72,7 @@ func TestReceiptRetentionZeroKeepsReceiptsAndSkipsLookups(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT count(*) FROM event_receipts`).Scan(&n); err != nil || n != 1 {
 		t.Fatal("retention 0 pruned a receipt", n, err)
 	}
-	known, err := s.eventRules.coldKnown(context.Background(), "any", []Event{{UUID: "u", Timestamp: "2020-01-01T00:00:00Z"}})
+	known, err := s.eventRules.coldKnown(context.Background(), "any", []eventapi.Event{{UUID: "u", Timestamp: "2020-01-01T00:00:00Z"}})
 	if err != nil || known != nil {
 		t.Fatal("retention 0 looked up DuckLake", known, err)
 	}
@@ -84,7 +87,7 @@ func TestColdKnownDoesNotTrustProducerTimestamps(t *testing.T) {
 			asked = append(asked, uuids...)
 			return map[string]int64{}, nil
 		}}
-	events := []Event{
+	events := []eventapi.Event{
 		{UUID: "recent", Timestamp: now.Add(-time.Hour).Format(time.RFC3339Nano)},
 		{UUID: "inside-window", Timestamp: now.Add(-20 * 24 * time.Hour).Format(time.RFC3339Nano)},
 		{UUID: "within-margin", Timestamp: now.Add(-25 * 24 * time.Hour).Format(time.RFC3339Nano)},
@@ -107,7 +110,7 @@ func TestPrunedReceiptsKeepIDsAndIdentityAcrossRestart(t *testing.T) {
 	directory := t.TempDir()
 	config := Config{DBPath: filepath.Join(directory, "journal.sqlite"), BootstrapToken: adminToken,
 		Clock: func() time.Time { return time.UnixMilli(clock.Load()).UTC() }, ReceiptRetention: 48 * time.Hour,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(directory, "lake"), MemoryLimitMB: 128, Threads: 1}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +275,7 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 				t.Fatal("pruned import was reaccepted", retry.Counts)
 			}
 			blocked := createFormatImport(t, s, projectID, writer, format, "blocked-job", retryData)
-			store := s.lake.(*duckLakeStore)
+			store := s.lake.(*lakeapi.DuckLakeStore)
 			if err := store.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -281,7 +284,7 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 			if err := s.db.QueryRow("SELECT offset_bytes FROM import_upload_files WHERE id=?", blocked.Files[0].ID).Scan(&offset); err != nil || offset != 0 {
 				t.Fatal("failed lookup advanced import", offset, err)
 			}
-			reopened, err := newDuckLake(store.Config)
+			reopened, err := lakeapi.NewDuckLake(store.Config)
 			if err != nil {
 				t.Fatal(err)
 			}

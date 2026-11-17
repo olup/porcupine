@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"slices"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 const serviceKeyPrefix = "pc_sk_"
@@ -78,7 +80,7 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	}
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
-	id := newID()
+	id := eventapi.NewID()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
 		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {
 		return nil, apiError(503, "service key storage unavailable")

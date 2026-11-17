@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"slices"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type TenantServiceAccountSpec struct {
@@ -228,7 +230,7 @@ func (s *Service) createTenantServiceAccount(ctx context.Context, input *TenantS
 	if _, err := rand.Read(bearerBytes[:]); err != nil {
 		return nil, apiError(503, "service account generation unavailable")
 	}
-	id, created := newID(), now()
+	id, created := eventapi.NewID(), now()
 	secret := base64.RawURLEncoding.EncodeToString(secretBytes[:])
 	permissions, _ := json.Marshal(spec.Permissions)
 	projects, _ := json.Marshal(spec.Projects)
@@ -369,7 +371,7 @@ func (s *Service) createTenantServiceKey(ctx context.Context, input *TenantServi
 	if err != nil {
 		return nil, apiError(503, "service key generation unavailable")
 	}
-	id := newID()
+	id := eventapi.NewID()
 	permissions, _ := json.Marshal(spec.Permissions)
 	projects, _ := json.Marshal(spec.Projects)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, spec.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {

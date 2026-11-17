@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) startDelivery() {
@@ -79,7 +82,7 @@ func (s *Service) flushDelivery(ctx context.Context) error {
 	return err
 }
 
-func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
+func (s *Service) deliveryBatch(ctx context.Context) ([]eventapi.Event, error) {
 	cursor, err := s.deliveryCursor(ctx)
 	if err != nil {
 		return nil, err
@@ -91,16 +94,16 @@ func (s *Service) deliveryBatch(ctx context.Context) ([]Event, error) {
 	return s.deliveryBatchAfter(ctx, 0)
 }
 
-func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]Event, error) {
+func (s *Service) deliveryBatchAfter(ctx context.Context, cursor int64) ([]eventapi.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.project_id,e.uuid,e.event,e.distinct_id,e.properties,e.timestamp,e.received_at,e.identity_snapshot,e.ingestion_metadata,e.is_imported FROM delivery_ready r JOIN events e ON e.id=r.event_id WHERE r.event_id>$1 ORDER BY r.event_id LIMIT $2`, cursor, s.deliveryMaxEvents)
 	if err != nil {
 		return nil, errors.New("cannot read delivery queue")
 	}
 	defer rows.Close()
-	batch := make([]Event, 0, s.deliveryMaxEvents)
+	batch := make([]eventapi.Event, 0, s.deliveryMaxEvents)
 	bytes := 0
 	for rows.Next() {
-		var event Event
+		var event eventapi.Event
 		var properties, ingestion string
 		if err := rows.Scan(&event.ID, &event.ProjectID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &event.IdentitySnapshot, &ingestion, &event.Imported); err != nil {
 			return nil, errors.New("cannot read queued event")
@@ -147,7 +150,7 @@ func (s *Service) deliverBatch(ctx context.Context) (bool, error) {
 	return progress, deliveryErr
 }
 
-func (s *Service) acknowledgeOriginals(ctx context.Context, batch []Event) error {
+func (s *Service) acknowledgeOriginals(ctx context.Context, batch []eventapi.Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.New("cannot acknowledge delivered events")
@@ -183,8 +186,8 @@ func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
 	s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key='last_delivery_error'`)
 }
 
-func (s *Service) deliveryStatus(ctx context.Context, projectID string) (DeliveryStatus, error) {
-	status := DeliveryStatus{Enabled: s.lake != nil}
+func (s *Service) deliveryStatus(ctx context.Context, projectID string) (lakeapi.DeliveryStatus, error) {
+	status := lakeapi.DeliveryStatus{Enabled: s.lake != nil}
 	if s.shared != nil {
 		owner, _, err := s.sharedProjectOwner(ctx, projectID)
 		if err != nil {

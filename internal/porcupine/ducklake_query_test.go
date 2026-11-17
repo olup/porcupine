@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/nativequery"
 )
 
@@ -84,7 +85,7 @@ func TestDuckLakeSQLGuardRejectsEscapeRoutes(t *testing.T) {
 		`SELECT * FROM events AT (VERSION => 1)`,
 		`SELECT COLUMNS('.*') FROM events`,
 		`SELECT count(*) OVER (ORDER BY current_setting('threads')) FROM events`,
-		strings.Repeat(" ", maxSQLBytes+1),
+		strings.Repeat(" ", lakeapi.MaxSQLBytes+1),
 	} {
 		t.Run(query, func(t *testing.T) {
 			if canonical, _, err := nativequery.Prepare(context.Background(), db, query, nil); err == nil {

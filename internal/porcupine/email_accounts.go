@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"slices"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type HumanProjectGrant struct {
@@ -100,7 +102,7 @@ func (s *Service) initializeEmailAccounts(ctx context.Context) error {
 		return errors.New("deployment admin email already belongs to an invited person")
 	}
 	admin := EmailHuman{
-		ID: newID(), Email: address, CreatedAt: now(), DeploymentAdmin: true,
+		ID: eventapi.NewID(), Email: address, CreatedAt: now(), DeploymentAdmin: true,
 		Permissions: []string{"instance:admin"}, Projects: []string{"*"},
 		Grants: []HumanProjectGrant{{ProjectID: "*", Permissions: []string{"instance:admin"}}},
 	}
@@ -238,7 +240,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 	if err != nil {
 		return nil, err
 	}
-	h.ID, h.Email, h.CreatedAt = newID(), email, now()
+	h.ID, h.Email, h.CreatedAt = eventapi.NewID(), email, now()
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apiError(503, "human account storage unavailable")
@@ -271,7 +273,7 @@ func (s *Service) inviteHuman(ctx context.Context, input *InviteHumanInput) (*Em
 			if s.clock().UnixMilli() < retryAfter {
 				return nil, apiError(429, "invitation delivery in progress or cooling down; retry the same request")
 			}
-			attempt = newID()
+			attempt = eventapi.NewID()
 			if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET notice_attempt=$1, notice_retry_after_ms=$2 WHERE principal_id=$3`, attempt, s.clock().Add(time.Minute).UnixMilli(), h.ID); err != nil {
 				return nil, apiError(503, "invitation status unavailable")
 			}

@@ -10,20 +10,21 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func checkpointCurrentFileFixture(t *testing.T, store *duckLakeStore, project, kind string) string {
+func checkpointCurrentFileFixture(t *testing.T, store *lakeapi.DuckLakeStore, project, kind string) string {
 	t.Helper()
 	ctx := context.Background()
 	original := lakeStorageProjection(t, project, "checkpoint-original", 1)
 	survivor := lakeStorageProjection(t, project, "checkpoint-survivor", 2)
-	if err := store.Apply(ctx, []eventProjection{original, survivor}); err != nil {
+	if err := store.Apply(ctx, []lakeapi.EventProjection{original, survivor}); err != nil {
 		t.Fatal(err)
 	}
 	flushCleanupProject(t, store, project)
 	original.Revision = 1
 	original.Event.Event = "checkpoint-edited"
-	if err := store.Apply(ctx, []eventProjection{original}); err != nil {
+	if err := store.Apply(ctx, []lakeapi.EventProjection{original}); err != nil {
 		t.Fatal(err)
 	}
 	flushCleanupProject(t, store, project)
@@ -49,7 +50,7 @@ func TestDuckLakeCheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T
 		t.Run(kind, func(t *testing.T) {
 			service, config := nativeBackupService(t)
 			project, _ := project(t, service)
-			store := service.lake.(*duckLakeStore)
+			store := service.lake.(*lakeapi.DuckLakeStore)
 			missing := checkpointCurrentFileFixture(t, store, project, kind)
 			ctx := context.Background()
 			if err := service.createNativeBackup(ctx); err != nil {
@@ -65,7 +66,7 @@ func TestDuckLakeCheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T
 			if service.nativeBackupStatus().LatestBundle != first {
 				t.Fatal("failed source capture replaced the last healthy backup")
 			}
-			if _, err := verifyNativeBackup(ctx, filepath.Join(config.NativeBackup.Directory, first)); err != nil {
+			if _, err := lakeapi.VerifyNativeBackup(ctx, filepath.Join(config.NativeBackup.Directory, first)); err != nil {
 				t.Fatal("failed source capture pruned the last healthy backup", err)
 			}
 		})
@@ -81,8 +82,8 @@ func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing
 			backup.Prefix += "-backup"
 			root := t.TempDir()
 			config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken,
-				DuckLake:     &DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour},
-				NativeBackup: &NativeBackupConfig{S3: &backup, Retain: 1}}
+				DuckLake:     &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour},
+				NativeBackup: &lakeapi.NativeBackupConfig{S3: &backup, Retain: 1}}
 			service, err := Open(config)
 			s3FixtureError(t, fixture, "open incomplete-source backup fixture", err)
 			defer service.Close()
@@ -90,14 +91,14 @@ func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing
 			service.lakeMaintenanceCancel()
 			<-service.lakeMaintenanceDone
 			project, _ := project(t, service)
-			store := service.lake.(*duckLakeStore)
+			store := service.lake.(*lakeapi.DuckLakeStore)
 			missing := checkpointCurrentFileFixture(t, store, project, kind)
 			ctx := context.Background()
 			s3FixtureError(t, fixture, "create healthy backup before source damage", service.createNativeBackup(ctx))
 			first := service.nativeBackupStatus().LatestBundle
 			source, err := store.SourceID(ctx)
 			s3FixtureError(t, fixture, "read source identity", err)
-			reader, err := newNativeBackupS3(ctx, backup, source)
+			reader, err := lakeapi.NewNativeBackupS3(ctx, backup, source)
 			s3FixtureError(t, fixture, "open healthy backup reader", err)
 			defer reader.Close()
 			key := strings.TrimPrefix(missing, "s3://"+fixture.storage.Bucket+"/")

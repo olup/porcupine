@@ -10,6 +10,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func mutationContext(id string) context.Context {
@@ -163,7 +164,7 @@ func TestMutationQueuedDeleteTombstoneAndDurableReceipt(t *testing.T) {
 	}
 	var payload string
 	s.db.QueryRow(`SELECT payload FROM mutation_outbox`).Scan(&payload)
-	var tombstone eventProjection
+	var tombstone lakeapi.EventProjection
 	if json.Unmarshal([]byte(payload), &tombstone) != nil || !tombstone.IsDeleted || tombstone.Event.Event != "" || tombstone.DistinctID != "" || tombstone.Timestamp != "" || string(tombstone.Properties) != `{}` || tombstone.OriginalSnapshot != "" {
 		t.Fatal("tombstone retained deleted content")
 	}

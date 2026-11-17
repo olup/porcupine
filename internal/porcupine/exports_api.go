@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/danielgtaylor/huma/v2"
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type ExportCreateBody struct {
@@ -169,7 +171,7 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 	if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='events'),0),coalesce((SELECT max(seq) FROM mutation_audit),0)`).Scan(&eventWatermark, &mutationWatermark); err != nil {
 		return nil, apiError(503, "export delivery barrier unavailable")
 	}
-	job := ExportJob{ID: newID(), ProjectID: input.ID, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
+	job := ExportJob{ID: eventapi.NewID(), ProjectID: input.ID, State: ExportQueued, Format: format, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), Consistency: exportConsistency}
 	_, err = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,project_id,actor_id,sql,parameters,format,idempotency_hash,request_hash,state,event_watermark,mutation_watermark,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, job.ID, job.ProjectID, actorID, canonical, string(encodedParameters), format, keyHash, requestHash, job.State, eventWatermark, mutationWatermark, job.CreatedAt)
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(503, "export storage unavailable")

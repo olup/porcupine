@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testing.T) {
@@ -104,7 +106,7 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	t.Parallel()
 	s := duckLakeJourneyService(t)
 	id, _ := project(t, s)
-	batch := make([]eventProjection, 40)
+	batch := make([]lakeapi.EventProjection, 40)
 	for i := range batch {
 		batch[i] = lakeStorageProjection(t, id, fmt.Sprintf("budget-%d", i), int64(i+1))
 	}
@@ -137,10 +139,10 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 			t.Fatal("byte policy ignored including empty result", err)
 		}
 	}
-	if _, err := s.lakeEventCatalog(context.Background(), EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
+	if _, err := s.lakeEventCatalog(context.Background(), lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
 		t.Fatal("catalog byte policy ignored", err)
 	}
-	if _, err := s.eventProfile(context.Background(), &EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
+	if _, err := s.eventProfile(context.Background(), &lakeapi.EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
 		t.Fatal("profile byte policy ignored", err)
 	}
 	set(20, 1000, 1<<20)
@@ -158,10 +160,10 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	if _, err = s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.lakeEventCatalog(context.Background(), EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
+	if _, err = s.lakeEventCatalog(context.Background(), lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
 		t.Fatal("catalog bypassed tenant admission", err)
 	}
-	if _, err = s.eventProfile(context.Background(), &EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
+	if _, err = s.eventProfile(context.Background(), &lakeapi.EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
 		t.Fatal("profile bypassed tenant admission", err)
 	}
 	release()
@@ -185,26 +187,27 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 }
 
 type recordingQueryLimits struct {
-	lakeStore
-	received queryExecutionLimits
+	lakeapi.LakeStore
+
+	received lakeapi.QueryExecutionLimits
 }
 
-func (s *recordingQueryLimits) Query(ctx context.Context, project, sql string, parameters map[string]string, limits queryExecutionLimits) (AnalyticsResult, error) {
+func (s *recordingQueryLimits) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	s.received = limits
-	return s.lakeStore.Query(ctx, project, sql, parameters, limits)
+	return s.LakeStore.Query(ctx, project, sql, parameters, limits)
 }
 
 func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) {
 	t.Parallel()
 	s := duckLakeJourneyService(t)
 	s.interactiveConfig = InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 6000, MaxRows: 2000, MaxResultBytes: 4 << 20}
-	spy := &recordingQueryLimits{lakeStore: s.lake}
+	spy := &recordingQueryLimits{LakeStore: s.lake}
 	s.lake = spy
 	id, _ := project(t, s)
 	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=6000,hot_query_max_rows=2000,hot_query_max_result_bytes=? WHERE id=?`, 4<<20, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
-	batch := make([]eventProjection, 40)
+	batch := make([]lakeapi.EventProjection, 40)
 	for i := range batch {
 		batch[i] = lakeStorageProjection(t, id, fmt.Sprintf("raised-%d", i), int64(i+1))
 	}

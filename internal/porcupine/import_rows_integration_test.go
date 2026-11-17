@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/importer"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) {
@@ -166,7 +167,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 	// including a user projection alias with the same import-marker name.
 	for _, query := range []string{"SELECT uuid FROM events ORDER BY uuid", "SELECT uuid,0 AS is_imported FROM events ORDER BY uuid"} {
 		var ids []string
-		stream, err := s.lake.Export(context.Background(), projectID, query, nil, &analyticalWindow{StartMS: 0, EndMS: 9223372036854775807}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func(values []json.RawMessage) error {
+		stream, err := s.lake.Export(context.Background(), projectID, query, nil, &lakeapi.AnalyticalWindow{StartMS: 0, EndMS: 9223372036854775807}, 1<<20, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func(values []json.RawMessage) error {
 			var id string
 			if err := json.Unmarshal(values[0], &id); err != nil {
 				return err
@@ -178,7 +179,7 @@ func TestDuckLakePostHogImportHTTPIdentityAndDestinationIsolation(t *testing.T) 
 			t.Fatalf("automatic export included imported history: %v ids=%v", err, ids)
 		}
 	}
-	stream, err := s.lake.Export(context.Background(), projectID, "SELECT uuid,0 AS received_at_ms FROM events", nil, &analyticalWindow{StartMS: 0, EndMS: 10}, 1<<20, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }})
+	stream, err := s.lake.Export(context.Background(), projectID, "SELECT uuid,0 AS received_at_ms FROM events", nil, &lakeapi.AnalyticalWindow{StartMS: 0, EndMS: 10}, 1<<20, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }})
 	if err != nil || stream.Rows != 0 {
 		t.Fatal("user projection alias bypassed trusted receipt-time filter", err)
 	}
@@ -251,7 +252,7 @@ func TestDuckLakePostHogBoundImportSourcesAndProjection(t *testing.T) {
 		json.Unmarshal(row["source_id"], &source)
 		json.Unmarshal(row["message_id"], &message)
 		json.Unmarshal(row["uuid"], &uuid)
-		if !strings.HasPrefix(uuid, sourceEventUUIDPrefix) {
+		if !strings.HasPrefix(uuid, lakeapi.SourceEventUUIDPrefix) {
 			t.Fatal("bound import did not use existing physical namespace")
 		}
 		seen[source+":"+message] = true

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net/url"
 	"path/filepath"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // The caller holds the projection guard. Freezing control writes keeps project
 // lifecycle and access metadata stable while the journal and catalogs are copied.
-func (s *Service) stageNativeCheckpoint(ctx context.Context) (checkpoint *nativeCheckpoint, result error) {
+func (s *Service) stageNativeCheckpoint(ctx context.Context) (checkpoint *lakeapi.NativeCheckpoint, result error) {
 	defer func() {
 		if result != nil && checkpoint != nil {
 			result = errors.Join(result, checkpoint.Close())
@@ -44,7 +46,7 @@ func (s *Service) stageNativeCheckpoint(ctx context.Context) (checkpoint *native
 			if err != nil {
 				return err
 			}
-			err = errors.Join(snapshotSQLite(ctx, source, item.destination), source.Close())
+			err = errors.Join(lakeapi.SnapshotSQLite(ctx, source, item.destination), source.Close())
 			if err != nil {
 				return err
 			}

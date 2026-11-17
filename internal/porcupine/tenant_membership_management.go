@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"slices"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type TenantMemberInviteInput struct {
@@ -117,7 +119,7 @@ func (s *Service) inviteTenantMember(ctx context.Context, input *TenantMemberInv
 	var revoked *string
 	err = tx.QueryRowContext(ctx, `SELECT h.principal_id,k.revoked_at FROM email_humans h JOIN access_keys k ON k.id=h.principal_id WHERE h.email=$1`, email).Scan(&humanID, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
-		human := EmailHuman{ID: newID(), Email: email, CreatedAt: now(), Projects: []string{}, Permissions: []string{}, Grants: []HumanProjectGrant{}}
+		human := EmailHuman{ID: eventapi.NewID(), Email: email, CreatedAt: now(), Projects: []string{}, Permissions: []string{}, Grants: []HumanProjectGrant{}}
 		if err = insertEmailHuman(ctx, tx, human); err != nil {
 			return nil, apiError(503, "human account storage unavailable")
 		}
@@ -156,7 +158,7 @@ func (s *Service) inviteTenantMember(ctx context.Context, input *TenantMemberInv
 			if s.clock().UnixMilli() < retry {
 				return nil, apiError(429, "invitation delivery in progress or cooling down; retry the same request")
 			}
-			attempt = newID()
+			attempt = eventapi.NewID()
 			if _, err := tx.ExecContext(ctx, `UPDATE tenant_memberships SET notice_attempt=$1,notice_retry_after_ms=$2 WHERE tenant_id=$3 AND human_id=$4`, attempt, s.clock().Add(time.Minute).UnixMilli(), spec.TenantID, spec.HumanID); err != nil {
 				return nil, apiError(503, "invitation status unavailable")
 			}

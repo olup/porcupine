@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestMutationDeliveryAckRetryRestartAndPayloadCleanup(t *testing.T) {
@@ -149,11 +151,11 @@ func TestMutationRestoredSQLiteAdvancesAboveNativeRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := originals[0]
-	snapshot, err := originalSnapshot(event)
+	snapshot, err := lakeapi.OriginalSnapshot(event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.lake.Apply(ctx, []eventProjection{{Event: event, Revision: 900, OriginalSnapshot: snapshot}}); err != nil {
+	if err := s.lake.Apply(ctx, []lakeapi.EventProjection{{Event: event, Revision: 900, OriginalSnapshot: snapshot}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`DELETE FROM events`); err != nil {

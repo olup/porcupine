@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
@@ -41,7 +42,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 				t.Fatal(err)
 			}
 			participantCalls := 0
-			writer := eventAcceptance{db: s.db, rules: rules, enqueueWebhooks: func(ctx context.Context, tx *sql.Tx, events []Event) error {
+			writer := eventAcceptance{db: s.db, rules: rules, enqueueWebhooks: func(ctx context.Context, tx *sql.Tx, events []eventapi.Event) error {
 				participantCalls++
 				if len(events) != 1 || events[0].Event != "$pageview" || !strings.HasPrefix(events[0].DistinctID, "cookieless_") {
 					t.Fatal("participant did not receive the accepted ordinary event")
@@ -86,7 +87,7 @@ func TestLiveAcceptanceHTTPDoesNotAcknowledgeFailedParticipant(t *testing.T) {
 	t.Parallel()
 	s := service(t, 10)
 	projectID, ingest := project(t, s)
-	s.acceptance.enqueueWebhooks = func(context.Context, *sql.Tx, []Event) error { return errors.New("destination failure") }
+	s.acceptance.enqueueWebhooks = func(context.Context, *sql.Tx, []eventapi.Event) error { return errors.New("destination failure") }
 	response := request(t, s, "POST", "/capture/", "", captureBody(ingest, "not-acknowledged"), 503)
 	if response["accepted"] != nil || response["receipts"] != nil || eventCount(t, s) != 0 {
 		t.Fatal("transport acknowledged an uncommitted event", projectID, response)

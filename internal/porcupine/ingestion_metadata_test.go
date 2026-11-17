@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func normalizedCapture(t *testing.T, s *Service, token string, batch eventBatch, status int) map[string]any {
@@ -51,7 +52,7 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "shared-message")}, 200)
 	receipt := receiptFrom(t, first, 0)
 	uuid, id := receipt["uuid"].(string), receipt["event_id"].(string)
-	if len(uuid) <= 128 || !validStoredEventUUID(uuid) || id == "" || receipt["duplicate"] != false {
+	if len(uuid) <= 128 || !lakeapi.ValidStoredEventUUID(uuid) || id == "" || receipt["duplicate"] != false {
 		t.Fatal("native event lacks stable disjoint physical UUID and numeric ID", receipt)
 	}
 	second := normalizedCapture(t, s, token, eventBatch{normalizedTrack("segment", "shared-message")}, 200)
@@ -75,7 +76,7 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 		t.Fatal("different logical source collided")
 	}
 	_, legacy := key(t, s, []string{"events:write"}, []string{projectID})
-	legacyUUID := sourceEventUUIDPrefix + strings.Repeat("a", 128-len(sourceEventUUIDPrefix))
+	legacyUUID := lakeapi.SourceEventUUIDPrefix + strings.Repeat("a", 128-len(lakeapi.SourceEventUUIDPrefix))
 	request(t, s, "POST", "/capture/", "", captureBody(legacy, legacyUUID), 200)
 	var stored string
 	if err := s.db.QueryRow(`SELECT uuid FROM events WHERE uuid=?`, legacyUUID).Scan(&stored); err != nil || stored != legacyUUID {

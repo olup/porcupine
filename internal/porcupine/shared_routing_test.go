@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestSharedRouteOriginValidation(t *testing.T) {
@@ -93,7 +95,7 @@ func TestSharedRouteLargeImportManifestForwarding(t *testing.T) {
 	body := bytes.Repeat([]byte{'x'}, sharedRouteMaxBodyBytes+1)
 	r := httptest.NewRequest("POST", "http://public.example/api/v1/projects/project/imports", bytes.NewReader(body))
 	claim := sharedRouteClaim{Version: 1, Source: "edge", Target: "owner", Project: "project", Epoch: 1,
-		IssuedAtMS: time.Now().UnixMilli(), Nonce: newID(), Method: r.Method, URI: r.URL.RequestURI(), Host: r.Host,
+		IssuedAtMS: time.Now().UnixMilli(), Nonce: eventapi.NewID(), Method: r.Method, URI: r.URL.RequestURI(), Host: r.Host,
 		Peer: "203.0.113.73", AuthHash: sharedRouteDigest(nil), BodyHash: sharedRouteDigest(body)}
 	raw, _ := json.Marshal(claim)
 	r.Header.Set(sharedRouteHeader, base64.RawURLEncoding.EncodeToString(raw))
@@ -306,7 +308,7 @@ func TestSharedRouteRejectsTamperingExpiryAndStaleEpoch(t *testing.T) {
 			r := httptest.NewRequest("POST", "http://public.example/api/v1/projects/project/imports", strings.NewReader(`{}`))
 			r.Header.Set("Authorization", "Bearer original-token")
 			claim := sharedRouteClaim{Version: 1, Source: edge.shared.config.WorkerID, Target: owner.shared.config.WorkerID,
-				Project: "project", Epoch: 1, IssuedAtMS: time.Now().UnixMilli(), Nonce: newID(), Method: r.Method, URI: r.URL.RequestURI(),
+				Project: "project", Epoch: 1, IssuedAtMS: time.Now().UnixMilli(), Nonce: eventapi.NewID(), Method: r.Method, URI: r.URL.RequestURI(),
 				Host: r.Host, Peer: "203.0.113.73", AuthHash: sharedRouteDigest([]byte(r.Header.Get("Authorization"))), BodyHash: sharedRouteDigest([]byte(`{}`))}
 			setProof := func() {
 				raw, _ := json.Marshal(claim)

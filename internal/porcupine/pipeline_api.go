@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/danielgtaylor/huma/v2"
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type PipelineCreateBody struct {
@@ -220,7 +222,7 @@ func (s *Service) createPipeline(ctx context.Context, input *PipelineCreateInput
 	if strings.TrimSpace(input.Body.Name) == "" || len(input.Body.Name) > 200 {
 		return nil, apiError(400, "invalid pipeline name")
 	}
-	p := Pipeline{ID: newID(), ProjectID: input.ID, Kind: input.Body.Kind, Name: input.Body.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
+	p := Pipeline{ID: eventapi.NewID(), ProjectID: input.ID, Kind: input.Body.Kind, Name: input.Body.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
 	config, secret, err := s.encodePipelineDestination(ctx, p.ProjectID, p.ID, p.Kind, input.Body.Webhook, input.Body.S3, input.Body.Credentials)
 	if err != nil {
 		return nil, err

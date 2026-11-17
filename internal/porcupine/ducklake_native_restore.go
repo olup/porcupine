@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // RestoreNativeBackup reconstructs current native state in a fresh namespace.
@@ -33,12 +34,12 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		if filepath.Base(filepath.Clean(r.LocalBundlePath)) != r.BackupID {
 			return result, errors.New("local bundle directory must match backup_id")
 		}
-		c.Backup = NativeBackupConfig{Directory: filepath.Dir(filepath.Clean(r.LocalBundlePath))}
+		c.Backup = lakeapi.NativeBackupConfig{Directory: filepath.Dir(filepath.Clean(r.LocalBundlePath))}
 	}
 	if c.Backup.S3 == nil && r.LocalBundlePath == "" {
 		return result, errors.New("local_bundle_path is required for a local backup")
 	}
-	reader, err := newNativeBackupReader(ctx, c.Backup, r.SourceID)
+	reader, err := lakeapi.NewNativeBackupReader(ctx, c.Backup, r.SourceID)
 	if err != nil {
 		return result, err
 	}
@@ -55,10 +56,10 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if manifest.ID != r.BackupID || (r.SourceID != "" && manifest.SourceID != r.SourceID) {
 		return result, errors.New("backup source identity mismatch")
 	}
-	if err = validateNativeBackupManifest(manifest); err != nil {
+	if err = lakeapi.ValidateNativeBackupManifest(manifest); err != nil {
 		return result, err
 	}
-	_, remoteArchive := reader.(*nativeBackupS3)
+	_, remoteArchive := reader.(*lakeapi.NativeBackupS3)
 	if err = validateNativeRestoreSourceStorage(c.DuckLake.S3, manifest.SourceStorage, remoteArchive); err != nil {
 		return result, err
 	}
@@ -79,7 +80,7 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		if err != nil {
 			return result, err
 		}
-		if err = syncBackupDirectory(filepath.Dir(marker)); err != nil {
+		if err = lakeapi.SyncBackupDirectory(filepath.Dir(marker)); err != nil {
 			return result, err
 		}
 	}
@@ -92,7 +93,7 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		return result, err
 	}
 	sqlitePath := filepath.Join(stage, "acceptance.sqlite")
-	if err = validateBackupSQLite(ctx, sqlitePath); err != nil {
+	if err = lakeapi.ValidateBackupSQLite(ctx, sqlitePath); err != nil {
 		return result, err
 	}
 	db, err := sql.Open("sqlite", sqlitePath+"?_pragma=foreign_keys(1)")
@@ -110,10 +111,10 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 		return result, errors.New("backup acceptance source identity mismatch")
 	}
 	controlPath := filepath.Join(stage, "control.sqlite")
-	if err = validateBackupSQLite(ctx, controlPath); err != nil {
+	if err = lakeapi.ValidateBackupSQLite(ctx, controlPath); err != nil {
 		return result, err
 	}
-	if err = verifyNativeBackupPair(ctx, sqlitePath, controlPath); err != nil {
+	if err = lakeapi.VerifyNativeBackupPair(ctx, sqlitePath, controlPath); err != nil {
 		return result, err
 	}
 	control, err := sql.Open("sqlite", controlPath+"?_pragma=foreign_keys(1)")
@@ -157,13 +158,13 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err != nil {
 		return result, err
 	}
-	store, err := newDuckLake(c.DuckLake)
+	store, err := lakeapi.NewDuckLake(c.DuckLake)
 	if err != nil {
 		return result, err
 	}
-	lake := store.(*duckLakeStore)
+	lake := store.(*lakeapi.DuckLakeStore)
 	for _, catalog := range manifest.Catalogs {
-		if err = restoreNativeProject(ctx, lake, reader, manifest, catalog, stage); err != nil {
+		if err = lakeapi.RestoreNativeProject(ctx, lake, reader, manifest, catalog, stage); err != nil {
 			lake.Close()
 			return result, err
 		}
@@ -171,14 +172,14 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = lake.Close(); err != nil {
 		return result, err
 	}
-	if err = validateBackupSQLite(ctx, sqlitePath); err != nil {
+	if err = lakeapi.ValidateBackupSQLite(ctx, sqlitePath); err != nil {
 		return result, err
 	}
 	// Both SQLite files stay unpublished until the reconstructed catalogs close.
-	if err = validateBackupSQLite(ctx, controlPath); err != nil {
+	if err = lakeapi.ValidateBackupSQLite(ctx, controlPath); err != nil {
 		return result, err
 	}
-	if err = copyCheckpointFile(ctx, controlPath, r.TargetControlDBPath); err != nil {
+	if err = lakeapi.CopyCheckpointFile(ctx, controlPath, r.TargetControlDBPath); err != nil {
 		return result, err
 	}
 	if err = os.Rename(sqlitePath, r.TargetDBPath); err != nil {
@@ -209,20 +210,20 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 			}
 		}
 	}
-	if err = syncBackupDirectory(r.TargetDuckLakeDirectory); err != nil {
+	if err = lakeapi.SyncBackupDirectory(r.TargetDuckLakeDirectory); err != nil {
 		return result, err
 	}
-	if err = syncBackupDirectory(filepath.Dir(r.TargetDBPath)); err != nil {
+	if err = lakeapi.SyncBackupDirectory(filepath.Dir(r.TargetDBPath)); err != nil {
 		return result, err
 	}
-	if err = syncBackupDirectory(filepath.Dir(r.TargetControlDBPath)); err != nil {
+	if err = lakeapi.SyncBackupDirectory(filepath.Dir(r.TargetControlDBPath)); err != nil {
 		return result, err
 	}
 	for i := len(markers) - 1; i >= 0; i-- {
 		if err = os.Remove(markers[i]); err != nil {
 			return result, err
 		}
-		if err = syncBackupDirectory(filepath.Dir(markers[i])); err != nil {
+		if err = lakeapi.SyncBackupDirectory(filepath.Dir(markers[i])); err != nil {
 			return result, err
 		}
 	}
@@ -230,9 +231,9 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	return result, nil
 }
 
-func verifyNativeRestoreRegistry(ctx context.Context, stage string, m nativeBackupManifest) error {
+func verifyNativeRestoreRegistry(ctx context.Context, stage string, m lakeapi.NativeBackupManifest) error {
 	path := filepath.Join(stage, "ducklake", "registry.sqlite")
-	if err := validateBackupSQLite(ctx, path); err != nil {
+	if err := lakeapi.ValidateBackupSQLite(ctx, path); err != nil {
 		return err
 	}
 	registry, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String()+"?mode=ro")
@@ -272,16 +273,16 @@ func verifyNativeRestoreRegistry(ctx context.Context, stage string, m nativeBack
 	return nil
 }
 
-func validateNativeRestoreS3Target(ctx context.Context, target, backup *DuckLakeS3Config) error {
+func validateNativeRestoreS3Target(ctx context.Context, target, backup *lakeapi.DuckLakeS3Config) error {
 	if target == nil {
 		return nil
 	}
-	normalized, err := normalizeDuckLakeS3(target)
+	normalized, err := lakeapi.NormalizeDuckLakeS3(target)
 	if err != nil {
 		return err
 	}
 	if backup != nil {
-		backup, err = normalizeDuckLakeS3(backup)
+		backup, err = lakeapi.NormalizeDuckLakeS3(backup)
 		if err != nil {
 			return err
 		}
@@ -291,7 +292,7 @@ func validateNativeRestoreS3Target(ctx context.Context, target, backup *DuckLake
 			return errors.New("backup and restore S3 prefixes overlap")
 		}
 	}
-	client, transport, err := newNativeS3Client(ctx, *normalized)
+	client, transport, err := lakeapi.NewNativeS3Client(ctx, *normalized)
 	if err != nil {
 		return err
 	}
@@ -306,7 +307,7 @@ func validateNativeRestoreS3Target(ctx context.Context, target, backup *DuckLake
 	return nil
 }
 
-func validateNativeRestoreSourceStorage(target *DuckLakeS3Config, source nativeBackupStorageIdentity, remoteArchive bool) error {
+func validateNativeRestoreSourceStorage(target *lakeapi.DuckLakeS3Config, source lakeapi.NativeBackupStorageIdentity, remoteArchive bool) error {
 	if source.Mode == "" {
 		if target != nil || remoteArchive {
 			return errors.New("remote native restore requires the backup's original analytical storage identity")
@@ -322,14 +323,14 @@ func validateNativeRestoreSourceStorage(target *DuckLakeS3Config, source nativeB
 	if source.Mode != "s3" {
 		return errors.New("unsupported backup source storage mode")
 	}
-	original, err := normalizeDuckLakeS3(&DuckLakeS3Config{Bucket: source.Bucket, Prefix: source.Prefix, Region: source.Region, Endpoint: source.Endpoint})
+	original, err := lakeapi.NormalizeDuckLakeS3(&lakeapi.DuckLakeS3Config{Bucket: source.Bucket, Prefix: source.Prefix, Region: source.Region, Endpoint: source.Endpoint})
 	if err != nil {
 		return errors.New("invalid backup original analytical storage identity")
 	}
 	if target == nil {
 		return nil
 	}
-	normalized, err := normalizeDuckLakeS3(target)
+	normalized, err := lakeapi.NormalizeDuckLakeS3(target)
 	if err != nil {
 		return err
 	}

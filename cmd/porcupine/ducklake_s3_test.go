@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/olup/porcupine/internal/porcupine"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeS3Environment(t *testing.T) {
@@ -39,7 +40,7 @@ func TestAnalyticalObjectStorageHTTPResponseBudget(t *testing.T) {
 		t.Fatal("local response budget changed")
 	}
 	for _, pair := range []struct{ io, wanted int }{{0, 30}, {1, 30}, {5, 30}, {30, 45}} {
-		lake := &porcupine.DuckLakeConfig{S3: &porcupine.DuckLakeS3Config{RequestTimeoutSeconds: pair.io}}
+		lake := &lakeapi.DuckLakeConfig{S3: &lakeapi.DuckLakeS3Config{RequestTimeoutSeconds: pair.io}}
 		if got := analyticsHTTPWriteTimeout(lake); got != time.Duration(pair.wanted)*time.Second {
 			t.Fatalf("I/O timeout %d produced response budget %s", pair.io, got)
 		}

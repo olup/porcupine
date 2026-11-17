@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 // Multipart behavior comes from the existing S3 HTTP fixture. This wrapper adds
@@ -122,10 +124,10 @@ func newPipelineRecoveryFixture(t *testing.T, body string) *pipelineRecoveryFixt
 func pipelineRecoveryBody(t *testing.T) string {
 	t.Helper()
 	data, err := json.Marshal(struct {
-		Meta []AnalyticsResultColumn `json:"meta"`
-		Data [][]string              `json:"data"`
-		Rows int                     `json:"rows"`
-	}{Meta: []AnalyticsResultColumn{{Name: "uuid", Type: "String"}, {Name: "note", Type: "String"}}, Data: [][]string{{"a", strings.Repeat("a", 750)}, {"b", strings.Repeat("b", 750)}, {"c", strings.Repeat("c", 750)}}, Rows: 3})
+		Meta []lakeapi.AnalyticsResultColumn `json:"meta"`
+		Data [][]string                      `json:"data"`
+		Rows int                             `json:"rows"`
+	}{Meta: []lakeapi.AnalyticsResultColumn{{Name: "uuid", Type: "String"}, {Name: "note", Type: "String"}}, Data: [][]string{{"a", strings.Repeat("a", 750)}, {"b", strings.Repeat("b", 750)}, {"c", strings.Repeat("c", 750)}}, Rows: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/time/rate"
@@ -34,7 +35,7 @@ func oauthProtocolService(t *testing.T) (*Service, *atomic.Int64) {
 
 func oauthProtocolClient(t *testing.T, s *Service, permissions, projects []string) (string, string) {
 	t.Helper()
-	id := newID()
+	id := eventapi.NewID()
 	secret := "secret+percent:% reserved-character-value"
 	encodedPermissions, _ := json.Marshal(permissions)
 	encodedProjects, _ := json.Marshal(projects)

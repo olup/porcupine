@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
@@ -52,7 +53,7 @@ func sharedIngestionProject(t *testing.T, s *Service, id string) {
 func sharedIngestionBatch(project, prefix string, n int) preparedLiveBatch {
 	batch := preparedLiveBatch{projectID: project}
 	for i := range n {
-		batch.events = append(batch.events, Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()})
+		batch.events = append(batch.events, eventapi.Event{ProjectID: project, UUID: fmt.Sprintf("%s-%d", prefix, i), Event: "visited", DistinctID: "visitor", Properties: []byte(`{}`), Timestamp: "2026-11-01T00:00:00Z", ReceivedAt: now()})
 	}
 	return batch
 }
@@ -190,7 +191,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 	a.clock = func() time.Time { return at }
 	b.clock = a.clock
 	peer := ingestionPeer{address: netip.MustParseAddr("192.0.2.8"), userAgent: "fixture"}
-	accept := func(s *Service, prefix string) Event {
+	accept := func(s *Service, prefix string) eventapi.Event {
 		t.Helper()
 		batch := sharedIngestionBatch("cookie", prefix, 1)
 		batch.cookieless = true
@@ -198,7 +199,7 @@ func TestSharedIngestionCookielessKeysAndUTCPeriods(t *testing.T) {
 		if _, err := s.acceptance.Accept(t.Context(), batch, peer, true); err != nil {
 			t.Fatal(err)
 		}
-		var event Event
+		var event eventapi.Event
 		var properties string
 		if err := s.db.QueryRow(`SELECT distinct_id,properties FROM events WHERE uuid=$1`, prefix+"-0").Scan(&event.DistinctID, &properties); err != nil {
 			t.Fatal(err)

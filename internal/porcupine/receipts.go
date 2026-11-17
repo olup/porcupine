@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func localReceipt(ctx context.Context, q oauthQueryer, project, uuid string) (bool, error) {
@@ -32,7 +34,7 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid s
 
 // coldKnown checks UUIDs without trusting producer timestamps. A retry may omit
 // its timestamp or change any payload field while keeping the same message ID.
-func (rules *eventRules) coldKnown(ctx context.Context, project string, events []Event) (map[string]int64, error) {
+func (rules *eventRules) coldKnown(ctx context.Context, project string, events []eventapi.Event) (map[string]int64, error) {
 	if rules.knownEvents == nil || len(events) == 0 {
 		return nil, nil
 	}

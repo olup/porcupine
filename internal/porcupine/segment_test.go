@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
@@ -19,9 +20,9 @@ func segmentHeaders(key string) map[string]string {
 	}
 	return headers
 }
-func segmentEvent(t *testing.T, s *Service, project, messageID string) Event {
+func segmentEvent(t *testing.T, s *Service, project, messageID string) eventapi.Event {
 	t.Helper()
-	var event Event
+	var event eventapi.Event
 	var metadata, properties string
 	if err := s.db.QueryRow(`SELECT id,uuid,event,distinct_id,properties,timestamp,ingestion_metadata FROM events WHERE project_id=? AND json_extract(ingestion_metadata,'$.message_id')=?`, project, messageID).Scan(&event.ID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &metadata); err != nil {
 		t.Fatal(err)

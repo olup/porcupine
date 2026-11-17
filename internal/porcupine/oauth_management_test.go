@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func oauthManagementActor(id string, permissions, projects []string) context.Context {
@@ -56,8 +57,8 @@ func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range []struct{ id, permissions, created string }{
-		{newID(), `["events:read"]`, "1990-01-01"},
-		{newID(), `["instance:admin"]`, "2002-01-01"},
+		{eventapi.NewID(), `["events:read"]`, "1990-01-01"},
+		{eventapi.NewID(), `["instance:admin"]`, "2002-01-01"},
 	} {
 		if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,?,?,?)`, row.id, hash(row.id), row.permissions, `["*"]`, row.created); err != nil {
 			t.Fatal(err)
@@ -70,7 +71,7 @@ func TestOAuthClientSchemaPinsOriginalBootstrap(t *testing.T) {
 	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&alias); err != nil || alias != original {
 		t.Fatal("bootstrap alias did not retain the original revoked administrator", err)
 	}
-	older := newID()
+	older := eventapi.NewID()
 	if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES(?,'bootstrap admin',?,'["instance:admin"]','["*"]','1980-01-01')`, older, hash(older)); err != nil {
 		t.Fatal(err)
 	}

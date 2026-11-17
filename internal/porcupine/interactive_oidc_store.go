@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func (s *Service) loadOAuthHuman(ctx context.Context, query oauthQueryer, humanID string) (auth.Principal, error) {
@@ -47,7 +48,7 @@ JOIN access_keys k ON k.id=h.principal_id WHERE h.email=$1 AND k.revoked_at IS N
 			return authenticatedHuman{}, errors.New("account is not authorized")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO oidc_identities(id,issuer,subject,principal_id,linked_email,created_at)
-VALUES($1,$2,$3,$4,$5,$6)`, newID(), s.oauth.oidc.provider.Issuer(), subject, id, email, now()); err != nil {
+VALUES($1,$2,$3,$4,$5,$6)`, eventapi.NewID(), s.oauth.oidc.provider.Issuer(), subject, id, email, now()); err != nil {
 			return authenticatedHuman{}, errors.New("provider identity cannot be linked")
 		}
 	default:

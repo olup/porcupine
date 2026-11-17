@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestSharedNativeMetadataLockTimeout(t *testing.T) {
@@ -27,11 +29,11 @@ func TestSharedNativeMetadataLockTimeout(t *testing.T) {
 	if _, err := native.ExecContext(ctx, "SET allow_persistent_secrets=false"); err != nil {
 		t.Fatal(err)
 	}
-	store := duckLakeStore{Config: DuckLakeConfig{PostgresURL: dsn, MetadataTimeoutSeconds: 2}}
+	store := lakeapi.DuckLakeStore{Config: lakeapi.DuckLakeConfig{PostgresURL: dsn, MetadataTimeoutSeconds: 2}}
 	if err := store.ConfigureSharedPostgres(ctx, native); err != nil {
 		t.Fatal(err)
 	}
-	attach := "ATTACH 'ducklake:postgres:' AS lake (META_SECRET 'pc_analytics_postgres',METADATA_SCHEMA 'pc_timeout',DATA_PATH " + lakeLiteral(t.TempDir()) + ",DATA_INLINING_ROW_LIMIT 0)"
+	attach := "ATTACH 'ducklake:postgres:' AS lake (META_SECRET 'pc_analytics_postgres',METADATA_SCHEMA 'pc_timeout',DATA_PATH " + lakeapi.LakeLiteral(t.TempDir()) + ",DATA_INLINING_ROW_LIMIT 0)"
 	if _, err := native.ExecContext(ctx, attach); err != nil {
 		t.Fatal("cannot attach isolated native metadata catalog")
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type largeEventReceipt struct {
@@ -189,7 +190,7 @@ func TestDuckLakeLargeEventsCrashHelper(t *testing.T) {
 	}
 	stage := os.Getenv("PORCUPINE_LARGE_EVENT_STAGE")
 	config := Config{DBPath: filepath.Join(root, "queue.db"), BootstrapToken: adminToken, QueueMaxEvents: 2000,
-		DuckLake: &DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512, Threads: 2, MaintenanceInterval: 24 * time.Hour}}
+		DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(root, "lake"), MemoryLimitMB: 512, Threads: 2, MaintenanceInterval: 24 * time.Hour}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

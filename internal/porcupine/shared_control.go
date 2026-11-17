@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 //go:embed control_schema.sql
@@ -87,7 +88,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 		if len(bootstrapToken) < 16 {
 			return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization")
 		}
-		id := newID()
+		id := eventapi.NewID()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrapToken), now()); err != nil {
 			return err
 		}
@@ -100,7 +101,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tenants(id,name,created_at,ingestion_allowed,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) VALUES($1,'Default',$2,1,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`, defaultTenantID, now(), queries.MaxConcurrent, queries.TimeoutMS, queries.MaxRows, queries.MaxResultBytes); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_source_id',$1) ON CONFLICT(key) DO NOTHING`, newID()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('shared_source_id',$1) ON CONFLICT(key) DO NOTHING`, eventapi.NewID()); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
@@ -47,11 +49,11 @@ func identityLink(ctx context.Context, tx *sql.Tx, project, id string) (string, 
 // applyIdentityControl runs after stable UUID deduplication and insertion, in the
 // capture transaction. Invalid or conflicting controls retain a durable no-op
 // marker and cannot change any profile or link, including a competing target.
-func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, error) {
+func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *eventapi.Event) (bool, error) {
 	if !isIdentityControl(event.Event) {
 		return false, nil
 	}
-	snapshot := identitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []identityLinkSnapshot{}}
+	snapshot := lakeapi.IdentitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []lakeapi.IdentityLinkSnapshot{}}
 	ignored, err := applyIdentityState(ctx, tx, *event, &snapshot)
 	if err != nil {
 		return false, err
@@ -66,7 +68,7 @@ func applyIdentityControl(ctx context.Context, tx *sql.Tx, event *Event) (bool, 
 	return ignored, err
 }
 
-func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *identitySnapshot) (bool, error) {
+func applyIdentityState(ctx context.Context, tx *sql.Tx, event eventapi.Event, snapshot *lakeapi.IdentitySnapshot) (bool, error) {
 	if !validIdentityID(event.DistinctID) {
 		return true, nil
 	}
@@ -155,7 +157,7 @@ func applyIdentityState(ctx context.Context, tx *sql.Tx, event Event, snapshot *
 				return false, err
 			}
 		}
-		snapshot.Links = append(snapshot.Links, identityLinkSnapshot{AnonymousID: anonymous, IdentifiedID: target, Version: strconv.FormatInt(linkVersion, 10)})
+		snapshot.Links = append(snapshot.Links, lakeapi.IdentityLinkSnapshot{AnonymousID: anonymous, IdentifiedID: target, Version: strconv.FormatInt(linkVersion, 10)})
 	}
 	snapshot.IdentifiedID, snapshot.Traits = target, traits
 	return false, nil

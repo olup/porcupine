@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
@@ -31,7 +32,7 @@ func (s settings) runNativeRestore(ctx context.Context, input io.Reader, output 
 	if err != nil {
 		return err
 	}
-	backupConfig := porcupine.NativeBackupConfig{}
+	backupConfig := lakeapi.NativeBackupConfig{}
 	if backup != nil {
 		backupConfig = *backup
 	}
@@ -40,7 +41,7 @@ func (s settings) runNativeRestore(ctx context.Context, input io.Reader, output 
 		return err
 	}
 	if target == nil {
-		target = &porcupine.DuckLakeConfig{}
+		target = &lakeapi.DuckLakeConfig{}
 	}
 	target.Directory = request.TargetDuckLakeDirectory
 	result, err := porcupine.RestoreNativeBackup(ctx, porcupine.NativeRestoreConfig{Request: request, Backup: backupConfig, DuckLake: *target})

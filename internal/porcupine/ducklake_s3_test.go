@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
@@ -22,7 +25,7 @@ func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := validLakeS3Config()
-	if err := pinDuckLakeStorage(ctx, database, root, &original); err != nil {
+	if err := lakeapi.PinDuckLakeStorage(ctx, database, root, &original); err != nil {
 		t.Fatal(err)
 	}
 	rotated := original
@@ -31,11 +34,11 @@ func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
 	rotated.UsePathStyle = false
 	rotated.Region = "us-east-1"
 	rotated.RequestTimeoutSeconds = 1
-	if err := pinDuckLakeStorage(ctx, database, root, &rotated); err != nil {
+	if err := lakeapi.PinDuckLakeStorage(ctx, database, root, &rotated); err != nil {
 		t.Fatal("credential rotation changed storage identity", err)
 	}
-	for _, modified := range []*DuckLakeS3Config{nil, func() *DuckLakeS3Config { c := original; c.Prefix = "other"; return &c }(), func() *DuckLakeS3Config { c := original; c.Bucket = "other-bucket"; return &c }(), func() *DuckLakeS3Config { c := original; c.Endpoint = "https://other.example"; return &c }()} {
-		if err := pinDuckLakeStorage(ctx, database, root, modified); err == nil {
+	for _, modified := range []*lakeapi.DuckLakeS3Config{nil, func() *lakeapi.DuckLakeS3Config { c := original; c.Prefix = "other"; return &c }(), func() *lakeapi.DuckLakeS3Config { c := original; c.Bucket = "other-bucket"; return &c }(), func() *lakeapi.DuckLakeS3Config { c := original; c.Endpoint = "https://other.example"; return &c }()} {
+		if err := lakeapi.PinDuckLakeStorage(ctx, database, root, modified); err == nil {
 			t.Fatal("archive silently changed object namespace")
 		}
 	}
@@ -47,7 +50,7 @@ func TestDuckLakeS3StoragePinAndCredentialRotation(t *testing.T) {
 	if _, err := local.Exec("CREATE TABLE catalogs(project_id TEXT);INSERT INTO catalogs VALUES('existing')"); err != nil {
 		t.Fatal(err)
 	}
-	if err := pinDuckLakeStorage(ctx, local, root, &original); err == nil {
+	if err := lakeapi.PinDuckLakeStorage(ctx, local, root, &original); err == nil {
 		t.Fatal("legacy local archive silently switched to S3")
 	}
 }
@@ -66,17 +69,17 @@ func TestDuckLakeS3StoragePinPreservesAWSPartition(t *testing.T) {
 	}
 	original := validLakeS3Config()
 	original.Endpoint = ""
-	if err := pinDuckLakeStorage(ctx, database, root, &original); err != nil {
+	if err := lakeapi.PinDuckLakeStorage(ctx, database, root, &original); err != nil {
 		t.Fatal(err)
 	}
 	changed := original
 	changed.Region = "us-east-1"
-	if err := pinDuckLakeStorage(ctx, database, root, &changed); err != nil {
+	if err := lakeapi.PinDuckLakeStorage(ctx, database, root, &changed); err != nil {
 		t.Fatal("same-partition signing-region correction rejected", err)
 	}
 	for _, region := range []string{"cn-north-1", "us-gov-west-1"} {
 		changed.Region = region
-		if err := pinDuckLakeStorage(ctx, database, root, &changed); err == nil {
+		if err := lakeapi.PinDuckLakeStorage(ctx, database, root, &changed); err == nil {
 			t.Fatal("AWS partition switch changed the object namespace", region)
 		}
 	}
@@ -85,8 +88,8 @@ func TestDuckLakeS3StoragePinPreservesAWSPartition(t *testing.T) {
 func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
 	t.Parallel()
 	c := validLakeS3Config()
-	lake := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &c}
-	if _, err := prepareNativeBackup(&NativeBackupConfig{Directory: t.TempDir()}, "queue.db", localControlPath("queue.db"), &lake); err == nil {
+	lake := lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &c}
+	if _, err := prepareNativeBackup(&lakeapi.NativeBackupConfig{Directory: t.TempDir()}, "queue.db", localControlPath("queue.db"), &lake); err == nil {
 		t.Fatal("local-only backups accepted remote data")
 	}
 }
@@ -94,7 +97,7 @@ func TestDuckLakeS3LocalBackupsFailClosed(t *testing.T) {
 func TestDuckLakeS3SecretBindErrorsCannotDiscloseCredentials(t *testing.T) {
 	t.Parallel()
 	reached := false
-	name := "s3-secret-error-" + newID()
+	name := "s3-secret-error-" + eventapi.NewID()
 	sql.Register(name, secretErrorDriver{reached: &reached})
 	database, err := sql.Open(name, "")
 	if err != nil {
@@ -103,7 +106,7 @@ func TestDuckLakeS3SecretBindErrorsCannotDiscloseCredentials(t *testing.T) {
 	defer database.Close()
 	c := validLakeS3Config()
 	c.RequestTimeoutSeconds = 5
-	objects := duckLakeObjectStore{Config: c, Namespace: "tests/source/"}
+	objects := lakeapi.DuckLakeObjectStore{Config: c, Namespace: "tests/source/"}
 	_, err = objects.Configure(context.Background(), database, "project")
 	if err == nil || !reached {
 		t.Fatal("fixture did not exercise the native secret bind failure")
@@ -142,7 +145,7 @@ func TestDuckLakeS3SettingsReachAllConnections(t *testing.T) {
 			break
 		}
 	}
-	objects := duckLakeObjectStore{Config: c, Namespace: "tests/source/"}
+	objects := lakeapi.DuckLakeObjectStore{Config: c, Namespace: "tests/source/"}
 	if _, err := objects.Configure(context.Background(), database, "project"); err != nil {
 		t.Fatal(err)
 	}

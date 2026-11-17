@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestExportWorkerPublishesOnlyCompleteValidatedResult(t *testing.T) {
@@ -133,7 +135,7 @@ func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 	fake := &exportTestS3{}
 	s, job := nativeExportWorkerFixture(t, fake)
 	sink := newExportSink(context.Background(), s, job)
-	sink.setColumns([]AnalyticsResultColumn{{Name: "uuid"}})
+	sink.setColumns([]lakeapi.AnalyticsResultColumn{{Name: "uuid"}})
 	if err := sink.writeRow([]json.RawMessage{json.RawMessage(`"partial"`)}); err != nil {
 		t.Fatal(err)
 	}

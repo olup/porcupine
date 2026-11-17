@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func identityCapture(t *testing.T, s *Service, token string, events []map[string]any, status int) map[string]any {
@@ -49,13 +50,13 @@ func storedIdentityProfile(t *testing.T, s *Service, project, target string) (ma
 	return traits, identified, version
 }
 
-func storedIdentitySnapshot(t *testing.T, s *Service, uuid string) identitySnapshot {
+func storedIdentitySnapshot(t *testing.T, s *Service, uuid string) lakeapi.IdentitySnapshot {
 	t.Helper()
 	var raw string
 	if err := s.db.QueryRow(`SELECT identity_snapshot FROM events WHERE uuid=?`, uuid).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	var snapshot identitySnapshot
+	var snapshot lakeapi.IdentitySnapshot
 	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
 		t.Fatal(err)
 	}

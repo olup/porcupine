@@ -15,12 +15,13 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func nativeExportWorkerFixture(t *testing.T, fake *exportTestS3) (*Service, storedExport) {
 	t.Helper()
 	s := duckLakeJourneyService(t)
-	s.lakeMemoryMB = defaultDuckLakeMemoryMB
+	s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
 	config, err := normalizeExportConfig(ExportConfig{FileBytes: 1024, BandwidthBytesPerSecond: 100 << 20, MaxExecutionSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestDuckLakeConfiguredExportsOpen(t *testing.T) {
 	fake := &exportTestS3{}
 	server := httptest.NewServer(fake)
 	defer server.Close()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "acceptance.sqlite"), BootstrapToken: adminToken, DuckLake: &DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Exports: &ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "native-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "acceptance.sqlite"), BootstrapToken: adminToken, DuckLake: &lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")}, Exports: &ExportConfig{S3: exportstore.Config{Region: "us-east-1", Bucket: "native-exports", Prefix: "isolated", Endpoint: server.URL, AccessKeyID: "key", SecretAccessKey: "secret", UsePathStyle: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 			imported := lakeStorageProjection(t, a, "historical", 9999)
 			imported.Event.Event = "purchase"
 			imported.Imported = true
-			if err = s.lake.Apply(context.Background(), []eventProjection{imported}); err != nil {
+			if err = s.lake.Apply(context.Background(), []lakeapi.EventProjection{imported}); err != nil {
 				t.Fatal(err)
 			}
 			spec := testS3Spec()
@@ -260,7 +261,7 @@ func TestDuckLakeS3PipelineWindowsPublicationAndRevocation(t *testing.T) {
 func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
-	batch := make([]eventProjection, 100)
+	batch := make([]lakeapi.EventProjection, 100)
 	for i := range batch {
 		batch[i] = lakeStorageProjection(t, "large", fmt.Sprintf("row-%03d", i), int64(i+1))
 		batch[i].Properties = json.RawMessage(`{"padding":"` + strings.Repeat("x", 1024) + `"}`)
@@ -271,7 +272,7 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	seen := 0
-	_, err := store.Export(ctx, "large", "SELECT a.uuid,a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error {
+	_, err := store.Export(ctx, "large", "SELECT a.uuid,a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error {
 		seen++
 		if seen == 20 {
 			cancel()
@@ -288,11 +289,11 @@ func TestDuckLakeExportProducesPrefixBeforeLargeResultCompletes(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("stream directory retained after cancellation: %v", entries)
 	}
-	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 64, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return nil }})
-	if !errors.Is(err, errExportValueTooLarge) {
+	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 64, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return nil }})
+	if !errors.Is(err, lakeapi.ErrExportValueTooLarge) {
 		t.Fatalf("row-limit cause masked by COPY cancellation: %v", err)
 	}
-	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, exportStreamCallbacks{Columns: func([]AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errExportPressure }})
+	_, err = store.Export(context.Background(), "large", "SELECT a.properties FROM events a CROSS JOIN events b CROSS JOIN events c", nil, nil, 4096, lakeapi.ExportStreamCallbacks{Columns: func([]lakeapi.AnalyticsResultColumn) error { return nil }, Row: func([]json.RawMessage) error { return errExportPressure }})
 	if !errors.Is(err, errExportPressure) {
 		t.Fatalf("consumer cause masked by COPY cancellation: %v", err)
 	}

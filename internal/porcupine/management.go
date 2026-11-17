@@ -6,14 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/danielgtaylor/huma/v2"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 type Project struct {
@@ -104,7 +106,7 @@ type EventListInput struct {
 	Limit int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 }
 type EventList struct {
-	Events []Event `json:"events"`
+	Events []eventapi.Event `json:"events"`
 }
 type EventListOutput struct{ Body EventList }
 type actorContextKey struct{}
@@ -391,7 +393,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if mode == ingestionServerOnly && s.oauth == nil {
 		return nil, apiError(503, "server_only ingestion requires configured OAuth")
 	}
-	p := Project{ID: newID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
+	p := Project{ID: eventapi.NewID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
 	raw := ""
 	if mode == ingestionMixed {
 		raw = token()
@@ -404,7 +406,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$3,$4,$5)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
 	if err == nil && mode == ingestionMixed {
 		projects, _ := json.Marshal([]string{p.ID})
-		ingestionID := newID()
+		ingestionID := eventapi.NewID()
 		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, ingestionID, p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, ingestionID, tenantID)
@@ -517,7 +519,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	if s.oauth != nil && !s.oauth.config.AllowLegacyKeys && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
 		return nil, apiError(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
-	id, raw := newID(), token()
+	id, raw := eventapi.NewID(), token()
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	tenantID := ""
@@ -648,9 +650,9 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		return nil, apiError(500, "storage error")
 	}
 	defer rows.Close()
-	events := []Event{}
+	events := []eventapi.Event{}
 	for rows.Next() {
-		var e Event
+		var e eventapi.Event
 		var props, ingestion string
 		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered, &ingestion, &e.Imported); err != nil {
 			return nil, apiError(500, "storage error")

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 const defaultTenantID = "default"
@@ -122,7 +124,7 @@ func (s *Service) insertTenant(ctx context.Context, name string, budgets TenantB
 	if err = validateTenantBudgets(budgets); err != nil {
 		return Tenant{}, err
 	}
-	t := Tenant{ID: newID(), Name: name, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), IngestionAllowed: true, Budgets: budgets}
+	t := Tenant{ID: eventapi.NewID(), Name: name, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), IngestionAllowed: true, Budgets: budgets}
 	_, err = s.control.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes)
 	if err != nil {
 		return Tenant{}, apiError(503, "tenant creation unavailable")

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 )
 
@@ -80,7 +81,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	human := EmailHuman{ID: newID(), Email: "person@example.test", CreatedAt: now(), Permissions: []string{"management:read", "events:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"management:read", "events:read"}}}}
+	human := EmailHuman{ID: eventapi.NewID(), Email: "person@example.test", CreatedAt: now(), Permissions: []string{"management:read", "events:read"}, Projects: []string{"project-a"}, Grants: []HumanProjectGrant{{ProjectID: "project-a", Permissions: []string{"management:read", "events:read"}}}}
 	tx, err := first.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

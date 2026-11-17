@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/golang-jwt/jwt/v5"
 	"io"
 	"math/big"
 	"net/http"
@@ -24,7 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
 	"golang.org/x/oauth2"
 	"golang.org/x/time/rate"
 )
@@ -196,7 +198,7 @@ func newOIDCFixtureWithOTP(t *testing.T, otp bool) *oidcFixture {
 			t.Fatal(err)
 		}
 	}
-	human := EmailHuman{ID: newID(), Email: "operator@example.test", CreatedAt: now(), Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}, Grants: []HumanProjectGrant{
+	human := EmailHuman{ID: eventapi.NewID(), Email: "operator@example.test", CreatedAt: now(), Permissions: []string{"events:read", "management:read"}, Projects: []string{"project-a", "project-b"}, Grants: []HumanProjectGrant{
 		{ProjectID: "project-a", Permissions: []string{"events:read", "management:read"}},
 		{ProjectID: "project-b", Permissions: []string{"events:read", "management:read"}},
 	}}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/auth"
+	eventapi "github.com/olup/porcupine/internal/event"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 var (
@@ -142,7 +144,7 @@ func (s *Service) nextQueuedExport(ctx context.Context) (storedExport, bool) {
 }
 
 func (s *Service) claimExport(ctx context.Context, job storedExport) (storedExport, error) {
-	attempt := newID()
+	attempt := eventapi.NewID()
 	started := job.StartedAt
 	if started == "" {
 		started = s.clock().UTC().Format(time.RFC3339Nano)
@@ -261,7 +263,7 @@ func (s *Service) executeExport(ctx context.Context, job storedExport) error {
 		return err
 	}
 	sink := newExportSink(ctx, s, job)
-	result, err := s.lake.Export(ctx, job.ProjectID, job.SQL, job.Parameters, nil, s.exports.config.MaxRowBytes, exportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
+	result, err := s.lake.Export(ctx, job.ProjectID, job.SQL, job.Parameters, nil, s.exports.config.MaxRowBytes, lakeapi.ExportStreamCallbacks{Columns: sink.setColumns, Row: sink.writeRow})
 	if err != nil {
 		return err
 	}
@@ -274,13 +276,13 @@ func (s *Service) executeExport(ctx context.Context, job storedExport) error {
 	return s.publishExport(ctx, job, result, sink)
 }
 
-func (s *Service) publishExport(ctx context.Context, job storedExport, result exportStreamResult, sink *exportSink) error {
+func (s *Service) publishExport(ctx context.Context, job storedExport, result lakeapi.ExportStreamResult, sink *exportSink) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	columns, err := json.Marshal(result.Columns)
 	if err != nil {
-		return errExportStreamInvalid
+		return lakeapi.ErrExportStreamInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -333,11 +335,11 @@ func (s *Service) failExport(parent context.Context, job storedExport, failure e
 		code = "deadline_exceeded"
 	case errors.Is(failure, errExportOutputLimit):
 		code = "output_limit"
-	case errors.Is(failure, errExportMetadataTooLarge):
+	case errors.Is(failure, lakeapi.ErrExportMetadataTooLarge):
 		code = "metadata_limit"
-	case errors.Is(failure, errExportValueTooLarge):
+	case errors.Is(failure, lakeapi.ErrExportValueTooLarge):
 		code = "row_limit"
-	case errors.Is(failure, errExportStreamInvalid):
+	case errors.Is(failure, lakeapi.ErrExportStreamInvalid):
 		code = "stream_invalid"
 	case parent.Err() != nil:
 		state, code = ExportQueued, "interrupted"

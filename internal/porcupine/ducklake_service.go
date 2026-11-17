@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func (s *Service) initializeLakeSource(ctx context.Context) error {
@@ -68,7 +70,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 	}()
 }
 
-func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []eventProjection) error {
+func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []lakeapi.EventProjection) error {
 	if s.lake == nil {
 		return errors.New("analytical delivery is disabled")
 	}
@@ -85,9 +87,9 @@ func (s *Service) applyAnalyticalProjections(ctx context.Context, projections []
 	}
 	return s.lake.Apply(ctx, projections)
 }
-func (s *Service) loadAnalyticalProjection(ctx context.Context, project, uuid string) (eventProjection, error) {
+func (s *Service) loadAnalyticalProjection(ctx context.Context, project, uuid string) (lakeapi.EventProjection, error) {
 	if s.lake == nil {
-		return eventProjection{}, errEventNotFound
+		return lakeapi.EventProjection{}, lakeapi.ErrEventNotFound
 	}
 	return s.lake.Load(ctx, project, uuid)
 }

@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/olup/porcupine/internal/porcupine"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func (s settings) analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
+func (s settings) analyticsConfiguration() (*lakeapi.DuckLakeConfig, error) {
 	directory := s.get("PORCUPINE_DUCKLAKE_DIR")
 	remote, err := s.duckLakeS3Configuration()
 	if err != nil {
@@ -17,7 +17,7 @@ func (s settings) analyticsConfiguration() (*porcupine.DuckLakeConfig, error) {
 	if directory == "" {
 		directory = defaultAnalyticsDirectory(s.get("PORCUPINE_DB"))
 	}
-	config := &porcupine.DuckLakeConfig{Directory: directory, S3: remote}
+	config := &lakeapi.DuckLakeConfig{Directory: directory, S3: remote}
 	config.PostgresURL, err = s.sharedSecretSetting("PORCUPINE_DUCKLAKE_POSTGRES_URL")
 	if err != nil {
 		return nil, err

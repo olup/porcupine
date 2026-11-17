@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	eventapi "github.com/olup/porcupine/internal/event"
 )
 
 func TestManagementKeyListingAndLifecycle(t *testing.T) {
@@ -84,7 +86,7 @@ ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,permissions=exclude
 		}
 	}
 	forged := token()
-	journalGrant(newID(), forged)
+	journalGrant(eventapi.NewID(), forged)
 	request(t, s, "GET", "/api/v1/tenants", forged, "", 401)
 	readerID, reader := key(t, s, []string{"management:read"}, []string{projectID})
 	journalGrant(readerID, reader)

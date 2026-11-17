@@ -10,6 +10,7 @@ import (
 
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type importedPersonState struct {
@@ -140,7 +141,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	}
 	acceptedAt := rules.clock().UTC()
 	event.ReceivedAt = acceptedAt.Format(time.RFC3339Nano)
-	event = eventWithMetadata(event)
+	event = lakeapi.EventWithMetadata(event)
 	// Imported control arguments cannot be replayed as live incremental updates.
 	// Persons snapshots hydrate profiles separately with explicit version guards.
 	control := isIdentityControl(event.Event) || event.Event == "$create_alias" || event.Event == "$groupidentify"
@@ -161,7 +162,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 		return result, err
 	}
 	if control {
-		snapshot := identitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []identityLinkSnapshot{}}
+		snapshot := lakeapi.IdentitySnapshot{Version: strconv.FormatInt(event.ID, 10), Traits: map[string]any{}, Links: []lakeapi.IdentityLinkSnapshot{}}
 		if row.Kind == "persons" {
 			var traits map[string]any
 			properties := row.Person.Properties

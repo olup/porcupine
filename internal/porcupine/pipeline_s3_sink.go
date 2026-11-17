@@ -12,6 +12,7 @@ import (
 
 	"github.com/olup/porcupine/internal/delivery"
 	"github.com/olup/porcupine/internal/exportstore"
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"golang.org/x/time/rate"
 )
 
@@ -23,16 +24,16 @@ type pipelineS3File struct {
 	SHA256       string `json:"sha256"`
 }
 type pipelineS3Manifest struct {
-	Version       int                     `json:"version"`
-	ProjectID     string                  `json:"project_id"`
-	PipelineID    string                  `json:"pipeline_id"`
-	RunID         string                  `json:"run_id"`
-	WindowStartMS int64                   `json:"window_start_ms"`
-	WindowEndMS   int64                   `json:"window_end_ms"`
-	Format        string                  `json:"format"`
-	Rows          int64                   `json:"rows"`
-	Columns       []AnalyticsResultColumn `json:"columns"`
-	Files         []pipelineS3File        `json:"files"`
+	Version       int                             `json:"version"`
+	ProjectID     string                          `json:"project_id"`
+	PipelineID    string                          `json:"pipeline_id"`
+	RunID         string                          `json:"run_id"`
+	WindowStartMS int64                           `json:"window_start_ms"`
+	WindowEndMS   int64                           `json:"window_end_ms"`
+	Format        string                          `json:"format"`
+	Rows          int64                           `json:"rows"`
+	Columns       []lakeapi.AnalyticsResultColumn `json:"columns"`
+	Files         []pipelineS3File                `json:"files"`
 }
 type pipelineS3Sink struct {
 	ctx                       context.Context
@@ -41,7 +42,7 @@ type pipelineS3Sink struct {
 	store                     *exportstore.Store
 	config                    ExportConfig
 	encoder                   *delivery.RowEncoder
-	resultColumns             []AnalyticsResultColumn
+	resultColumns             []lakeapi.AnalyticsResultColumn
 	limiter                   *rate.Limiter
 	current                   *pipelineS3File
 	upload                    *exportstore.Upload
@@ -56,7 +57,7 @@ func newPipelineS3Sink(ctx context.Context, s *Service, w *s3PipelineWork, store
 	sink.limiter = rate.NewLimiter(rate.Limit(sink.config.BandwidthBytesPerSecond), 64<<10)
 	return sink
 }
-func (w *pipelineS3Sink) columns(columns []AnalyticsResultColumn) error {
+func (w *pipelineS3Sink) columns(columns []lakeapi.AnalyticsResultColumn) error {
 	if w.encoder != nil {
 		return errExportSink
 	}
@@ -69,7 +70,7 @@ func (w *pipelineS3Sink) columns(columns []AnalyticsResultColumn) error {
 		return errExportSink
 	}
 	w.encoder = encoder
-	w.resultColumns = append([]AnalyticsResultColumn{}, columns...)
+	w.resultColumns = append([]lakeapi.AnalyticsResultColumn{}, columns...)
 	return nil
 }
 func (w *pipelineS3Sink) row(values []json.RawMessage) error {
