@@ -102,39 +102,31 @@ func TestNewerSchemaVersionIsRefusedBeforeChanges(t *testing.T) {
 
 func TestPreVersioningDatabaseIsAdoptedAsVersionOne(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "events.db")
-	s, err := Open(Config{DBPath: path, BootstrapToken: adminToken})
+	ctx := context.Background()
+	db, err := openLocalSQLite(filepath.Join(t.TempDir(), "journal.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, _ := project(t, s)
-	s.Close()
-	for _, file := range []string{path, path + ".control"} {
-		db, err := sql.Open("sqlite", file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`PRAGMA user_version=0`); err != nil {
-			t.Fatal(err)
-		}
-		db.Close()
-	}
-	s, err = Open(Config{DBPath: path, BootstrapToken: adminToken})
-	if err != nil {
+	defer db.Close()
+	// The pre-versioning build created exactly version 1 and marked its layout.
+	v1 := journalSchema
+	v1.steps = journalSchema.steps[:1]
+	if err := migrateSQLite(ctx, db, v1); err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if listed := request(t, s, "GET", "/api/v1/projects", adminToken, "", 200); !strings.Contains(fmt.Sprint(listed), projectID) {
-		t.Fatal("adopted database lost its project")
+	if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('journal_layout','separate-control-v1'); PRAGMA user_version=0`); err != nil {
+		t.Fatal(err)
 	}
-	for _, item := range []struct {
-		db    *sql.DB
-		store schemaStore
-	}{{s.db, journalSchema}, {s.control, localControlSchema}} {
-		var version int
-		if err := item.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != len(item.store.steps) {
-			t.Fatalf("adopted %s version %d (%v)", item.store.name, version, err)
-		}
+	if err := migrateSQLite(ctx, db, journalSchema); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != len(journalSchema.steps) {
+		t.Fatalf("adopted journal version %d (%v)", version, err)
+	}
+	var column bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('event_receipts') WHERE name='recorded_at_ms')`).Scan(&column); err != nil || !column {
+		t.Fatal("later steps were not applied after adoption", err)
 	}
 }
 

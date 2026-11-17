@@ -70,7 +70,8 @@ func saveImportedPerson(ctx context.Context, tx *sql.Tx, project string, p Impor
 // The upload owner checkpoints the source file cursor in the same
 // transaction as local receipt checks and historical row acceptance.
 // No network work or outbound destination enqueueing occurs here.
-func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row ImportRow) (ImportRowResult, error) {
+// known holds events found in DuckLake by coldKnown before the transaction.
+func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row ImportRow, known map[string]int64) (ImportRowResult, error) {
 	var result ImportRowResult
 	if row.Kind != "events" && row.Kind != "persons" {
 		return result, errImportRow
@@ -86,7 +87,7 @@ func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, pro
 	if err != nil {
 		return result, err
 	}
-	if duplicate {
+	if _, cold := known[event.UUID]; duplicate || cold {
 		return ImportRowResult{Duplicates: 1}, nil
 	}
 	var personState importedPersonState

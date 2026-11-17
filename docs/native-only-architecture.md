@@ -56,7 +56,7 @@ Webhook delivery remains in the application. `webhookAcceptance` retains only pi
 
 Interactive queries have two instance-wide admission slots, an execution deadline, and row and output-size bounds. Each resident project engine has its own DuckDB memory setting and threads. That setting is neither a per-query quota nor a hard process RSS ceiling. Multiple resident projects multiply the engine budgets, and native allocations can exceed the buffer-manager setting.
 
-Physical scan quotas and per-query temporary-disk caps are not implemented. Output, bandwidth, file size, concurrency and queue-pressure limits still protect managed exports. Permanent SQLite receipts preserve retry identity and therefore grow with accepted history.
+Physical scan quotas and per-query temporary-disk caps are not implemented. Output, bandwidth, file size, concurrency and queue-pressure limits still protect managed exports. SQLite receipts are pruned after a configurable window; older retries are recognized from DuckLake event heads.
 
 ## Verification
 

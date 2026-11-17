@@ -25,11 +25,14 @@ import (
 )
 
 type Config struct {
-	DBPath             string
-	ControlDBPath      string
-	BootstrapToken     string
-	QueueMaxEvents     int
-	QueueMaxBytes      int64
+	DBPath         string
+	ControlDBPath  string
+	BootstrapToken string
+	QueueMaxEvents int
+	QueueMaxBytes  int64
+	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
+	// Zero keeps every receipt.
+	ReceiptRetention   time.Duration
 	AllowedOrigins     []string
 	TrustedProxies     []string
 	Clock              func() time.Time
@@ -201,13 +204,19 @@ func Open(c Config) (*Service, error) {
 			return nil, err
 		}
 	}
-	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock}, allowedOrigins: origins, trustedProxies: proxies,
+	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
 		pipelines: pipelines, batchSlot: make(chan struct{}, 1), exports: exports, oauth: oauth, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
 	s.control = control
 	if c.Shared != nil {
 		copyConfig := *c.Shared
 		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
 		s.shared = &sharedRuntime{config: copyConfig}
+	}
+	s.eventRules.knownEvents = func(ctx context.Context, project string, uuids []string) (map[string]int64, error) {
+		if s.lake == nil {
+			return nil, nil
+		}
+		return s.lake.KnownEvents(ctx, project, uuids)
 	}
 	s.acceptance = &eventAcceptance{db: db, rules: s.eventRules}
 	if pipelines != nil {

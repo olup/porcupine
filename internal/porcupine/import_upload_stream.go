@@ -106,6 +106,16 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 			return apiError(503, "ingestion policy unavailable; retry the same chunk")
 		}
 	}
+	events := make([]Event, 0, len(work.rows))
+	for _, row := range work.rows {
+		if row.Kind == "events" {
+			events = append(events, row.Event)
+		}
+	}
+	known, err := m.rules.coldKnown(ctx, project, events)
+	if err != nil {
+		return apiError(503, "import storage unavailable; retry the same chunk")
+	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return apiError(503, "import storage unavailable")
@@ -145,7 +155,7 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT import_row`); err != nil {
 			return apiError(503, "import storage unavailable")
 		}
-		result, err := m.rules.AcceptHistoricalTx(ctx, tx, project, row)
+		result, err := m.rules.AcceptHistoricalTx(ctx, tx, project, row, known)
 		if errors.Is(err, errImportRow) {
 			if _, err := tx.ExecContext(ctx, `ROLLBACK TO import_row; RELEASE import_row`); err != nil {
 				return apiError(503, "import storage unavailable")

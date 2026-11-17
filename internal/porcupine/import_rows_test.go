@@ -35,7 +35,7 @@ func importRowsForSourceTest(t *testing.T, s *Service, project, source, kind str
 	}
 	results := make([]ImportRowResult, len(rows))
 	for i, row := range rows {
-		results[i], err = s.eventRules.AcceptHistoricalTx(ctx, tx, project, row)
+		results[i], err = s.eventRules.AcceptHistoricalTx(ctx, tx, project, row, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

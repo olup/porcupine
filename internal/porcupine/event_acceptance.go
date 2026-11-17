@@ -22,6 +22,9 @@ type eventRules struct {
 	consumeTenant     func(context.Context, *sql.Tx, string, time.Time, int64) error
 	cookielessKey     func(context.Context, *sql.Tx, string) ([]byte, error)
 	prepareAcceptance func(context.Context, string) error
+	// receiptRetention bounds local receipts; knownEvents finds older events.
+	receiptRetention time.Duration
+	knownEvents      func(context.Context, string, []string) (map[string]int64, error)
 }
 
 type preparedLiveBatch struct {
@@ -140,6 +143,10 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "ingestion policy unavailable", retry: true}
 		}
 	}
+	known, err := a.rules.coldKnown(ctx, batch.projectID, batch.events)
+	if err != nil {
+		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable", retry: true}
+	}
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
@@ -180,6 +187,14 @@ func (a *eventAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, p
 		exists, lookupErr := localReceipt(ctx, tx, batch.projectID, e.UUID)
 		if lookupErr != nil {
 			return liveAcceptanceResult{}, &acceptanceFailure{message: "storage unavailable"}
+		}
+		coldID, cold := known[e.UUID]
+		if cold && !exists {
+			if withReceipts {
+				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(coldID, 10), UUID: e.UUID, Duplicate: true})
+			}
+			duplicates++
+			continue
 		}
 		if exists {
 			if withReceipts {

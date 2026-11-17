@@ -33,6 +33,10 @@ var journalSchema = schemaStore{name: "journal", steps: []string{
 	journalSchemaV1,
 	// 2: export objects of a deleted project, created lazily before versioning.
 	`CREATE TABLE IF NOT EXISTS project_deletion_files (project_id TEXT NOT NULL, object_key TEXT NOT NULL, upload_id TEXT NOT NULL, PRIMARY KEY(project_id, object_key, upload_id)) WITHOUT ROWID`,
+	// 3: receipt age for bounded retention. Existing receipts count from the upgrade.
+	`ALTER TABLE event_receipts ADD COLUMN recorded_at_ms INTEGER NOT NULL DEFAULT 0;
+UPDATE event_receipts SET recorded_at_ms=CAST(strftime('%s','now') AS INTEGER)*1000;
+CREATE INDEX event_receipts_recorded ON event_receipts(recorded_at_ms)`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}

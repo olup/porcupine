@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 func localReceipt(ctx context.Context, q oauthQueryer, project, uuid string) (bool, error) {
@@ -25,6 +26,54 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid s
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO event_receipts(project_id,uuid,event_id) VALUES($1,$2,$3) ON CONFLICT(project_id,uuid) DO UPDATE SET event_id=CASE WHEN event_receipts.event_id=0 THEN excluded.event_id ELSE event_receipts.event_id END`, project, uuid, id)
+	_, err := tx.ExecContext(ctx, `INSERT INTO event_receipts(project_id,uuid,event_id,recorded_at_ms) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,uuid) DO UPDATE SET event_id=CASE WHEN event_receipts.event_id=0 THEN excluded.event_id ELSE event_receipts.event_id END`, project, uuid, id, s.clock().UnixMilli())
 	return err
+}
+
+// receiptColdMargin widens the occurrence-time window checked against DuckLake,
+// so client clocks running ahead cannot outlive a pruned receipt.
+const receiptColdMargin = 7 * 24 * time.Hour
+
+// coldKnown returns projected event IDs for events old enough that their local
+// receipt may have been pruned. It runs before the SQLite acceptance
+// transaction; an event projected meanwhile already has a fresh receipt.
+func (rules *eventRules) coldKnown(ctx context.Context, project string, events []Event) (map[string]int64, error) {
+	if rules.receiptRetention <= 0 || rules.knownEvents == nil {
+		return nil, nil
+	}
+	cutoff := rules.clock().Add(-rules.receiptRetention + receiptColdMargin)
+	var uuids []string
+	for _, e := range events {
+		at, err := time.Parse(time.RFC3339Nano, e.Timestamp)
+		if err != nil || at.Before(cutoff) {
+			uuids = append(uuids, e.UUID)
+		}
+	}
+	if len(uuids) == 0 {
+		return nil, nil
+	}
+	return rules.knownEvents(ctx, project, uuids)
+}
+
+// pruneReceipts removes receipts older than the retention window in small
+// batches. Their events are already in DuckLake, where coldKnown finds them.
+func (s *Service) pruneReceipts(ctx context.Context) error {
+	if s.receiptRetention <= 0 || s.lake == nil {
+		return nil
+	}
+	cutoff := s.clock().Add(-s.receiptRetention).UnixMilli()
+	for {
+		result, err := s.db.ExecContext(ctx, `DELETE FROM event_receipts WHERE (project_id,uuid) IN (SELECT project_id,uuid FROM event_receipts WHERE recorded_at_ms<$1 LIMIT 2000)`, cutoff)
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n < 2000 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
