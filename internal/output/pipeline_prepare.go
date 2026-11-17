@@ -8,7 +8,10 @@ func validatePipelinePreparation(b PipelineBinding, plan PipelinePlan, outputs [
 		return ErrPipelineConflict
 	}
 	remaining := b.Demand
-	remaining.ArtifactBytes -= b.PlanRef.Bytes
+	remaining.ArtifactBytes -= b.PlanRef.Bytes + b.ManifestBytesLimit
+	if len(outputs) > 0 && b.ManifestBytesLimit <= 0 {
+		return ErrPipelineCapacity
+	}
 	remaining.MetadataRows -= int64(3 + len(plan.Targets))
 	remaining.ProofSlots = 0
 	if !remaining.valid() {

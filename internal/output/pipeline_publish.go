@@ -17,6 +17,7 @@ type PipelineOutput struct {
 	Charge                                                                           PipelineDemand
 }
 type PipelinePublication struct {
+	Manifest    PipelineRef
 	Sequence    int64
 	ProofSHA256 string
 	Outputs     []PipelineOutput
@@ -29,6 +30,12 @@ func PipelinePreparedSHA256(outputs []PipelineOutput) string { return pipelineDi
 // The adapter verifies S3 refs/manifests against native proof before calling here.
 func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sql.Tx, b PipelineBinding, v PipelinePublication) (bool, error) {
 	if tx == nil || !b.valid() || v.Sequence <= 0 || !pipelineHash(v.ProofSHA256) || len(v.Outputs) > 10000 || PipelinePreparedSHA256(v.Outputs) != b.PreparedSHA256 {
+		return false, ErrPipelineConflict
+	}
+	if len(v.Outputs) > 0 && (!v.Manifest.valid() || v.Manifest.Bytes > b.ManifestBytesLimit) {
+		return false, ErrPipelineCapacity
+	}
+	if len(v.Outputs) == 0 && v.Manifest != (PipelineRef{}) {
 		return false, ErrPipelineConflict
 	}
 	if e := p.lockCapacity(ctx, tx, b, false); e != nil {
@@ -105,7 +112,7 @@ func (p *PGPipelineEffects) PublishReservedEffectsTx(ctx context.Context, tx *sq
 		return false, ErrPipelineConflict
 	}
 	residual := PipelineDemand{b.Demand.References - spent.References, b.Demand.QueuedBytes - spent.QueuedBytes, b.Demand.MetadataRows - spent.MetadataRows, b.Demand.ArtifactBytes - spent.ArtifactBytes, 0}
-	if residual.ArtifactBytes < b.PlanRef.Bytes {
+	if residual.ArtifactBytes < b.PlanRef.Bytes+b.ManifestBytesLimit {
 		return false, ErrPipelineCapacity
 	}
 	if e = p.transferCleanup(ctx, tx, b, residual); e != nil {

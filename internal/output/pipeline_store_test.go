@@ -63,8 +63,8 @@ func pipelinePrepare(t *testing.T, db *sql.DB, p *PGPipelineEffects) (PipelineBi
 	})
 	body := PipelineRef{"immutable-body", "version", strings.Repeat("b", 64), 100}
 	o := PipelineOutput{ID: "delivery", PipelineID: "pipeline", Incarnation: "incarnation", RuleRevision: "rule", DestinationRevision: "destination", Generation: "generation", Kind: "delivery", Body: body, Members: []PipelineMember{{"uuid", 10}}, Charge: PipelineDemand{1, 100, 2, 100, 0}}
-	v := PipelinePublication{Sequence: 1, ProofSHA256: strings.Repeat("c", 64), Outputs: []PipelineOutput{o}}
-	b := PipelineBinding{Scope: s, TenantID: "tenant", BatchID: "batch", PlanID: plan.ID, PreparedSHA256: PipelinePreparedSHA256(v.Outputs), AcquisitionID: "acquisition", ArtifactPrefix: "namespace/attempt/", Epoch: 1, PlanRef: PipelineRef{"plan", "version", strings.Repeat("d", 64), 10}, Demand: PipelineDemand{1, 200, 10, 1000, 1}}
+	v := PipelinePublication{Manifest: PipelineRef{"manifest", "version", strings.Repeat("f", 64), 10}, Sequence: 1, ProofSHA256: strings.Repeat("c", 64), Outputs: []PipelineOutput{o}}
+	b := PipelineBinding{Scope: s, TenantID: "tenant", BatchID: "batch", PlanID: plan.ID, PreparedSHA256: PipelinePreparedSHA256(v.Outputs), AcquisitionID: "acquisition", ArtifactPrefix: "namespace/attempt/", Epoch: 1, ManifestBytesLimit: 10, PlanRef: PipelineRef{"plan", "version", strings.Repeat("d", 64), 10}, Demand: PipelineDemand{1, 200, 10, 1000, 1}}
 	return b, plan, v
 }
 func pipelineCount(t *testing.T, db *sql.DB, query string) int64 {
@@ -249,6 +249,7 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	other.PlanID = otherPlan.ID
 	other.BatchID = "other"
 	other.Demand.References = 0
+	other.ManifestBytesLimit = 0
 	other.PreparedSHA256 = PipelinePreparedSHA256(nil)
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, other, otherPlan, nil) })
 	// Lease expiry has no refund API. Only successor-fenced absence may settle.
@@ -366,5 +367,18 @@ func TestSharedPipelineEffectsPlanArtifactAndCheckpointRemainCharged(t *testing.
 	tx.Rollback()
 	if pipelineCount(t, db, `SELECT count(*) FROM pipeline_effect_reservations`) != 0 {
 		t.Fatal("invalid preparation admitted")
+	}
+	// Even when plan+body fits, the manifest must have its own allowance.
+	b.Demand.ArtifactBytes = 119
+	tx, _ = db.Begin()
+	if e := p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs); !errors.Is(e, ErrPipelineCapacity) {
+		t.Fatal("manifest allowance missing", e)
+	}
+	tx.Rollback()
+	b.Demand.ArtifactBytes = 120
+	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
+	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
+	if pipelineCount(t, db, `SELECT artifacts FROM pipeline_effect_cleanup`) != 20 {
+		t.Fatal("plan and manifest ownership not retained")
 	}
 }

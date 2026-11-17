@@ -27,7 +27,7 @@ CREATE TABLE pipeline_effect_streams (
 CREATE TABLE pipeline_effect_reservations (
  source_id TEXT NOT NULL,project_id TEXT NOT NULL,catalog_id TEXT NOT NULL,stream_id TEXT NOT NULL,tenant_id TEXT NOT NULL,
  batch_id TEXT NOT NULL,artifact_prefix TEXT NOT NULL,binding_sha TEXT NOT NULL,epoch BIGINT NOT NULL,acquisition_id TEXT NOT NULL,plan_id TEXT NOT NULL REFERENCES pipeline_effect_plans(id),prepared_sha TEXT NOT NULL,
- plan_key TEXT NOT NULL,plan_version TEXT NOT NULL,plan_sha TEXT NOT NULL,plan_bytes BIGINT NOT NULL,
+ plan_key TEXT NOT NULL,plan_version TEXT NOT NULL,plan_sha TEXT NOT NULL,plan_bytes BIGINT NOT NULL,manifest_bytes_limit BIGINT NOT NULL CHECK(manifest_bytes_limit>=0),
  refs BIGINT NOT NULL,bytes BIGINT NOT NULL,rows BIGINT NOT NULL,artifacts BIGINT NOT NULL,proofs BIGINT NOT NULL CHECK(proofs=1),checkpoint_rows BIGINT NOT NULL CHECK(checkpoint_rows IN (0,1)),
  PRIMARY KEY(source_id,project_id,catalog_id,stream_id),
  FOREIGN KEY(source_id,project_id,catalog_id,stream_id) REFERENCES pipeline_effect_streams(source_id,project_id,catalog_id,stream_id));

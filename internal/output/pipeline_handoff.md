@@ -22,7 +22,9 @@ Freeze a real plan, prepare canonical native-selected output metadata, then
 reserve exact matching references and conservative byte/row/artifact/proof demand
 before uploading any object or committing native. `ReserveEffectsTx` takes the
 prepared outputs and verifies their digest, exact member count, concrete object
-charges and plan object allowance before admitting the reservation. Plan IDs include detached rule
+charges and plan/manifest object allowance before admitting the reservation.
+The binding carries an explicit conservative manifest-byte limit; publication
+requires the verified immutable manifest reference to fit that limit. Plan IDs include detached rule
 references and creator/incarnation/destination revisions. The binding also pins
 the immutable plan reference, prepared-output digest, batch, epoch, acquisition
 and attempt artifact prefix. A reservation stores ownership before external I/O.

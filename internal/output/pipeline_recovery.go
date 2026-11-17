@@ -12,7 +12,7 @@ func (p *PGPipelineEffects) ReservationTx(ctx context.Context, tx *sql.Tx, s Pip
 	if tx == nil || !s.valid() {
 		return b, ErrPipelineConflict
 	}
-	e := tx.QueryRowContext(ctx, `SELECT tenant_id,batch_id,artifact_prefix,epoch,acquisition_id,plan_id,prepared_sha,plan_key,plan_version,plan_sha,plan_bytes,refs,bytes,rows,artifacts,proofs FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere, pipelineScopeArgs(s)...).Scan(&b.TenantID, &b.BatchID, &b.ArtifactPrefix, &b.Epoch, &b.AcquisitionID, &b.PlanID, &b.PreparedSHA256, &b.PlanRef.Key, &b.PlanRef.VersionID, &b.PlanRef.SHA256, &b.PlanRef.Bytes, &b.Demand.References, &b.Demand.QueuedBytes, &b.Demand.MetadataRows, &b.Demand.ArtifactBytes, &b.Demand.ProofSlots)
+	e := tx.QueryRowContext(ctx, `SELECT tenant_id,batch_id,artifact_prefix,epoch,acquisition_id,plan_id,prepared_sha,plan_key,plan_version,plan_sha,plan_bytes,manifest_bytes_limit,refs,bytes,rows,artifacts,proofs FROM pipeline_effect_reservations WHERE `+pipelineScopeWhere, pipelineScopeArgs(s)...).Scan(&b.TenantID, &b.BatchID, &b.ArtifactPrefix, &b.Epoch, &b.AcquisitionID, &b.PlanID, &b.PreparedSHA256, &b.PlanRef.Key, &b.PlanRef.VersionID, &b.PlanRef.SHA256, &b.PlanRef.Bytes, &b.ManifestBytesLimit, &b.Demand.References, &b.Demand.QueuedBytes, &b.Demand.MetadataRows, &b.Demand.ArtifactBytes, &b.Demand.ProofSlots)
 	return b, e
 }
 

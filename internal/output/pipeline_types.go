@@ -74,13 +74,13 @@ type PipelinePlan struct {
 type PipelineBinding struct {
 	Scope                                                                    PipelineScope
 	TenantID, BatchID, PlanID, PreparedSHA256, AcquisitionID, ArtifactPrefix string
-	Epoch                                                                    int64
+	Epoch, ManifestBytesLimit                                                int64
 	PlanRef                                                                  PipelineRef
 	Demand                                                                   PipelineDemand
 }
 
 func (b PipelineBinding) valid() bool {
-	return b.Scope.valid() && pipelineID(b.TenantID) && pipelineID(b.BatchID) && pipelineHash(b.PlanID) && pipelineHash(b.PreparedSHA256) && pipelineID(b.AcquisitionID) && len(b.ArtifactPrefix) > 0 && len(b.ArtifactPrefix) <= 2048 && b.Epoch > 0 && b.PlanRef.valid() && b.Demand.valid() && b.Demand.ProofSlots == 1 && b.Demand.MetadataRows >= 1 && b.Demand.ArtifactBytes >= b.PlanRef.Bytes
+	return b.Scope.valid() && pipelineID(b.TenantID) && pipelineID(b.BatchID) && pipelineHash(b.PlanID) && pipelineHash(b.PreparedSHA256) && pipelineID(b.AcquisitionID) && len(b.ArtifactPrefix) > 0 && len(b.ArtifactPrefix) <= 2048 && b.Epoch > 0 && b.PlanRef.valid() && b.Demand.valid() && b.Demand.ProofSlots == 1 && b.Demand.MetadataRows >= 1 && b.ManifestBytesLimit >= 0 && b.Demand.ArtifactBytes >= b.PlanRef.Bytes && b.ManifestBytesLimit <= b.Demand.ArtifactBytes-b.PlanRef.Bytes
 }
 
 // ResolveCreatorTx must use the existing auth adapter and current credential/consent
