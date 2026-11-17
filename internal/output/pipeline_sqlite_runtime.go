@@ -35,6 +35,7 @@ type PipelineConfig struct {
 }
 
 type PipelineJobs struct {
+	pg                          *hostedPipelineRuntime
 	db, control                 *sql.DB
 	clock                       func() time.Time
 	lake                        PipelineReader
@@ -65,7 +66,7 @@ type PipelineJobs struct {
 	workers     sync.WaitGroup
 }
 
-func newSQLitePipelineRuntime(input *PipelineConfig) (*PipelineJobs, error) {
+func newPipelineRuntime(input *PipelineConfig) (*PipelineJobs, error) {
 	if input == nil {
 		return nil, nil
 	}
@@ -170,6 +171,9 @@ func (s *PipelineJobs) OpenSecret(projectID, pipelineID string, blob []byte) ([]
 }
 
 func (s *PipelineJobs) Initialize(ctx context.Context) error {
+	if s.pg != nil {
+		return s.initializeHostedPipelines(ctx)
+	}
 	if err := s.verifyPipelineConfig(ctx); err != nil {
 		return err
 	}
@@ -266,6 +270,12 @@ func (s *PipelineJobs) Start() {
 			}
 		}()
 	}
+	if s.pg != nil {
+		if s.pg.step != nil {
+			start("webhook", rt.webhookWake, s.RunWebhook)
+		}
+		return
+	}
 	start("webhook", rt.webhookWake, s.RunWebhook)
 	start("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "", "") })
 	if s.lake != nil {
@@ -290,7 +300,7 @@ type pipelineAdmission struct {
 
 func (s *PipelineJobs) BeginReceipt(projectID string) (time.Time, func()) {
 	rt := s
-	if !s.Enabled() || s.lake == nil {
+	if !s.Enabled() || s.pg != nil || s.lake == nil {
 		return s.clock().UTC(), func() {}
 	}
 	rt.admissionsMu.Lock()

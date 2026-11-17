@@ -58,6 +58,7 @@ type storedExport struct {
 	AttemptID           string
 	EventWatermark      int64
 	MutationWatermark   int64
+	Snapshot            lakeapi.ExportSnapshot
 	CancelRequested     bool
 	ExpiresAtMS         int64
 	CleanupPending      bool

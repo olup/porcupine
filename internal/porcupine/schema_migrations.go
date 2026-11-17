@@ -99,7 +99,7 @@ var hostedImportSchema string
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
 // 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
 // 11: hosted project lifecycle. 12: hosted mutation intents.
-var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, usage.ControlSchema, lakeapi.ProjectCoordinatorSchemaV1, output.PipelineSchemaV1, catalogDescriptionSchema, usage.ExecutionSchema, hostedProjectLifecycleSchema, hostedMutationSchemaV1, hostedImportSchema}
+var sharedControlSteps = []string{controlSchema + sharedControlSchema, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthPostgresTriggers, usage.ControlSchema, lakeapi.ProjectCoordinatorSchemaV1, output.PipelineSchemaV1, catalogDescriptionSchema, usage.ExecutionSchema, hostedProjectLifecycleSchema, hostedMutationSchemaV1, hostedImportSchema, output.PipelineJobsPostgresSchemaV1 + output.PipelineDeliverySchemaV1 + output.ExportPostgresSchemaV1}
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
 func sqliteMetadataHas(ctx context.Context, tx *sql.Tx, key, value string) (bool, error) {

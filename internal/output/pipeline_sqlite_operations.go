@@ -47,6 +47,9 @@ func scanPipeline(row interface{ Scan(...any) error }) (storedPipeline, error) {
 	return p, err
 }
 func (s *PipelineJobs) loadPipeline(ctx context.Context, projectID, pipelineID string) (storedPipeline, error) {
+	if s.pg != nil {
+		return s.hostedPipeline(ctx, projectID, pipelineID)
+	}
 	return scanPipeline(s.db.QueryRowContext(ctx, `SELECT `+pipelineColumns+` FROM pipelines WHERE project_id=$1 AND id=$2`, projectID, pipelineID))
 }
 func pipelineLookupError(err error) error {
@@ -57,6 +60,18 @@ func pipelineLookupError(err error) error {
 }
 
 func (s *PipelineJobs) encodePipelineDestination(ctx context.Context, projectID, pipelineID, kind string, webhook *WebhookPipelineSpec, s3 *S3PipelineSpec, credentials PipelineCredentials) ([]byte, []byte, error) {
+	config, secret, err := s.encodePipelineDestinationPlain(ctx, projectID, kind, webhook, s3, credentials)
+	if err != nil {
+		return nil, nil, err
+	}
+	sealed, err := s.SealSecret(projectID, pipelineID, secret)
+	if err != nil {
+		return nil, nil, apiError(503, "pipeline credentials unavailable")
+	}
+	return config, sealed, nil
+}
+
+func (s *PipelineJobs) encodePipelineDestinationPlain(ctx context.Context, projectID, kind string, webhook *WebhookPipelineSpec, s3 *S3PipelineSpec, credentials PipelineCredentials) ([]byte, []byte, error) {
 	var config, secret []byte
 	if kind == "webhook" {
 		if webhook == nil || s3 != nil {
@@ -115,9 +130,13 @@ func (s *PipelineJobs) encodePipelineDestination(ctx context.Context, projectID,
 		if delivery.ValidateWebhookHeaders(headers) != nil {
 			return nil, nil, apiError(400, "invalid webhook credentials")
 		}
-		filters := *webhook
-		filters.Endpoint = ""
-		config, _ = json.Marshal(filters)
+		config, _ = json.Marshal(delivery.WebhookRule{
+			IncludeEvents:   webhook.IncludeEvents,
+			ExcludeEvents:   webhook.ExcludeEvents,
+			DeliveryMode:    webhook.DeliveryMode,
+			IntervalSeconds: webhook.IntervalSeconds,
+			StartAt:         webhook.StartAt,
+		})
 		secret, _ = json.Marshal(WebhookPipelineSecret{Endpoint: webhook.Endpoint, Headers: headers})
 	} else if kind == "s3" {
 		if s3 == nil || webhook != nil {
@@ -146,14 +165,13 @@ func (s *PipelineJobs) encodePipelineDestination(ctx context.Context, projectID,
 	} else {
 		return nil, nil, apiError(400, "unsupported pipeline kind")
 	}
-	sealed, err := s.SealSecret(projectID, pipelineID, secret)
-	if err != nil {
-		return nil, nil, apiError(503, "pipeline credentials unavailable")
-	}
-	return config, sealed, nil
+	return config, secret, nil
 }
 
 func (s *PipelineJobs) Define(ctx context.Context, project string, request PipelineRequest, caller auth.Principal) (*Pipeline, error) {
+	if s.pg != nil {
+		return s.defineHostedPipeline(ctx, project, request, caller)
+	}
 	if !s.Enabled() {
 		return nil, apiError(503, "pipelines are not configured")
 	}
@@ -211,7 +229,13 @@ func (s *PipelineJobs) List(ctx context.Context, project string, limit, offset i
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, apiError(400, "invalid pipeline pagination")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,kind,name,state,created_at_ms FROM pipelines WHERE project_id=$1 ORDER BY created_at_ms DESC,id LIMIT $2 OFFSET $3`, project, limit+1, offset)
+	var rows *sql.Rows
+	var err error
+	if s.pg != nil {
+		rows, err = s.hostedPipelinePage(ctx, project, limit+1, offset)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `SELECT id,project_id,kind,name,state,created_at_ms FROM pipelines WHERE project_id=$1 ORDER BY created_at_ms DESC,id LIMIT $2 OFFSET $3`, project, limit+1, offset)
+	}
 	if err != nil {
 		return nil, apiError(503, "pipeline storage unavailable")
 	}
@@ -246,6 +270,9 @@ func (s *PipelineJobs) Get(ctx context.Context, project, id string) (*Pipeline, 
 	return &public, nil
 }
 func (s *PipelineJobs) SetState(ctx context.Context, project, id string, state string) (*Pipeline, error) {
+	if s.pg != nil {
+		return s.changeHostedPipeline(ctx, project, id, state, nil)
+	}
 	if state == "active" && !s.Enabled() {
 		return nil, apiError(503, "pipelines are not configured")
 	}
@@ -280,6 +307,10 @@ func (s *PipelineJobs) SetState(ctx context.Context, project, id string, state s
 	return &public, nil
 }
 func (s *PipelineJobs) Delete(ctx context.Context, project, id string) error {
+	if s.pg != nil {
+		_, err := s.changeHostedPipeline(ctx, project, id, "retired", nil)
+		return err
+	}
 	p, lookupErr := s.loadPipeline(ctx, project, id)
 	if lookupErr != nil {
 		return pipelineLookupError(lookupErr)
@@ -303,6 +334,9 @@ func (s *PipelineJobs) Delete(ctx context.Context, project, id string) error {
 	return nil
 }
 func (s *PipelineJobs) Replace(ctx context.Context, project, id string, change PipelineChange) (*Pipeline, error) {
+	if s.pg != nil {
+		return s.changeHostedPipeline(ctx, project, id, "", &change)
+	}
 	if s.Enabled() {
 		release, err := s.lockS3Lifecycle(id)
 		if err != nil {
@@ -406,6 +440,9 @@ func (s *PipelineJobs) Replace(ctx context.Context, project, id string, change P
 }
 
 func (s *PipelineJobs) pipelineRunPage(ctx context.Context, p storedPipeline, limit, offset int) ([]PipelineRun, error) {
+	if s.pg != nil {
+		return s.pgWebhookRunPage(ctx, p.ProjectID, p.ID, limit, offset)
+	}
 	if p.Kind == "s3" {
 		return s.s3PipelineRunPage(ctx, p.ProjectID, p.ID, limit, offset)
 	}
@@ -441,7 +478,9 @@ func (s *PipelineJobs) Run(ctx context.Context, project, id, runID string) (*Pip
 		return nil, pipelineLookupError(err)
 	}
 	var run PipelineRun
-	if p.Kind == "s3" {
+	if s.pg != nil {
+		run, err = s.pgWebhookRun(ctx, p.ProjectID, p.ID, runID)
+	} else if p.Kind == "s3" {
 		run, err = s.getS3PipelineRun(ctx, p.ProjectID, p.ID, runID)
 	} else {
 		run, err = s.getWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)
@@ -467,7 +506,9 @@ func (s *PipelineJobs) Retry(ctx context.Context, project, id, runID string) (bo
 		return false, apiError(409, "pipeline is paused")
 	}
 	var requeued bool
-	if p.Kind == "s3" {
+	if s.pg != nil {
+		requeued, err = s.pgRetryWebhookRun(ctx, p.ProjectID, p.ID, runID)
+	} else if p.Kind == "s3" {
 		requeued, err = s.retryS3PipelineRun(ctx, p.ProjectID, p.ID, runID)
 	} else {
 		requeued, err = s.retryWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)

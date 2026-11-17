@@ -25,6 +25,8 @@ type hostedEffectPublisher struct {
 	objects               *lakeapi.DuckLakeObjectStore
 	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
 	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
+	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -76,6 +78,11 @@ func (p *hostedEffectPublisher) transaction(ctx context.Context, f func(*sql.Tx)
 func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope lakeapi.HostedProjectScope) (output.PipelinePlan, frozenLiveOutputPlan, error) {
 	var plan output.PipelinePlan
 	err := p.transaction(ctx, func(tx *sql.Tx) error {
+		if p.ensureCapacity != nil {
+			if err := p.ensureCapacity(ctx, tx, tenant, scope.Key.ProjectID); err != nil {
+				return err
+			}
+		}
 		var e error
 		plan, e = p.effects.FreezeLivePlanTx(ctx, tx, tenant, pipelineScope(scope))
 		return e
@@ -85,7 +92,13 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 		return plan, routing, err
 	}
 	for _, t := range plan.Targets {
-		raw, e := p.objects.ReadImmutableEffectObject(ctx, scope, nativeRef(t.Rule))
+		var raw []byte
+		var e error
+		if p.loadRule != nil {
+			raw, e = p.loadRule(ctx, tenant, scope.Key.ProjectID, t)
+		} else {
+			raw, e = p.objects.ReadImmutableEffectObject(ctx, scope, nativeRef(t.Rule))
+		}
 		if e != nil {
 			return plan, routing, e
 		}
@@ -172,7 +185,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 			members[i] = output.PipelineMember{UUID: id, Bytes: o.EventBytes[i]}
 			queued += o.EventBytes[i] + 1024
 		}
-		prepared = append(prepared, output.PipelineOutput{ID: o.FragmentID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "fragment", Body: pipelineRef(o.Body), Members: members, Charge: output.PipelineDemand{References: int64(len(members)), QueuedBytes: max(queued, o.Body.Bytes), MetadataRows: int64(1 + len(members)), ArtifactBytes: o.Body.Bytes}})
+		prepared = append(prepared, output.PipelineOutput{ID: o.FragmentID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "fragment", Fragment: &output.PipelineFragmentSpec{WindowStartMS: o.WindowStartMS, WindowEndMS: o.WindowEndMS, Rule: o.Target.Rule}, Body: pipelineRef(o.Body), Members: members, Charge: output.PipelineDemand{References: int64(len(members)), QueuedBytes: max(queued, o.Body.Bytes), MetadataRows: int64(1 + len(members)), ArtifactBytes: o.Body.Bytes}})
 	}
 	planRaw, err := json.Marshal(s.plan)
 	if err != nil {

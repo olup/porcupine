@@ -1,12 +1,12 @@
 # SQL export design
 
-> Implementation reference for the SQLite export domain. See [the export guide](../exports.md) for user operations.
+> Implementation reference for the standalone export domain and the unreleased hosted provider. See [the export guide](../exports.md) for user operations.
 
 Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](../exports.md) for requests and operator settings.
 
 ## Module ownership
 
-`internal/output.ExportJobs` owns the complete SQLite export lifecycle. The service constructs it through `NewSQLiteExports` and starts its worker. The HTTP and MCP handlers retain route registration, project authorization, request validation, and native SQL validation. They call the same domain operations for submission, status, pagination, cancellation, and download links.
+`internal/output.ExportJobs` owns the complete SQLite export lifecycle. The service constructs it through `NewSQLiteExports` and starts its worker. The HTTP and MCP handlers retain route registration, project authorization, and request validation. The domain invokes native SQL validation when it admits the job. They call the same domain operations for submission, status, pagination, cancellation, and download links.
 
 The domain stores creator-scoped idempotency, delivery watermarks, claims, retry outcomes, progress, multipart checkpoints, publication, retention, and cleanup. `RunOne` performs a bounded worker cycle. Successful publication and `usage.Recorder.AddTx` share the same SQLite transaction and the same winning attempt predicate.
 
@@ -16,11 +16,17 @@ The domain derives finite external execution metadata from the current verified 
 
 Project deletion calls `StageExportProjectCleanupTx` inside the journal removal transaction. It copies namespace and upload ownership before deleting export rows. `CleanupProject` retains the control inventory before remote deletion and checkpoint removal. Offline restore calls `ExportRestoreArtifacts` before reset, then `ResetRestoredExportsTx` after preserving source artifact holds. Reset does not contact the source destination.
 
-The extraction adds no PostgreSQL implementation, migration, or hosted activation. It preserves one coherent native query per attempt and the existing delivery-barrier consistency contract.
+## Hosted export provider
+
+The staged PostgreSQL provider uses `NewPostgresExports` and stores job state, finite external authority, upload checkpoints, and successful usage in shared control. Admission takes a durable activity ticket before touching the analytical catalog. The hosted startup adapter supplies a project write session and settles accepted mutations. The provider captures the current DuckLake catalog identity and version within that session and commits the job on its PostgreSQL connection. Every retry uses the same version for events and identity tables. Hosted compaction preserves snapshot history used by queued and running jobs.
+
+A worker claims a job with a renewable PostgreSQL lease and a unique attempt ID. Expired claims become eligible for cleanup and a new attempt. The prior worker keeps its activity ticket until its native and upload calls return. Artifact writes, progress, and publication verify the current attempt. Publication rechecks project and creator authority, and posts export usage in the same transaction as success.
+
+The configured pending-job cap applies across the hosted instance. Up to 100 jobs per project, 400 per tenant, and 1,000 per instance can hold capacity for work or S3 artifacts. Queued and running jobs, available downloads, and pending cleanup all count. Total job metadata is capped at 1,000 per project, 2,000 per tenant, and 10,000 per instance. Capacity refusal preserves the existing ownership records. A terminal job remains available for idempotent replay for 30 days after its artifact cleanup completes. Successful jobs first complete their configured download retention. Once retirement is due, the worker removes job metadata only after cleanup has cleared the file checkpoints. The managed ownership records used for project purge remain durable.
 
 ## Query and publication boundaries
 
-The worker waits for accepted original and mutation work through its recorded watermarks. This is a delivery barrier, not an injected SQL filter or a transaction spanning SQLite and DuckLake. Execution reads the analytical state available to its native connection.
+For a journal-backed job, the worker waits for accepted original and mutation work through its recorded watermarks. This is a delivery barrier, not an injected SQL filter or a transaction spanning SQLite and DuckLake. Execution reads the analytical state available to its native connection.
 
 One canonical query runs once per attempt. File rotation splits output files rather than dividing SQL into pages. Rows pass through bounded row encoding, gzip, and sequential S3 multipart buffers. The full result is not staged on the application host.
 
@@ -36,7 +42,7 @@ Unknown multipart uploads in the create-before-checkpoint interval need an S3 li
 
 ## Resource scope
 
-One background analytical query runs at a time, shared by one-off exports and scheduled pipelines. Admission also considers queue pressure and delivery health. Interactive queries keep their separate admission pool.
+Each worker runs one background analytical query at a time, shared by one-off exports and scheduled pipelines. Journal-backed admission also considers queue pressure and delivery health. Interactive queries keep their separate admission pool.
 
 The worker enforces output, row, file, deadline, sink-bandwidth, pending-job, and retention budgets. Query execution shares the project's engine memory setting with its other work. This is not a per-export memory reservation or a hard process RSS limit. Physical scan quotas and per-query temporary-disk quotas are not implemented.
 

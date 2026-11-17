@@ -498,42 +498,52 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	// Capacity failure rolls native sequence/data/usage back before any body PUT.
-	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=3 WHERE scope_kind='project' AND scope_id=$1`, project)
+	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='active'`, project).Scan(&n); err != nil || n != 2 {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
-	session, err = ca.Acquire(t.Context(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, target := range []output.PipelineTarget{
-			{ID: "hook", Incarnation: "inc", RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)},
-			{ID: "batch-hook", Incarnation: "batch-inc", RuleRevision: "batch-rule", DestinationRevision: "batch-dest", CreatorID: creator, Rule: pipelineRef(batchRef)},
-		} {
-			if e := fa.publisher.effects.CompareAndSwapDefinitionTx(t.Context(), tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: "paused", Target: target}); e != nil {
-				return e
-			}
-		}
-		return nil
-	})
-	session.Release()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='paused'`, project).Scan(&n); err != nil || n != 2 {
-		t.Fatal("pause changed an unintended definition", n, err)
-	}
-
 	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
 
 	blocked := batch("blocked")
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
 		t.Fatal("full queue admitted", err)
 	}
+	setPipelineState := func(state string) {
+		t.Helper()
+		session, err := ca.Acquire(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Release()
+		err = session.RunControlTx(t.Context(), func(ctx context.Context, tx *sql.Tx) error {
+			for _, target := range []output.PipelineTarget{
+				{ID: "hook", Incarnation: "inc", RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)},
+				{ID: "batch-hook", Incarnation: "batch-inc", RuleRevision: "batch-rule", DestinationRevision: "batch-dest", CreatorID: creator, Rule: pipelineRef(batchRef)},
+			} {
+				if err := fa.publisher.effects.CompareAndSwapDefinitionTx(ctx, tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: state, Target: target}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPipelineState("paused")
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='paused'`, project).Scan(&n); err != nil || n != 2 {
+		t.Fatal("pause changed an unintended definition", n, err)
+	}
+	if err = fa.FlushLive(t.Context(), batch("skip-paused-pipelines")); err != nil {
+		t.Fatal("paused targets still reserved output capacity", err)
+	}
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
+		t.Fatal("paused targets received new jobs", n, err)
+	}
+
 	if err = fb.FlushLive(t.Context(), body); err != nil {
 		t.Fatal("duplicate at full quota", err)
 	}
@@ -611,6 +621,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	fa.policy.refreshed = time.Time{}
+	setPipelineState("active")
 	nativeProject, release, er := sa.LeaseProject(t.Context(), project)
 	if er != nil {
 		t.Fatal(er)
@@ -668,7 +679,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fb.FlushLive(t.Context(), batch("fenced")); !errors.Is(err, errHostedProjectFenced) {
 		t.Fatalf("sealed project accepted live input: %v", err)
 	}
-	page, err := sb.PendingNativeCommitEffects(t.Context(), scope, 0, 100)
+	page, err := sb.PendingNativeEffects(t.Context(), scope, 0, 100)
 	if err != nil || len(page.Evidence) == 0 {
 		t.Fatalf("sealed proof history unavailable: %+v, %v", page, err)
 	}
