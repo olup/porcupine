@@ -220,6 +220,18 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	// A real 100-target plan can exceed its preparation memory bound before the
 	// numeric reservation. Refuse it before any PUT, with no native growth or
 	// unresolved reservation, rather than encoding all fanout then rejecting.
+	generous := output.PipelineDemand{References: 1000, QueuedBytes: 256 << 20, MetadataRows: 10000, ArtifactBytes: 256 << 20, ProofSlots: 10}
+	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], generous); e != nil {
+				return e
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	fanout := make([]output.PipelineTarget, 99)
 	session, err = ca.Acquire(t.Context(), key)
 	if err != nil {
@@ -264,6 +276,17 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	})
 	session.Release()
 	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); e != nil {
+				return e
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -479,8 +502,30 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.service.control.Exec(`UPDATE pipeline_effect_definitions SET state='paused' WHERE project_id=$1`, project); err != nil {
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='active'`, project).Scan(&n); err != nil || n != 2 {
+		t.Fatal("retired fanout definitions were revived", n, err)
+	}
+	session, err = ca.Acquire(t.Context(), key)
+	if err != nil {
 		t.Fatal(err)
+	}
+	err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
+		for _, target := range []output.PipelineTarget{
+			{ID: "hook", Incarnation: "inc", RuleRevision: "rule", DestinationRevision: "dest", CreatorID: creator, Rule: pipelineRef(ref)},
+			{ID: "batch-hook", Incarnation: "batch-inc", RuleRevision: "batch-rule", DestinationRevision: "batch-dest", CreatorID: creator, Rule: pipelineRef(batchRef)},
+		} {
+			if e := fa.publisher.effects.CompareAndSwapDefinitionTx(t.Context(), tx, &target, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: "paused", Target: target}); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	session.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_definitions WHERE project_id=$1 AND state='paused'`, project).Scan(&n); err != nil || n != 2 {
+		t.Fatal("pause changed an unintended definition", n, err)
 	}
 
 	blocked := batch("blocked")
