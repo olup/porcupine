@@ -259,6 +259,23 @@ func (r *Recorder) Recover(ctx context.Context) error {
 	return err
 }
 
+// RecoverStale is Recover for a store shared by several live processes. The
+// owner rewrites last_observed_at on every observation pass while the record
+// is open, so only records not observed since before are marked lost, at most
+// limit per call. Like Recover, it invents no finish: the admitted count and
+// unresolved lower bound stay. A presumed-lost owner that is only partitioned
+// can still record its real observation later.
+func (r *Recorder) RecoverStale(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, errors.New("invalid usage recovery limit")
+	}
+	result, err := r.DB.ExecContext(ctx, `UPDATE usage_executions SET lost=1 WHERE id IN (SELECT id FROM usage_executions WHERE closed=0 AND lost=0 AND last_observed_at<$1 ORDER BY day_start,id LIMIT $2)`, Stamp(before), limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *Recorder) Pending(ctx context.Context) ([]SourceTotals, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT source_id,tenant_id,project_id,day_start,revision,`+strings.Join(columns, ",")+`,unresolved_queries,last_observed_at FROM usage_rollups WHERE revision>published_revision ORDER BY day_start,tenant_id,project_id LIMIT 1000`)
 	if err != nil {

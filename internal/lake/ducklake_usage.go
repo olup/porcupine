@@ -88,3 +88,58 @@ func (s *DuckLakeStore) CurrentParquetBytes(ctx context.Context, project string)
 	}
 	return total, tx.Commit()
 }
+
+// HostedCurrentParquetBytes measures the same current data/delete files from
+// a hosted project's DuckLake metadata in PostgreSQL. It reads one statement
+// snapshot, opens no analytical engine and does not list S3. A project without
+// a ready, undeleted catalog is not measured.
+func (s *DuckLakeStore) HostedCurrentParquetBytes(ctx context.Context, project string) (int64, error) {
+	registry, ok := s.registry.(*postgresNativeRegistry)
+	if !ok || s.SharedCatalog == nil {
+		return 0, ErrHostedProjectNotReady
+	}
+	p, err := registry.lookup(ctx, project)
+	if err != nil {
+		return 0, err
+	}
+	if !p.Ready || p.Deleted {
+		return 0, sql.ErrNoRows
+	}
+	ctx, cancel := registry.metadataContext(ctx)
+	defer cancel()
+	// SharedNativeSchema derives a fixed-format identifier from the checked
+	// catalog ID. Like ducklake_list_files, count current files of live main
+	// tables and the current delete files attached to them, once per path.
+	schema := SharedNativeSchema(p.CatalogID)
+	var exists bool
+	if err = registry.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, schema+".ducklake_data_file").Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, sql.ErrNoRows
+	}
+	schema = `"` + schema + `"`
+	var total, smallest, paths, files int64
+	err = registry.db.QueryRowContext(ctx, `WITH tables AS (
+	SELECT t.table_id FROM `+schema+`.ducklake_table t JOIN `+schema+`.ducklake_schema s ON s.schema_id=t.schema_id
+	WHERE t.end_snapshot IS NULL AND s.end_snapshot IS NULL AND s.schema_name='main'
+), data AS (
+	SELECT d.data_file_id,d.path,d.file_size_bytes FROM `+schema+`.ducklake_data_file d JOIN tables USING(table_id)
+	WHERE d.end_snapshot IS NULL
+), current AS (
+	SELECT path,file_size_bytes FROM data
+	UNION SELECT f.path,f.file_size_bytes FROM `+schema+`.ducklake_delete_file f JOIN data USING(data_file_id)
+	WHERE f.end_snapshot IS NULL
+)
+SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),coalesce(min(file_size_bytes),0) FROM current`).Scan(&total, &paths, &files, &smallest)
+	if err != nil {
+		return 0, err
+	}
+	if paths != files {
+		return 0, errors.New("conflicting current Parquet size")
+	}
+	if smallest < 0 {
+		return 0, errors.New("invalid current Parquet size")
+	}
+	return total, nil
+}
