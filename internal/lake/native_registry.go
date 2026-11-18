@@ -21,6 +21,8 @@ type nativeCleanupAttempt struct {
 type nativeCleanupSummary struct {
 	Registered, Completed, Failed, Running int
 	LastAttempt, LastSuccess               int64
+	SnapshotsExpired, FilesDeleted         int64
+	LastError                              string
 }
 
 // lookup never creates a catalog: proof recovery must not turn an unknown
@@ -276,9 +278,14 @@ func (r *postgresNativeRegistry) cleanupSummary(ctx context.Context) (nativeClea
 	ctx, cancel := r.metadataContext(ctx)
 	defer cancel()
 	var s nativeCleanupSummary
+	// last_error holds a stable code, never native error text. A later
+	// successful pass clears it for that catalog.
 	err := r.db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE p.last_success>0),
-coalesce(sum(p.failed),0),count(*) FILTER(WHERE p.state='running'),coalesce(max(p.last_attempt),0),coalesce(max(p.last_success),0)
+coalesce(sum(p.failed),0),count(*) FILTER(WHERE p.state='running'),coalesce(max(p.last_attempt),0),coalesce(max(p.last_success),0),
+coalesce(sum(p.snapshots_expired),0),coalesce(sum(p.files_deleted),0),
+coalesce((array_agg(p.last_error ORDER BY p.last_attempt DESC) FILTER(WHERE p.last_error<>''))[1],'')
 FROM pc_native_projects c LEFT JOIN pc_native_cleanup p ON p.source_id=c.source_id AND p.project_id=c.project_id
-WHERE c.source_id=$1 AND c.ready=1 AND c.deleted=0`, r.source).Scan(&s.Registered, &s.Completed, &s.Failed, &s.Running, &s.LastAttempt, &s.LastSuccess)
+WHERE c.source_id=$1 AND c.ready=1 AND c.deleted=0`, r.source).Scan(&s.Registered, &s.Completed, &s.Failed, &s.Running, &s.LastAttempt, &s.LastSuccess,
+		&s.SnapshotsExpired, &s.FilesDeleted, &s.LastError)
 	return s, err
 }

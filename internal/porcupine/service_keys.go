@@ -90,8 +90,12 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	id := eventapi.NewID()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now()); err != nil {
+	owner, err := credentialTenantOwner(ctx, tx, body.Permissions, body.Projects)
+	if err != nil {
+		return nil, apiError(503, "service key ownership unavailable")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at,owner_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now(), owner); err != nil {
 		return nil, apiError(503, "service key storage unavailable")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES($1,$2,$3)`, id, parent.ID, body.Audience); err != nil {

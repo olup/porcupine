@@ -100,7 +100,8 @@ func (s *Service) startUsage() {
 		defer close(u.done)
 		ticker := time.NewTicker(usage.ObservationInterval)
 		defer ticker.Stop()
-		nextSample := time.Time{}
+		nextSample, nextHostedSample, nextHostedRecovery := time.Time{}, time.Time{}, time.Time{}
+		hostedCursor := ""
 		for {
 			work, stop := context.WithTimeout(ctx, 30*time.Second)
 			_ = s.synchronizeUsage(work)
@@ -115,7 +116,22 @@ func (s *Service) startUsage() {
 				}
 				nextSample = u.clock().Add(usage.SampleInterval)
 			}
+			if s.hostedQueries != nil && !u.clock().Before(nextHostedRecovery) {
+				if recovered, err := s.recoverHostedQueryUsage(work); err == nil && recovered < hostedQueryRecoverBatch {
+					nextHostedRecovery = u.clock().Add(time.Minute)
+				}
+			}
 			stop()
+			if s.hosted != nil && !u.clock().Before(nextHostedSample) {
+				// Bound storage separately so each loop can observe queries first.
+				work, stop = context.WithTimeout(ctx, hostedStorageSampleTimeout)
+				next, err := s.sampleHostedUsageStorage(work, hostedCursor)
+				stop()
+				hostedCursor = next
+				if err == nil && next == "" {
+					nextHostedSample = u.clock().Add(hostedStorageSampleIdle)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -199,11 +215,11 @@ type parquetUsageSampler interface {
 
 func (s *Service) sampleUsageStorage(ctx context.Context) error {
 	sampler := s.usage.sampler
-	if sampler == nil || s.hostedQueries != nil {
+	if sampler == nil || s.hosted != nil {
 		return nil
 	}
-	// Sample the projects in the standalone journal. Hosted samples are recorded
-	// by hosted maintenance.
+	// Sample the projects in the standalone journal. Hosted workers use
+	// sampleHostedUsageStorage instead.
 	after := ""
 	for {
 		rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id FROM projects WHERE id>$1 ORDER BY id LIMIT 100`, after)
@@ -243,4 +259,79 @@ func (s *Service) sampleUsageStorage(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+const (
+	hostedStorageSampleBatch   = 32
+	hostedStorageSampleTimeout = 10 * time.Second
+	hostedStorageSampleIdle    = time.Minute
+	// A live owner rewrites last_observed_at every ObservationInterval, and
+	// one usage loop pass is bounded far below this, with room for clock skew.
+	hostedQueryLostAfter    = 5 * time.Minute
+	hostedQueryRecoverBatch = 1000
+)
+
+// sampleHostedUsageStorage measures one bounded page of projects, after the
+// cursor, whose sample for the current UTC day is missing or older than
+// SampleInterval. Every worker runs it with its own cursor. The freshness
+// filter shares the hourly cadence between workers; two workers measuring
+// the same project only replace that day's latest sample. Bytes come from
+// DuckLake metadata in PostgreSQL, never an S3 listing. It returns the next
+// cursor, or "" after the last page.
+func (s *Service) sampleHostedUsageStorage(ctx context.Context, after string) (string, error) {
+	at := s.usage.clock()
+	rows, err := s.control.QueryContext(ctx, `SELECT p.id,p.tenant_id FROM projects p
+LEFT JOIN usage_storage_samples u ON u.tenant_id=p.tenant_id AND u.project_id=p.id AND u.day_start=$2
+WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMIT $4`,
+		after, usage.Day(at), usage.Stamp(at.Add(-usage.SampleInterval)), hostedStorageSampleBatch)
+	if err != nil {
+		return after, err
+	}
+	type project struct{ id, tenant string }
+	batch := []project{}
+	for rows.Next() {
+		var p project
+		if err = rows.Scan(&p.id, &p.tenant); err != nil {
+			rows.Close()
+			return after, err
+		}
+		batch = append(batch, p)
+	}
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return after, err
+	}
+	for _, p := range batch {
+		if err := ctx.Err(); err != nil {
+			return after, err
+		}
+		// Resume after attempted projects even if one spends the whole
+		// page budget. Missing samples become eligible on the next sweep.
+		after = p.id
+		observed := s.usage.clock()
+		bytes, err := s.hosted.native.HostedCurrentParquetBytes(ctx, p.id)
+		if err == nil {
+			sample := usage.StorageSample{TenantID: p.tenant, ProjectID: p.id, Day: usage.Day(observed), ObservedAt: usage.Stamp(observed), Bytes: bytes}
+			if err := s.usage.store.RecordStorageSample(ctx, sample); err != nil {
+				return after, err
+			}
+		}
+		if ctx.Err() != nil {
+			return after, ctx.Err()
+		}
+	}
+	if len(batch) < hostedStorageSampleBatch {
+		return "", nil
+	}
+	return after, nil
+}
+
+// recoverHostedQueryUsage marks query executions lost once their owner has
+// stopped observing them. Hosted workers share one execution table, so the
+// standalone startup Recover would also mark other live workers' queries.
+// Ownership is the observation heartbeat instead: a live owner rewrites the
+// record's last_observed_at every ObservationInterval until it closes, so a
+// record unobserved for hostedQueryLostAfter belongs to a crashed, stopped or
+// partitioned worker. A later observation can clear that provisional state.
+func (s *Service) recoverHostedQueryUsage(ctx context.Context) (int64, error) {
+	return s.hostedQueries.recorder.RecoverStale(ctx, s.usage.clock().Add(-hostedQueryLostAfter), hostedQueryRecoverBatch)
 }

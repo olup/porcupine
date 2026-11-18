@@ -80,7 +80,11 @@ func run(ctx context.Context, command []string) (result error) {
 	}
 	fmt.Fprintln(os.Stderr, "PostgreSQL 17 fixture ready (native process, loopback only)")
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
-	child.Env = environment(map[string]string{"PORCUPINE_TEST_POSTGRES_DSN": pg.ConnectionURL(), "CGO_ENABLED": "1"})
+	child.Env = environment(map[string]string{
+		"PORCUPINE_TEST_POSTGRES_DSN":      pg.ConnectionURL(),
+		"PORCUPINE_TEST_PITR_POSTGRES_BIN": filepath.Join(pg.Info().BinariesDir, "bin"),
+		"CGO_ENABLED":                      "1",
+	})
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := child.Run(); err != nil {
 		return fmt.Errorf("shared PostgreSQL integration command failed: %w", err)

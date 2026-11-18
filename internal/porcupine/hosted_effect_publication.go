@@ -112,17 +112,19 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 }
 
 type reservingHostedStager struct {
-	publisher *hostedEffectPublisher
-	fence     lakeapi.ProjectWriteFence
-	plan      output.PipelinePlan
-	routing   frozenLiveOutputPlan
-	admission *hostedIngestionPolicy
-	admitted  bool
-	binding   output.PipelineBinding
+	publisher        *hostedEffectPublisher
+	fence            lakeapi.ProjectWriteFence
+	plan             output.PipelinePlan
+	routing          frozenLiveOutputPlan
+	admission        *hostedIngestionPolicy
+	admitted         bool
+	uploadedManifest lakeapi.ImmutableObjectRef
+	binding          output.PipelineBinding
 }
 
 func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
 	p := s.publisher
+	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
 	if !s.admitted {
 		if err := s.admission.admit(ctx, selected.TenantID); err != nil {
 			return lakeapi.StagedLiveEffects{}, err
@@ -139,8 +141,8 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	objects := []hostedPreparedObject{}
 	var preparedBytes int64
 	stager.put = func(_ context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
-		if int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
-			return lakeapi.ImmutableObjectRef{}, output.ErrPipelineCapacity
+		if int64(len(raw)) > lakeapi.MaxImmutableEffectObjectBytes || int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
+			return lakeapi.ImmutableObjectRef{}, errors.Join(errHostedLiveBatchTooLarge, output.ErrPipelineCapacity)
 		}
 		ref, _, e := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, raw)
 		if e == nil {
@@ -150,6 +152,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		return ref, e
 	}
 	staged, err := stager.StageLiveEffects(ctx, selected)
+	if errors.Is(err, delivery.ErrWebhookCapacity) {
+		return staged, errors.Join(errHostedLiveBatchTooLarge, err)
+	}
 	if err != nil {
 		return staged, err
 	}
@@ -218,7 +223,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	if len(prepared) > 0 {
 		preview, _ := json.Marshal(hostedPublicationManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: binding.PreparedSHA256, AcquisitionID: s.fence.AcquisitionID, Epoch: s.fence.Epoch, Sequence: selected.Sequence, Outputs: prepared, PlanRef: pipelineRef(planRef)})
 		if int64(len(preview))+int64(len(prepared)+1)*6144 > binding.ManifestBytesLimit {
-			return staged, output.ErrPipelineCapacity
+			return staged, errors.Join(errHostedLiveBatchTooLarge, output.ErrPipelineCapacity)
 		}
 	}
 
@@ -229,6 +234,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	err = p.transaction(ctx, func(tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
+	if errors.Is(err, output.ErrPipelineDemandTooLarge) {
+		return staged, errors.Join(errHostedLiveBatchTooLarge, err)
+	}
 	if err != nil {
 		return staged, err
 	}
@@ -270,10 +278,11 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	}
 
 	s.binding = binding
+	s.uploadedManifest = staged.Manifest
 	return staged, nil
 }
 
-func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) (output.PipelinePublication, error) {
+func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, uploadedManifest lakeapi.ImmutableObjectRef) (output.PipelinePublication, error) {
 	fail := func() (output.PipelinePublication, error) {
 		return output.PipelinePublication{}, output.ErrPipelineConflict
 	}
@@ -331,12 +340,17 @@ func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBin
 	if output.PipelinePreparedSHA256(outputs) != b.PreparedSHA256 {
 		return fail()
 	}
+	// The stager records this exact manifest only after uploading every referenced
+	// body. Cold recovery has no such record and verifies each body in S3.
+	bodiesUploaded := uploadedManifest == e.Effects.Manifest
 	for _, o := range outputs {
 		if !owned(o.Body) {
 			return fail()
 		}
-		if _, err = p.objects.ReadImmutableEffectObject(ctx, e.Scope, nativeRef(o.Body)); err != nil {
-			return output.PipelinePublication{}, err
+		if !bodiesUploaded {
+			if _, err = p.objects.ReadImmutableEffectObject(ctx, e.Scope, nativeRef(o.Body)); err != nil {
+				return output.PipelinePublication{}, err
+			}
 		}
 	}
 	return output.PipelinePublication{Manifest: pipelineRef(e.Effects.Manifest), Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint, Outputs: outputs}, nil
@@ -359,12 +373,12 @@ func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBi
 }
 
 func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession) error {
-	return p.publishEvidence(ctx, b, e, session, false)
+	return p.publishEvidence(ctx, b, e, session, false, lakeapi.ImmutableObjectRef{})
 }
 
 // publishEvidence can settle existing durable proofs after a deletion fence.
 // It does not admit new native work or add an output cursor.
-func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession, deleting bool) error {
+func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession, deleting bool, uploadedManifest lakeapi.ImmutableObjectRef) error {
 	if err := lakeapi.ValidateNativeCommitEvidence(e); err != nil {
 		return err
 	}
@@ -374,7 +388,7 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 	var err error
 	switch e.Kind {
 	case lakeapi.NativeCommitLive:
-		v, err = p.verify(ctx, b, e)
+		v, err = p.verify(ctx, b, e, uploadedManifest)
 	case lakeapi.NativeCommitImport:
 		if b != (output.PipelineBinding{}) {
 			return output.ErrPipelineConflict

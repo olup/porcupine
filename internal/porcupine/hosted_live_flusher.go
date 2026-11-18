@@ -19,6 +19,7 @@ type hostedLiveFlusher struct {
 	coordinator        *lakeapi.PostgresProjectCoordinator
 	publisher          *hostedEffectPublisher
 	policy             hostedIngestionPolicy
+	incarnation        *hostedIncarnation
 	returnedActivities sync.Map
 }
 
@@ -125,7 +126,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 					return e
 				}
 			}
-			if e = f.publisher.publish(ctx, binding, v.Evidence); e != nil {
+			if e = f.publisher.publishEvidence(ctx, binding, v.Evidence, nil, false, stager.uploadedManifest); e != nil {
 				return e
 			}
 			_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, v.Evidence.Sequence)
@@ -281,7 +282,7 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		}
 		evidence := page.Evidence[0]
 		if deleting {
-			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true)
+			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true, lakeapi.ImmutableObjectRef{})
 		} else if evidence.Kind == lakeapi.NativeCommitMutation {
 			err = f.publisher.publishOn(ctx, binding, evidence, session)
 		} else {

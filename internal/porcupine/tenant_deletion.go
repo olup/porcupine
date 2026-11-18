@@ -3,7 +3,9 @@ package porcupine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,8 +28,11 @@ type TenantDeletionOutput struct{ Body TenantDeletion }
 
 var errRestoredArtifactsPending = errors.New("restored artifact ownership requires reconciliation")
 
-const tenantNativeOwnedPrincipals = `SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
-UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1)`
+const tenantCredentialIDs = `SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
+UNION SELECT id FROM access_keys WHERE owner_tenant_id=$1`
+
+const tenantNativeOwnedPrincipals = tenantCredentialIDs + `
+UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (` + tenantCredentialIDs + `)`
 
 func (s *Service) tenantOwnedPrincipals() string {
 	query := tenantNativeOwnedPrincipals
@@ -141,6 +146,13 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) DO NOTHING`, tenant); err != nil {
 		return err
 	}
+	projects, err := tenantProjectIDs(ctx, tx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := recordTenantScopedCredentials(ctx, tx, tenant, projects); err != nil {
+		return err
+	}
 	owned := strings.ReplaceAll(s.tenantOwnedPrincipals(), "$1", "$2")
 	if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$1) WHERE id IN `+owned, at, tenant); err != nil {
 		return err
@@ -150,16 +162,63 @@ SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) D
 			return err
 		}
 	}
-	projects, err := tenantProjectIDs(ctx, tx, tenant)
-	if err != nil {
-		return err
-	}
 	for _, project := range projects {
 		if err := s.purgeProjectGrants(ctx, tx, project); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// Assign ownership to credentials issued before it was recorded at creation.
+// The deletion fence serializes credential issuance in this transaction.
+func recordTenantScopedCredentials(ctx context.Context, tx *sql.Tx, tenant string, projects []string) error {
+	if len(projects) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects FROM access_keys k
+WHERE k.owner_tenant_id='' AND k.id NOT LIKE 'external:%' AND k.id<>coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),'')
+AND NOT EXISTS(SELECT 1 FROM tenant_credentials t WHERE t.principal_id=k.id)
+AND NOT EXISTS(SELECT 1 FROM email_humans h WHERE h.principal_id=k.id)
+ORDER BY k.id`)
+	if err != nil {
+		return err
+	}
+	var owned []string
+	for rows.Next() {
+		var id, rawPermissions, rawProjects string
+		if err := rows.Scan(&id, &rawPermissions, &rawProjects); err != nil {
+			rows.Close()
+			return err
+		}
+		var permissions, scope []string
+		if json.Unmarshal([]byte(rawPermissions), &permissions) != nil || json.Unmarshal([]byte(rawProjects), &scope) != nil {
+			rows.Close()
+			return errors.New("invalid stored credential grants")
+		}
+		if !projectCredentialScope(permissions, scope) || !subset(scope, projects) {
+			continue
+		}
+		owned = append(owned, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, id := range owned {
+		if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET owner_tenant_id=$2 WHERE id=$1`, id, tenant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func subset(values, allowed []string) bool {
+	for _, value := range values {
+		if !slices.Contains(allowed, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func tenantProjectIDs(ctx context.Context, query oauthQueryer, tenant string) ([]string, error) {

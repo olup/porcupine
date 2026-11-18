@@ -72,11 +72,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
 	var rejectEffects, blockEffects atomic.Bool
-	var effectPuts atomic.Int64
+	var effectPuts, effectGets atomic.Int64
 	effectEntered, resumeEffects := make(chan struct{}), make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
-			effectPuts.Add(1)
+		if strings.Contains(r.URL.Path, "/effects/") {
+			switch r.Method {
+			case http.MethodPut:
+				effectPuts.Add(1)
+			case http.MethodGet:
+				effectGets.Add(1)
+			}
 		}
 		if rejectEffects.Load() && r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -253,8 +258,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	oversized := batch("prepared-byte-cap")
 	oversized.events[0].input.event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
 	putsBefore := effectPuts.Load()
-	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) {
-		t.Fatal("oversized preparation accepted", err)
+	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("oversized preparation did not report a permanent pre-commit capacity error", err)
 	}
 	if effectPuts.Load() != putsBefore {
 		t.Fatal("preparation bound uploaded an object before refusal")
@@ -311,6 +316,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	rejectEffects.Store(false)
 
 	readsBefore := reservationReads.Load()
+	getsBeforeFlush := effectGets.Load()
 	blockEffects.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
@@ -337,6 +343,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	if reads := reservationReads.Load() - readsBefore; reads != 1 {
 		t.Fatalf("flush read the reservation %d times, want one recovery read", reads)
+	}
+	if got := effectGets.Load() - getsBeforeFlush; got != 3 {
+		t.Fatalf("fresh flush made %d effect GETs, want 3 (rule, manifest, plan)", got)
 	}
 	if _, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=NULL WHERE id=$1`, defaultTenantID); er != nil {
 		t.Fatal(er)
@@ -461,7 +470,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	missing := original
 	missing.Effects.Manifest.Key += "missing"
-	if _, er = fb.publisher.verify(t.Context(), binding, missing); er == nil {
+	if _, er = fb.publisher.verify(t.Context(), binding, missing, lakeapi.ImmutableObjectRef{}); er == nil {
 		t.Fatal("missing manifest accepted")
 	}
 	get, er := fixture.client.GetObject(t.Context(), &s3.GetObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key)})
@@ -492,11 +501,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(m.PlanRef.Key), Body: bytes.NewReader([]byte("modified plan latest"))}); er != nil {
 			t.Fatal(er)
 		}
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er != nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er != nil {
 			t.Fatal("actual version pin did not survive overwrite", er)
 		}
 	} else {
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er == nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er == nil {
 			t.Fatal("tampered immutable manifest accepted")
 		}
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key), Body: bytes.NewReader(originalRaw)}); er != nil {
@@ -507,8 +516,12 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`DROP TRIGGER reject_hosted_usage ON usage_rollups; DROP FUNCTION reject_hosted_usage()`); err != nil {
 		t.Fatal(err)
 	}
+	getsBeforeRecovery := effectGets.Load()
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold publication", err)
+	}
+	if got := effectGets.Load() - getsBeforeRecovery; got != 4 {
+		t.Fatalf("cold publication made %d effect GETs, want 4 (manifest, plan, delivery, fragment)", got)
 	}
 	if err = fa.FlushLive(t.Context(), crash); err != nil {
 		t.Fatal("original native proof replay", err)
@@ -530,8 +543,17 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
 	blocked := batch("blocked")
-	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
-		t.Fatal("full queue admitted", err)
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) || errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("full queue did not report a retryable capacity error", err)
+	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=1 WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
+		t.Fatal(err)
+	}
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("oversized reservation did not report a permanent pre-commit capacity error", err)
+	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
+		t.Fatal(err)
 	}
 	setPipelineState := func(state string) {
 		t.Helper()
