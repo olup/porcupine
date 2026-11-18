@@ -180,7 +180,7 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		flusher, err := newHostedLiveFlusher(node.service.control, store, coordinator, node.service.usage.store)
+		flusher, err := newHostedLiveFlusherFixture(node.service.control, store, coordinator, node.service.usage.store)
 		if err != nil {
 			t.Fatal(err)
 		}

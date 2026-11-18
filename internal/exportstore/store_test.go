@@ -154,6 +154,7 @@ func TestEmptyAndExactPartUploads(t *testing.T) {
 	}
 }
 func TestEmbeddedCompleteErrorAndAbort(t *testing.T) {
+	t.Parallel()
 	fake := &fakeS3{completeError: true}
 	upload := begin(t, testStore(t, fake), context.Background())
 	_, _ = upload.Write([]byte("validated query"))
@@ -177,6 +178,7 @@ func TestEmbeddedCompleteErrorAndAbort(t *testing.T) {
 	}
 }
 func TestFailedPartIsStickyAndAbortUsesFreshContext(t *testing.T) {
+	t.Parallel()
 	fake := &fakeS3{partError: true}
 	store := testStore(t, fake)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -234,6 +236,7 @@ func TestPresignAndDelete(t *testing.T) {
 	}
 }
 func TestNoRedirects(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	requests := 0
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mu.Lock(); requests++; mu.Unlock(); w.WriteHeader(204) }))

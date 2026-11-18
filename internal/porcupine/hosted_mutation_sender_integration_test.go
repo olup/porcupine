@@ -38,7 +38,13 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := newHostedLiveFlusher(a.service.control, native, coordinator, a.service.usage.store)
+	effects, err := output.NewPGPipelineEffects(hostedPipelineNativeAuthority{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := newHostedLiveFlusher(a.service.control, native, coordinator, a.service.usage.store, effects, hostedPublisherHooks{
+		cancelMutationWebhook: effects.CancelHostedWebhookEventTx,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +75,6 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.service.hostedMutations = f
-	f.publisher.cancelMutationWebhook = f.publisher.effects.CancelHostedWebhookEventTx
 	actor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:delete"})
 	actorContext := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: actor, Projects: []string{project}, Permissions: []string{"events:delete"}})
 	acceptDelete := func(uuid string) {

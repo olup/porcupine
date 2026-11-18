@@ -73,27 +73,20 @@ type hostedPipelineExecution struct {
 	endAttempt     func(context.Context, string, string) error
 }
 
-func (s *Service) configureHostedPipelines(c *output.PipelineConfig, flusher *hostedLiveFlusher, execution hostedPipelineExecution) error {
-	if flusher == nil || flusher.coordinator == nil || flusher.native == nil || flusher.publisher == nil || flusher.publisher.control != s.control {
-		return errors.New("hosted pipelines require the shared live flusher")
-	}
+func (s *Service) newHostedPipelines(c *output.PipelineConfig, effects *output.PGPipelineEffects, coordinator *lakeapi.PostgresProjectCoordinator, sourceID string, execution hostedPipelineExecution) (*output.PipelineJobs, error) {
 	if s.pipelineClient == nil {
 		s.pipelineClient = delivery.NewWebhookHTTPClient()
-	}
-	effects, err := output.NewPGPipelineEffects(hostedPipelineAuthority{service: s})
-	if err != nil {
-		return err
 	}
 	d := output.HostedPipelineDependencies{
 		PipelineDependencies: output.PipelineDependencies{
 			Control: s.control, Clock: func() time.Time { return s.clock() },
 			Reader: s.lake, WebhookClient: s.pipelineClient, Acquire: s.queries.TryBackground,
-			Usage: usage.NewRecorder(s.control, "pipelines-"+flusher.native.Config.SharedSourceID, s.clock),
+			Usage: usage.NewRecorder(s.control, "pipelines-"+sourceID, s.clock),
 		},
 		Effects: effects,
 		ProjectTransaction: func(ctx context.Context, project string, work func(context.Context, *sql.Tx) error) error {
-			key := lakeapi.ProjectWriteKey{SourceID: flusher.native.Config.SharedSourceID, ProjectID: project}
-			session, err := flusher.coordinator.Acquire(ctx, key)
+			key := lakeapi.ProjectWriteKey{SourceID: sourceID, ProjectID: project}
+			session, err := coordinator.Acquire(ctx, key)
 			if err != nil {
 				return err
 			}
@@ -104,28 +97,26 @@ func (s *Service) configureHostedPipelines(c *output.PipelineConfig, flusher *ho
 	if execution.snapshotCut != nil {
 		reader, ok := s.lake.(output.HostedScheduledReader)
 		if !ok || execution.beginAttemptTx == nil || execution.endAttempt == nil {
-			return errors.New("hosted scheduled pipelines require retained analytical snapshots")
+			return nil, errors.New("hosted scheduled pipelines require retained analytical snapshots")
 		}
 		d.Scheduled = output.HostedScheduledDependencies{Reader: reader, SnapshotCut: execution.snapshotCut, BeginAttemptTx: execution.beginAttemptTx, EndAttempt: execution.endAttempt}
 	}
-	p, err := output.NewHostedPipelines(d, c)
-	if err != nil {
-		return err
+	return output.NewHostedPipelines(d, c)
+}
+
+func (s *Service) attachHostedWebhookWorker(p *output.PipelineJobs, flusher *hostedLiveFlusher, execution hostedPipelineExecution) error {
+	if !p.Enabled() {
+		return nil
 	}
-	if p.Enabled() {
-		if execution.deleteGate == nil || execution.beginAttemptTx == nil || execution.endAttempt == nil {
-			return errors.New("hosted webhooks require coordinated deletion and activity")
-		}
-		config := p.Config()
-		worker := newHostedPipelineDelivery(flusher, p.HostedWebhookDestinationTx, output.HostedWebhookLimits{MaxAttempts: config.WebhookMaxAttempts, Timeout: time.Duration(config.WebhookTimeoutSeconds) * time.Second}, s.pipelineClient)
-		worker.deleteGate = execution.deleteGate
-		worker.beginAttemptTx = execution.beginAttemptTx
-		worker.endAttempt = execution.endAttempt
-		p.SetHostedWebhookWorker(worker.Step)
+	if execution.deleteGate == nil || execution.beginAttemptTx == nil || execution.endAttempt == nil {
+		return errors.New("hosted webhooks require coordinated deletion and activity")
 	}
-	s.pipelines = p
-	flusher.publisher.effects = effects
-	flusher.publisher.ensureCapacity = p.EnsureHostedPipelineCapacityTx
-	flusher.publisher.loadRule = p.HostedPipelineRule
+	config := p.Config()
+	worker := newHostedPipelineDelivery(flusher, p.HostedWebhookDestinationTx, output.HostedWebhookLimits{MaxAttempts: config.WebhookMaxAttempts, Timeout: time.Duration(config.WebhookTimeoutSeconds) * time.Second}, s.pipelineClient)
+	worker.deleteGate = execution.deleteGate
+	worker.beginAttemptTx = execution.beginAttemptTx
+	worker.endAttempt = execution.endAttempt
+	// The flusher needs PipelineJobs for publication, and the worker needs the flusher.
+	p.SetHostedWebhookWorker(worker.Step)
 	return nil
 }

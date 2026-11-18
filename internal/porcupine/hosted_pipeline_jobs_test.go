@@ -75,24 +75,20 @@ VALUES ('grant','consent','human','client',$1,$2,$3)`, s.resources.mcpResource, 
 		t.Fatal(err)
 	}
 	key := lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "project"}
-	flusher := &hostedLiveFlusher{
-		coordinator: coordinator,
-		native:      &lakeapi.DuckLakeStore{Config: lakeapi.DuckLakeConfig{SharedSourceID: key.SourceID}},
-		publisher:   &hostedEffectPublisher{control: db},
+	effects, err := output.NewPGPipelineEffects(hostedPipelineAuthority{service: s})
+	if err != nil {
+		t.Fatal(err)
 	}
 	config := &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
-	execution := hostedPipelineExecution{
-		deleteGate:     func(context.Context, *sql.Tx, lakeapi.HostedProjectScope, string) (bool, error) { return true, nil },
-		beginAttemptTx: func(context.Context, *sql.Tx, string, string) error { t.Error("unexpected send"); return nil },
-		endAttempt:     func(context.Context, string, string) error { t.Error("unexpected send"); return nil },
-	}
-	if err = s.configureHostedPipelines(config, flusher, execution); err != nil {
+	p, err := s.newHostedPipelines(config, effects, coordinator, key.SourceID, hostedPipelineExecution{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.pipelines.Initialize(ctx); err != nil {
+	publisher := &hostedEffectPublisher{control: db, effects: effects, ensureCapacity: p.EnsureHostedPipelineCapacityTx, loadRule: p.HostedPipelineRule}
+	if err = p.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pipeline, err := s.pipelines.Define(ctx, "project", output.PipelineRequest{Kind: "webhook", Name: "hosted", Webhook: &output.WebhookPipelineSpec{Endpoint: "https://hooks.example.test/events", IncludeEvents: []string{"checkout"}}}, auth.Principal{ID: "consent"})
+	pipeline, err := p.Define(ctx, "project", output.PipelineRequest{Kind: "webhook", Name: "hosted", Webhook: &output.WebhookPipelineSpec{Endpoint: "https://hooks.example.test/events", IncludeEvents: []string{"checkout"}}}, auth.Principal{ID: "consent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +97,7 @@ VALUES ('grant','consent','human','client',$1,$2,$3)`, s.resources.mcpResource, 
 		t.Fatal(err)
 	}
 	scope := lakeapi.HostedProjectScope{Key: key, CatalogID: "catalog", StreamID: "stream"}
-	_, routing, err := flusher.publisher.plan(ctx, "default", scope)
+	_, routing, err := publisher.plan(ctx, "default", scope)
 	if releaseErr := session.Release(); releaseErr != nil {
 		t.Fatal(releaseErr)
 	}
