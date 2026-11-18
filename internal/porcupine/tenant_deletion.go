@@ -3,7 +3,9 @@ package porcupine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,6 +143,13 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) DO NOTHING`, tenant); err != nil {
 		return err
 	}
+	projects, err := tenantProjectIDs(ctx, tx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := recordTenantScopedCredentials(ctx, tx, tenant, projects); err != nil {
+		return err
+	}
 	owned := strings.ReplaceAll(s.tenantOwnedPrincipals(), "$1", "$2")
 	if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$1) WHERE id IN `+owned, at, tenant); err != nil {
 		return err
@@ -150,16 +159,70 @@ SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) D
 			return err
 		}
 	}
-	projects, err := tenantProjectIDs(ctx, tx, tenant)
-	if err != nil {
-		return err
-	}
 	for _, project := range projects {
 		if err := s.purgeProjectGrants(ctx, tx, project); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// recordTenantScopedCredentials makes the fence own every non-human credential
+// whose project set lies entirely in this tenant: operator-created multi-project
+// keys and OAuth clients, and service keys and consent grants derived from them.
+// Ownership is not recorded when these are created, because tenant_credentials
+// also turns a credential into a tenant machine actor. Instance-level
+// credentials (all projects, or instance or tenant administration) and
+// credentials that still reach another tenant are never owned; the project
+// purge removes this tenant's projects from the latter. The caller's fence
+// serializes credential creation, so the recorded set is complete.
+func recordTenantScopedCredentials(ctx context.Context, tx *sql.Tx, tenant string, projects []string) error {
+	if len(projects) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects FROM access_keys k
+WHERE k.id NOT LIKE 'external:%' AND k.id<>coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),'')
+AND NOT EXISTS(SELECT 1 FROM tenant_credentials t WHERE t.principal_id=k.id)
+AND NOT EXISTS(SELECT 1 FROM email_humans h WHERE h.principal_id=k.id)
+ORDER BY k.id`)
+	if err != nil {
+		return err
+	}
+	var owned []string
+	for rows.Next() {
+		var id, rawPermissions, rawProjects string
+		if err := rows.Scan(&id, &rawPermissions, &rawProjects); err != nil {
+			rows.Close()
+			return err
+		}
+		var permissions, scope []string
+		if json.Unmarshal([]byte(rawPermissions), &permissions) != nil || json.Unmarshal([]byte(rawProjects), &scope) != nil {
+			rows.Close()
+			return errors.New("invalid stored credential grants")
+		}
+		if len(scope) == 0 || !subset(permissions, auth.ProjectPermissions()) || !subset(scope, projects) {
+			continue
+		}
+		owned = append(owned, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, id := range owned {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, tenant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func subset(values, allowed []string) bool {
+	for _, value := range values {
+		if !slices.Contains(allowed, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func tenantProjectIDs(ctx context.Context, query oauthQueryer, tenant string) ([]string, error) {
