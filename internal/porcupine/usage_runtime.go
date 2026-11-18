@@ -100,7 +100,7 @@ func (s *Service) startUsage() {
 		defer close(u.done)
 		ticker := time.NewTicker(usage.ObservationInterval)
 		defer ticker.Stop()
-		nextSample, nextHostedSample := time.Time{}, time.Time{}
+		nextSample, nextHostedSample, nextHostedRecovery := time.Time{}, time.Time{}, time.Time{}
 		hostedCursor := ""
 		for {
 			work, stop := context.WithTimeout(ctx, 30*time.Second)
@@ -113,13 +113,17 @@ func (s *Service) startUsage() {
 				}
 				if s.hostedQueries != nil {
 					_ = s.hostedQueries.recorder.PruneExecutions(work, u.config.RetentionDays)
-					_, _ = s.recoverHostedQueryUsage(work)
 				}
 				nextSample = u.clock().Add(usage.SampleInterval)
 			}
+			if s.hostedQueries != nil && !u.clock().Before(nextHostedRecovery) {
+				if recovered, err := s.recoverHostedQueryUsage(work); err == nil && recovered < hostedQueryRecoverBatch {
+					nextHostedRecovery = u.clock().Add(time.Minute)
+				}
+			}
 			stop()
 			if s.hosted != nil && !u.clock().Before(nextHostedSample) {
-				// A separate budget: storage reads must not delay query observation.
+				// Bound storage separately so each loop can observe queries first.
 				work, stop = context.WithTimeout(ctx, hostedStorageSampleTimeout)
 				next, err := s.sampleHostedUsageStorage(work, hostedCursor)
 				stop()
@@ -299,10 +303,13 @@ WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMI
 		return after, err
 	}
 	for _, p := range batch {
+		observed := s.usage.clock()
 		bytes, err := s.hosted.native.HostedCurrentParquetBytes(ctx, p.id)
 		if err == nil {
-			at := s.usage.clock()
-			err = s.usage.store.RecordStorageSample(ctx, usage.StorageSample{TenantID: p.tenant, ProjectID: p.id, Day: usage.Day(at), ObservedAt: usage.Stamp(at), Bytes: bytes})
+			sample := usage.StorageSample{TenantID: p.tenant, ProjectID: p.id, Day: usage.Day(observed), ObservedAt: usage.Stamp(observed), Bytes: bytes}
+			if err := s.usage.store.RecordStorageSample(ctx, sample); err != nil {
+				return after, err
+			}
 		}
 		if ctx.Err() != nil {
 			return after, ctx.Err()
@@ -323,7 +330,7 @@ WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMI
 // Ownership is the observation heartbeat instead: a live owner rewrites the
 // record's last_observed_at every ObservationInterval until it closes, so a
 // record unobserved for hostedQueryLostAfter belongs to a crashed, stopped or
-// partitioned worker. A live worker's in-flight record is never that old.
+// partitioned worker. A later observation can clear that provisional state.
 func (s *Service) recoverHostedQueryUsage(ctx context.Context) (int64, error) {
 	return s.hostedQueries.recorder.RecoverStale(ctx, s.usage.clock().Add(-hostedQueryLostAfter), hostedQueryRecoverBatch)
 }

@@ -28,6 +28,10 @@ func (s *DuckLakeStore) CurrentParquetBytes(ctx context.Context, project string)
 		return 0, err
 	}
 	defer release()
+	return p.currentParquetBytes(ctx)
+}
+
+func (p *ProjectLake) currentParquetBytes(ctx context.Context) (int64, error) {
 	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -119,7 +123,7 @@ func (s *DuckLakeStore) HostedCurrentParquetBytes(ctx context.Context, project s
 		return 0, sql.ErrNoRows
 	}
 	schema = `"` + schema + `"`
-	var total, smallest, paths, files int64
+	var total, smallest, paths, files, sizes int64
 	err = registry.db.QueryRowContext(ctx, `WITH tables AS (
 	SELECT t.table_id FROM `+schema+`.ducklake_table t JOIN `+schema+`.ducklake_schema s ON s.schema_id=t.schema_id
 	WHERE t.end_snapshot IS NULL AND s.end_snapshot IS NULL AND s.schema_name='main'
@@ -131,14 +135,14 @@ func (s *DuckLakeStore) HostedCurrentParquetBytes(ctx context.Context, project s
 	UNION SELECT f.path,f.file_size_bytes FROM `+schema+`.ducklake_delete_file f JOIN data USING(data_file_id)
 	WHERE f.end_snapshot IS NULL
 )
-SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),coalesce(min(file_size_bytes),0) FROM current`).Scan(&total, &paths, &files, &smallest)
+SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),count(file_size_bytes),coalesce(min(file_size_bytes),0) FROM current`).Scan(&total, &paths, &files, &sizes, &smallest)
 	if err != nil {
 		return 0, err
 	}
 	if paths != files {
 		return 0, errors.New("conflicting current Parquet size")
 	}
-	if smallest < 0 {
+	if sizes != files || smallest < 0 {
 		return 0, errors.New("invalid current Parquet size")
 	}
 	return total, nil

@@ -241,7 +241,7 @@ func (r *Recorder) observeExecution(ctx context.Context, e *Execution) error {
 	if ended {
 		state = 1
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE usage_executions SET elapsed_us=$1,closed=$2,last_observed_at=$3 WHERE id=$4`, elapsed, state, Stamp(r.Clock()), e.id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE usage_executions SET elapsed_us=$1,closed=$2,last_observed_at=$3,lost=0 WHERE id=$4`, elapsed, state, Stamp(r.Clock()), e.id); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -269,7 +269,8 @@ func (r *Recorder) RecoverStale(ctx context.Context, before time.Time, limit int
 	if limit < 1 {
 		return 0, errors.New("invalid usage recovery limit")
 	}
-	result, err := r.DB.ExecContext(ctx, `UPDATE usage_executions SET lost=1 WHERE id IN (SELECT id FROM usage_executions WHERE closed=0 AND lost=0 AND last_observed_at<$1 ORDER BY day_start,id LIMIT $2)`, Stamp(before), limit)
+	result, err := r.DB.ExecContext(ctx, `UPDATE usage_executions SET lost=1 WHERE closed=0 AND lost=0 AND last_observed_at<$1
+AND id IN (SELECT id FROM usage_executions WHERE closed=0 AND lost=0 AND last_observed_at<$1 ORDER BY day_start,id LIMIT $2)`, Stamp(before), limit)
 	if err != nil {
 		return 0, err
 	}

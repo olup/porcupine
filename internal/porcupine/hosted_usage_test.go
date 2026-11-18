@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -60,7 +62,7 @@ func TestSharedHostedUsageStorageSamplesCurrentParquet(t *testing.T) {
 	if err != nil || measured <= 0 {
 		t.Fatalf("hosted current Parquet bytes = %v, %v", storage["current_parquet_bytes"], err)
 	}
-	// Two appends and no maintenance leave every written Parquet object current.
+	// The prefix also includes obsolete Parquet files left by the write guards.
 	var objects int64
 	prefix := fixture.projectPrefix(t, b.service.hosted.native, project)
 	pager := s3.NewListObjectsV2Paginator(fixture.client, &s3.ListObjectsV2Input{Bucket: aws.String(fixture.storage.Bucket), Prefix: aws.String(prefix)})
@@ -73,19 +75,10 @@ func TestSharedHostedUsageStorageSamplesCurrentParquet(t *testing.T) {
 			if strings.HasSuffix(aws.ToString(object.Key), ".parquet") {
 				objects += aws.ToInt64(object.Size)
 			}
-			t.Log("DEBUG s3", aws.ToString(object.Key), aws.ToInt64(object.Size))
-		}
-		schema := "pc_lake_" + strings.ReplaceAll(lakeapiCatalog(t, b, project), "-", "")
-		dbg, _ := a.service.control.QueryContext(ctx, `SELECT d.table_id,t.table_name,d.path,d.file_size_bytes,d.begin_snapshot,coalesce(d.end_snapshot,-1) FROM "`+schema+`".ducklake_data_file d JOIN "`+schema+`".ducklake_table t USING(table_id) UNION ALL SELECT f.table_id,'DELETE',f.path,f.file_size_bytes,f.begin_snapshot,coalesce(f.end_snapshot,-1) FROM "`+schema+`".ducklake_delete_file f`)
-		for dbg != nil && dbg.Next() {
-			var id, size, begin, end int64
-			var name, path string
-			_ = dbg.Scan(&id, &name, &path, &size, &begin, &end)
-			t.Log("DEBUG meta", id, name, path, size, begin, end)
 		}
 	}
-	if measured != objects {
-		t.Fatalf("metadata measured %d bytes, the project's S3 Parquet objects hold %d", measured, objects)
+	if measured >= objects {
+		t.Fatalf("current Parquet bytes = %d, all S3 Parquet bytes = %d", measured, objects)
 	}
 	if neighbor := rows[other]["storage"].(map[string]any); neighbor["status"] != "sampled" || neighbor["current_parquet_bytes"] == storage["current_parquet_bytes"] {
 		t.Fatalf("neighbor project was not measured separately: %v", neighbor)
@@ -120,11 +113,40 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	}
 	budget(3)
 	project, ingest := sharedJourneyProject(t, a.host.URL, tenant, "Metered events")
-	neighbor, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Unmetered events")
-	for i := range 3 {
-		hostedCleanupWrite(t, []*Service{a.service, b.service}[i%2], project, "accepted")
+	sibling, _ := sharedJourneyProject(t, b.host.URL, tenant, "Same tenant")
+	neighbor, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Other tenant")
+	at := a.service.clock()
+	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "accepted", DistinctID: "actor",
+		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
+	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project, admitted: true,
+		events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: at}}}
+	for _, node := range []*sharedJourneyNode{a, b} {
+		if err := node.service.hosted.flusher.FlushLive(ctx, batch); err != nil {
+			t.Fatal(err)
+		}
 	}
+	hostedCleanupWrite(t, a.service, project, "second acceptance")
+	hostedCleanupWrite(t, b.service, sibling, "same tenant")
 	hostedCleanupWrite(t, a.service, neighbor, "other tenant")
+
+	for _, scope := range []struct {
+		tenant string
+		counts map[string]string
+	}{
+		{tenant, map[string]string{project: "2", sibling: "1"}},
+		{defaultTenantID, map[string]string{neighbor: "1"}},
+	} {
+		rows := hostedUsageRows(t, b, scope.tenant)
+		for id, want := range scope.counts {
+			counters, _ := rows[id]["counters"].(map[string]any)
+			if counters["accepted_live_events"] != want {
+				t.Fatalf("project %s retained usage = %v, want %s", id, counters, want)
+			}
+		}
+		if len(rows) != len(scope.counts) {
+			t.Fatalf("tenant %s usage contains unexpected projects: %v", scope.tenant, rows)
+		}
+	}
 
 	reported := sharedJourneyHTTP(t, b.host.URL, http.MethodGet, "/api/v1/tenants/"+tenant+"/usage", adminToken, nil, nil, http.StatusOK)
 	if reported["accepted_events"] != "3" || reported["remaining_events"] != "0" || reported["ingestion_allowed"] != false {
@@ -177,7 +199,7 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 
 	// A worker that crashed after admitting a query: its record was last
 	// observed long ago and no process holds it any more.
-	crashed := usage.NewRecorder(control, hostedQueryUsageSource, func() time.Time { return time.Now().Add(-time.Hour) })
+	crashed := usage.NewRecorder(control, hostedQueryUsageSource, a.service.clock)
 	if _, err := crashed.StartExecution(ctx, defaultTenantID, project, "sql"); err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +232,12 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 				t.Fatal(err)
 			}
 			out[id] = r
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if len(out) != 2 {
+			t.Fatalf("got %d query executions, want 2", len(out))
 		}
 		return out
 	}
@@ -253,12 +281,4 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 	if row := hostedUsageRows(t, b, defaultTenantID)[project]; row["query_duration"].(map[string]any)["quality"] != "lower_bound" {
 		t.Fatalf("abandoned execution was reported as observed: %v", row)
 	}
-}
-
-func lakeapiCatalog(t *testing.T, b *sharedJourneyNode, project string) string {
-	var id string
-	if err := b.service.control.QueryRow(`SELECT catalog_id FROM pc_native_projects WHERE project_id=$1`, project).Scan(&id); err != nil {
-		t.Fatal(err)
-	}
-	return id
 }
