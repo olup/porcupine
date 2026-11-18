@@ -117,22 +117,24 @@ func TestDuckLakeS3SharedPostgresHostedWebhookSendGate(t *testing.T) {
 		}
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 	})}
-	w := newHostedPipelineDelivery(f, func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error) {
+	destination := func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error) {
 		return output.WebhookPipelineSecret{Endpoint: "https://receiver.example/webhook"}, nil
-	}, output.HostedWebhookLimits{MaxAttempts: 3, Timeout: 3 * time.Second}, client)
-	w.deleteGate = func(ctx context.Context, tx *sql.Tx, _ lakeapi.HostedProjectScope, _ string) (bool, error) {
+	}
+	deleteGate := func(ctx context.Context, tx *sql.Tx, _ lakeapi.HostedProjectScope, _ string) (bool, error) {
 		var ready bool
 		err := tx.QueryRowContext(ctx, `SELECT ready FROM test_delivery_intents`).Scan(&ready)
 		return ready, err
 	}
-	w.beginAttemptTx = func(ctx context.Context, tx *sql.Tx, project, id string) error {
+	beginAttemptTx := func(ctx context.Context, tx *sql.Tx, project, id string) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO test_delivery_activity VALUES($1,$2)`, project, id)
 		return err
 	}
-	w.endAttempt = func(ctx context.Context, project, id string) error {
+	endAttempt := func(ctx context.Context, project, id string) error {
 		_, err := db.ExecContext(ctx, `DELETE FROM test_delivery_activity WHERE project=$1 AND attempt=$2`, project, id)
 		return err
 	}
+	limits := output.HostedWebhookLimits{MaxAttempts: 3, Timeout: 3 * time.Second}
+	w := newHostedPipelineDelivery(f, destination, limits, client, deleteGate, beginAttemptTx, endAttempt)
 	if progress, err := w.Step(ctx); err != nil || progress || calls != 0 {
 		t.Fatal(progress, err, calls)
 	}

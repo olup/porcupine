@@ -114,19 +114,20 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 	})}
-	w := newHostedPipelineDelivery(f, func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error) {
+	destination := func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error) {
 		return output.WebhookPipelineSecret{Endpoint: "https://receiver.example/webhook"}, nil
-	}, output.HostedWebhookLimits{MaxAttempts: 3, Timeout: 3 * time.Second}, client)
-	w.reconcile = f.reconcileHostedWrites
-	w.deleteGate = hostedReadyDelete
-	w.beginAttemptTx = func(ctx context.Context, tx *sql.Tx, project, id string) error {
+	}
+	beginAttemptTx := func(ctx context.Context, tx *sql.Tx, project, id string) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO test_delivery_activity VALUES($1,$2)`, project, id)
 		return err
 	}
-	w.endAttempt = func(ctx context.Context, project, id string) error {
+	endAttempt := func(ctx context.Context, project, id string) error {
 		_, err := db.ExecContext(ctx, `DELETE FROM test_delivery_activity WHERE project=$1 AND attempt=$2`, project, id)
 		return err
 	}
+	limits := output.HostedWebhookLimits{MaxAttempts: 3, Timeout: 3 * time.Second}
+	w := newHostedPipelineDelivery(f, destination, limits, client, hostedReadyDelete, beginAttemptTx, endAttempt)
+	w.reconcile = f.reconcileHostedWrites
 	flush(deleteFirst)
 	acceptDelete(deleteFirst)
 	if _, err := w.Step(ctx); err != nil || calls != 0 {

@@ -112,10 +112,9 @@ func (s *Service) attachHostedWebhookWorker(p *output.PipelineJobs, flusher *hos
 		return errors.New("hosted webhooks require coordinated deletion and activity")
 	}
 	config := p.Config()
-	worker := newHostedPipelineDelivery(flusher, p.HostedWebhookDestinationTx, output.HostedWebhookLimits{MaxAttempts: config.WebhookMaxAttempts, Timeout: time.Duration(config.WebhookTimeoutSeconds) * time.Second}, s.pipelineClient)
-	worker.deleteGate = execution.deleteGate
-	worker.beginAttemptTx = execution.beginAttemptTx
-	worker.endAttempt = execution.endAttempt
+	limits := output.HostedWebhookLimits{MaxAttempts: config.WebhookMaxAttempts, Timeout: time.Duration(config.WebhookTimeoutSeconds) * time.Second}
+	worker := newHostedPipelineDelivery(flusher, p.HostedWebhookDestinationTx, limits, s.pipelineClient,
+		execution.deleteGate, execution.beginAttemptTx, execution.endAttempt)
 	// The flusher needs PipelineJobs for publication, and the worker needs the flusher.
 	p.SetHostedWebhookWorker(worker.Step)
 	return nil

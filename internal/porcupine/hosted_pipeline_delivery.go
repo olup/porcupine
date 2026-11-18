@@ -24,9 +24,24 @@ type hostedPipelineDelivery struct {
 	endAttempt     func(context.Context, string, string) error
 }
 
-func newHostedPipelineDelivery(flusher *hostedLiveFlusher, destination func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error), limits output.HostedWebhookLimits, client *http.Client) *hostedPipelineDelivery {
-	return &hostedPipelineDelivery{flusher: flusher, destination: destination, limits: limits, client: client,
-		reconcile: flusher.reconcileHostedWrites,
+func newHostedPipelineDelivery(
+	flusher *hostedLiveFlusher,
+	destination func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error),
+	limits output.HostedWebhookLimits,
+	client *http.Client,
+	deleteGate func(context.Context, *sql.Tx, lakeapi.HostedProjectScope, string) (bool, error),
+	beginAttemptTx func(context.Context, *sql.Tx, string, string) error,
+	endAttempt func(context.Context, string, string) error,
+) *hostedPipelineDelivery {
+	return &hostedPipelineDelivery{
+		flusher:        flusher,
+		destination:    destination,
+		limits:         limits,
+		client:         client,
+		reconcile:      flusher.reconcileHostedWrites,
+		deleteGate:     deleteGate,
+		beginAttemptTx: beginAttemptTx,
+		endAttempt:     endAttempt,
 	}
 }
 

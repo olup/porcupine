@@ -20,9 +20,7 @@ import (
 )
 
 func newHostedImportManager(rules *eventRules, flusher *hostedLiveFlusher) *importManager {
-	m := &importManager{db: flusher.publisher.control, control: flusher.publisher.control, rules: rules, deliveryEnabled: true, hosted: flusher}
-	flusher.publisher.checkpointImport = checkpointHostedImport
-	return m
+	return &importManager{db: flusher.publisher.control, control: flusher.publisher.control, rules: rules, deliveryEnabled: true, hosted: flusher}
 }
 
 type heldImportProject struct {
