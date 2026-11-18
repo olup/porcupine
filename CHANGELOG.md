@@ -7,6 +7,7 @@
 - Moved hosted live buffering and interactive query execution into dedicated packages. Exports and scheduled queries share the worker capacity gate with interactive queries. Standalone still acknowledges after the SQLite commit. Hosted acknowledges bounded worker memory admission, so a crash or incomplete drain can lose acknowledged events before a flush commits. (#122, #123)
 - Added coverage for export jobs waiting on delivery and worker capacity, interactive queries and capture during an export, and reclamation of activity from expired hosted workers. (#119, #120, #124)
 - Combined the query and export guide, clarified hosting and storage choices, and updated the architecture package map. (#121, #125)
+- Made interactive query reservation cleanup release resources once and preserve the first result across repeated calls. (#127)
 
 v0.16.0 reuses v0.15.1 storage without a schema migration. Stop and back up the deployment before upgrading. The [hosting guide](https://github.com/olup/porcupine/blob/v0.16.0/docs/hosting.md#upgrade-from-v0151) also covers the v0.15.0 migrations and the fresh-storage move from v0.14.0.
 
