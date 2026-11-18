@@ -465,6 +465,24 @@ func TestSharedPostgresCoordinatorAcquireTimeoutAndCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	// The fixture owns a distinct database. Checking its waiter list also
+	// confirms that canceled requests leave the server before the owner unlocks.
+	waitForQueued := func(want bool) {
+		t.Helper()
+		for {
+			var queued bool
+			err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
+WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)`).Scan(&queued)
+			if err != nil {
+				t.Fatalf("waiting for advisory queue state %v: %v", want, err)
+			}
+			if queued == want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
 	start := time.Now()
 	if s, err := waiter.Acquire(ctx, key); !errors.Is(err, ErrProjectWriteBusy) {
 		if s != nil {
@@ -473,6 +491,7 @@ func TestSharedPostgresCoordinatorAcquireTimeoutAndCancellation(t *testing.T) {
 		t.Fatalf("blocked acquisition did not hit coordinator timeout: %v", err)
 	}
 	t.Logf("blocked acquisition returned after %s", time.Since(start))
+	waitForQueued(false)
 
 	// A fresh coordinator waits with a longer deadline so cancellation can
 	// be triggered after PostgreSQL has queued its advisory lock request.
@@ -491,24 +510,12 @@ func TestSharedPostgresCoordinatorAcquireTimeoutAndCancellation(t *testing.T) {
 		}
 		result <- err
 	}()
-	// The fixture owns a distinct database. Only advisory waiters in this
-	// database are relevant.
-	for {
-		var queued bool
-		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
-WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)`).Scan(&queued)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if queued {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForQueued(true)
 	stop()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("blocked acquisition lost caller cancellation: %v", err)
 	}
+	waitForQueued(false)
 	if err := owner.Release(); err != nil {
 		t.Fatal(err)
 	}
