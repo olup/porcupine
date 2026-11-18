@@ -49,8 +49,22 @@ func TestSharedOperatorAPIProvisioner(t *testing.T) {
 	}
 	tenantA := call(b.URL, http.MethodPost, "/tenants", `{"name":"Customer A"}`, 201)["tenant"].(map[string]any)["id"].(string)
 	tenantB := call(a.URL, http.MethodPost, "/tenants", `{"name":"Customer B"}`, 201)["tenant"].(map[string]any)["id"].(string)
+	// The first read attaches a cold catalog, so use the hosted default
+	// execution budget. Dedicated query tests exercise short deadlines.
 	call(b.URL, http.MethodPut, "/tenants/"+tenantA+"/budgets",
-		`{"ingestion_monthly_events":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":1000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`, 200)
+		`{"ingestion_monthly_events":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":5000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`, 200)
+	budgets := call(a.URL, http.MethodGet, "/tenants/"+tenantA, "", 200)["tenant"].(map[string]any)["budgets"].(map[string]any)
+	for field, want := range map[string]float64{
+		"ingestion_monthly_events":   1,
+		"hot_query_max_concurrent":   1,
+		"hot_query_timeout_ms":       5000,
+		"hot_query_max_rows":         100,
+		"hot_query_max_result_bytes": 65536,
+	} {
+		if got := budgets[field]; got != want {
+			t.Fatalf("budget read on another worker: %s = %v, want %v", field, got, want)
+		}
+	}
 
 	createProject := func(origin, tenant string) string {
 		t.Helper()
@@ -67,9 +81,12 @@ func TestSharedOperatorAPIProvisioner(t *testing.T) {
 	customerKeyPath := accountPath + "/" + customer["client_id"].(string) + "/api-keys"
 	customerKey := call(a.URL, http.MethodPost, customerKeyPath, `{"name":"Dashboard API key","audience":"api",`+grants+`}`, 201)
 	reader := customerKey["token"].(string)
-	hostedCleanupWrite(t, serviceA, projectA, "customer A event")
+	firstEvent := hostedCleanupWrite(t, serviceA, projectA, "customer A event")
 	hostedCleanupWrite(t, serviceB, projectB, "customer B event")
-	sharedJourneyHTTP(t, b.URL, http.MethodGet, eventsA, reader, nil, nil, 200)
+	coldRead := sharedJourneyHTTP(t, b.URL, http.MethodGet, eventsA, reader, nil, nil, 200)["events"].([]any)
+	if len(coldRead) != 1 || coldRead[0].(map[string]any)["uuid"] != firstEvent {
+		t.Fatalf("cold worker did not return the event committed by the other worker: %v", coldRead)
+	}
 	sharedJourneyHTTP(t, a.URL, http.MethodGet, eventsB, reader, nil, nil, 403)
 	sharedJourneyHTTP(t, b.URL, http.MethodGet, "/api/v1/usage", reader, nil, nil, 403)
 
