@@ -11,7 +11,7 @@ Porcupine embeds DuckDB and DuckLake. Each project has its own DuckLake catalog 
 | Standalone | Local SQLite control and journal, with local DuckLake catalogs | Local SSD by default, or a configured private S3 bucket and prefix | Durable after the SQLite journal commits |
 | Hosted | Shared PostgreSQL control and DuckLake catalogs, with disposable worker scratch space | Configured private S3 bucket and prefix | Best-effort admission to bounded worker memory |
 
-A hosted worker crash or incomplete drain can lose acknowledged events before the DuckLake commit. The flush interval does not bound loss during an outage. Hosted imports and explicit mutations use durable shared checkpoints and staged objects. See the [native acknowledgment contract](reference/native-event-contract.md#unreleased-acknowledgment-metadata) and [hosted setup](design/hosted-architecture.md#configuration).
+A hosted worker crash or incomplete drain can lose acknowledged events before the DuckLake commit. The flush interval does not bound loss during an outage. Hosted imports and explicit mutations use durable shared checkpoints and staged objects. See the [native acknowledgment contract](reference/native-event-contract.md#acknowledgment-metadata) and [hosted setup](design/hosted-architecture.md#configuration).
 
 ## Local files or S3
 
@@ -23,13 +23,17 @@ Analytical storage, [destination pipelines](pipelines.md), [one-time exports](ex
 
 Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
-## Separate control and journal {#unreleased-separate-control-and-journal}
+<a id="unreleased-separate-control-and-journal"></a>
+
+## Separate control and journal
 
 Standalone uses two SQLite databases. Control holds accounts, grants, tenants, projects, and policies. The journal holds accepted live events, retry receipts, identity state, imports, and jobs. See [server configuration](reference/configuration.md#configuration-sections) for the paths.
 
 Preserve both databases, their SQLite auxiliary files, and DuckLake together. Startup rejects missing or mismatched database identities. Native v2 backups contain `acceptance.sqlite` and `control.sqlite`. Moving from v0.14.0 requires a fresh data directory. [Upgrade steps](hosting.md#move-from-v0140)
 
-## Schema versions {#unreleased-schema-versions}
+<a id="unreleased-schema-versions"></a>
+
+## Schema versions
 
 Each operational database records a schema version: SQLite in `PRAGMA user_version`, shared PostgreSQL control in `metadata.schema_version`. On start, the server applies the missing numbered steps in one transaction. It refuses a database written by a newer release, and an unversioned database it does not recognize, before changing anything. A native backup restores at its own version; the next start upgrades it.
 
@@ -61,4 +65,4 @@ Keep private deployment configuration, signing and encryption keys, and the matc
 
 ## Earlier analytical backends
 
-Version v0.14.0 supports DuckDB/DuckLake only. It does not automatically convert an older external-database deployment or its SQL. Preserve an older deployment and its backups until you have exported and imported the required history into a fresh native instance. The historical implementation is retained on `reference/clickhouse-before-ducklake`; its old operator settings are not supported by the native server.
+To move from ClickHouse, set up a fresh DuckLake instance, convert any ClickHouse SQL you still use, and follow the [historical import guide](imports.md). Keep the older deployment and its backups until you have verified the imported history. The old implementation remains on the `reference/clickhouse-before-ducklake` branch.

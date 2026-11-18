@@ -30,7 +30,7 @@ Use the exact server image and matching CLI that created the backup. Stop produc
 
 Restoration resets old credentials, rotates ingestion access, and pauses outgoing pipelines. Recreate human and machine access deliberately. Verify event counts, identity, corrections, deletions, and stable-ID retries before reconnecting producers.
 
-The v0.15.0 native bundle contains **two** SQLite databases, `acceptance.sqlite` and `control.sqlite`, captured together. Restore v0.14.0's earlier single-database bundles with the matching v0.14.0 image and CLI.
+A current native backup captures both SQLite databases together, `acceptance.sqlite` and `control.sqlite`. Restore a v0.14.0 single-database bundle with the v0.14.0 image and CLI.
 
 ## Plan for copies outside the instance
 

@@ -36,7 +36,7 @@ Renaming requires `management:write` for the target project. It preserves the pr
 
 ## Give someone access
 
-In tenant-enabled builds, [invite a tenant member](tenant-access.md#create-a-project-and-invite-a-reader) with selected-project grants or an all-project scope. A person can have different permissions on several projects. Tenant administrators manage their own team; an instance operator can manage every tenant. The [operator-wide invitation API](email-accounts.md) remains separate.
+In builtin sign-in mode, [invite a tenant member](tenant-access.md#create-a-project-and-invite-a-reader) with selected-project grants or an all-project scope. A person can have different permissions on several projects. Tenant administrators manage their own team; an instance operator can manage every tenant. The [operator-wide invitation API](email-accounts.md) remains separate.
 
 For a backend or shared team agent, issue a [service key](service-keys.md) scoped to its projects and required operations. Public ingestion keys cannot query events or administer the instance.
 

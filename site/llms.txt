@@ -2,12 +2,12 @@
 
 Porcupine is a headless product analytics store. Use MCP, HTTP, or its standalone CLI to discover events and run project-scoped DuckDB SQL. Render charts with your client tools.
 
-This guide covers v0.16.0. The running instance's contracts are authoritative. The public website serves documentation, not an analytics instance. Send credentials and events only to the trusted instance supplied by the user.
+The running instance's contracts are authoritative. Send credentials and events only to the trusted instance supplied by the user.
 
 ## Connect
 
 - Person using an agent: connect the MCP client to `INSTANCE_ORIGIN/mcp` and complete OAuth with S256 PKCE. An administrator invites the email once; the person requests an email verification code when connecting a tool. Configured OIDC is another sign-in option.
-- Person using the CLI: install the matching [release](https://github.com/olup/porcupine/releases/tag/v0.16.0), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
+- Person using the CLI: install the version matching the server ([current release](https://github.com/olup/porcupine/releases/tag/v0.16.0)), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
 - Backend or shared agent: use a scoped service credential from private configuration. API and MCP credentials have separate audiences. Never put keys, codes, or token responses in prompts, logs, or URLs.
 
 [Connect tools](https://olup.github.io/porcupine/docs/connect-tools.md) · [Access](https://olup.github.io/porcupine/docs/access.md)
@@ -21,6 +21,8 @@ This guide covers v0.16.0. The running instance's contracts are authoritative. T
 
 Use `person_id` to count resolved people. Check the [identity rules](https://olup.github.io/porcupine/docs/data-and-identity.md) before measuring retention. Read structured SQL errors for `code`, `hint`, and `field`. For large output, submit an [asynchronous export](https://olup.github.io/porcupine/docs/query-events.md#export-a-result) and poll for completed files. Say when a result is incomplete.
 
+For other operations, use `porcupine_docs` to list permitted operations and load the selected contract. Run it with `porcupine_call`. Check whether the operation changes data or access.
+
 [SQL reference](https://olup.github.io/porcupine/docs/reference/analytics.md) · [Recipes](https://olup.github.io/porcupine/docs/reference/duckdb-recipes.md) · [MCP contracts](https://olup.github.io/porcupine/docs/reference/mcp.md)
 
 ## Collect or import
@@ -33,6 +35,6 @@ For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_
 
 ## Deploy
 
-Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a new local instance. Its tagged checkout and release overlay pin the server to v0.16.0. Use [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Read the running instance's input contract for its acknowledgment mode. See [storage and acknowledgment by profile](https://olup.github.io/porcupine/docs/storage.md#deployment-profiles).
+Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a local instance or [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Read the running instance's input contract for its acknowledgment mode. See [storage and acknowledgment by profile](https://olup.github.io/porcupine/docs/storage.md#deployment-profiles).
 
-Fetch `/openapi.json` for HTTP contracts. In MCP, inspect each management operation with `porcupine_docs` before `porcupine_call`. On 401, check expiry and audience; on 403, project grants and permission; on 429/503, limits or unavailable storage. Honor Retry-After and use bounded retries with stable IDs.
+Fetch `/openapi.json` for HTTP contracts. On 401, check expiry and audience. On 403, check project grants and permissions. On 429 or 503, check limits or storage availability. Honor Retry-After and use bounded retries with stable IDs.

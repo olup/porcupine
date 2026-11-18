@@ -1,12 +1,8 @@
 # Configure native backups
 
-Native v0.15.0 backups use the two-database `porcupine-native-v2` format. Restore single-database v0.14.0 bundles using the v0.14.0 CLI and image.
+Porcupine schedules complete local backups when both the SQLite databases and DuckLake data files are local. Each bundle contains the control and journal databases, the DuckLake registry, every registered project catalog, and its managed data files.
 
-Porcupine supports local backups of local DuckLake data files. Its local recovery-bundle scheduler cannot be combined with analytical S3 storage; the server rejects that configuration instead of creating a bundle without remote objects.
-
-Version v0.14.0 also supports an independent S3 destination and an offline restore command. See [remote backups and recovery](native-backup-recovery.md).
-
-The DuckLake server can create coordinated recovery bundles on a schedule. Each bundle contains independent copies of the control SQLite database and the ingestion journal, the DuckLake registry, every registered project catalog, and its managed data files. No backup sidecar or Python script is needed. These complete-instance backups apply to the local SQLite control mode; hosted uses [PostgreSQL and S3 recovery](../design/hosted-architecture.md#recovery-and-retention).
+Standalone with analytical S3 requires a separate [S3 backup destination](native-backup-recovery.md). That guide also covers the bundle format and matching offline restore tools. Hosted uses [PostgreSQL and S3 recovery](../design/hosted-architecture.md#recovery-and-retention).
 
 Backups are disabled until the deployment operator sets a private destination directory. Copy completed bundles to independent off-host storage to protect against loss of the server.
 

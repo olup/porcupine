@@ -1,8 +1,6 @@
 # Store analytical data on S3
 
-This guide covers standalone deployments with local metadata and analytical S3.
-
-Available in v0.13.0 and later. A new DuckLake deployment can write its analytical data files to S3 or an S3-compatible service. SQLite and the per-project DuckLake catalogs remain on persistent local storage. No separate analytical database server is required.
+A fresh standalone deployment can write its DuckLake data files to S3 or an S3-compatible service. SQLite and the per-project catalogs stay on persistent local storage.
 
 Queries, ingestion, identify, corrections and deletion use the same API, CLI and MCP contracts as local storage. DuckDB reads the remote Parquet files for those queries. Query-result exports and destination pipelines are separate features.
 
@@ -49,7 +47,7 @@ Native HTTP retries are disabled so an unavailable object service does not exten
 
 An authenticated `get-instance-status` reports `configuration.native_s3_storage=true` when configured. This is a configuration flag, not a bucket-connectivity test. Test a synthetic event, wait for delivery, run a query, then inspect the managed objects with operator credentials. [Instance status](instance-status.md)
 
-The local-only [automatic recovery bundle](native-backups.md) is rejected with analytical S3 because it would omit remote objects. Use the [complete S3 backup and offline restore procedure](native-backup-recovery.md), available in v0.14.0. It preserves operational and catalog state with the referenced remote files in an independent destination. A bucket listing alone does not recover users, grants, receipts, or catalog metadata.
+The local-only [automatic recovery bundle](native-backups.md) is rejected with analytical S3 because it would omit remote objects. Use the [complete S3 backup and offline restore procedure](native-backup-recovery.md). It preserves operational and catalog state with the referenced remote files in an independent destination. A bucket listing alone does not recover users, grants, receipts, or catalog metadata.
 
 ## Test the integration locally
 

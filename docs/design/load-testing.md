@@ -20,13 +20,13 @@ The [hosted flush economics fixture](archive/hosted-economics.md) exercises
 PostgreSQL-backed flushes, queries, and compaction against disposable
 object storage and records request counts and bytes.
 
-## Queue capacity during outages
+## Standalone queue capacity during outages
 
-The original-event queue has two instance-wide limits. `PORCUPINE_QUEUE_MAX_EVENTS`
-defaults to 100,000 pending events. `PORCUPINE_QUEUE_MAX_BYTES` defaults to
-268,435,456 bytes, or 256 MiB. Set the byte limit as a positive decimal integer.
-For example, `PORCUPINE_QUEUE_MAX_BYTES=67108864` limits pending original payloads
-to 64 MiB. Compose forwards both settings to the service.
+The SQLite queue defaults to 100,000 pending original events and 256 MiB of
+charged payload per instance. Set `queue.max_events` and `queue.max_bytes` in
+`porcupine.json`, or use `PORCUPINE_QUEUE_MAX_EVENTS` and
+`PORCUPINE_QUEUE_MAX_BYTES` on the server process. Set `queue.max_bytes` to
+`67108864` for a 64 MiB test. [Configuration reference](../reference/configuration.md)
 
 The byte charge is the stored UTF-8 length of the project ID, UUID, event name,
 distinct ID, properties JSON, event and receipt timestamps, identity snapshot and
@@ -49,4 +49,4 @@ This payload budget is separate from SQLite file size. Reserve disk space for
 indexes, WAL, durable deduplication receipts, mutation snapshots and other
 metadata. During outage tests, use both limits to bound the backlog and inspect
 HTTP 503 counts in the report. Increasing the event-count limit alone does not
-increase the byte budget.
+increase the byte budget. [Hosted memory limits](hosted-architecture.md#live-admission-and-shutdown)

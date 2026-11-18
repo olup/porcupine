@@ -1,6 +1,6 @@
-# Host Porcupine 0.16.0
+# Host Porcupine
 
-Start a local instance with the [v0.16.0 quickstart](../README.md#quickstart). Keep the server and CLI versions matched. Follow the upgrade steps for your current version ([v0.15.1](#upgrade-from-v0151), [v0.15.0](#upgrade-from-v0150), or [v0.14.0](#move-from-v0140)).
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.16.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 <a id="choose-a-storage-mode"></a>
@@ -59,7 +59,11 @@ Follow [tenant provisioning](reference/tenants.md#provision-a-tenant-from-a-priv
 
 Review [persistent storage and memory settings](reference/hosting-options.md#persistent-storage-and-resources). Follow the [readiness and delivery checks](reference/instance-status.md#verify-delivery-before-routing-traffic) before routing traffic. To monitor the deployment, follow the [Prometheus, Grafana, and visibility probe setup](reference/observability.md).
 
-## Upgrade from v0.15.1
+## Upgrade
+
+Choose the procedure for the version you are running.
+
+### Upgrade from v0.15.1
 
 v0.16.0 uses the same storage schemas as v0.15.1. Schedule downtime for the server or worker fleet.
 
@@ -69,7 +73,7 @@ v0.16.0 uses the same storage schemas as v0.15.1. Schedule downtime for the serv
 
 The Prometheus listener is disabled by default. If you collect server stderr, configure your log collector to parse JSON. [Monitoring setup](reference/observability.md)
 
-## Upgrade from v0.15.0
+### Upgrade from v0.15.0
 
 v0.16.0 applies the numbered migrations introduced in v0.15.1 when it starts on v0.15.0 storage. Follow the [upgrade steps](#upgrade-from-v0151) with these precautions.
 
@@ -77,7 +81,7 @@ v0.16.0 applies the numbered migrations introduced in v0.15.1 when it starts on 
 - Before enabling hosted file reclamation, verify the [recovery floor and cleanup grace](reference/ducklake-cleanup.md#hosted-profile).
 - Before relying on tenant deletion to erase credentials, review [legacy credentials with empty project scopes](reference/tenants.md#delete-a-tenant).
 
-## Move from v0.14.0
+### Move from v0.14.0
 
 Porcupine uses separate acceptance and control databases and tenant ownership. Start v0.16.0 with fresh storage. Keep the v0.14.0 image digest, complete data and backup bundles, overlay files, and private configuration together for recovery. Restore v0.14.0 bundles with the matching v0.14.0 tools. An image swap on the old volume cannot migrate it.
 

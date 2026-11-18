@@ -1,6 +1,6 @@
 # Durable webhook module
 
-This unreleased refactor moves the durable webhook subsystem into `internal/delivery`. HTTP, CLI and MCP operations, SQLite schema, destination policy, payloads and retry behavior stay unchanged.
+> Historical record of the initial webhook extraction. The refactor moved durable webhook jobs into `internal/delivery` before the release of v0.15.0. The later [pipeline jobs extraction](pipeline-jobs.md#ownership-moved) moved those jobs to `internal/output`. [Current architecture](../architecture.md)
 
 ## Ownership
 

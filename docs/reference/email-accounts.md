@@ -2,7 +2,9 @@
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-## Invite a tenant member {#invite-a-tenant-member-unreleased}
+<a id="invite-a-tenant-member-unreleased"></a>
+
+## Invite a tenant member
 
 Tenant administrators invite people with `invite-tenant-member`, scoped to their own tenant. A durable human identity can have independent memberships in several tenants. Revoking one membership removes that team's access without disabling the human elsewhere or revoking independent team service accounts.
 

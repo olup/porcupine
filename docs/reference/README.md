@@ -1,6 +1,6 @@
 # Reference
 
-Use the running server's `/openapi.json` for its installed HTTP contract. MCP `porcupine_docs` returns the operations available to the connected credential. The CLI's operation help is generated from the same API definition.
+Use the running server's `/openapi.json` for its installed HTTP contract. MCP `porcupine_docs` returns the operations available to the connected credential. Use a matching server and CLI. The CLI's operation help is generated from the same API definition.
 
 ## Data
 
@@ -21,8 +21,8 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Team sign-in setup](connect-your-team.md) and [email invitations](email-accounts.md)
 - [OAuth clients](oauth.md) and [Google/OIDC configuration](mcp-interactive-oauth.md)
 - [Email transport](email-transport.md)
-- [external authentication](external-auth.md) replaces the builtin identity provider while retaining native ingestion and machine keys.
-- [tenant access](tenant-access.md), [budgets](tenants.md), and [identity recovery](identity-recovery.md)
+- [External authentication](external-auth.md)
+- [Tenant access](tenant-access.md), [budgets](tenants.md), and [identity recovery](identity-recovery.md)
 
 ## Operations
 
@@ -30,9 +30,7 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Analytical S3](ducklake-s3.md) and [hosted runtime](shared-deployment.md)
 - [Instance status](instance-status.md), [durability](reliability.md), and [retry receipts](receipts.md)
 - [Operator monitoring and the visibility probe](observability.md)
-- [operator numerical usage](usage.md), including replayable consumption and current Parquet sampling
+- [Numerical usage and Parquet storage sampling](usage.md)
 - [History cleanup](ducklake-cleanup.md)
 - [Local backup scheduler](native-backups.md), [S3 backups and offline restore](native-backup-recovery.md), and [Compose backup setup](backup-compose.md)
 - [Backup consistency](online-backup.md) and [stopped-volume recovery](restore.md)
-
-The current release is v0.16.0. Use a matching server and CLI.

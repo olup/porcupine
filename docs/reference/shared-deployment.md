@@ -4,7 +4,7 @@ Use the [hosted setup](../design/hosted-architecture.md#configuration) for worke
 
 ## Live ingestion and delivery
 
-Hosted live responses confirm bounded memory admission. The worker flushes to DuckLake and publishes durable effects. A worker crash or incomplete drain can lose acknowledged events that have not committed. Keep stable producer IDs on retries. Durable import and mutation operations have separate, shared checkpoints. [Acknowledgment contract](native-event-contract.md#unreleased-acknowledgment-metadata)
+Hosted live responses confirm bounded memory admission. The worker flushes to DuckLake and publishes durable effects. A worker crash or incomplete drain can lose acknowledged events that have not committed. Keep stable producer IDs on retries. Durable import and mutation operations have separate, shared checkpoints. [Acknowledgment contract](native-event-contract.md#acknowledgment-metadata)
 
 A hosted query can report `delivery.pending_unknown: true` because its worker cannot inspect another worker's memory buffer. Verify expected events in SQL. Do not interpret a zero pending count as a flushed deployment.
 

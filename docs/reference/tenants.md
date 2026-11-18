@@ -10,7 +10,7 @@ Each project belongs to one tenant. Its `tenant_id` is returned with project met
 
 A human can belong to several tenants with different roles. A tenant administrator manages that tenant's projects, memberships, and team service accounts. A member receives project permissions through an `all` or `selected` project scope. `all` includes future projects in that tenant; `selected` includes only the listed projects. Role presets provide reader, contributor, or manager permissions, and explicit permission lists allow different access on each project. [Tenant access](tenant-access.md)
 
-Only an instance operator with `instance:admin` can create tenants, change their budgets, or suspend ingestion. Tenant administrators can inspect their own tenant's configuration and usage. Project readers can inspect their effective query limits through the project schema, but cannot change budgets or read aggregate tenant consumption. An operator-issued `*` project grant covers the whole deployment; tenant-wide access never uses that wildcard. [Permissions](security-and-interfaces.md#tenant-roles-and-project-permissions-unreleased)
+Only an instance operator with `instance:admin` can create tenants, change their budgets, or suspend ingestion. Tenant administrators can inspect their own tenant's configuration and usage. Project readers can inspect their effective query limits through the project schema, but cannot change budgets or read aggregate tenant consumption. An operator-issued `*` project grant covers the whole deployment; tenant-wide access never uses that wildcard. [Permissions](security-and-interfaces.md#tenant-roles-and-project-permissions)
 
 ## Create a tenant and its projects
 
@@ -155,7 +155,7 @@ Hosted reserves tenant places immediately in PostgreSQL across workers, while en
 
 `hot_query_timeout_ms`, `hot_query_max_rows`, and `hot_query_max_result_bytes` bound each interactive SQL execution. Row or byte overflow fails rather than silently truncating the result. A SQL `LIMIT` can reduce a result, but does not replace the execution deadline.
 
-Effective limits are the lower of the tenant budget and the deployment ceiling. The deployment defaults are two analytical places, 5,000 ms, 1,000 rows, and 1 MiB. Increasing a tenant budget cannot raise a deployment ceiling. Existing background exports and pipelines keep their separate execution budgets and deployment-level admission controls.
+Effective limits are the lower of the tenant budget and the deployment ceiling. The deployment defaults are two analytical slots per worker, 5,000 ms, 1,000 rows, and 1 MiB. Increasing a tenant budget cannot raise a deployment ceiling. Exports and scheduled S3 queries share worker capacity and have [separate execution budgets](export-api.md#consistency-retries-and-revocation).
 
 A project reader can call `get-event-schema` to see configured `tenant_budgets`, `deployment_limits`, and effective interactive `limits`. The configured monthly allowance is visible; aggregate tenant consumption is not. Use [query discovery](../query-events.md) before building a query, and [exports](../exports.md) for a larger result. Operators configure deployment ceilings in the [configuration reference](configuration.md#interactive-query-ceilings).
 

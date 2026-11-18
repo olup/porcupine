@@ -1,8 +1,8 @@
 # Native and Segment ingestion
 
-The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. Version v0.14.0 exposes JSON Schema discovery and [historical imports](../imports.md) for native, PostHog, and Segment JSONL.
+The [native event contract](native-event-contract.md) defines message fields, IDs, server-managed values, and adapter mappings. It also covers schema discovery and the [historical message format](native-event-contract.md#historical-records).
 
-Native, Segment and supported [PostHog inputs](compatibility.md) write to the same project event table. Choose a stable producer message ID for each original event so that a retry returns the same event ID.
+Native, Segment and supported [PostHog inputs](compatibility.md) write to the same project event table. Reuse the same producer message ID when retrying an event.
 
 ## Send native events
 
@@ -47,13 +47,13 @@ Save the following as `journey.json`. A timestamp can be supplied in RFC 3339 fo
 ]
 ```
 
-The pageview and purchase become two queryable rows. The identify operation updates the profile and links the earlier visit. Subsequent trait updates can omit `anonymous_id`. A conflicting link is ignored and contributes to the response's `identity_ignored` count. See the [identity rules](../data-and-identity.md). Native ordinary messages may omit `actor_id`. An inventory update can therefore contribute to event totals without creating a user. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` when counting known or pseudonymous actors.
+The pageview and purchase become two queryable rows. The identify operation updates the profile and links the earlier visit. Subsequent trait updates can omit `anonymous_id`. A conflicting link is ignored. In standalone mode it contributes to the response's `identity_ignored` count. See the [identity rules](../data-and-identity.md). Native ordinary messages may omit `actor_id`. An inventory update can therefore contribute to event totals without creating a user. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` when counting known or pseudonymous actors.
 
 ### Receipts and logical sources
 
-Each native receipt includes the producer's `message_id`, the server's `event_id` as a decimal string, the `uuid` for the event management routes, and a `duplicate` flag. Receipts follow input order. The server returns success after the SQLite transaction commits. A stable message ID lets you retry a whole batch after a lost response. Omitting the message ID requests a new ID on each submission. An explicit native message ID can contain up to 1,024 bytes.
+Native receipts follow input order. In standalone, `durability: "durable"` confirms the SQLite commit. Each receipt includes `message_id`, the decimal-string `event_id`, the `uuid` used in event management routes, and `duplicate`. In hosted, `durability: "buffered"` confirms admission to memory. Each receipt includes `message_id` and `uuid` only. See the [acknowledgment contract](native-event-contract.md#acknowledgment-metadata).
 
-In v0.15.0, standalone adds `durability: "durable"` to the response. Hosted returns `durability: "buffered"` and reports unknown duplicate outcomes as described in the [native contract](native-event-contract.md#unreleased-acknowledgment-metadata). Native, Segment, and PostHog live adapters use the same admission boundary and retain HTTP 200 success responses. PostHog keeps its response without native receipts.
+All three live adapters return HTTP 200 on success at the profile's acknowledgment boundary. PostHog's response omits native receipts. A stable message ID lets you retry a whole batch after a lost response. An explicit native message ID can contain up to 1,024 bytes. Omitting it requests a new ID on each submission.
 
 For a named source, set `source_id` on the single-project writer when [provisioning a service credential](service-keys.md). The writer needs `events:write`. The credential associates messages with one project and one logical producer. Give a replacement credential the same source to preserve retries across rotation. A native and a Segment credential can share the same source when both deliver events from that producer. The first accepted combination of project, source and message ID wins, including if a retry changes the payload.
 

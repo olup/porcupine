@@ -1,6 +1,6 @@
 # Shared interactive execution lifecycle
 
-> Design record for renewable permits and quarantine. See the [hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision) for the released behavior.
+> Historical design record for renewable permits and quarantine. [Current hosted runtime](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
 
 ## Decision
 
@@ -24,7 +24,7 @@ fencing during a network partition.
 
 ## Behavior changes
 
-| Situation | Previous behavior | Current behavior |
+| Situation | Previous behavior | Behavior at this checkpoint |
 | --- | --- | --- |
 | Healthy query completes | Token-scoped release | Token-scoped release |
 | Lake method returns before response processing | Places and timer retained through handler completion | Native tracking and places released before summary, delivery status, or JSON processing, in both modes |
@@ -84,6 +84,8 @@ native hang.
 
 ## Documentation fact ledger
 
+Paths in this table describe the checkout at the time of the change.
+
 | Source | Destination | Treatment |
 | --- | --- | --- |
 | `docs/reference/shared-deployment.md`, fixed horizon and watchdog paragraphs | Same guide, native execution lifecycle section | Replaced with renewable scopes, quarantine, automatic-expiry limitation, shutdown and deletion behavior |
@@ -92,7 +94,7 @@ native hang.
 | `docs/reference/configuration.md`, metadata timeout paragraph | Same paragraph plus canonical lifecycle link | Preserved I/O configuration ownership; removed obsolete process-exit promise |
 | `docs/reference/hosting-options.md`, reference ownership paragraph | Same paragraph | Updated canonical guide description from watchdog to renewal/quarantine |
 | `docs/reference/security-and-interfaces.md`, native timeout boundary | Same section plus shared lifecycle link | Preserved cancellation limitation and local/shared distinction; stated accepted partition overlap |
-| `docs/design/shared-deployment-design.md`, query admission description | Same section plus runtime-reference link | Updated current unreleased design, preserving token fencing and worker capacity |
+| `docs/design/shared-deployment-design.md`, query admission description | Same section plus runtime-reference link | Updated the design at the time, preserving token fencing and worker capacity |
 | `docs/design/saas-and-compute-plans.md`, unreleased query bullets | Same bullets plus runtime-reference link | Replaced fixed-expiry/exit70 claims; retained no prompt-native-return guarantee in canonical reference |
 | API metadata timeout/status field descriptions | Generated OpenAPI snapshot | Same runtime facts exposed through HTTP, offline CLI catalog discovery, and MCP operation documentation |
 

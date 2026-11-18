@@ -18,11 +18,11 @@ The worker projects bounded batches into DuckLake. A transaction maintains curre
 
 A process can stop after the analytical commit and before SQLite acknowledgment. The queued batch retries after restart with the same IDs and revisions. Projection rejects stale revisions and preserves one logical current event. This is at-least-once processing with idempotent projection, not a distributed exactly-once transaction.
 
-SQLite-journal deployments keep project-and-UUID receipts indefinitely. A fresh SQLite-journal deployment can therefore accept new events and deduplicate retries during an analytical outage. Optional receipt pruning introduces an analytical dependency. See the persistent pruning marker in [receipt retention](receipts.md#bounded-receipts). Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have separate storage costs.
+By default, SQLite-journal deployments keep project-and-UUID receipts indefinitely. A fresh SQLite-journal deployment can therefore accept new events and deduplicate retries during an analytical outage. Optional receipt pruning introduces an analytical dependency. See the persistent pruning marker in [receipt retention](receipts.md#bounded-receipts). Delivered payloads leave the SQLite queue, but freed database pages do not automatically shrink the file. Receipts, revision heads, catalog snapshots, and history have separate storage costs.
 
 The server schedules native DuckLake flush and compaction operations. DuckLake owns file rewriting and transactional visibility. Maintenance still consumes CPU, memory, disk bandwidth, and catalog work. Deployment sizing must cover ingestion, queries, and maintenance together. [Maintenance measurements](../design/ducklake-maintenance.md)
 
-Porcupine leases only the project currently undergoing maintenance. Projects waiting for their turn remain evictable, and maintenance skips candidates evicted or deleted in the meantime. This prevents a maintenance pass from occupying every resident-engine slot and rejecting an otherwise admissible cold-project query. These changes are not in v0.12.1.
+Porcupine leases only the project currently undergoing maintenance. Projects waiting for their turn remain evictable, and maintenance skips candidates evicted or deleted in the meantime. This prevents a maintenance pass from occupying every resident-engine slot and rejecting an otherwise admissible cold-project query.
 
 ## Identity, edits, and deletion
 
@@ -34,7 +34,7 @@ A deleted event returns `410` from the current-event API after acceptance. SQL e
 
 ## Whole-project deletion
 
-Instance administrators can delete a project through HTTP, CLI, or MCP. Porcupine cancels its active work, removes its SQLite state, and checkpoints cleanup of its managed analytical directory and export objects. A storage outage can leave cleanup pending after the project disappears from listings. Startup and periodic work retry cleanup. Repeating deletion returns `204` once cleanup finishes. Other projects remain separate.
+The instance administrator or the project's tenant administrator can delete it through HTTP, CLI, or MCP. Porcupine cancels its active work, removes its SQLite state, and checkpoints cleanup of its managed analytical directory and export objects. A storage outage can leave cleanup pending after the project disappears from listings. Startup and periodic work retry cleanup. Repeating deletion returns `204` once cleanup finishes. Other projects remain separate.
 
 Backups and copies already delivered to external destinations have their own retention. [Project management](projects.md)
 

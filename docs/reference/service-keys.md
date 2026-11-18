@@ -1,16 +1,18 @@
 # Static credentials for service accounts
 
-Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. Each key has one audience, project IDs, and permissions. Set `PORCUPINE_OAUTH_ISSUER` to enable service accounts.
+Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. Each key has one audience, project IDs, and permissions. In builtin mode, configure `PORCUPINE_OAUTH_ISSUER`. In [external mode](external-auth.md#native-machine-accounts-and-deferred-work), machine accounts use static API or MCP keys.
 
-## Create a team service account {#create-a-team-service-account-unreleased}
+<a id="create-a-team-service-account-unreleased"></a>
 
-Connect as the [tenant administrator](tenant-access.md#connect-as-the-tenant-administrator), then create a machine account with fixed project permissions:
+## Create a team service account
+
+Create a machine account with fixed project permissions as a tenant administrator. For builtin sign-in, see [Connect as the tenant administrator](tenant-access.md#connect-as-the-tenant-administrator).
 
 ```sh
 porcupine create-tenant-service-account --tenant-id TENANT_ID --body '{"name":"Dashboard backend","permissions":["events:read"],"projects":["PROJECT_ID"]}'
 ```
 
-The response returns `client_id` and a one-time `client_secret`. Store them privately if the integration uses OAuth client credentials. The client exchanges them at `/oauth/token` for a short-lived access token scoped to the API or MCP resource.
+In builtin mode, the response returns `client_id` and a one-time `client_secret`. Store them privately if the integration uses OAuth client credentials. The client exchanges them at `/oauth/token` for a short-lived access token scoped to the API or MCP resource. In external mode, the response omits the secret.
 
 For an integration that accepts a static bearer key, create one under that account:
 
@@ -47,9 +49,11 @@ Use `revoke-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID` to revo
 
 The operation IDs are also the CLI commands. MCP uses `porcupine_docs` to inspect their contracts and `porcupine_call` to call them. HTTP clients use `/api/v1/tenants/{tenant_id}/service-accounts`, with `/{id}/api-keys` for keys. Account updates use `PUT`; revocations use `DELETE`. The running `/openapi.json` describes every field and permission check.
 
-## Use the operator API {#use-the-operator-api-in-v0140}
+<a id="use-the-operator-api-in-v0140"></a>
 
-The released operator API provides `create-oauth-client`, `create-service-api-key`, `list-access-keys`, and `revoke-access-key`. An instance administrator creates a machine client through `POST /api/v1/oauth-clients`, then issues keys through `POST /api/v1/oauth-clients/{id}/api-keys`. Use the same key body as above. The corresponding CLI key command is `porcupine create-service-api-key --id CLIENT_ID --body @key.json`.
+## Use the operator API
+
+The operator API provides `create-oauth-client`, `create-service-api-key`, `list-access-keys`, and `revoke-access-key`. An instance administrator creates a machine client through `POST /api/v1/oauth-clients`, then issues keys through `POST /api/v1/oauth-clients/{id}/api-keys`. Use the same key body as above. The corresponding CLI key command is `porcupine create-service-api-key --id CLIENT_ID --body @key.json`.
 
 A key belongs to a machine OAuth client with the `client_credentials` grant. Parent revocation invalidates every key it owns. Changes to the parent's permissions, project set, or producer identity invalidate existing static keys. Granting new permissions to a service account never silently widens an existing token.
 

@@ -1,12 +1,10 @@
 # Inspect an event
 
-The `get-event-profile` operation is available in v0.13.0 and later. Older versions provide schema and catalog discovery without profiles. Check the running instance's OpenAPI contract or MCP operation catalog before using this guide.
-
-Use a profile to inspect an event before writing SQL. You need `events:read` for the project. API requests and the CLI use an API-audience credential. MCP uses an MCP-audience credential with the same project permissions.
+Use `get-event-profile` to inspect an event before writing SQL. You need `events:read` for the project. API requests and the CLI use an API-audience credential. MCP uses an MCP-audience credential with the same project permissions.
 
 ## Choose an event
 
-List the project's event names with `get-event-catalog`. Choose an exact name, such as `userInputSent`. The catalog's latest pointer follows acceptance order. Its timestamp is not necessarily the most recent occurrence time.
+List the project's event names with `porcupine_schema` in MCP or `get-event-catalog` in the API and CLI. Choose an exact name, such as `userInputSent`. The catalog's latest pointer follows acceptance order. Its timestamp is not necessarily the most recent occurrence time.
 
 ## Request a profile
 
@@ -23,7 +21,7 @@ GET /api/v1/projects/PROJECT_ID/event-profile?event=userInputSent
 Authorization: Bearer API_CREDENTIAL
 ```
 
-Through MCP, first request the `get-event-profile` contract with `porcupine_docs`, then call:
+In MCP, request the `get-event-profile` contract with `porcupine_docs`. Pass the following arguments to `porcupine_call`.
 
 ```json
 {
@@ -32,8 +30,6 @@ Through MCP, first request the `get-event-profile` contract with `porcupine_docs
 	"query": {"event": "userInputSent", "sample_limit": "1000", "example_limit": "3"}
 }
 ```
-
-Pass this object to `porcupine_call`. The existing two MCP tools expose the new operation. No separate plotting or profile tool is required.
 
 ## Read activity and examples
 

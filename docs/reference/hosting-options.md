@@ -1,12 +1,12 @@
 # Hosting options
 
-Use the [quickstart](../../README.md#local-setup) to start a new v0.16.0 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
+Use the [quickstart](../../README.md#local-setup) to start a standalone instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
 
 The release overlay selects the tagged image and removes the source build. Keep it after `compose.yaml`. Set `PORCUPINE_IMAGE` to an explicit digest when pinning a deployment.
 
 ## Load an image without registry access
 
-Download the archive for the Docker server's architecture and verify its checksum.
+From the tagged checkout in the [quickstart](../../README.md#local-setup), download the archive for the Docker server's architecture and verify its checksum.
 
 ```sh
 case "$(docker info --format '{{.Architecture}}')" in
@@ -14,8 +14,9 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.16.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.16.0
+PORCUPINE_RELEASE_VERSION=$(cat VERSION)
+PORCUPINE_RELEASE_ARCHIVE="porcupine-$PORCUPINE_RELEASE_VERSION-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL="https://github.com/olup/porcupine/releases/download/v$PORCUPINE_RELEASE_VERSION"
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)
@@ -68,9 +69,11 @@ Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. 
 
 See [retention and deletion](../storage.md#retention-and-deletion), [receipt pruning](receipts.md#bounded-receipts), and [readiness and delivery checks](instance-status.md#verify-delivery-before-routing-traffic).
 
-### Interactive query ceilings {#unreleased-interactive-query-ceilings}
+<a id="unreleased-interactive-query-ceilings"></a>
 
-The [configuration reference](configuration.md#interactive-query-ceilings) owns the JSON keys, environment equivalents, defaults, and accepted ranges. [Tenant budgets](tenants.md#interactive-query-limits) describes effective limits and permissions. [Hosted execution and supervision](shared-deployment.md#native-timeouts-and-worker-supervision) owns PostgreSQL metadata timeouts, reservation renewal, automatic expiry, and project quarantine.
+### Interactive query ceilings
+
+See the [query settings](configuration.md#interactive-query-ceilings) for deployment defaults and ranges, [tenant budgets](tenants.md#interactive-query-limits) for effective limits and permissions, and [worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision) for hosted timeouts, reservations, and quarantine.
 
 ## Optional destinations
 
@@ -78,4 +81,4 @@ Configure the `export.s3`, `ducklake.s3`, and `backup.s3` destinations separatel
 
 ## Backups and upgrades
 
-Take a complete checkpoint and record the image digest and private configuration. For a v0.14.0 deployment, follow the [fresh-storage cutover procedure](../hosting.md#move-from-v0140). For a recoverable checkpoint, follow the [backup guide](../backup-and-restore.md).
+Take a complete checkpoint and record the image digest and private configuration. Follow the [backup guide](../backup-and-restore.md) and the [upgrade procedure for your version](../hosting.md).

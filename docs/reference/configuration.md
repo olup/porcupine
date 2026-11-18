@@ -82,11 +82,11 @@ A tenant budget can lower a deployment ceiling.
 
 | JSON path | Environment equivalent | Default | Accepted range |
 | --- | --- | --- | --- |
-| `query.max_concurrent` | `PORCUPINE_QUERY_MAX_CONCURRENT` | 2 | 2–64 deployment analytical places |
+| `query.max_concurrent` | `PORCUPINE_QUERY_MAX_CONCURRENT` | 2 | 2–64 analytical slots per server process |
 | `query.timeout_ms` | `PORCUPINE_QUERY_TIMEOUT_MS` | 5,000 | 1–60,000 ms |
 | `query.max_rows` | `PORCUPINE_QUERY_MAX_ROWS` | 1,000 | 1–100,000 rows |
 | `query.max_result_bytes` | `PORCUPINE_QUERY_MAX_RESULT_BYTES` | 1,048,576 | 256–67,108,864 bytes |
 
-An unset value uses its default. The concurrency pool also retains the background export safety slot. These settings do not change per-engine memory budgets or provide process isolation. Configure them within the host's measured resource capacity. Query readers discover their effective limits through `get-event-schema`. [Tenant budgets](tenants.md#interactive-query-limits)
+An unset value uses its default. The pool includes the slot used by [exports and scheduled S3 queries](export-api.md#consistency-retries-and-revocation). These settings do not change per-engine memory budgets or provide process isolation. Configure them within the host's measured resource capacity. Query readers discover their effective limits through `get-event-schema`. [Tenant budgets](tenants.md#interactive-query-limits)
 
 The hosted profile also has [metadata timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision). Those I/O allowances can extend native execution beyond a SQL deadline. Hosted workers retain execution-scoped reservations and quarantine affected interactive engines; automatic expiry can allow physical concurrency overshoot during a partition. Local mode has no shared reservation keeper.

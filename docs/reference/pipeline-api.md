@@ -301,10 +301,11 @@ unavailable. Successfully committed destination files are not deleted.
 
 Scheduled work waits for its recorded original-event and mutation delivery
 barriers and healthy analytical delivery. This reduces delivery lag; it is not a
-transactional snapshot. S3 pipelines and one-off exports share one heavy-query
-slot, leaving the other interactive slot available. Work starts only while the
-interactive pool is idle and pending input is at or below the operator threshold.
-It yields if delivery fails or input grows beyond four times that threshold.
+transactional snapshot. S3 pipelines and one-off exports share one background
+slot per worker. A job starts only while the local analytical pool is idle and
+leaves the remaining slots available for interactive work. In standalone, work
+also waits until pending input is at or below the operator threshold and yields
+if delivery fails or input grows beyond four times that threshold.
 
 The resource-related `PORCUPINE_EXPORT_*` settings also bound scheduled S3 work.
 Pipelines apply 5 MiB/s sink bandwidth, 24 hours per attempt, a 1 TiB decoded-output limit, and an 8 MiB row bound by default. Native jobs share the project engine's configured memory and temporary directory; they have no per-query physical read-byte or temporary-disk quota. These are operator controls, not pipeline request
