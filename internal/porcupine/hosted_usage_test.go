@@ -266,6 +266,24 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 		t.Fatalf("repeated recovery marked %d executions: %v", n, err)
 	}
 
+	// A live worker can miss observations during a partition. The lost marker
+	// is provisional until it resumes and has no effect on the admitted count.
+	if _, err = control.ExecContext(ctx, `UPDATE usage_executions SET last_observed_at=$1 WHERE id=$2`, usage.Stamp(time.Now().Add(-time.Hour)), liveID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.service.recoverHostedQueryUsage(ctx); err != nil || n != 1 {
+		t.Fatalf("recovery after an observation gap marked %d executions: %v", n, err)
+	}
+	if r := records()[liveID]; r != (record{lost: 1}) {
+		t.Fatalf("recovery fabricated a finish after an observation gap: %+v", r)
+	}
+	if err = a.service.synchronizeUsage(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := records()[liveID]; r != (record{}) {
+		t.Fatalf("resumed observation left the execution marked lost: %+v", r)
+	}
+
 	live.Finish()
 	if err = a.service.synchronizeUsage(ctx); err != nil {
 		t.Fatal(err)
