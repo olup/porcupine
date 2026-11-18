@@ -112,7 +112,7 @@ state,attempt_id,destination_revision,secret,created_at_ms,reserved_bytes) VALUE
 state,attempt_id,destination_revision,secret,created_at_ms,reserved_bytes,manifest) VALUES($1,$2,$3,60000,120000,'catalog',0,'failed',$4,$5,$6,0,512,$7)`, []any{deliveredRun, project, pipeline, deliveredAttempt, revision, sealed, checkpoint}},
 			{`INSERT INTO hosted_s3_pipeline_files(run_id,object_key,upload_id) VALUES($1,$2,$3),($4,$5,'')`, []any{run, key, aws.ToString(upload.UploadId), deliveredRun, deliveredKey}},
 			{`UPDATE pipeline_capacity SET used_rows=used_rows+258,used_artifacts=used_artifacts+$3,used_proofs=used_proofs+2
-WHERE scope_kind='instance' OR (scope_kind='tenant' AND scope_id=$1) OR (scope_kind='project' AND scope_id=$2)`, []any{defaultTenantID, project, 2 * (512 + exportstore.MaxManifestBytes)}},
+WHERE (scope_kind='tenant' AND scope_id=$1) OR (scope_kind='project' AND scope_id=$2)`, []any{defaultTenantID, project, 2 * (512 + exportstore.MaxManifestBytes)}},
 		} {
 			if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
 				return err

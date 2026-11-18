@@ -119,11 +119,12 @@ func TestExternalAccessTokenBoundaries(t *testing.T) {
 	if verifier.SigningKeysAvailable(clock.Add(time.Minute)) {
 		t.Fatal("failed refresh not reflected in component health")
 	}
+	afterGrace := clock.Add(5*time.Minute + externalKeyStaleGrace + time.Second)
 	fresh := claims()
-	fresh["iat"] = clock.Add(6 * time.Minute).Unix()
-	fresh["exp"] = clock.Add(10 * time.Minute).Unix()
-	if _, err := verifier.Verify(context.Background(), sign(fresh, "at+jwt"), config.APIAudience, clock.Add(6*time.Minute)); err != ErrExternalKeysUnavailable {
-		t.Fatalf("stale key accepted: %v", err)
+	fresh["iat"] = afterGrace.Unix()
+	fresh["exp"] = afterGrace.Add(5 * time.Minute).Unix()
+	if _, err := verifier.Verify(context.Background(), sign(fresh, "at+jwt"), config.APIAudience, afterGrace); err != ErrExternalKeysUnavailable {
+		t.Fatalf("stale key accepted after the grace: %v", err)
 	}
 }
 
