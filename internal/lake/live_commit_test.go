@@ -176,9 +176,6 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	terminateFenceSession(t, control, owner)
 	successor := acquireFenceSession(t, coordinator, key)
 	next := successor.Fence(scope.StreamID)
-	if err := b.AdvanceWriteFence(ctx, next); err != nil {
-		t.Fatal(err)
-	}
 	b.liveClock = func() time.Time { return firstTime.Add(24 * time.Hour) }
 	recovered := &liveProofStager{objects: b.Remote, attempt: next.AcquisitionID}
 	replay := commitLiveFixture(t, b, successor, batch, recovered)
@@ -200,7 +197,33 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	}
 	changed.Identity = &command
 	second := LiveCommitBatch{ID: "second-batch", TenantID: batch.TenantID, Scope: scope, Inputs: []LiveCommitInput{changed, newLiveInput(t, key.ProjectID, "page_viewed", "deleted-uuid", "browser", `{}`), newLiveInput(t, key.ProjectID, "page_viewed", event.NewID(), "person", `{}`)}}
-	secondResult := commitLiveFixture(t, b, successor, second, recovered)
+	secondIDs, err := successor.ReserveEventIDs(ctx, scope.StreamID, second.ID, len(second.Inputs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitSecond := func(checkpoint NativeEffectCheckpoint) (LiveCommitResult, error) {
+		return b.CommitLiveFromCheckpoint(ctx, next, second, secondIDs, recovered, checkpoint, func(_ context.Context, commit func() error) error {
+			return commit()
+		})
+	}
+	if _, err := commitSecond(NativeEffectCheckpoint{}); !errors.Is(err, ErrNativeEffectsPending) {
+		t.Fatal("new fence skipped unpublished predecessor", err)
+	}
+	checkpoint := NativeEffectCheckpoint{Sequence: committed.Evidence.Sequence, Fingerprint: "wrong"}
+	if _, err := commitSecond(checkpoint); !errors.Is(err, ErrNativeEvidenceGap) {
+		t.Fatal("new fence accepted mismatched predecessor", err)
+	}
+	if len(recovered.selected) != 0 {
+		t.Fatal("invalid checkpoint staged effects")
+	}
+	checkpoint.Fingerprint = committed.Evidence.ProofFingerprint
+	secondResult, err := commitSecond(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CommitLive(ctx, fence, failed, failedIDs, stager); !errors.Is(err, ErrProjectWriteFenceStale) {
+		t.Fatal("combined write let a previous writer commit", err)
+	}
 	secondProof, ok := secondResult.(CommittedLiveBatch)
 	if !ok || secondProof.Evidence.AcceptedLive != 1 || secondProof.Evidence.Sequence != 2 || secondProof.Evidence.Totals[0].Live != 1 {
 		t.Fatal(secondResult)
@@ -212,7 +235,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 		t.Fatal("duplicate batch fabricated new proof")
 	}
 	page, err = b.PendingNativeEffects(ctx, scope, 0, 10)
-	if err != nil || page.NativeHighWater != 2 || len(page.Evidence) != 2 {
+	if err != nil || page.NativeHighWater != 2 || page.AcknowledgedThrough != 1 || len(page.Evidence) != 2 {
 		t.Fatal(page, err)
 	}
 	var replayID int64
