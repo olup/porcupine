@@ -45,10 +45,8 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	clientA, clientB := operatorClient("A machine client", []string{pa1, pa2}), operatorClient("B machine client", []string{pb1, pb2})
 	previousProject, _ := tenantJourneyProject(t, s, a)
 	prunedID, _ := namedKey("A key for previously deleted project", read, []string{previousProject})
-	legacyID, _ := namedKey("Legacy key for previously deleted project", read, []string{previousProject})
-	if _, err := s.control.Exec(`UPDATE access_keys SET owner_tenant_id='' WHERE id=$1`, legacyID); err != nil {
-		t.Fatal(err)
-	}
+	const legacyID = "a-pruned-legacy"
+	sharedDeletionPrincipal(t, s.control, legacyID, []string{previousProject})
 	request(t, s, "DELETE", "/api/v1/projects/"+previousProject, adminToken, "", 204)
 	for _, credential := range []string{rawA, rawInstance, clientA.token, clientA.key} {
 		request(t, s, "GET", "/api/v1/projects/"+pa2+"/schema", credential, "", 200)
