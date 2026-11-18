@@ -28,24 +28,29 @@ The opt-in [hosted profile](design/hosted-architecture.md#configuration) uses Po
 
 ## Boundaries in the code
 
+This map follows the source checkout. See [storage profiles](storage.md) for deployment behavior.
+
 | Module | Responsibility |
 | --- | --- |
-| `internal/porcupine` | Service composition, HTTP and MCP handlers, acceptance transactions, and coordination across modules |
-| `internal/lake` | Project engines, analytical projection/query, maintenance, and native backup state |
+| `internal/porcupine` | Service composition, HTTP and MCP handlers, SQLite acceptance transactions, and coordination across stores |
+| `internal/lake` | Project engines, native query execution, analytical projection, maintenance, and native backup state |
+| `internal/query` | Admission and execution lifetime for interactive SQL, catalog, profile, and hosted event-list reads. Owns hosted permit renewal and worker capacity shared with exports and scheduled S3 queries. |
 | `internal/nativequery` | SQL AST policy, allowed functions, and bindings |
 | `internal/auth` | Principals, grant/consent policy, OAuth validation, provider verification, browser OTP/OIDC sign-in, temporary sessions, and login/email admission |
 | `internal/event` | Canonical event model and IDs, independent of storage and adapters |
 | `internal/ingest` | Native/Segment live input decoding, normalization, traits, and privacy filtering |
+| `internal/acceptance` | Validated live batches and acknowledgment types. Owns the hosted memory buffer, flush scheduling, retries, and drain. |
 | `internal/importer` | Historical decoding, manifests, bounded JSONL parsing, and shared import row decisions |
 | `internal/delivery` | Webhook destination and DNS policy, HTTP delivery, and CSV/JSONL row encoding |
 | `internal/identity` | Parse and evaluate event identity controls against the current links and profiles |
 | `internal/output` | SQLite and PostgreSQL job stores, export and pipeline orchestration, webhook queues, and artifact cleanup |
-| `internal/usage` | Cumulative counters, execution observations, storage samples, and report snapshots |
+| `internal/usage` | Durable counters, execution observations, storage samples, and report snapshots |
+| `internal/observability` | Process-local Prometheus counters and histograms, text encoding, and shared flush metrics |
 | `internal/s3client` | Common S3 client construction, with separate credentials and transports for each destination |
 | `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
 | `internal/exportstore` | Export object storage |
 
-The service owns acceptance and cross-store coordination. Standalone attaches webhook enqueue and cancellation to the caller's SQLite transaction. Hosted reconciles retained DuckLake proofs into shared output jobs and usage. The output stores own their attempt and retry transactions. [Hosted flush protocol](design/hosted-architecture.md#flush-and-publication)
+In standalone, the service attaches webhook enqueue and cancellation to the caller's SQLite transaction. In the hosted profile, the service commits buffered batches to DuckLake and reconciles retained proofs into shared output jobs and usage. The output stores own their attempt and retry transactions. [Hosted flush protocol](design/hosted-architecture.md#flush-and-publication)
 
 Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
 
