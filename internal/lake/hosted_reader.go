@@ -53,13 +53,13 @@ func (r *HostedReader) lease(ctx context.Context, project string) (*ProjectLake,
 func (r *HostedReader) ListEvents(ctx context.Context, project string, maxRows, maxBytes int) ([]event.Event, error) {
 	p, release, err := r.lease(ctx, project)
 	if err != nil {
-		return nil, err
+		return nil, DuckLakeQueryError(ctx, err)
 	}
 	defer release()
 	rows, err := p.DB.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,
 source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC LIMIT ?`, maxRows)
 	if err != nil {
-		return nil, err
+		return nil, DuckLakeQueryError(ctx, err)
 	}
 	defer rows.Close()
 	events := []event.Event{}
@@ -70,7 +70,7 @@ source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC
 		var imported uint8
 		if err := rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &properties,
 			&e.Timestamp, &e.ReceivedAt, &e.SourceID, &e.MessageID, &e.EventType, &body, &imported); err != nil {
-			return nil, err
+			return nil, DuckLakeQueryError(ctx, err)
 		}
 		e.Properties, e.Context = json.RawMessage(properties), json.RawMessage(body)
 		e.Delivered, e.Imported = true, imported != 0
@@ -79,7 +79,7 @@ source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC
 		}
 		encoded, err := json.Marshal(e)
 		if err != nil {
-			return nil, err
+			return nil, DuckLakeQueryError(ctx, err)
 		}
 		size += len(encoded) + 1
 		if size > maxBytes {
@@ -87,5 +87,8 @@ source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC
 		}
 		events = append(events, e)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, DuckLakeQueryError(ctx, err)
+	}
+	return events, nil
 }
