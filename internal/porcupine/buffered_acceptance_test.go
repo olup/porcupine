@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
+	"github.com/olup/porcupine/internal/output"
 )
 
 type liveFlusherFunc func(context.Context, bufferedFlushBatch) error
@@ -230,23 +231,42 @@ func TestBufferedAcceptanceFailureBackpressureAndStableRetry(t *testing.T) {
 	t.Parallel()
 	c := testBufferConfig()
 	c.flushBytes = 1
-	c.retryMin = 30 * time.Millisecond
-	c.retryMax = 60 * time.Millisecond
+	c.retryMin = 250 * time.Millisecond
+	c.retryMax = c.retryMin
 	calls, results := make(chan bufferedFlushBatch, 2), make(chan error, 2)
-	b := newTestBuffer(t, c, blockingTestWriter(calls, results))
+	blocked := blockingTestWriter(calls, results)
+	healthy := make(chan struct{}, 1)
+	b := newTestBuffer(t, c, liveFlusherFunc(func(ctx context.Context, batch bufferedFlushBatch) error {
+		if batch.projectID == "healthy-project" {
+			healthy <- struct{}{}
+			return nil
+		}
+		return blocked.FlushLive(ctx, batch)
+	}))
 	if _, err := b.Accept(t.Context(), testBufferBatch(t, "p", 1), ingestionPeer{}, false); err != nil {
 		t.Fatal(err)
 	}
 	first := nextFlush(t, calls)
-	results <- errors.New("durable commit unavailable")
+	results <- output.ErrPipelineCapacity
 	failed := waitBuffer(t, b, func(s bufferSnapshot) bool { return s.failed })
 	if failed.events != 1 || failed.oldest != first.oldest {
 		t.Fatal(failed)
 	}
-	_, err := b.Accept(t.Context(), testBufferBatch(t, "healthy-project", 1), ingestionPeer{}, false)
+	_, err := b.Accept(t.Context(), testBufferBatch(t, "p", 1), ingestionPeer{}, false)
 	var failure *acceptanceFailure
 	if !errors.As(err, &failure) || !failure.retry {
-		t.Fatal("flush failure did not reject whole worker admission", err)
+		t.Fatal("flush failure did not backpressure its own project", err)
+	}
+	if !b.available() {
+		t.Fatal("failed project made the worker unready")
+	}
+	if _, err := b.Accept(t.Context(), testBufferBatch(t, "healthy-project", 1), ingestionPeer{}, false); err != nil {
+		t.Fatal("failed project prevented healthy project admission", err)
+	}
+	select {
+	case <-healthy:
+	case <-time.After(2 * time.Second):
+		t.Fatal("healthy project did not flush")
 	}
 	retry := nextFlush(t, calls)
 	if retry.id != first.id || !reflect.DeepEqual(retry, first) {
@@ -254,15 +274,63 @@ func TestBufferedAcceptanceFailureBackpressureAndStableRetry(t *testing.T) {
 	}
 	results <- nil
 	waitBuffer(t, b, func(s bufferSnapshot) bool { return !s.failed && s.events == 0 })
-	if _, err := b.Accept(t.Context(), testBufferBatch(t, "healthy-project", 1), ingestionPeer{}, false); err != nil {
-		t.Fatal("healthy flush did not restore admission", err)
-	}
-	nextFlush(t, calls)
-	results <- nil
 	if err := b.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
+
+func TestBufferedAcceptanceSplitsAtRequestBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, testcase := range []struct {
+		name                       string
+		sizes, attempts, committed []int
+		droppedEvents              uint64
+	}{
+		{name: "both requests fit", sizes: []int{3, 3}, attempts: []int{6, 3, 3}, committed: []int{3, 3}},
+		{name: "one oversized request", sizes: []int{5, 2, 1}, attempts: []int{8, 5, 3}, committed: []int{3}, droppedEvents: 5},
+	} {
+		t.Run(testcase.name, func(t *testing.T) {
+			t.Parallel()
+			var attempts, committed []int
+			ids := map[string]bool{}
+			writer := liveFlusherFunc(func(_ context.Context, batch bufferedFlushBatch) error {
+				if ids[batch.id] {
+					t.Errorf("split reused batch ID %q", batch.id)
+				}
+				ids[batch.id] = true
+				attempts = append(attempts, len(batch.events))
+				if len(batch.events) > 3 {
+					return errHostedLiveBatchTooLarge
+				}
+				committed = append(committed, len(batch.events))
+				return nil
+			})
+			b := newTestBuffer(t, testBufferConfig(), writer)
+			for _, n := range testcase.sizes {
+				if _, err := b.Accept(t.Context(), testBufferBatch(t, "project", n), ingestionPeer{}, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if err := b.Drain(ctx); err != nil {
+				t.Fatal("capacity-limited batch did not drain", err)
+			}
+			if !reflect.DeepEqual(attempts, testcase.attempts) || !reflect.DeepEqual(committed, testcase.committed) {
+				t.Fatal("unexpected attempts or commits", attempts, committed)
+			}
+			s := b.snapshot()
+			var droppedRequests uint64
+			if testcase.droppedEvents > 0 {
+				droppedRequests = 1
+			}
+			if s.events != 0 || s.bytes != 0 || s.projects != 0 || s.droppedRequests != droppedRequests || s.droppedEvents != testcase.droppedEvents {
+				t.Fatal("incorrect capacity or drop counts after drain", s)
+			}
+		})
+	}
+}
+
 func TestBufferedAcceptanceOwnsCommandsAndPayload(t *testing.T) {
 	t.Parallel()
 	batch, err := prepareLiveBatch("p", "source", eventBatch{normalizedTrack("native", "track"), {Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "browser", "$set": map[string]any{"plan": "new"}}}}, time.Now())
