@@ -35,6 +35,8 @@ var ErrNativeEffectsPending = errors.New("native effects await publication")
 
 // CommitLiveFromCheckpoint advances the write fence and acknowledges the
 // published predecessor in the same transaction as the next live outcome.
+// The guard checks the control fence and invokes COMMIT synchronously,
+// at most once.
 func (s *DuckLakeStore) CommitLiveFromCheckpoint(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint NativeEffectCheckpoint, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
 	if guard == nil {
 		return nil, errors.New("hosted live commit requires a control fence guard")

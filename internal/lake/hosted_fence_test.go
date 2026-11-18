@@ -449,3 +449,80 @@ func testCoordinatorReleaseJoinsOperation(t *testing.T, reservation bool) {
 		t.Fatal("released project lock remained held", held, err)
 	}
 }
+
+func TestSharedPostgresCoordinatorAcquireTimeoutAndCancellation(t *testing.T) {
+	t.Parallel()
+	db, coordinator := nativeFenceControl(t)
+	key := ProjectWriteKey{SourceID: "source", ProjectID: "busy"}
+	owner := acquireFenceSession(t, coordinator, key)
+	config := DefaultProjectCoordinatorConfig()
+	config.MaxConcurrent = 1
+	config.AcquireTimeout = 150 * time.Millisecond
+	waiter, err := NewPostgresProjectCoordinator(db, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// The fixture owns a distinct database. Checking its waiter list also
+	// confirms that canceled requests leave the server before the owner unlocks.
+	waitForQueued := func(want bool) {
+		t.Helper()
+		for {
+			var queued bool
+			err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
+WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)`).Scan(&queued)
+			if err != nil {
+				t.Fatalf("waiting for advisory queue state %v: %v", want, err)
+			}
+			if queued == want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	start := time.Now()
+	if s, err := waiter.Acquire(ctx, key); !errors.Is(err, ErrProjectWriteBusy) {
+		if s != nil {
+			_ = s.Release()
+		}
+		t.Fatalf("blocked acquisition did not hit coordinator timeout: %v", err)
+	}
+	t.Logf("blocked acquisition returned after %s", time.Since(start))
+	waitForQueued(false)
+
+	// A fresh coordinator waits with a longer deadline so cancellation can
+	// be triggered after PostgreSQL has queued its advisory lock request.
+	config.AcquireTimeout = 10 * time.Second
+	cancelWaiter, err := NewPostgresProjectCoordinator(db, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	result := make(chan error, 1)
+	go func() {
+		s, err := cancelWaiter.Acquire(waitCtx, key)
+		if s != nil {
+			_ = s.Release()
+		}
+		result <- err
+	}()
+	waitForQueued(true)
+	stop()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("blocked acquisition lost caller cancellation: %v", err)
+	}
+	waitForQueued(false)
+	if err := owner.Release(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*PostgresProjectCoordinator{waiter, cancelWaiter} {
+		s := acquireFenceSession(t, c, key)
+		if err := s.Release(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
