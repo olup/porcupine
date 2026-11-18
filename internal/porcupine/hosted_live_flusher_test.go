@@ -526,6 +526,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, errHostedLiveBatchTooLarge) {
 		t.Fatal("oversized reservation did not report a permanent pre-commit capacity error", err)
 	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
+		t.Fatal(err)
+	}
 	setPipelineState := func(state string) {
 		t.Helper()
 		session, err := ca.Acquire(t.Context(), key)
