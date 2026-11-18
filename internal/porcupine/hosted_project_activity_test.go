@@ -13,7 +13,7 @@ func TestSharedHostedDeletionRequiresActualReturnAcrossWorkers(t *testing.T) {
 	s := sharedDeletionFixture(t)
 	ctx := t.Context()
 	db := s.control
-	if err := beginHostedProjectActivity(ctx, db, "removed", "first-query"); err != nil {
+	if err := (*hostedIncarnation)(nil).beginActivity(ctx, db, "removed", "first-query"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO shared_query_permits
@@ -33,10 +33,10 @@ VALUES('first-query','default','removed','owner-a',clock_timestamp()-interval '1
 	if err := f.sealDeletedProject(ctx, key); !errors.Is(err, errHostedProjectBusy) {
 		t.Fatalf("expired permit let deletion pass actual-return barrier: %v", err)
 	}
-	if err := beginHostedProjectActivity(ctx, db, "removed", "late"); !errors.Is(err, errHostedProjectFenced) {
+	if err := (*hostedIncarnation)(nil).beginActivity(ctx, db, "removed", "late"); !errors.Is(err, errHostedProjectFenced) {
 		t.Fatalf("deleted project admitted a late operation: %v", err)
 	}
-	if err := beginHostedProjectActivity(ctx, db, "kept", "other-query"); err != nil {
+	if err := (*hostedIncarnation)(nil).beginActivity(ctx, db, "kept", "other-query"); err != nil {
 		t.Fatalf("fenced project blocked another project: %v", err)
 	}
 	for range 2 {
@@ -80,7 +80,7 @@ func TestSharedHostedDeletionWaiterRechecksCommittedFence(t *testing.T) {
 		}
 		defer admission.Rollback()
 		close(started)
-		waiter <- registerHostedProjectActivityTx(ctx, admission, "removed", "waiter")
+		waiter <- (*hostedIncarnation)(nil).registerTx(ctx, admission, "removed", "waiter")
 	}()
 	<-started
 	if err := tx.Commit(); err != nil {
