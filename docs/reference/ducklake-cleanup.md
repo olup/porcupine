@@ -21,6 +21,14 @@ The maintenance scheduler considers one due catalog per pass, including register
 
 Each cleanup cycle flushes inlined rows, asks DuckLake to rewrite at most one group of files per table containing deleted rows, expires eligible snapshots, and removes eligible obsolete files. Rewriting uses a zero deletion-ratio threshold so a file with only a few deleted rows can eventually be reclaimed. A large backlog can require several cycles. The existing background pass has a 30-second deadline and uses the configured engine memory and thread limits; this is not a separate worker or service.
 
+## Hosted profile
+
+The [hosted profile](../design/hosted-profile-composition.md) runs the same cleanup from its maintenance loop, under the project's coordinator session and write fence. The same settings apply. Each tick runs one compaction pass and one cleanup pass, each for one claimed project. A cleanup pass rewrites one group of files with deleted rows, expires at most 64 of the oldest snapshots before the retention cutoff, and deletes obsolete files in whole schedule-time groups. It deletes at most 256 files unless the oldest group alone is larger. The pass runs within a 30-second deadline. A project with remaining work becomes eligible again at once; otherwise its next pass waits for `PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL`.
+
+File deletion requires the restore policy and the recovery floor. Each pass reads `restore_floor_file` again. It deletes only files that DuckLake scheduled for deletion before both the floor and `now - cleanup_grace`. A PostgreSQL restore to any target at or after the floor therefore never references a deleted file. The pass deletes nothing when the policy durations are missing, `cleanup_grace` is shorter than `restore_window + restore_max_reader_time + restore_safety_margin`, or the floor is missing, unreadable or in the future. Hosted readers have no cross-worker leases, so `restore_max_reader_time` must cover the longest query or export.
+
+For the hosted profile, the status adds `snapshots_expired`, `files_deleted` and `last_error`. `last_error` is `restore_guard`, `failed` or `interrupted`; a later successful pass of the same catalog clears it. A refusal by the restore guard does not count as a failed catalog.
+
 ## Reads and interruption
 
 Porcupine keeps a lease for the full lifetime of every query and export. A reader that began before the cleanup horizon delays expiration and file removal for that catalog until its lease ends. Other project catalogs can continue cleanup. An export can therefore retain old files longer than the default grace period.

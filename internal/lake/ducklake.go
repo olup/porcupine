@@ -11,18 +11,21 @@ const DefaultDuckLakeMemoryMB = 512
 // DuckLakeConfig selects native resource limits, a local working directory and
 // optional shared PostgreSQL metadata with S3 analytical data.
 type DuckLakeConfig struct {
-	Directory              string
-	MemoryLimitMB          int
-	Threads                int
-	MaxOpenProjects        int
-	MaintenanceInterval    time.Duration
-	SnapshotRetention      time.Duration
-	CleanupGrace           time.Duration
-	CleanupInterval        time.Duration
-	RestoreWindow          time.Duration
-	RestoreMaxReaderTime   time.Duration
-	RestoreSafetyMargin    time.Duration
-	DisableCleanup         bool
+	Directory            string
+	MemoryLimitMB        int
+	Threads              int
+	MaxOpenProjects      int
+	MaintenanceInterval  time.Duration
+	SnapshotRetention    time.Duration
+	CleanupGrace         time.Duration
+	CleanupInterval      time.Duration
+	RestoreWindow        time.Duration
+	RestoreMaxReaderTime time.Duration
+	RestoreSafetyMargin  time.Duration
+	DisableCleanup       bool
+	// Hosted selects the fenced history cleanup in CleanupHostedDue. The
+	// unfenced CleanupDue path never runs for a hosted store.
+	Hosted                 bool
 	S3                     *DuckLakeS3Config
 	PostgresURL            string
 	SharedSourceID         string
@@ -63,6 +66,9 @@ type DuckLakeCleanupStatus struct {
 	RunningCatalogs          int    `json:"running_catalogs"`
 	LastAttempt              string `json:"last_attempt,omitempty"`
 	LastSuccess              string `json:"last_success,omitempty"`
+	SnapshotsExpired         int64  `json:"snapshots_expired,omitempty" doc:"Hosted profile: snapshots expired by completed passes in registered catalogs."`
+	FilesDeleted             int64  `json:"files_deleted,omitempty" doc:"Hosted profile: obsolete DuckLake files deleted by completed passes in registered catalogs."`
+	LastError                string `json:"last_error,omitempty" doc:"Hosted profile: stable code (restore_guard, failed or interrupted) of the most recent unsuccessful pass that no later pass of the same catalog has cleared. restore_guard means the restore policy or recovery floor did not permit deletion."`
 }
 
 func NormalizeDuckLakeCleanup(c *DuckLakeConfig) error {
@@ -87,11 +93,20 @@ func NormalizeDuckLakeCleanup(c *DuckLakeConfig) error {
 		if c.RestoreWindow < time.Second || c.RestoreMaxReaderTime < time.Second || c.RestoreSafetyMargin < time.Second {
 			return errors.New("DuckLake restore window, maximum reader time and safety margin must each be at least one second")
 		}
-		// Subtract from the grace so large durations cannot wrap the sum.
-		remaining := c.CleanupGrace - c.RestoreWindow
-		if remaining < c.RestoreMaxReaderTime || remaining-c.RestoreMaxReaderTime < c.RestoreSafetyMargin {
+		if !restoreGraceCovered(*c) {
 			return errors.New("DuckLake cleanup grace must cover the restore window, maximum reader time and safety margin")
 		}
 	}
 	return nil
+}
+
+// restoreGraceCovered reports cleanup_grace >= restore_window +
+// restore_max_reader_time + restore_safety_margin with each term set.
+func restoreGraceCovered(c DuckLakeConfig) bool {
+	if c.RestoreWindow < time.Second || c.RestoreMaxReaderTime < time.Second || c.RestoreSafetyMargin < time.Second {
+		return false
+	}
+	// Subtract from the grace so large durations cannot wrap the sum.
+	remaining := c.CleanupGrace - c.RestoreWindow
+	return remaining >= c.RestoreMaxReaderTime && remaining-c.RestoreMaxReaderTime >= c.RestoreSafetyMargin
 }

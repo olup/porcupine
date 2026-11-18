@@ -9,17 +9,38 @@ import (
 )
 
 // MaintainHostedProject compacts an existing open hosted catalog under the caller's
-// already-held coordinator session. It schedules no background work or retention
-// cleanup. Callers own the maintenance cadence and must not call Release inside it.
+// already-held coordinator session. Callers own the maintenance cadence and must
+// not call Release inside it. CleanupHostedProject owns history expiry.
 // One extra engine per store is allowed while cleanup is held. Its normal resource
 // limits apply, and its resident project lease prevents store close until it returns.
 func (s *DuckLakeStore) MaintainHostedProject(ctx context.Context, session *ProjectWriteSession) (stats DuckLakeMaintenanceStats, err error) {
+	err = s.runHostedMaintenance(ctx, session, func(ctx context.Context, p *ProjectLake, fence ProjectWriteFence, _ HostedProjectScope) error {
+		started := time.Now()
+		for _, statement := range []string{
+			fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake',max_compacted_files=>1,max_file_size=>%d)", hostedMergeFileSize),
+			"CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)",
+		} {
+			if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, &stats); err != nil {
+				return err
+			}
+		}
+		stats.CompactMS = float64(time.Since(started)) / float64(time.Millisecond)
+		return nil
+	})
+	stats.Completed = err == nil
+	return stats, err
+}
+
+// runHostedMaintenance advances the session's fence and opens a private engine.
+// Each native statement still runs through hostedMaintenanceStatement, which
+// rereads the fence inside its own transaction.
+func (s *DuckLakeStore) runHostedMaintenance(ctx context.Context, session *ProjectWriteSession, work func(context.Context, *ProjectLake, ProjectWriteFence, HostedProjectScope) error) error {
 	if session == nil || s.SharedCatalog == nil || session.key.SourceID != s.Config.SharedSourceID {
-		return stats, ErrProjectWriteFenceStale
+		return ErrProjectWriteFenceStale
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostedCompactionTimeout)
 	defer cancel()
-	err = session.RunNative(ctx, func(nativeCtx context.Context) (err error) {
+	return session.RunNative(ctx, func(nativeCtx context.Context) (err error) {
 		if err := s.cleanup.Lock(nativeCtx); err != nil {
 			return err
 		}
@@ -42,29 +63,21 @@ func (s *DuckLakeStore) MaintainHostedProject(ctx context.Context, session *Proj
 			return err
 		}
 		defer func() { err = errors.Join(err, p.DB.Close()) }()
-		started := time.Now()
-		for _, statement := range []string{
-			fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake',max_compacted_files=>1,max_file_size=>%d)", hostedMergeFileSize),
-			"CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)",
-		} {
-			if err := retryNativeTransaction(nativeCtx, func() error {
-				return session.RunNative(nativeCtx, func(attemptCtx context.Context) error {
-					next := stats
-					if err := p.hostedMaintenanceAttempt(attemptCtx, fence, statement, &next); err != nil {
-						return err
-					}
-					stats = next
-					return nil
-				})
-			}); err != nil {
+		return work(nativeCtx, p, fence, scope)
+	})
+}
+
+func (p *ProjectLake) hostedMaintenanceStatement(ctx context.Context, session *ProjectWriteSession, fence ProjectWriteFence, statement string, stats *DuckLakeMaintenanceStats) error {
+	return retryNativeTransaction(ctx, func() error {
+		return session.RunNative(ctx, func(attemptCtx context.Context) error {
+			next := *stats
+			if err := p.hostedMaintenanceAttempt(attemptCtx, fence, statement, &next); err != nil {
 				return err
 			}
-		}
-		stats.CompactMS = float64(time.Since(started)) / float64(time.Millisecond)
-		return nil
+			*stats = next
+			return nil
+		})
 	})
-	stats.Completed = err == nil
-	return stats, err
 }
 
 // No native retry may refresh the snapshot after this guard read. The first

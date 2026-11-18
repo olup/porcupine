@@ -55,7 +55,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 		return nil, err
 	}
 	lakeConfig := *c.DuckLake
-	lakeConfig.DisableCleanup = true
+	lakeConfig.Hosted = true
 	if err := control.QueryRowContext(ctx, "SELECT value FROM metadata WHERE key='shared_source_id'").Scan(&lakeConfig.SharedSourceID); err != nil {
 		return nil, errors.New("hosted analytical source identity unavailable")
 	}
