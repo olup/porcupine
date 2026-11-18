@@ -91,6 +91,7 @@ func installLostHostedCommit(dbURL string, p *hostedEffectPublisher, lose *atomi
 type hostedNativeBoundaryDriver struct {
 	db                  *sql.DB
 	loseCommit, failACK *atomic.Bool
+	beforeProofCommit   func() error
 }
 
 func (d hostedNativeBoundaryDriver) Open(string) (driver.Conn, error) {
@@ -98,13 +99,14 @@ func (d hostedNativeBoundaryDriver) Open(string) (driver.Conn, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &hostedNativeBoundaryConn{conn: c, loseCommit: d.loseCommit, failACK: d.failACK}, nil
+	return &hostedNativeBoundaryConn{conn: c, loseCommit: d.loseCommit, failACK: d.failACK, beforeProofCommit: d.beforeProofCommit}, nil
 }
 
 type hostedNativeBoundaryConn struct {
 	conn                *sql.Conn
 	tx                  *sql.Tx
 	loseCommit, failACK *atomic.Bool
+	beforeProofCommit   func() error
 	proof               bool
 }
 
@@ -189,6 +191,11 @@ type hostedNativeBoundaryTx struct {
 }
 
 func (t hostedNativeBoundaryTx) Commit() error {
+	if t.c.proof && t.c.beforeProofCommit != nil {
+		if err := t.c.beforeProofCommit(); err != nil {
+			return errors.Join(err, t.Rollback())
+		}
+	}
 	e := t.Tx.Commit()
 	t.c.tx = nil
 	if e != nil {
@@ -200,8 +207,8 @@ func (t hostedNativeBoundaryTx) Commit() error {
 	return nil
 }
 func (t hostedNativeBoundaryTx) Rollback() error { e := t.Tx.Rollback(); t.c.tx = nil; return e }
-func installHostedNativeBoundary(db *sql.DB, lose, ack *atomic.Bool) (*sql.DB, error) {
+func installHostedNativeBoundary(db *sql.DB, lose, ack *atomic.Bool, beforeProofCommit func() error) (*sql.DB, error) {
 	name := "hosted_native_boundary_" + eventapi.NewID()
-	sql.Register(name, hostedNativeBoundaryDriver{db: db, loseCommit: lose, failACK: ack})
+	sql.Register(name, hostedNativeBoundaryDriver{db: db, loseCommit: lose, failACK: ack, beforeProofCommit: beforeProofCommit})
 	return sql.Open(name, "")
 }
