@@ -20,7 +20,7 @@ Preserve both databases, their SQLite auxiliary files, and DuckLake together. St
 
 ## Hosted profile
 
-The opt-in hosted profile keeps control metadata and DuckLake catalogs in PostgreSQL and analytical payloads in S3. Workers use disposable scratch space. Live ingress acknowledges admission to bounded memory. Until a flush commits, a worker crash or incomplete drain can lose an accepted event. Durable imports and event mutations use shared checkpoints and staged objects. [Profile setup and recovery](design/hosted-profile-composition.md)
+The opt-in hosted profile keeps control metadata and DuckLake catalogs in PostgreSQL and analytical payloads in S3. Workers use disposable scratch space. Live ingress acknowledges admission to bounded memory. Until a flush commits, a worker crash or incomplete drain can lose an accepted event. Durable imports and event mutations use shared checkpoints and staged objects. [Profile setup and recovery](design/hosted-architecture.md#configuration)
 
 ## Schema versions {#unreleased-schema-versions}
 
@@ -34,7 +34,7 @@ Live events have no automatic age limit. Edits and deletions change the current 
 
 DuckLake snapshots can retain old payloads. Porcupine schedules deleted-row rewrites, snapshot expiration, and obsolete-file cleanup. The default policy keeps seven days of snapshots and waits two days before removing obsolete files. Active readers, backup pins, and maintenance backlogs can delay reclamation. See [history cleanup](reference/ducklake-cleanup.md) for settings and progress.
 
-Hosted retention must protect PostgreSQL recovery points and active readers. Physical reclamation waits for the configured grace and the operator’s verified recovery floor. [Hosted recovery requirements](design/hosted-profile-composition.md)
+Hosted retention must protect PostgreSQL recovery points and active readers. Physical reclamation waits for the configured grace and the operator’s verified recovery floor. [Hosted recovery requirements](design/hosted-architecture.md#recovery-and-retention)
 
 Retry receipts are separate from payload history and stay in SQLite indefinitely by default. Journal deployments can opt into pruning, which introduces an analytical dependency after the first prune. The [receipt reference](reference/receipts.md) describes that tradeoff and the effect of changing retention back to zero.
 
@@ -46,7 +46,7 @@ In standalone, whole-project deletion removes its SQLite state and managed analy
 
 Use [coordinated native backups](reference/native-backup-recovery.md) for local or analytical S3 deployments. A local bundle scheduler alone is insufficient for analytical S3 because it does not include remote objects. Complete S3 backups use an independent destination and verify the copied catalog references and data inventory before publication.
 
-Hosted recovery coordinates PostgreSQL point-in-time recovery, versioned S3 objects, and deployment secrets. Recover into an isolated environment before replacing the live deployment. [Hosted recovery drill](design/hosted-restore-drill.md)
+Hosted recovery coordinates PostgreSQL point-in-time recovery, versioned S3 objects, and deployment secrets. Recover into an isolated environment before replacing the live deployment. [Hosted recovery requirements](design/hosted-architecture.md#recovery-and-retention)
 
 A local-only deployment can also use a [stopped-volume copy](reference/restore.md). Copy the entire data volume after its single writer stops. A live copy of selected SQLite or catalog files is not a consistent recovery point. An S3 bucket listing alone is not a recovery procedure.
 

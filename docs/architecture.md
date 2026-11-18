@@ -24,25 +24,28 @@ Standalone stores analytical data on local SSD or S3 and keeps operational state
 
 The two files have matching persistent identities and must be restored together.
 
-The opt-in [hosted profile](design/hosted-profile-composition.md) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
+The opt-in [hosted profile](design/hosted-architecture.md#configuration) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
 
 ## Boundaries in the code
 
 | Module | Responsibility |
 | --- | --- |
-| `internal/porcupine` | Service composition, HTTP/MCP handlers, durable transactions, jobs, and cross-module coordination |
+| `internal/porcupine` | Service composition, HTTP and MCP handlers, acceptance transactions, and coordination across modules |
 | `internal/lake` | Project engines, analytical projection/query, maintenance, and native backup state |
 | `internal/nativequery` | SQL AST policy, allowed functions, and bindings |
 | `internal/auth` | Principals, grant/consent policy, OAuth validation, provider verification, browser OTP/OIDC sign-in, temporary sessions, and login/email admission |
 | `internal/event` | Canonical event model and IDs, independent of storage and adapters |
 | `internal/ingest` | Native/Segment live input decoding, normalization, traits, and privacy filtering |
-| `internal/importer` | Historical native/PostHog/Segment decoding, manifests, and bounded JSONL parsing |
-| `internal/delivery` | Durable webhook enqueueing, batching, attempts, retries and history; webhook destination/DNS policy and HTTP delivery; CSV/JSONL row encoding |
+| `internal/importer` | Historical decoding, manifests, bounded JSONL parsing, and shared import row decisions |
+| `internal/delivery` | Webhook destination and DNS policy, HTTP delivery, and CSV/JSONL row encoding |
+| `internal/identity` | Parse and evaluate event identity controls against the current links and profiles |
+| `internal/output` | SQLite and PostgreSQL job stores, export and pipeline orchestration, webhook queues, and artifact cleanup |
+| `internal/usage` | Cumulative counters, execution observations, storage samples, and report snapshots |
 | `internal/s3client` | Common S3 client construction, with separate credentials and transports for each destination |
 | `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
 | `internal/exportstore` | Export object storage |
 
-The service owns analytical delivery, exports and S3 pipeline jobs, checkpoint commits, quotas, and the atomic acceptance transaction. The webhook queue owns its attempt and retry transactions. Its enqueuer and event-cancellation function instead use the caller's SQLite transaction, so event acceptance and mutation remain atomic with their webhook effects. A three-method host contract supplies current authorization, destination decryption, and the project activity lease. See the [webhook module record](design/webhook-module.md) for the ownership map and verification.
+The service owns acceptance and cross-store coordination. Standalone attaches webhook enqueue and cancellation to the caller's SQLite transaction. Hosted reconciles retained DuckLake proofs into shared output jobs and usage. The output stores own their attempt and retry transactions. [Hosted flush protocol](design/hosted-architecture.md#flush-and-publication)
 
 Authentication policy and provider verification live in `internal/auth`; the service still owns control-database identity linking, consent issuance, revocation transactions, and login-version checks. No authentication mode was removed. See the [simplification proposal](design/auth-simplification.md) for decisions still open. The [native boundary design](design/native-only-architecture.md) records these invariants.
 
@@ -58,4 +61,4 @@ Shared usage publication can lag, so monthly quotas permit some overshoot. Concu
 
 Run one process per local journal and DuckLake root. Preserve the complete volume, control state, private configuration, and matching version. A query export or S3 bucket listing is not an instance checkpoint. Use [coordinated backups](backup-and-restore.md).
 
-The same server can support self-hosting and a future commercial deployment. The commercial controller owns prices and billing and uses an authenticated management API. It does not need a private fork or direct access to the operational database. Separate compute roles and automatic owner failover remain design work, not current deployment guarantees.
+The same server can support self-hosting and a future commercial deployment. The commercial controller owns prices and billing and uses an authenticated management API. It does not need a private fork or direct access to the operational database. Hosted replicas share durable state and can be replaced independently. [Hosted architecture](design/hosted-architecture.md)

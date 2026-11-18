@@ -1,5 +1,7 @@
 # PostgreSQL native effect metadata participant
 
+> Historical component handoff. See [the active publication protocol](../hosted-architecture.md#flush-and-publication).
+
 This component is disabled until an integration adapter uses it. It implements
 control migration 8; existing migration 7 is unchanged. No production provider,
 HTTP sender or native ACK path is activated.

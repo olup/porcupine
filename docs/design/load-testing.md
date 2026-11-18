@@ -16,7 +16,7 @@ The batching and architecture runners use Docker to keep their memory and CPU
 limits reproducible. The native benchmark runs directly on the host. They do not
 need credentials to an existing deployment or send events to production.
 
-The [hosted flush economics fixture](hosted-economics.md) exercises
+The [hosted flush economics fixture](archive/hosted-economics.md) exercises
 PostgreSQL-backed flushes, queries, and compaction against disposable
 object storage and records request counts and bytes.
 

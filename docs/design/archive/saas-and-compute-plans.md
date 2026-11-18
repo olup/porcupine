@@ -1,32 +1,34 @@
 # Scope and roadmap
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 > Historical record of the proposal and implementation before hosted startup. Use the [current hosted setup](hosted-profile-composition.md) for v0.15.0. Owner-local shared queues described here were a development design.
 
 ## Pre-release design work
 
-- Tenant ownership for projects, with one default tenant on fresh installations. Tenant administrators manage their team's projects, memberships, and independent service credentials. Members can receive read-only or finer grants on selected projects, or tenant-local access including future projects. Instance operators retain hard budgets and deployment controls. [Team access](../reference/tenant-access.md), [tenant guide](../reference/tenants.md)
-- Email OTP and optional trusted Google/OIDC sign-in authenticate the same invited humans. Operator-only identity recovery lists and unlinks provider bindings while revoking prior interactive connections and browser proofs. [Identity recovery](../reference/identity-recovery.md)
+- Tenant ownership for projects, with one default tenant on fresh installations. Tenant administrators manage their team's projects, memberships, and independent service credentials. Members can receive read-only or finer grants on selected projects, or tenant-local access including future projects. Instance operators retain hard budgets and deployment controls. [Team access](../../reference/tenant-access.md), [tenant guide](../../reference/tenants.md)
+- Email OTP and optional trusted Google/OIDC sign-in authenticate the same invited humans. Operator-only identity recovery lists and unlinks provider bindings while revoking prior interactive connections and browser proofs. [Identity recovery](../../reference/identity-recovery.md)
 - Monthly ingestion allowances shared by a tenant's projects. Counts commit atomically with newly accepted canonical rows, including imports and identity controls. Duplicate, invalid, ignored, and rolled-back rows consume nothing; deletion does not refund usage. Periods are UTC calendar months, with preserved history and no manual reset endpoint.
-- Shared tenant limits for interactive query concurrency, execution time, result rows, and result bytes. Effective limits cannot exceed deployment ceilings and are discoverable through the project schema. [Query limits](../reference/analytics.md#query-limits)
+- Shared tenant limits for interactive query concurrency, execution time, result rows, and result bytes. Effective limits cannot exceed deployment ceilings and are discoverable through the project schema. [Query limits](../../reference/analytics.md#query-limits)
 - Operator ingestion suspension and resumable import checkpoints when an allowance is exhausted. These technical controls contain no pricing or billing logic.
 - Optional [owner-local deployment design](shared-deployment-design.md): shared control metadata and DuckLake catalogs, one persistent SQLite volume per worker, and S3 Parquet. Public entry points forward owner-bound requests internally; delivered SQL can run on any worker. Event payloads do not enter operational PostgreSQL, and PostgreSQL DuckLake data inlining is disabled.
 - Cumulative usage publication and cached shared ingestion policies on a ten-second cycle, with fail-closed stale policies and soft quota overshoot across owners. Tenant interactive query places are reserved immediately in PostgreSQL, with per-process protection and renewable execution-scoped expiry.
-- Bounded native PostgreSQL metadata settings and schema-visible I/O allowances. Shared interactive queries retain their places until calls return. Failed renewal or unresponsive native work quarantines the affected project's interactive engine. Worker status reports uncertain permits and quarantine without probing native engines. Automatic expiry can permit physical concurrency overshoot during a partition. See [shared execution](../reference/shared-deployment.md#native-timeouts-and-worker-supervision).
+- Bounded native PostgreSQL metadata settings and schema-visible I/O allowances. Shared interactive queries retain their places until calls return. Failed renewal or unresponsive native work quarantines the affected project's interactive engine. Worker status reports uncertain permits and quarantine without probing native engines. Automatic expiry can permit physical concurrency overshoot during a partition. See [shared execution](../../reference/shared-deployment.md#native-timeouts-and-worker-supervision).
 - Stable project-owner/volume identity, owner-down `503` responses, and explicit `delivery.pending_unknown` on non-owner query responses. Shared cleanup preserves at least eight days of snapshots and obsolete-file grace. Automatic owner failover and native whole-instance backup/restore are not supported in shared mode.
-- Read-only MCP tools `porcupine_schema` and `porcupine_query` for analysis. Clients can approve them without approving the generic `porcupine_call`. [MCP](../reference/mcp.md)
+- Read-only MCP tools `porcupine_schema` and `porcupine_query` for analysis. Clients can approve them without approving the generic `porcupine_call`. [MCP](../../reference/mcp.md)
 - Removed inert ClickHouse-era API fields: `use_cache` in `query-events` (now rejected), `sql.result_cache` and the zero scan-quota limits in `get-event-schema`, and the zero read and temporary-disk limits in exports.
-- Versioned schema migrations for the journal, local control and shared control databases. Newer or unknown databases are refused before any change, and restores accept older versions. [Schema versions](../storage.md#unreleased-schema-versions)
+- Versioned schema migrations for the journal, local control and shared control databases. Newer or unknown databases are refused before any change, and restores accept older versions. [Schema versions](../../storage.md#unreleased-schema-versions)
 - A fresh data directory is required. Pre-tenant SQLite databases are rejected; no legacy migration or compatibility layer is included.
 
 The default remains a single-process SQLite deployment. Optional shared mode is implementation work, not a released hosting guarantee. Hosted billing, tenant-wide rate limiting, replicated acceptance, automatic owner failover, and separately provisioned analytical compute remain future work below. None of these unreleased changes is included in the published v0.14.0 release.
 
 ## Available in v0.14.0
 
-- **Capture.** Native JSON, supported PostHog SDK profiles and Segment ingestion. Native, PostHog, and Segment history can be imported from JSONL through one resumable CLI command. PostHog persons files provide profile snapshots. Stable producer IDs support retries. [Inputs](../collect-events.md)
-- **Analytics.** Project-scoped DuckDB SQL through API, CLI and MCP. Discover event names, properties, activity, recent examples and sampled property coverage with event profiles. Identify links anonymous activity to a stable actor. [Queries](../query-events.md) · [Event profiles](../reference/event-discovery.md)
-- **Delivery.** One-off query exports, individual or batched event webhooks, and scheduled SQL-to-S3 pipelines. [Pipelines](../pipelines.md)
-- **Management.** Projects, scoped credentials, human email/OIDC sign-in and service accounts, through the shared API contract and agent tools. [Projects](../reference/projects.md) · [Permissions](../reference/security-and-interfaces.md)
-- **Operations.** Local DuckLake by default, optional [analytical S3](../reference/ducklake-s3.md) for fresh deployments, native history cleanup and administrator-visible status. [Scheduled backups](../reference/native-backups.md) support local data files; [independent S3 backups and offline recovery](../reference/native-backup-recovery.md) support both local and analytical S3 data.
+- **Capture.** Native JSON, supported PostHog SDK profiles and Segment ingestion. Native, PostHog, and Segment history can be imported from JSONL through one resumable CLI command. PostHog persons files provide profile snapshots. Stable producer IDs support retries. [Inputs](../../collect-events.md)
+- **Analytics.** Project-scoped DuckDB SQL through API, CLI and MCP. Discover event names, properties, activity, recent examples and sampled property coverage with event profiles. Identify links anonymous activity to a stable actor. [Queries](../../query-events.md) · [Event profiles](../../reference/event-discovery.md)
+- **Delivery.** One-off query exports, individual or batched event webhooks, and scheduled SQL-to-S3 pipelines. [Pipelines](../../pipelines.md)
+- **Management.** Projects, scoped credentials, human email/OIDC sign-in and service accounts, through the shared API contract and agent tools. [Projects](../../reference/projects.md) · [Permissions](../../reference/security-and-interfaces.md)
+- **Operations.** Local DuckLake by default, optional [analytical S3](../../reference/ducklake-s3.md) for fresh deployments, native history cleanup and administrator-visible status. [Scheduled backups](../../reference/native-backups.md) support local data files; [independent S3 backups and offline recovery](../../reference/native-backup-recovery.md) support both local and analytical S3 data.
 
 ## Added in v0.13.0
 
@@ -39,11 +41,11 @@ The default remains a single-process SQLite deployment. Optional shared mode is 
 
 ## Added in v0.14.0
 
-- One-command historical imports for native, PostHog and Segment files or directories, including gzip streaming, automatic resume, original occurrence times and stable-ID deduplication. [Import guide](../imports.md)
-- Published native schemas and `get-event-input-contract` through API, CLI and MCP. [Event contract](../reference/native-event-contract.md)
-- Smaller analytical transactions after a typed native out-of-memory error. Unfinished work stays queued. [Large-event delivery](ducklake-large-batches.md)
-- Complete backups to an independent S3 destination and offline recovery through the standalone CLI. [Backup and recovery](../reference/native-backup-recovery.md)
-- DuckDB/DuckLake as the only analytical runtime. Explicit acceptance/import/webhook transaction owners, an independent SQL-policy module, and offline CLI contract generation. [Architecture boundaries](native-only-architecture.md)
+- One-command historical imports for native, PostHog and Segment files or directories, including gzip streaming, automatic resume, original occurrence times and stable-ID deduplication. [Import guide](../../imports.md)
+- Published native schemas and `get-event-input-contract` through API, CLI and MCP. [Event contract](../../reference/native-event-contract.md)
+- Smaller analytical transactions after a typed native out-of-memory error. Unfinished work stays queued. [Large-event delivery](../ducklake-large-batches.md)
+- Complete backups to an independent S3 destination and offline recovery through the standalone CLI. [Backup and recovery](../../reference/native-backup-recovery.md)
+- DuckDB/DuckLake as the only analytical runtime. Explicit acceptance/import/webhook transaction owners, an independent SQL-policy module, and offline CLI contract generation. [Architecture boundaries](../native-only-architecture.md)
 
 ## Next validation: manage a team through the public API
 
@@ -89,7 +91,7 @@ database writes. Payment integration follows that contract validation.
   Record the author and last modification time. Documentation remains optional
   and never gates ingestion. See the deferred automation ideas below.
 - Expand historical adapter coverage from real-world export variants while preserving the common acceptance rules.
-- Define a separate native historical person-snapshot encoding against the [event contract](../reference/native-event-contract.md). Whether additional official SDK connectors or a plugin framework are useful remains an open question.
+- Define a separate native historical person-snapshot encoding against the [event contract](../../reference/native-event-contract.md). Whether additional official SDK connectors or a plugin framework are useful remains an open question.
 - Scheduled SQL results delivered to webhooks, with optional alert conditions, cooldowns and repeat suppression. Reuse durable runs and destination credentials.
 - Operational metrics and measured hosting profiles. Add an external queue or multiple writers only when a deployment need justifies the shared state and failure-model changes.
 
@@ -247,6 +249,6 @@ Automatic documentation from SDK payloads, competing-description consolidation,
 codebase-driven documentation refresh, and proactive documentation reminders remain
 on hold. The editable event and property documentation above is separate planned work.
 
-Saved parameterized SQL queries and report collections remain on hold. Agents write SQL and use tested [DuckDB recipes](../reference/duckdb-recipes.md). A server-side graph renderer is not a current priority; the client agent can generate graphs where its tools support it.
+Saved parameterized SQL queries and report collections remain on hold. Agents write SQL and use tested [DuckDB recipes](../../reference/duckdb-recipes.md). A server-side graph renderer is not a current priority; the client agent can generate graphs where its tools support it.
 
-General aliasing, merging identified users, unlinking, native result caching and finite native receipt history remain deferred. PostgreSQL-backed remote DuckLake catalogs are part of unreleased shared-deployment work, not v0.14.0. The [compatibility matrix](../../compat/matrix.json) records the exact supported SDK behaviors. Feature flags and replay are outside the current product scope.
+General aliasing, merging identified users, unlinking, native result caching and finite native receipt history remain deferred. PostgreSQL-backed remote DuckLake catalogs are part of unreleased shared-deployment work, not v0.14.0. The [compatibility matrix](../../../compat/matrix.json) records the exact supported SDK behaviors. Feature flags and replay are outside the current product scope.

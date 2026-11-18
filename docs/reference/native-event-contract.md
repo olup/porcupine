@@ -125,7 +125,7 @@ In SQLite-journal deployments, success confirms the acceptance transaction. Read
 
 The SQLite-journal response includes `durability: "durable"` and retains the committed receipt fields.
 
-The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](../design/hosted-profile-composition.md). It uses the same route and HTTP 200 with the following response.
+The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](../design/hosted-architecture.md#configuration). It uses the same route and HTTP 200 with the following response.
 
 ```json
 {"status":1,"durability":"buffered","received":1,"receipts":[{"message_id":"msg-001","uuid":"opaque-server-uuid"}]}

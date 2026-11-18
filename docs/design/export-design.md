@@ -1,6 +1,6 @@
 # SQL export design
 
-> Implementation reference for the standalone export domain and the unreleased hosted provider. See [the export guide](../exports.md) for user operations.
+> Implementation reference for the standalone and hosted export providers. See [the export guide](../exports.md) for user operations.
 
 Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](../exports.md) for requests and operator settings.
 
@@ -10,7 +10,7 @@ Exports stream one validated DuckDB query into private gzip files. They reuse pr
 
 The domain stores creator-scoped idempotency, delivery watermarks, claims, retry outcomes, progress, multipart checkpoints, publication, retention, and cleanup. `RunOne` performs a bounded worker cycle. Successful publication and `usage.Recorder.AddTx` share the same SQLite transaction and the same winning attempt predicate.
 
-`ExportDependencies` supplies the journal and control databases, clock, usage recorder, external issuer, and a native `ExportReader`. Its function fields check current credential or caller authority, active project and shared owner fences, project activity, and shared analytical admission. These functions do not update export jobs. The native reader retains its query permit until `Export` returns, and the domain retains local admission and project activity until execution returns.
+`ExportDependencies` supplies the journal and control databases, clock, usage recorder, external issuer, and a native `ExportReader`. Its function fields check current credential or caller authority, active project and tenant fences, project activity, and shared analytical admission. These functions do not update export jobs. The native reader retains its query permit until `Export` returns, and the domain retains local admission and project activity until execution returns.
 
 The domain derives finite external execution metadata from the current verified caller. It retains the original tenant, issuer, and expiry without storing the token. Reusing an idempotency key cannot renew this metadata. Download signing separately uses the current caller's expiry and the retained object's deadline.
 
@@ -18,7 +18,7 @@ Project deletion calls `StageExportProjectCleanupTx` inside the journal removal 
 
 ## Hosted export provider
 
-The staged PostgreSQL provider uses `NewPostgresExports` and stores job state, finite external authority, upload checkpoints, and successful usage in shared control. Admission takes a durable activity ticket before touching the analytical catalog. The hosted startup adapter supplies a project write session and settles accepted mutations. The provider captures the current DuckLake catalog identity and version within that session and commits the job on its PostgreSQL connection. Every retry uses the same version for events and identity tables. Hosted compaction preserves snapshot history used by queued and running jobs.
+The hosted PostgreSQL provider uses `NewPostgresExports` and stores job state, finite external authority, upload checkpoints, and successful usage in shared control. Admission takes a durable activity ticket before touching the analytical catalog. The hosted startup adapter supplies a project write session and settles accepted mutations. The provider captures the current DuckLake catalog identity and version within that session and commits the job on its PostgreSQL connection. Every retry uses the same version for events and identity tables. Hosted compaction preserves snapshot history used by queued and running jobs.
 
 A worker claims a job with a renewable PostgreSQL lease and a unique attempt ID. Expired claims become eligible for cleanup and a new attempt. The prior worker keeps its activity ticket until its native and upload calls return. Artifact writes, progress, and publication verify the current attempt. Publication rechecks project and creator authority, and posts export usage in the same transaction as success.
 
