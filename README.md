@@ -46,6 +46,8 @@ Run `docker compose -f compose.yaml -f compose.release.yaml down` to stop the se
 
 Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/storage.md#deployment-profiles), [team setup](docs/reference/tenant-access.md), and [upgrades](docs/hosting.md#upgrade-from-v0151).
 
+Hosted ingestion can lose acknowledged events if a worker crashes before committing them to DuckLake.
+
 Send events with [native or Segment inputs](docs/reference/native-and-segment-ingestion.md) or a [supported PostHog SDK](docs/reference/compatibility.md). Use the CLI to [import history](docs/imports.md).
 
 [Query or export events](docs/query-events.md) with SQL. For scheduled results or webhook delivery, use a [pipeline](docs/pipelines.md).
