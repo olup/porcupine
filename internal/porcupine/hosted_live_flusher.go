@@ -29,6 +29,7 @@ type hostedPublisherHooks struct {
 	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
 	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
+	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
 }
 
 func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store, effects *output.PGPipelineEffects, hooks hostedPublisherHooks) (*hostedLiveFlusher, error) {
@@ -49,6 +50,7 @@ func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordi
 			ensureCapacity:        hooks.ensureCapacity,
 			loadRule:              hooks.loadRule,
 			cancelMutationWebhook: hooks.cancelMutationWebhook,
+			checkpointImport:      hooks.checkpointImport,
 		},
 		policy: hostedIngestionPolicy{db: control},
 	}, nil

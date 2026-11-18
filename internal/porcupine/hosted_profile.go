@@ -119,6 +119,7 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 		ensureCapacity:        p.EnsureHostedPipelineCapacityTx,
 		loadRule:              p.HostedPipelineRule,
 		cancelMutationWebhook: effects.CancelHostedWebhookEventTx,
+		checkpointImport:      checkpointHostedImport,
 	})
 	if err != nil {
 		return nil, err
