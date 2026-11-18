@@ -188,7 +188,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour)
 	flush := func(count int) hostedFlushSample {
 		t.Helper()
-		batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project, admitted: true}
+		batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project}
 		for i := range count {
 			at = at.Add(time.Millisecond)
 			instant := at.Format(time.RFC3339Nano)

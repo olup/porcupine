@@ -123,8 +123,6 @@ type reservingHostedStager struct {
 	fence            lakeapi.ProjectWriteFence
 	plan             output.PipelinePlan
 	routing          frozenLiveOutputPlan
-	admission        *hostedIngestionPolicy
-	admitted         bool
 	uploadedManifest lakeapi.ImmutableObjectRef
 	binding          output.PipelineBinding
 }
@@ -133,14 +131,6 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	p := s.publisher
 	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
 	s.binding = output.PipelineBinding{}
-	if !s.admitted {
-		if err := s.admission.admit(ctx, selected.TenantID); err != nil {
-			return lakeapi.StagedLiveEffects{}, err
-		}
-		// Retrying this accepted native operation does not revoke its admission if
-		// a grouped refresh observes a later policy reduction.
-		s.admitted = true
-	}
 	stager, err := newHostedImmutableEffects(p.objects, s.fence, s.routing)
 	if err != nil {
 		return lakeapi.StagedLiveEffects{}, err

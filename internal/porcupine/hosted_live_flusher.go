@@ -45,6 +45,7 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 	return func() { _ = tx.Rollback() }, nil
 }
 
+// FlushLive processes batches admitted by the buffered ingestion path.
 func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch) error {
 	if b.id == "" || b.projectID == "" || len(b.events) == 0 {
 		return output.ErrPipelineConflict
@@ -74,7 +75,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 			return e
 		}
 		if !recovery {
-			e = f.commitLiveBatch(ctx, session, fence, batch, b.admitted)
+			e = f.commitLiveBatch(ctx, session, fence, batch)
 			if !errors.Is(e, lakeapi.ErrNativeEffectsPending) {
 				return e
 			}
@@ -88,7 +89,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
 			return e
 		}
-		return f.commitLiveBatch(ctx, session, fence, batch, b.admitted)
+		return f.commitLiveBatch(ctx, session, fence, batch)
 	})
 }
 
@@ -103,7 +104,7 @@ func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi
 	return err == nil, err
 }
 
-func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch, admitted bool) error {
+func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch) error {
 	seq, hash, err := f.publisher.checkpoint(ctx, batch.Scope, batch.TenantID)
 	if err != nil {
 		return err
@@ -119,7 +120,7 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 			if err != nil {
 				return lakeapi.StagedLiveEffects{}, err
 			}
-			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
+			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing}
 		}
 		return stager.StageLiveEffects(ctx, selected)
 	})
