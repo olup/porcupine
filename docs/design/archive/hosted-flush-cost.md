@@ -72,3 +72,41 @@ The baseline inventory counts 20 responsibilities on the live flush path with a 
 18. Verify staged output objects against the native proof and reservation.
 19. Publish webhook jobs, advance the PostgreSQL checkpoint, and account for usage in one transaction.
 20. Acknowledge published effects in DuckLake.
+
+## Paired v0.15.1 comparison
+
+A single GitHub Actions job ran v0.15.0 and the combined v0.15.1 production source sequentially. The tested candidate was `eabef779c159a502712468e0559d9197a985d110`. Git confirmed its tree was identical to merge `c5722941b096ea8aff7dc1d14f5dea6f24d4ac65` from [#113](https://github.com/olup/porcupine/pull/113), which followed [#107](https://github.com/olup/porcupine/pull/107), [#108](https://github.com/olup/porcupine/pull/108), [#112](https://github.com/olup/porcupine/pull/112), and [#114](https://github.com/olup/porcupine/pull/114). Both revisions used Go 1.26.11 on the same Linux amd64 runner with the same fixture and phase order. The test omits the removed `admitted` field on the candidate. [Paired run and raw JSON](https://github.com/olup/porcupine/actions/runs/44275061370)
+
+Each entry gives v0.15.0 → v0.15.1. Both sides run 20 flushes of 100 events per phase. GETs include whole-object and ranged requests. The DuckLake snapshot delta counts native transactions that create a snapshot.
+
+| Webhook | Starting sequence | p50 (ms) | p95 (ms) | S3 PUTs | S3 GETs | DuckLake snapshots | Guard Parquet PUTs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Paused | 0 | 291.9 → 108.1 | 476.8 → 400.9 | 7 → 5 | 5.90 → 3.85 | 3 → 1 | 3 → 1 |
+| On | 20 | 645.2 → 905.1 | 817.3 → 2455.9 | 109 → 107 | 108.00 → 6.00 | 3 → 1 | 3 → 1 |
+| Paused | 200 | 367.3 → 134.0 | 583.8 → 171.5 | 7 → 5 | 5.95 → 3.95 | 3 → 1 | 3 → 1 |
+| On | 220 | 878.5 → 451.9 | 1192.0 → 723.6 | 109 → 107 | 108.00 → 6.00 | 3 → 1 | 3 → 1 |
+| Paused, after compaction | 240 | 368.0 → 124.8 | 738.3 → 134.1 | 7 → 5 | 6.05 → 4.00 | 3 → 1 | 3 → 1 |
+
+Every measured ordinary flush fell from three to one DuckLake snapshot and from three to one guard Parquet PUT. Each webhook flush saved 100 whole-object reads of webhook bodies. Two fewer native range reads bring the total from 108 to 6 GETs. The two remaining whole-object reads fetch the plan and manifest.
+
+Four phases had lower p50 and p95 latency. The first webhook phase at sequence 20 was slower on the candidate, rising from 645.2 to 905.1 ms at p50 and from 817.3 to 2,455.9 ms at p95. The later webhook phase was faster. The test measures 20 flushes per phase in one fixed-order run on a shared runner. It cannot determine what caused the timing reversal or establish a general webhook latency change.
+
+### Source size
+
+The expanded scope adds non-test `internal/lake/live_commit*.go`, `internal/lake/project_coordinator.go`, and `internal/porcupine/buffered_acceptance.go` to the original file selection. Run the source-count command above with those paths appended before the pipe.
+
+| Revision | Original scope | Expanded scope |
+| --- | ---: | ---: |
+| v0.15.0 | 16,100 | 17,299 |
+| `fae689a`, after A and B and before the C production changes | 16,817 | 18,079 |
+| Combined candidate | 16,871 | 18,198 |
+| v0.15.0 to combined | +771 | +899 |
+| C changes | +54 | +119 |
+
+The measured path made fewer commits and storage requests. Source grew in both scopes. The expanded scope includes the new predecessor proof check and the coordinator acquisition deadline.
+
+### Flush operations
+
+The inventory falls from 20 to 18 independent responsibilities. Steps 4 and 20 no longer require separate native commits on the ordinary live path. Step 16 writes the fence, previous publication acknowledgment, data, and proof together. Step 10 validates the predecessor checkpoint and proof, then allocates the next effect sequence. The explicit full proof-history count remains available on recovery paths. Step 17 still checks active tenant and project state, and releases those row locks before native commit. Step 18 checks the fresh manifest, plan, and pinned references. The S3 upload validates each body's checksum, and recovery still reads bodies while replaying saved evidence.
+
+The output plan, output-capacity reservation, and publication still have separate PostgreSQL phases. Publication reuses the committed binding from staging and skips the fresh reservation lookup. An aborted writer can leave S3 objects before native commit. The durable reservation identifies that attempt and charges capacity before PUT. Publication makes the jobs visible after the native proof exists. The fixture does not count PostgreSQL statements or transactions.
