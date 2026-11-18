@@ -28,8 +28,11 @@ type TenantDeletionOutput struct{ Body TenantDeletion }
 
 var errRestoredArtifactsPending = errors.New("restored artifact ownership requires reconciliation")
 
-const tenantNativeOwnedPrincipals = `SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
-UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1)`
+const tenantCredentialIDs = `SELECT principal_id FROM tenant_credentials WHERE tenant_id=$1
+UNION SELECT id FROM access_keys WHERE owner_tenant_id=$1`
+
+const tenantNativeOwnedPrincipals = tenantCredentialIDs + `
+UNION SELECT principal_id FROM service_api_keys WHERE client_id IN (` + tenantCredentialIDs + `)`
 
 func (s *Service) tenantOwnedPrincipals() string {
 	query := tenantNativeOwnedPrincipals
@@ -167,21 +170,14 @@ SELECT id,tenant_id,0 FROM projects WHERE tenant_id=$1 ON CONFLICT(project_id) D
 	return tx.Commit()
 }
 
-// recordTenantScopedCredentials makes the fence own every non-human credential
-// whose project set lies entirely in this tenant: operator-created multi-project
-// keys and OAuth clients, and service keys and consent grants derived from them.
-// Ownership is not recorded when these are created, because tenant_credentials
-// also turns a credential into a tenant machine actor. Instance-level
-// credentials (all projects, or instance or tenant administration) and
-// credentials that still reach another tenant are never owned; the project
-// purge removes this tenant's projects from the latter. The caller's fence
-// serializes credential creation, so the recorded set is complete.
+// Assign ownership to credentials issued before it was recorded at creation.
+// The deletion fence serializes credential issuance in this transaction.
 func recordTenantScopedCredentials(ctx context.Context, tx *sql.Tx, tenant string, projects []string) error {
 	if len(projects) == 0 {
 		return nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,k.projects FROM access_keys k
-WHERE k.id NOT LIKE 'external:%' AND k.id<>coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),'')
+WHERE k.owner_tenant_id='' AND k.id NOT LIKE 'external:%' AND k.id<>coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),'')
 AND NOT EXISTS(SELECT 1 FROM tenant_credentials t WHERE t.principal_id=k.id)
 AND NOT EXISTS(SELECT 1 FROM email_humans h WHERE h.principal_id=k.id)
 ORDER BY k.id`)
@@ -200,7 +196,7 @@ ORDER BY k.id`)
 			rows.Close()
 			return errors.New("invalid stored credential grants")
 		}
-		if len(scope) == 0 || !subset(permissions, auth.ProjectPermissions()) || !subset(scope, projects) {
+		if !projectCredentialScope(permissions, scope) || !subset(scope, projects) {
 			continue
 		}
 		owned = append(owned, id)
@@ -209,7 +205,7 @@ ORDER BY k.id`)
 		return err
 	}
 	for _, id := range owned {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, tenant); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET owner_tenant_id=$2 WHERE id=$1`, id, tenant); err != nil {
 			return err
 		}
 	}

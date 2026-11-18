@@ -13,6 +13,7 @@ import (
 // and instance-level credentials keep working.
 func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	t.Parallel()
+	skipInShort(t)
 	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example", AllowLegacyKeys: true}})
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +43,9 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	crossID, rawCross := namedKey("Cross tenant key", read, []string{pa1, pb1})
 	_, rawInstance := namedKey("Instance reader", read, []string{"*"})
 	clientA, clientB := operatorClient("A machine client", []string{pa1, pa2}), operatorClient("B machine client", []string{pb1, pb2})
+	previousProject, _ := tenantJourneyProject(t, s, a)
+	prunedID, _ := namedKey("A key for previously deleted project", read, []string{previousProject})
+	request(t, s, "DELETE", "/api/v1/projects/"+previousProject, adminToken, "", 204)
 	for _, credential := range []string{rawA, rawInstance, clientA.token, clientA.key} {
 		request(t, s, "GET", "/api/v1/projects/"+pa2+"/schema", credential, "", 200)
 	}
@@ -55,7 +59,7 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	oauthProtocolRequest(t, s, clientA.id, clientA.secret, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 401)
 	for _, db := range []*sql.DB{s.db, s.control} {
 		var count int
-		if err := db.QueryRow(`SELECT count(*) FROM access_keys WHERE id IN ($1,$2,$3) OR token_hash=$4 OR token_hash=$5 OR name IN ('A multi key','A machine client','A machine client static')`, keyA, clientA.id, clientA.keyID, hash(rawA), hash(clientA.key)).Scan(&count); err != nil || count != 0 {
+		if err := db.QueryRow(`SELECT count(*) FROM access_keys WHERE id IN ($1,$2,$3,$4) OR token_hash=$5 OR token_hash=$6 OR name IN ('A multi key','A machine client','A machine client static')`, keyA, clientA.id, clientA.keyID, prunedID, hash(rawA), hash(clientA.key)).Scan(&count); err != nil || count != 0 {
 			t.Fatal("tenant-scoped operator credential survived", count, err)
 		}
 	}
