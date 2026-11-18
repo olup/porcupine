@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -89,7 +91,12 @@ func TestDuckLakeS3SharedPostgresHostedHistoryCleanupKeepsRestoreFloor(t *testin
 	var floor atomic.Pointer[time.Time]
 	config := Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, BootstrapToken: adminToken,
 		Shared: &SharedConfig{DatabaseURL: dsn}, DuckLake: &lake,
-		HostedRecoveryFloor: func(context.Context) (time.Time, error) { return *floor.Load(), nil }}
+		HostedRecoveryFloor: func(context.Context) (time.Time, error) {
+			if at := floor.Load(); at != nil {
+				return *at, nil
+			}
+			return time.Time{}, errors.New("restore point not recorded")
+		}}
 	s, host, _ := hostedCleanupWorker(t, config)
 	project, _ := sharedJourneyProject(t, host.URL, defaultTenantID, "restore floor")
 	neighbor, _ := sharedJourneyProject(t, host.URL, defaultTenantID, "restore floor neighbor")
@@ -157,7 +164,7 @@ func TestDuckLakeS3SharedPostgresHostedHistoryCleanupKeepsRestoreFloor(t *testin
 	}
 
 	// Without a recovery floor every pass refuses and reports the guard.
-	s.hosted.recoveryFloor = nil
+	floor.Store(nil)
 	passes()
 	var code string
 	if err := s.control.QueryRowContext(t.Context(), `SELECT last_error FROM pc_native_cleanup WHERE project_id=$1`, project).Scan(&code); err != nil || code != "restore_guard" {
@@ -190,6 +197,11 @@ func (f duckLakeS3Fixture) objectsContaining(t *testing.T, prefix, marker string
 		object, err := f.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(f.storage.Bucket), Key: aws.String(key)})
 		if err != nil {
 			cancel()
+			// Cleanup can remove a file between listing and reading it.
+			var gone *types.NoSuchKey
+			if errors.As(err, &gone) {
+				continue
+			}
 			s3FixtureError(t, f, "read fixture object", err)
 		}
 		body, err := io.ReadAll(object.Body)

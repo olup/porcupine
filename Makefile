@@ -134,4 +134,4 @@ shared-integration: shared-postgres-fixture-test
 .PHONY: hosted-restore-drill
 hosted-restore-drill:
 	@test -n "$$PORCUPINE_TEST_PITR_POSTGRES_BIN" || { echo 'Set PORCUPINE_TEST_PITR_POSTGRES_BIN to the PostgreSQL binary directory'; exit 1; }
-	CGO_ENABLED=0 go run ./internal/cmd/ducklake-s3-integration -run '^TestHostedPostgresPITR$$' -race=false -timeout=240s
+	CGO_ENABLED=0 go run ./internal/cmd/ducklake-s3-integration -run '^TestSharedHostedPostgresPITR$$' -race=false -timeout=240s

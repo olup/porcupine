@@ -17,7 +17,7 @@ import (
 
 const pitrRestorePoint = "before_event_mutations"
 
-func TestHostedPostgresPITR(t *testing.T) {
+func TestSharedHostedPostgresPITR(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	bin := os.Getenv("PORCUPINE_TEST_PITR_POSTGRES_BIN")
@@ -103,6 +103,13 @@ func TestHostedPostgresPITR(t *testing.T) {
 		if err := hosted.hosted.native.CleanupHostedDue(t.Context(), time.Now().Add(time.Duration(30+day)*24*time.Hour), hosted.hosted.flusher.coordinator, hosted.cleanupHostedHistory); err != nil {
 			t.Fatal(err)
 		}
+	}
+	var expired int64
+	if err := hosted.control.QueryRowContext(t.Context(), `SELECT snapshots_expired FROM pc_native_cleanup WHERE project_id=$1`, projectA).Scan(&expired); err != nil {
+		t.Fatal(err)
+	}
+	if expired == 0 {
+		t.Fatal("history cleanup did not expire any snapshots before PITR")
 	}
 	sharedJourneyHTTP(t, primary.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, adminToken, nil, nil, 204)
 	pitrAssertEvent(t, primary.URL, projectA, editor, "")
