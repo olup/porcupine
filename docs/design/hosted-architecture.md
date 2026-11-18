@@ -1,6 +1,6 @@
 # Hosted architecture
 
-This guide describes Porcupine v0.15.1. [Standalone](../architecture.md) acknowledges live events after its SQLite journal commits. Hosted acknowledges validated admission to bounded worker memory. An acknowledged but uncommitted hosted event can be lost on a crash or incomplete shutdown. For release differences and upgrade requirements, see [Changes after v0.15.0](#changes-after-v0150).
+This guide describes Porcupine v0.16.0. [Standalone](../architecture.md) acknowledges live events after its SQLite journal commits. Hosted acknowledges validated admission to bounded worker memory. An acknowledged but uncommitted hosted event can be lost on a crash or incomplete shutdown. See the [hosting upgrade steps](../hosting.md#upgrade-from-v0151) and the [v0.15.0 release differences](#changes-after-v0150).
 
 Hosted workers share PostgreSQL for control, coordination, operational jobs, and DuckLake metadata. S3 stores Parquet and immutable job inputs and outputs. Workers are replaceable behind an ingress and use disposable scratch space. PostgreSQL holds object references and job state. Event bodies, import parser tails, and mutation bodies live in memory before their respective commit or staging boundary and in S3 when persisted. DuckLake data inlining is disabled. Protect the catalog as sensitive data because its statistics can contain derived event values.
 

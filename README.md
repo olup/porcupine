@@ -12,7 +12,7 @@ Existing option where big inspirations - posthog, openpanel, pug - but no one of
 
 The rest of this readme is LLM generated.
 
-[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.15.1)
+[Agent quickstart](https://olup.github.io/porcupine/llms.txt) · [Local setup](#local-setup) · [Documentation](docs/README.md) · [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.16.0)
 
 ## Quickstart
 
@@ -25,7 +25,7 @@ Paste this into your coding agent:
 The example runs one Porcupine server with embedded DuckDB and DuckLake on your laptop. You’ll need Git, curl, OpenSSL, jq and Docker Compose 2.24.4 or newer. Install the [standalone CLI](cli/README.md) and run this in a POSIX shell.
 
 ```sh
-git clone --branch v0.15.1 https://github.com/olup/porcupine.git
+git clone --branch v0.16.0 https://github.com/olup/porcupine.git
 cd porcupine
 docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
 docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
@@ -44,7 +44,7 @@ Run `docker compose -f compose.yaml -f compose.release.yaml down` to stop the se
 
 ## Use and run Porcupine
 
-Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/storage.md#deployment-profiles), [team setup](docs/reference/tenant-access.md), and [upgrades](docs/hosting.md#upgrade-from-v0150).
+Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/storage.md#deployment-profiles), [team setup](docs/reference/tenant-access.md), and [upgrades](docs/hosting.md#upgrade-from-v0151).
 
 Send events with [native or Segment inputs](docs/reference/native-and-segment-ingestion.md) or a [supported PostHog SDK](docs/reference/compatibility.md). Use the CLI to [import history](docs/imports.md).
 
