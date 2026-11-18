@@ -123,16 +123,17 @@ rows=0,bytes=0,decoded_bytes=0,file_count=0,error=''`
 		if err := s.beginAttemptTx(ctx, tx, job.ProjectID, attempt); err != nil {
 			return storedExport{}, err
 		}
+		// A registered attempt ends on every failed path, even after rollback.
+		project := job.ProjectID
 		err = verifyExportMutation(tx.ExecContext(ctx, claim+`,lease_until=`+exportLeaseExtension+eligible, args...))
-		if err != nil {
-			return storedExport{}, err
+		if err == nil {
+			job, err = s.scanExport(tx.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE id=$1`, job.ID))
 		}
-		job, err = s.scanExport(tx.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE id=$1`, job.ID))
-		if err != nil {
-			return storedExport{}, err
+		if err == nil {
+			err = tx.Commit()
 		}
-		if err = tx.Commit(); err != nil {
-			s.finishExportActivity(job.ProjectID, attempt)
+		if err != nil {
+			s.finishExportActivity(project, attempt)
 			return storedExport{}, err
 		}
 		return job, nil

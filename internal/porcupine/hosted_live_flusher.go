@@ -19,6 +19,7 @@ type hostedLiveFlusher struct {
 	coordinator        *lakeapi.PostgresProjectCoordinator
 	publisher          *hostedEffectPublisher
 	policy             hostedIngestionPolicy
+	incarnation        *hostedIncarnation
 	returnedActivities sync.Map
 }
 
