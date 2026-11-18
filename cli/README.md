@@ -54,7 +54,7 @@ Use `porcupine list-projects` to find the project ID. Renaming requires `managem
 porcupine rename-project --id PROJECT_ID --body '{"name":"Research"}'
 ```
 
-For permanent deletion, use an instance administrator credential. With browser login, run `porcupine login --admin`, then `porcupine delete-project --id PROJECT_ID`. The command exits successfully when cleanup finishes. See [project lifecycle and cleanup scope](../docs/reference/management-api.md#operations).
+To delete a project, sign in with `porcupine login --tenant-admin` for the owning tenant or `porcupine login --admin` for the instance. Run `porcupine delete-project --id PROJECT_ID`. See [project deletion and cleanup](../docs/reference/projects.md#delete-a-project).
 
 ## Discover commands
 
