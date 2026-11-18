@@ -36,7 +36,10 @@ checked_layout_snapshot bigint NOT NULL DEFAULT 0,
 PRIMARY KEY(source_id,project_id),FOREIGN KEY(source_id,project_id) REFERENCES pc_native_projects(source_id,project_id));`,
 	`ALTER TABLE pc_native_cleanup ADD COLUMN snapshots_expired bigint NOT NULL DEFAULT 0 CHECK(snapshots_expired>=0),
 ADD COLUMN files_deleted bigint NOT NULL DEFAULT 0 CHECK(files_deleted>=0),
-ADD COLUMN last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','restore_guard','failed','interrupted'));`,
+ADD COLUMN last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','restore_guard','failed','interrupted')),
+ADD COLUMN file_cutoff timestamptz, ADD COLUMN files_observed_at timestamptz,
+ADD COLUMN file_set text,
+ADD CHECK((file_cutoff IS NULL) = (files_observed_at IS NULL) AND (file_cutoff IS NULL) = (file_set IS NULL));`,
 }
 
 // Caller holds the domain initialization advisory lock. Catalog metadata can

@@ -103,7 +103,7 @@ func NormalizeDuckLakeCleanup(c *DuckLakeConfig) error {
 // restoreGraceCovered reports cleanup_grace >= restore_window +
 // restore_max_reader_time + restore_safety_margin with each term set.
 func restoreGraceCovered(c DuckLakeConfig) bool {
-	if c.RestoreWindow < time.Second || c.RestoreMaxReaderTime < time.Second || c.RestoreSafetyMargin < time.Second {
+	if c.CleanupGrace < c.RestoreWindow || c.RestoreWindow < time.Second || c.RestoreMaxReaderTime < time.Second || c.RestoreSafetyMargin < time.Second {
 		return false
 	}
 	// Subtract from the grace so large durations cannot wrap the sum.

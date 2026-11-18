@@ -148,6 +148,21 @@ func TestDuckLakeS3SharedPostgresHostedHistoryCleanupKeepsRestoreFloor(t *testin
 		t.Fatal("cleanup deleted the restore target's copy of the event")
 	}
 
+	// The schedule was written before PostgreSQL committed the expiry. A floor
+	// between that schedule and the committed observation still protects it.
+	var cutoff, observed time.Time
+	if err := s.control.QueryRowContext(t.Context(), `SELECT file_cutoff,files_observed_at FROM pc_native_cleanup WHERE project_id=$1`, project).Scan(&cutoff, &observed); err != nil {
+		t.Fatal(err)
+	}
+	if !cutoff.Before(observed) {
+		t.Fatalf("the schedule cutoff %v did not precede its observation %v", cutoff, observed)
+	}
+	floor.Store(&cutoff)
+	passes()
+	if _, removed := progress(); removed != 0 {
+		t.Fatalf("cleanup deleted %d files below the committed observation", removed)
+	}
+
 	advanced := time.Now()
 	floor.Store(&advanced)
 	passes()

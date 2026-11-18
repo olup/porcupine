@@ -30,11 +30,9 @@ type HostedCleanupStats struct {
 
 // HostedCleanupHorizon returns the snapshot-expiry and file-deletion cutoffs for
 // one pass at now. DuckLake schedules a file for deletion when the last snapshot
-// that references it expires. A metadata restore to a target at or after that
-// schedule time no longer references the file. Files are therefore deleted only
-// when they were scheduled before the verified recovery floor and before
-// now-cleanup_grace, where the grace covers the restore window, the longest
-// reader and the safety margin.
+// that references it expires. A file can be deleted once it is observed on
+// the committed schedule before both the verified recovery floor and
+// now-cleanup_grace. The grace covers the restore window, readers and margin.
 func HostedCleanupHorizon(c DuckLakeConfig, now, floor time.Time) (snapshotBefore, fileBefore time.Time, err error) {
 	if c.DisableCleanup || now.IsZero() || floor.IsZero() || floor.After(now) ||
 		c.SnapshotRetention < time.Second || !restoreGraceCovered(c) {
@@ -79,18 +77,54 @@ func (s *DuckLakeStore) CleanupHostedProject(ctx context.Context, session *Proje
 			}
 			stats.SnapshotsExpired = int64(len(versions))
 		}
-		olderThan, files, moreFiles, err := registry.deletableFiles(ctx, schema, fileBefore)
+		stats.More = more
+		witness, err := registry.hostedFileWitness(ctx, scope.Key.ProjectID)
 		if err != nil {
 			return err
 		}
-		if files != 0 {
-			statement := "CALL ducklake_cleanup_old_files('lake',older_than=>TIMESTAMPTZ " + LakeLiteral(olderThan.UTC().Format(time.RFC3339Nano)) + ")"
-			if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, &native); err != nil {
+		if witness.observed.Valid {
+			if !witness.observed.Time.Before(floor) {
+				return ErrHostedCleanupGuard
+			}
+			if !witness.observed.Time.Before(fileBefore) {
+				return nil
+			}
+			files, signature, _, err := registry.hostedFileSet(ctx, schema, witness.cutoff.Time)
+			if err != nil {
 				return err
 			}
-			stats.FilesDeleted = files
+			if files != 0 && witness.signature.String == signature {
+				statement := "CALL ducklake_cleanup_old_files('lake',older_than=>TIMESTAMPTZ " + LakeLiteral(witness.cutoff.Time.UTC().Format(time.RFC3339Nano)) + ")"
+				if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, &native); err != nil {
+					return err
+				}
+				stats.FilesDeleted = files
+			}
+			if err := registry.saveHostedFileWitness(ctx, scope.Key.ProjectID, hostedFileWitness{}); err != nil {
+				return err
+			}
 		}
-		stats.More = more || moreFiles
+		nextCutoff, nextFiles, moreFiles, err := registry.deletableFiles(ctx, schema, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if nextFiles != 0 {
+			files, signature, observed, err := registry.hostedFileSet(ctx, schema, nextCutoff)
+			if err != nil {
+				return err
+			}
+			// A prior operation may have completed in the time between the
+			// two reads. Retry with a newly bounded batch in that case.
+			if files != nextFiles {
+				stats.More = true
+				return nil
+			}
+			stats.More = stats.More || moreFiles
+			return registry.saveHostedFileWitness(ctx, scope.Key.ProjectID, hostedFileWitness{
+				cutoff: sql.NullTime{Time: nextCutoff, Valid: true}, observed: sql.NullTime{Time: observed, Valid: true},
+				signature: sql.NullString{String: signature, Valid: true},
+			})
+		}
 		return nil
 	})
 	return stats, err
@@ -208,11 +242,45 @@ WHERE schedule_start<$1 GROUP BY schedule_start ORDER BY schedule_start LIMIT $2
 	if err := rows.Err(); err != nil {
 		return time.Time{}, 0, false, err
 	}
-	if !more {
-		return before, total, false, nil
+	if total == 0 {
+		return time.Time{}, 0, false, nil
 	}
-	// Schedule times have microsecond precision; the next group starts later.
-	return last.Add(time.Microsecond), total, true, nil
+	// Use the observed last group so a later group cannot enter this batch.
+	return last.Add(time.Microsecond), total, more, nil
+}
+
+// NOW() in a DuckLake schedule row is the start of the metadata transaction.
+// Record the database clock after reading committed rows under the project
+// coordinator. The floor must pass that observation, even if the transaction
+// wrote the schedule earlier. Keeping this batch across retries avoids moving
+// the observation time forward every time the floor is behind it.
+type hostedFileWitness struct {
+	cutoff, observed sql.NullTime
+	signature        sql.NullString
+}
+
+func (r *postgresNativeRegistry) hostedFileWitness(ctx context.Context, project string) (w hostedFileWitness, err error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
+	err = r.db.QueryRowContext(ctx, `SELECT file_cutoff,files_observed_at,file_set FROM pc_native_cleanup
+WHERE source_id=$1 AND project_id=$2`, r.source, project).Scan(&w.cutoff, &w.observed, &w.signature)
+	return w, err
+}
+
+func (r *postgresNativeRegistry) hostedFileSet(ctx context.Context, schema string, cutoff time.Time) (count int64, signature string, observed time.Time, err error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
+	err = r.db.QueryRowContext(ctx, `SELECT count(*),coalesce(md5(json_agg(path ORDER BY path COLLATE "C")::text),''),clock_timestamp()
+FROM `+schema+`.ducklake_files_scheduled_for_deletion WHERE schedule_start<$1`, cutoff).Scan(&count, &signature, &observed)
+	return count, signature, observed, err
+}
+
+func (r *postgresNativeRegistry) saveHostedFileWitness(ctx context.Context, project string, w hostedFileWitness) error {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
+	_, err := r.db.ExecContext(ctx, `UPDATE pc_native_cleanup SET file_cutoff=$1,files_observed_at=$2,file_set=$3
+WHERE source_id=$4 AND project_id=$5`, w.cutoff, w.observed, w.signature, r.source, project)
+	return err
 }
 
 func (r *postgresNativeRegistry) finishHostedCleanup(ctx context.Context, a nativeCleanupAttempt, state, code string, at, next time.Time, stats HostedCleanupStats) error {
