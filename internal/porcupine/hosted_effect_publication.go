@@ -111,6 +111,12 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 	return plan, routing, nil
 }
 
+type liveEffectStageFunc func(context.Context, lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error)
+
+func (f liveEffectStageFunc) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+	return f(ctx, selected)
+}
+
 type reservingHostedStager struct {
 	publisher *hostedEffectPublisher
 	session   *lakeapi.ProjectWriteSession

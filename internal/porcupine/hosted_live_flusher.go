@@ -107,15 +107,18 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	if err != nil {
 		return err
 	}
-	plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
-	if err != nil {
-		return err
-	}
 	ids, err := session.ReserveEventIDs(ctx, batch.Scope.StreamID, batch.ID, len(batch.Inputs))
 	if err != nil {
 		return err
 	}
-	stager := &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
+	stager := liveEffectStageFunc(func(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+		plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
+		if err != nil {
+			return lakeapi.StagedLiveEffects{}, err
+		}
+		stager := &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
+		return stager.StageLiveEffects(ctx, selected)
+	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
 	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stager, checkpoint, func(ctx context.Context, commit func() error) error {
 		return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
