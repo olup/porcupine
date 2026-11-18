@@ -1,5 +1,7 @@
 # DuckLake release validation
 
+> Historical record of the v0.11.0 validation and test deployment. [Current hosting guide](../../hosting.md)
+
 1. Read the engineering principles and preserve the ClickHouse reference and unrelated worktree edits. Done.
 2. Test bounded native compaction repeatedly for at least three minutes at 1,000 offered events/s with two analytical readers. Record actual rate, queue/freshness, maintenance progress and exact eventual data. A failed or inconclusive capacity predicate is not a pass.
 3. Exercise compaction without the projection mutex against ingestion, identify, edits, deletion and retry/restart. Keep normal domain projection serialized. Adopt concurrent maintenance only if it both progresses and preserves exact results.
@@ -16,4 +18,4 @@
 - PR #27 merged and v0.11.0 published. Both Linux image architectures, six standalone CLI archives and their checksums were verified. Public hosting and agent docs were deployed.
 - Lightsail now runs the official v0.11.0 image. Existing access was retained and all 16,076 prior test/research events were restored with matching event/day counts. Live HTTP, published CLI and connected MCP checks passed, including native/Segment retry IDs, identity, mutations, isolation, batch webhook and S3 exports/pipelines.
 - The S3 pipeline initially failed because the test credentials lacked ListBucket for missing-manifest lookup. After granting the documented permission, retry succeeded and the downloaded three-row output matched its SHA-256. Temporary receiver removed and synthetic pipelines paused.
-- Production producers remain disconnected. Native analytical data stays on local SSD; S3 destination exports do not provide native analytical tiering. See docs/ducklake-maintenance-soak.md for the completed release checkpoint.
+- Production producers remain disconnected. Native analytical data stays on local SSD; S3 destination exports do not provide native analytical tiering. See the [completed release checkpoint](../ducklake-maintenance-soak.md#released-deployment-checkpoint).

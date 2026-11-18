@@ -1,7 +1,6 @@
 # Authentication boundaries and possible simplification
 
-The extraction keeps every existing authentication mode and permission rule.
-It changes package ownership, without changing the HTTP, CLI, or MCP contract.
+This page explains the ownership of built-in authentication and records options for simplifying it. [External authentication](../reference/external-auth.md)
 
 ## Current ownership
 
@@ -42,7 +41,7 @@ keys. Public ingestion keys remain separately restricted to event submission.
 The remaining simplification candidates are direct access-key administration,
 persistent bootstrap credentials, and machine `client_credentials` exchange.
 Removing them would change setup, recovery, and API clients. Review those callers
-and agree on replacements before removing a mode. No mode is removed here.
+and agree on replacements before removing a mode.
 
 ## OAuth dependency boundary
 

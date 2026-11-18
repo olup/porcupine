@@ -1,6 +1,6 @@
 # Test feedback measurements
 
-This change reorganizes test execution after `a34027a`. It changes no production behavior, test fixtures, assertions, dataset sizes, operation deadlines, race settings, or pre-merge scenarios.
+This record measures the test execution changes in [PR #54](https://github.com/olup/porcupine/pull/54) against baseline `a34027a`. Production behavior, test fixtures, assertions, dataset sizes, operation deadlines, race settings, and pre-merge scenarios were held constant.
 
 ## What changed
 
@@ -11,7 +11,7 @@ This change reorganizes test execution after `a34027a`. It changes no production
 - Other packages run with the race detector alongside the backend jobs. Local `make check` and `make check-full` retain their existing short/full meanings.
 - The existing nonroot Docker restoration runs independently of the native HTTP/TLS S3 journeys. The final `go` check waits for every existing validation job, including restoration and SDKs. Existing security and tag-only CLI conditions remain explicit.
 
-No checks have been moved to nightly runs or hidden behind changed-file filters. The repository currently has no configured protection on `main`; this workflow provides a single aggregate check that can be required by branch protection, without claiming that the repository setting was changed.
+No checks have been moved to nightly runs or hidden behind changed-file filters. At the time of measurement, `main` had no branch protection. The workflow provided a single aggregate check that branch protection could require.
 
 ## Local before and after
 

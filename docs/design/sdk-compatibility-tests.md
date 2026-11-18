@@ -41,7 +41,7 @@ scenario, not exactly-once delivery under every failure.
 
 Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](../data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journeys verify SQL identity resolution for historical events.
 
-The browser tests use fetch and a bot-filter override so headless Chromium can send events. The example above restores normal SDK bot filtering for application use.
+The browser tests use fetch and a bot-filter override so headless Chromium can send events. The [application setup guide](../reference/compatibility.md) uses normal SDK bot filtering.
 
 ## Fixtures and provenance
 

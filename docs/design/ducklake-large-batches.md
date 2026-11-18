@@ -2,7 +2,7 @@
 
 > Historical record: this page documents a past design or validation and is not a guide to the current release.
 
-Available in v0.14.0 and later.
+This record covers the standalone batch splitting introduced in v0.14.0. [Standalone delivery and retries](../reference/reliability.md)
 
 Porcupine accepts events into its bounded SQLite queue before replying to the producer. A background worker projects them into DuckLake. An acknowledgment from the ingestion API therefore means durable acceptance, rather than immediate analytical visibility.
 

@@ -41,10 +41,10 @@ DELETE commits a paused state before signaling local cancellation or waiting for
 
 ## Hosted webhook provider
 
-The staged PostgreSQL provider stores the routing rule and encrypted destination separately. The ciphertext is bound to the tenant, project, pipeline incarnation and destination revision. Pausing stops new selection and retains queued deliveries. Replacing credentials retires jobs for the old destination. A live commit can publish a body reference or a batch fragment under its original immutable object prefix.
+The hosted PostgreSQL provider stores the routing rule and encrypted destination separately. The ciphertext is bound to the tenant, project, pipeline incarnation and destination revision. Pausing stops new selection and retains queued deliveries. Replacing credentials retires jobs for the old destination. A live commit can publish a body reference or a batch fragment under its original immutable object prefix.
 
 Workers reconcile the native cut and check durable deletion intents and creator authority before freezing the send. The send transaction holds the project coordinator session. The HTTP attempt begins after that session releases, with a durable project activity ticket and a finite attempt lease. The winning result transaction records delivery status and usage. An expired attempt can be reclaimed using the same body and receiver delivery ID.
 
 Batch assembly reserves capacity and freezes its fragment membership before uploading a body. A deletion can recompose an unattempted batch under its existing delivery ID. When an earlier attempt froze the original membership, the surviving batch has a new delivery ID. Artifact ownership and capacity attribution follow their original immutable namespaces until authorized cleanup proves removal.
 
-Hosted startup must supply the mutation gate and activity callbacks. Restore-gated artifact reclamation and scheduled S3 query pipelines remain activation dependencies.
+Hosted startup supplies the mutation gate and activity callbacks. The flusher, pipeline jobs, and webhook worker share one PostgreSQL pipeline effects handler. Hosted recovery reclaims eligible managed artifacts under the restore policy. Scheduled SQL-to-S3 jobs pin a reconciled snapshot before streaming. [Hosted architecture](hosted-architecture.md#query-permits-and-output-jobs)

@@ -1,12 +1,10 @@
 # SQL export design
 
-> Implementation reference for the standalone and hosted export providers. See [the export guide](../exports.md) for user operations.
-
-Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy while keeping a separate durable job lifecycle. See [the API and configuration](../exports.md) for requests and operator settings.
+Exports stream one validated DuckDB query into private gzip files. They reuse project isolation and the native SQL policy in a separate durable job lifecycle. [Export guide](../exports.md)
 
 ## Module ownership
 
-`internal/output.ExportJobs` owns the complete SQLite export lifecycle. The service constructs it through `NewSQLiteExports` and starts its worker. The HTTP and MCP handlers retain route registration, project authorization, and request validation. The domain invokes native SQL validation when it admits the job. They call the same domain operations for submission, status, pagination, cancellation, and download links.
+`internal/output.ExportJobs` owns the complete SQLite export lifecycle. The service constructs it through `NewSQLiteExports` and starts its worker. HTTP and MCP share operation registration, project authorization, and request validation. They call the same export operations for submission, status, pagination, cancellation, and download links. The export module invokes native SQL validation when it admits the job.
 
 The domain stores creator-scoped idempotency, delivery watermarks, claims, retry outcomes, progress, multipart checkpoints, publication, retention, and cleanup. `RunOne` performs a bounded worker cycle. Successful publication and `usage.Recorder.AddTx` share the same SQLite transaction and the same winning attempt predicate.
 
@@ -42,7 +40,7 @@ Unknown multipart uploads in the create-before-checkpoint interval need an S3 li
 
 ## Resource scope
 
-Each worker runs one background analytical query at a time, shared by one-off exports and scheduled pipelines. Journal-backed admission also considers queue pressure and delivery health. Interactive queries keep their separate admission pool.
+One-off exports and scheduled pipelines start their queries when the worker has no active analytical queries. A background query holds one slot in the worker pool shared with interactive queries. Standalone admission also checks SQLite queue pressure and delivery health.
 
 The worker enforces output, row, file, deadline, sink-bandwidth, pending-job, and retention budgets. Query execution shares the project's engine memory setting with its other work. This is not a per-export memory reservation or a hard process RSS limit. Physical scan quotas and per-query temporary-disk quotas are not implemented.
 

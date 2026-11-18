@@ -1,6 +1,6 @@
 # Hosted architecture
 
-This guide describes Porcupine v0.16.0. [Standalone](../architecture.md) acknowledges live events after its SQLite journal commits. Hosted acknowledges validated admission to bounded worker memory. An acknowledged but uncommitted hosted event can be lost on a crash or incomplete shutdown. See the [hosting upgrade steps](../hosting.md#upgrade-from-v0151) and the [v0.15.0 release differences](#changes-after-v0150).
+Hosted acknowledges validated live events after admission to bounded worker memory. An acknowledged event can be lost if the worker crashes or shuts down before the flush commits. Standalone acknowledges live events after its SQLite journal commits. [Standalone architecture](../architecture.md) [Hosting and upgrades](../hosting.md)
 
 Hosted workers share PostgreSQL for control, coordination, operational jobs, and DuckLake metadata. S3 stores Parquet and immutable job inputs and outputs. Workers are replaceable behind an ingress and use disposable scratch space. PostgreSQL holds object references and job state. Event bodies, import parser tails, and mutation bodies live in memory before their respective commit or staging boundary and in S3 when persisted. DuckLake data inlining is disabled. Protect the catalog as sensitive data because its statistics can contain derived event values.
 
@@ -30,7 +30,7 @@ Run `porcupine config check --config porcupine.json`, then start each worker wit
 
 ## Live admission and shutdown
 
-Native, PostHog, and Segment live adapters share validation, credential-bound project scope, and UUID normalization. The worker admits the entire request or rejects it. Native HTTP 200 includes `durability: "buffered"` and ordered receipts with `message_id` and `uuid`. The original event ID and duplicate outcome are unknown at admission. The native schema and authenticated input contract advertise the profile's acknowledgment. [Event contract](../reference/native-event-contract.md#unreleased-acknowledgment-metadata)
+Native, PostHog, and Segment live adapters share validation, credential-bound project scope, and UUID normalization. The worker admits the entire request or rejects it. Native HTTP 200 includes `durability: "buffered"` and ordered receipts with `message_id` and `uuid`. The original event ID and duplicate outcome are unknown at admission. The native schema and authenticated input contract advertise the profile's acknowledgment. [Event contract](../reference/native-event-contract.md)
 
 The buffer owns the pending event and parsed identity input. It resolves cookieless pseudonyms before enqueueing using shared daily keys and keeps raw peer data out of pending batches. The default two-second flush timer or 5 MiB project threshold triggers dispatch. The buffer accounts for pending and in-flight work against worker and project limits, including per-row and per-project overhead. Defaults are 64 MiB and 100,000 rows per worker, 8 MiB and 10,000 rows per project, 1,024 active projects, and four concurrent flushes. Process RSS also includes handlers, native memory, and caches. During an outage the oldest admitted event can remain pending beyond the flush interval. A query on another worker cannot report that buffer's state. [Hosted runtime reference](../reference/shared-deployment.md)
 
@@ -64,7 +64,7 @@ Explicit event mutations persist a durable intent before success. Immutable S3 o
 
 Hosted SQL, catalog, and profile requests use worker-local slots and renewable PostgreSQL permits. The keeper renews until actual native return, independently of HTTP deadlines. A stuck call or failed permit renewal quarantines that project's interactive engine on the worker. The process stays up and other projects can execute within their limits. A lost heartbeat can free a permit before a partitioned native call returns. Physical concurrency can exceed the configured limit during that window. [Hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
 
-Shared output jobs recheck creator authority and destination revision. Scheduled SQL-to-S3 delivery pins a reconciled snapshot under the project write session and releases the session before streaming. A stable window key, immutable manifest, and conditional cursor update make a retry recoverable after a lost commit. Live events still in memory when the snapshot is pinned can miss that receipt window. Cleanup uses the attempt's original destination credentials. Published customer outputs stay in the customer's bucket. [Pipelines](../pipelines.md)
+Exports and scheduled SQL pipelines share worker capacity with interactive queries. Output jobs recheck creator authority and destination revision. Scheduled SQL-to-S3 delivery pins a reconciled snapshot under the project write session and releases the session before streaming. A stable window key, immutable manifest, and conditional cursor update make a retry recoverable after a lost commit. Live events still in memory when the snapshot is pinned can miss that receipt window. Cleanup uses the attempt's original destination credentials. Published customer outputs stay in the customer's bucket. [Pipelines](../pipelines.md)
 
 ## Usage
 
@@ -86,17 +86,13 @@ Set `cleanup_grace` to at least `restore_window + restore_max_reader_time + rest
 
 Set `ducklake.restore_floor_file` to an absolute path containing one operator-verified RFC3339 timestamp for the earliest supported recovery point, including secondary backups. Update it atomically across the deployment as recovery points expire. Managed project reclamation waits for both the verified floor and grace since inventory. Missing, invalid, or stale evidence keeps reclamation pending. Hosted maintenance schedules compaction and history cleanup under the project write fence. Cleanup rewrites files with deleted rows, expires eligible snapshots, and reclaims obsolete files after the committed deletion schedule passes the restore floor and configured grace. [Cleanup bounds and status](../reference/ducklake-cleanup.md#hosted-profile) [Restore drill](archive/hosted-restore-drill.md)
 
-## Changes after v0.15.0
+S3 and webhook requests already accepted by a provider can outlive the local worker. Reclamation relies on their settling within the grace. An object written after reclamation may fall outside the cleanup inventory. Publication still requires a valid native proof or current output claim.
 
-[v0.15.0](https://github.com/olup/porcupine/tree/v0.15.0) used three DuckLake transactions for an ordinary live flush and charged a shared instance output budget in addition to tenant and project capacity. A project flush failure could block the entire worker, and stuck analytics could prevent the buffer drain. Active hosted catalogs did not run history cleanup, and tickets from dead workers did not expire.
+For earlier measurements, see the [flush cost record](archive/hosted-flush-cost.md). The [changelog](../../CHANGELOG.md) records differences between releases.
 
-For build-specific changes and external authentication updates, see the [changelog](../../CHANGELOG.md). The [flush cost record](archive/hosted-flush-cost.md) details the measured protocol costs and fixture limits.
+## Upgrade worker activity tickets
 
-### Upgrade worker activity tickets
-
-Before upgrading across #103, drain older workers. Tickets from before migration 20 have no incarnation and do not expire. If one remains, block all pre-upgrade executors from restarting and verify provider-side uploads and deliveries have settled. A database operator can remove only the verified ticket by project and activity ID with `incarnation_id IS NULL`. No public endpoint clears tickets.
-
-S3 and webhook requests already accepted by a provider can outlive the local worker. Reclamation relies on their settling within the grace. An object written after reclamation may fall outside the cleanup inventory, but publication still requires a valid native proof or current output claim.
+Drain older workers before upgrading from v0.15.0. Tickets created before migration 20 have a NULL incarnation and never expire automatically. If a ticket remains, block all pre-upgrade executors from restarting and verify that provider-side uploads and deliveries have settled. A database operator can remove the verified ticket by project and activity ID with `incarnation_id IS NULL`. No public endpoint clears tickets. [Upgrade guide](../hosting.md#upgrade-from-v0150)
 
 ## Standalone journal inventory
 
