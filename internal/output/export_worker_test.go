@@ -140,6 +140,62 @@ func TestExportWorkerAdmissionBarrierPressureAndRevokedCreator(t *testing.T) {
 	}
 }
 
+func TestExportWorkerDefersClaimUntilDeliveryAndCapacityAreReady(t *testing.T) {
+	t.Parallel()
+	s := newExportWorkerFixture(t, &exportTestS3{})
+	ctx := t.Context()
+	if _, err := s.db.Exec(`INSERT INTO events(project_id,uuid,event,distinct_id,properties,timestamp,received_at) VALUES('project','pending','purchase','u','{}','now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.Submit(ctx, "project", ExportRequest{IdempotencyKey: "admission", SQL: "SELECT uuid FROM events"}, fixtureActor())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	available := false
+	var acquisitions, releases int
+	s.acquire = func(context.Context) (func(), bool) {
+		acquisitions++
+		if !available {
+			return nil, false
+		}
+		return func() { releases++ }, true
+	}
+	checkDeferred := func(wantAcquisitions int) {
+		t.Helper()
+		worked, err := s.RunOne(ctx)
+		if err != nil || worked {
+			t.Fatalf("worker progressed before admission: worked=%v, err=%v", worked, err)
+		}
+		if acquisitions != wantAcquisitions || releases != 0 {
+			t.Fatalf("attempted %d permit acquisitions and %d releases, want %d acquisitions and no releases", acquisitions, releases, wantAcquisitions)
+		}
+		job, err := s.loadExport(ctx, "project", created.ID)
+		if err != nil || job.State != ExportQueued || job.AttemptID != "" || job.Attempts != 0 || job.StartedAt != "" {
+			t.Fatalf("deferral changed the queued job: %+v, err=%v", job, err)
+		}
+	}
+
+	checkDeferred(0)
+	applyExportEvent(t, s, "project", "pending", "short")
+	if _, err := s.db.Exec(`DELETE FROM events WHERE project_id='project' AND uuid='pending'`); err != nil {
+		t.Fatal(err)
+	}
+	checkDeferred(1)
+
+	available = true
+	if worked, err := s.RunOne(ctx); err != nil || !worked {
+		t.Fatalf("ready export did not run: worked=%v, err=%v", worked, err)
+	}
+	job, err := s.loadExport(ctx, "project", created.ID)
+	if err != nil || job.State != ExportSucceeded || job.Rows != 1 || job.Attempts != 1 {
+		t.Fatalf("ready export did not succeed on its first attempt: %+v, err=%v", job, err)
+	}
+	if acquisitions != 2 || releases != 1 {
+		t.Fatalf("completed export used %d acquisitions and %d releases, want 2 acquisitions and 1 release", acquisitions, releases)
+	}
+}
+
 func TestExportWorkerRestartCleansAttemptBeforeNewClaim(t *testing.T) {
 	t.Parallel()
 	fake := &exportTestS3{}
