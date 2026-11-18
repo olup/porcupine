@@ -85,7 +85,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 		return nil, err
 	}
 	inc := h.incarnation
-	if err := s.initializeHostedQueries(h.native, inc.registerTx, finishHostedProjectActivity, inc.release); err != nil {
+	if err := s.initializeHostedQueries(h.native, inc.registerReadTx, finishHostedProjectActivity); err != nil {
 		return nil, err
 	}
 	coordinator, err := lakeapi.NewPostgresProjectCoordinator(control, lakeapi.DefaultProjectCoordinatorConfig())

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -30,20 +29,19 @@ var errHostedIncarnationLost = errors.New("hosted worker lease is not current")
 // hostedIncarnationExitCode asks the supervisor to replace the worker.
 const hostedIncarnationExitCode = 75
 
-// The grace exceeds the 30-second S3 request timeout ceiling, so a request
-// already sent when the owner stops can finish before reclamation.
+// The grace gives requests already sent when the worker stops time to drain.
 type hostedIncarnationTiming struct {
 	lease, renew, grace time.Duration
 }
 
-var defaultHostedIncarnationTiming = hostedIncarnationTiming{lease: 30 * time.Second, renew: 5 * time.Second, grace: 30 * time.Second}
+var defaultHostedIncarnationTiming = hostedIncarnationTiming{lease: 30 * time.Second, renew: 5 * time.Second, grace: 45 * time.Second}
 
 type hostedActivityKey struct{ project, ticket string }
 
 // hostedIncarnation owns one renewable PostgreSQL lease per process lifetime.
 // The local deadline is measured from before each successful grant or
 // renewal statement, so it never passes after the PostgreSQL expiry. At that
-// deadline the process stops if any ticket it registered has not returned.
+// deadline the process stops if any write-capable activity has not returned.
 // A nil incarnation registers unleased tickets for unit fixtures.
 type hostedIncarnation struct {
 	control  *sql.DB
@@ -157,7 +155,7 @@ WHERE incarnation_id=$1 AND expires_at>clock_timestamp()`, id, i.timing.lease.Mi
 func (i *hostedIncarnation) fence() bool {
 	i.mu.Lock()
 	i.lost = true
-	id, outstanding := i.id, len(i.held)
+	outstanding := len(i.held)
 	i.mu.Unlock()
 	if outstanding == 0 {
 		return true
@@ -169,9 +167,9 @@ func (i *hostedIncarnation) fence() bool {
 	return false
 }
 
-// reserve counts a ticket before its registration commits. The fence reads
-// the same set, so a registration either is counted or is refused.
-func (i *hostedIncarnation) reserve(project, ticket string) (string, error) {
+// reserve counts a write-capable ticket before its registration commits. The
+// fence takes the same lock so expiry cannot miss an activity being registered.
+func (i *hostedIncarnation) reserve(project, ticket string, mayWrite bool) (string, error) {
 	if i == nil {
 		return "", nil
 	}
@@ -180,7 +178,9 @@ func (i *hostedIncarnation) reserve(project, ticket string) (string, error) {
 	if i.lost || !time.Now().Before(i.deadline) {
 		return "", errHostedIncarnationLost
 	}
-	i.held[hostedActivityKey{project, ticket}] = struct{}{}
+	if mayWrite {
+		i.held[hostedActivityKey{project, ticket}] = struct{}{}
+	}
 	return i.id, nil
 }
 

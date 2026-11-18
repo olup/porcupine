@@ -106,25 +106,33 @@ still determine which native writes committed.
 
 Each ticket references the registering process's worker incarnation. At
 start, a hosted process inserts a random incarnation row with `expires_at`
-(lease, 30 seconds) and `reclaim_after` (lease plus a 30-second grace). It
+(lease, 30 seconds) and `reclaim_after` (lease plus a 45-second grace). It
 renews both every 5 seconds. Renewal cannot revive an expired row. The
 process measures its local deadline from before each successful grant or
 renewal statement, so the deadline never falls after the PostgreSQL expiry.
 Registration is counted locally before its transaction commits and requires
 a current lease, both locally and in PostgreSQL. When the local deadline
-passes, the process refuses new tickets. If any of its tickets has not
-actually returned, it exits with status 75 so that the supervisor replaces
-it. With nothing outstanding, it joins again under a new incarnation.
+passes, the process refuses new tickets. With write-capable activity still
+running, the keeper exits with status 75 so the supervisor replaces the
+worker. Otherwise, it rejoins under a new incarnation. A read-only query
+alone does not stop the worker. It can fail if it still needs data after
+cleanup starts.
 
 Seal and cleanup first delete incarnations past `reclaim_after`. The
-foreign key cascades to their tickets. The grace covers the owner's exit
-and the 30-second S3 request timeout ceiling for a request already sent.
-DuckLake commits stay fenced by the native epoch that the seal advances.
-Control commits stay fenced by the project tombstone. Raw object writes and
-external sends have no storage-side token. Their bound assumes that the
-process is not paused for longer than the grace. A worker resumed after a
-longer pause could still finish one request; such an object is outside the
-cleanup inventory.
+foreign key cascades to their tickets. If the worker loses its lease
+during a DuckLake write, the sealer acquires the project write session
+and advances the native epoch. An older native transaction can win before
+that advance and become part of the seal cut, or the new epoch can win
+and reject the stale commit. The control project tombstone continues to
+fence new work.
+
+Raw object writes and external deliveries have no provider-side fence.
+Automatic reclamation assumes the supervisor and operating system let
+the worker exit at its deadline, and that requests already accepted by an
+external service settle within the grace. A client timeout bounds its
+wait, while a provider can continue processing an accepted request. A
+worker suspended past the grace or a provider that completes a write after
+it can leave an object outside the cleanup inventory.
 
 A returned call whose acknowledgement failed is retried with the original
 ticket while the process lives. Tickets without an incarnation, from builds

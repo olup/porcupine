@@ -38,7 +38,7 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 	defer func() {
 		resultErr = errors.Join(resultErr, f.finishProjectActivity(ctx, key.ProjectID, ticket))
 	}()
-	incarnation, err := f.incarnation.reserve(key.ProjectID, ticket)
+	incarnation, err := f.incarnation.reserve(key.ProjectID, ticket, true)
 	if err != nil {
 		return err
 	}

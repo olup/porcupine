@@ -46,7 +46,7 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 		return err
 	}
 	for _, node := range []*sharedJourneyNode{a, b} {
-		if err := node.service.initializeHostedQueries(node.service.lake.(*lakeapi.DuckLakeStore), register, finish, nil); err != nil {
+		if err := node.service.initializeHostedQueries(node.service.lake.(*lakeapi.DuckLakeStore), register, finish); err != nil {
 			t.Fatal(err)
 		}
 	}

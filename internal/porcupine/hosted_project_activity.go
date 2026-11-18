@@ -60,14 +60,23 @@ func hostedProjectLookupError(err error) error {
 // Register in the dispatch transaction, before starting the native or external
 // call. Reusing a ticket would make one return stand for two operations. The
 // ticket lives until acknowledged or until its incarnation lease is reclaimed.
-func (i *hostedIncarnation) registerTx(ctx context.Context, tx *sql.Tx, project, activityID string) (err error) {
+func (i *hostedIncarnation) registerTx(ctx context.Context, tx *sql.Tx, project, activityID string) error {
+	return i.registerActivityTx(ctx, tx, project, activityID, true)
+}
+
+// Register read-only queries without making them a reason to stop the worker.
+func (i *hostedIncarnation) registerReadTx(ctx context.Context, tx *sql.Tx, project, activityID string) error {
+	return i.registerActivityTx(ctx, tx, project, activityID, false)
+}
+
+func (i *hostedIncarnation) registerActivityTx(ctx context.Context, tx *sql.Tx, project, activityID string, mayWrite bool) (err error) {
 	if activityID == "" {
 		return errors.New("hosted project activity requires a unique identifier")
 	}
 	if _, err := lockActiveHostedProject(ctx, tx, project); err != nil {
 		return err
 	}
-	incarnation, err := i.reserve(project, activityID)
+	incarnation, err := i.reserve(project, activityID, mayWrite)
 	if err != nil {
 		return err
 	}
