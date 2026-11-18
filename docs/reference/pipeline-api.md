@@ -164,13 +164,17 @@ further attempts to that destination, starting at one second and increasing
 up to one hour. The worker can deliver to other destinations during that delay.
 
 Pending and failed payloads remain durable and count against queue limits.
-Defaults are 10,000 queued events and 64 MiB instance-wide, with 1,000 events
+In standalone mode, defaults are 10,000 queued events and 64 MiB instance-wide, with 1,000 events
 and 16 MiB per project. Fanout consumes capacity for each matching destination.
 If capture cannot enqueue every matching webhook delivery, the entire capture
 batch rolls back and returns `503`; it does not acknowledge partial acceptance.
 Pausing stops new enqueueing for that destination but does not free its retained
 failed payloads. Deliver, cancel through event deletion, or delete the pipeline
 to release retained capacity as appropriate.
+
+For the unreleased hosted profile, the defaults are 10,000 queued events and
+64 MiB per tenant, with 1,000 events and 16 MiB per project. A full tenant
+queue leaves capacity available to other tenants.
 
 Pausing skips new webhook enqueueing and holds existing queued work. Resume
 releases pending work and collects future events; it does not backfill the

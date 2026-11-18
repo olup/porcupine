@@ -56,7 +56,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if err := f.publisher.effects.ConfigureCapacityTx(ctx, tx, v[0], v[1], output.PipelineDemand{References: 100, QueuedBytes: 1 << 20, MetadataRows: 1000, ArtifactBytes: 128 << 20, ProofSlots: 4}); err != nil {
 				return err
 			}
