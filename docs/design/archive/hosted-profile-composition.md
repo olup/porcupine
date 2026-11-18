@@ -1,5 +1,7 @@
 # Hosted profile composition
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 The opt-in hosted profile uses PostgreSQL and S3 for durable state. Standalone uses durable SQLite acknowledgment.
 
 ## Configure workers
@@ -81,5 +83,5 @@ retention, owner routing settings and local native backups.
   records receipt-to-query time, worker kills, and S3 write interruption.
   Production capacity still needs separate measurements.
 
-See the [hosted architecture](hosted-architecture.md) for the storage and
+See the [hosted architecture](hosted-architecture-decisions.md) for the storage and
 recovery protocols.

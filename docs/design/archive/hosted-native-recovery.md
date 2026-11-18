@@ -1,5 +1,7 @@
 # Hosted native recovery and seal
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Unit A, unreleased. This component does not enable hosted buffered acceptance,
 production flush publication, pipeline jobs, or webhook sending. Standalone
 journal acceptance and the shared native v2 contract remain unchanged.

@@ -1,8 +1,10 @@
 # Usage measurement contract
 
-**Unreleased implementation.** Standalone and current owner-journal shared deployments use this contract. Hosted buffered acceptance remains a [separate target](hosted-architecture.md), requiring durable native-commit evidence before publishing consumption. These meters do not enable that mode.
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
 
-The [operator reference](../reference/usage.md) defines every metric, unit, accounting date, API parameter, resource bound and recovery limitation. Prices, invoices, subscription rules and decisions about charging incomplete observations remain outside Porcupine. A self-hosted operator gets the same measurements and configuration as the commercial deployment.
+**Unreleased implementation.** Standalone and current owner-journal shared deployments use this contract. Hosted buffered acceptance remains a [separate target](hosted-architecture-decisions.md), requiring durable native-commit evidence before publishing consumption. These meters do not enable that mode.
+
+The [operator reference](../../reference/usage.md) defines every metric, unit, accounting date, API parameter, resource bound and recovery limitation. Prices, invoices, subscription rules and decisions about charging incomplete observations remain outside Porcupine. A self-hosted operator gets the same measurements and configuration as the commercial deployment.
 
 ## Causal accounting
 

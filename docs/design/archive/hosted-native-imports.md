@@ -1,5 +1,7 @@
 # Native historical import outcomes
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 The hosted profile commits historical chunks under the native project guard and
 reconciles their usage through the shared publication cursor. The
 [hosted upload flow](hosted-import-uploads.md) uses this protocol. Standalone

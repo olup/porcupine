@@ -56,7 +56,7 @@ live and import kinds. Import dispatch validates the retained original outcome,
 advances the same cursor and publishes cumulative usage without a live plan,
 reservation or output job. Metadata-only transitions advance sequence and
 revision with zero accepted events. Pending live reservations cannot be skipped.
-The [native import contract](../../docs/design/hosted-native-imports.md) records
+The [native import contract](../../docs/design/hosted-architecture.md#imports-and-mutations) records
 schema 5, original outcomes, parser references and the remaining upload boundary.
 
 Remaining activation gates include the full encrypted public PipelineJobs API,

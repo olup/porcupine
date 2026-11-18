@@ -159,7 +159,7 @@ func reportHostedEconomics(t *testing.T, fixture duckLakeS3Fixture, traffic *eco
 func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	t.Parallel()
 	if os.Getenv("PORCUPINE_TEST_HOSTED_ECONOMICS") != "1" {
-		t.Skip("opt in with PORCUPINE_TEST_HOSTED_ECONOMICS=1; see docs/design/hosted-economics.md")
+		t.Skip("opt in with PORCUPINE_TEST_HOSTED_ECONOMICS=1; see docs/design/archive/hosted-economics.md")
 	}
 	dsn, err := url.Parse(os.Getenv("PORCUPINE_TEST_POSTGRES_DSN"))
 	if err != nil || !net.ParseIP(dsn.Hostname()).IsLoopback() || os.Getenv("PORCUPINE_TEST_DUCKLAKE_S3_ENDPOINT") == "" {

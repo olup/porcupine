@@ -1,5 +1,7 @@
 # Hosted maintenance fence
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Unit A2, unreleased. `DuckLakeStore.MaintainHostedProject` adds an explicit
 compaction entry point for an already-held project coordinator session. The
 hosted profile runs it through a shared due schedule. Legacy `Maintain`, `CleanupDue`, and arbitrary

@@ -6,7 +6,7 @@ For scheduled complete checkpoints and the standalone offline restore command, u
 
 A recovery point needs the complete persistent state from one stopped application: SQLite and its WAL state, the DuckLake registry, every project catalog, and all referenced data files. Preserve their paths and ownership.
 
-v0.15.0 uses one SQLite journal and a separate SQLite control database. The default control pathname is the journal pathname followed by `.control`. If `PORCUPINE_CONTROL_DB` places it outside the main volume, include that location in the same stopped recovery point. Never pair a journal with a control database from another backup. This procedure applies to local control; hosted uses [PostgreSQL and S3 recovery](../design/hosted-restore-drill.md).
+v0.15.0 uses one SQLite journal and a separate SQLite control database. The default control pathname is the journal pathname followed by `.control`. If `PORCUPINE_CONTROL_DB` places it outside the main volume, include that location in the same stopped recovery point. Never pair a journal with a control database from another backup. This procedure applies to local control; hosted uses [PostgreSQL and S3 recovery](../design/hosted-architecture.md#recovery-and-retention).
 
 1. Stop the single Porcupine writer. Keep other processes from opening the volume.
 2. Copy all persistent data locations to independent storage while the application remains stopped. Include both SQLite databases and their WAL state in the two-database layout. Do not select only the journal or individual catalogs.

@@ -30,7 +30,7 @@ A cursor reads the same stored numerical snapshot, including from another worker
 
 | Field | Meaning |
 | --- | --- |
-| `accepted_live_events` | Newly retained canonical live rows committed to the standalone SQLite journal. Stable-ID retries add nothing. |
+| `accepted_live_events` | Newly retained canonical live rows committed to the SQLite journal or hosted DuckLake. Stable-ID retries add nothing. |
 | `accepted_import_events` | Newly retained historical rows, counted at chunk acceptance time, separately from live traffic. Original event dates remain unchanged. |
 | `interactive_query_count` | Durably admitted backend attempts for SQL, catalogue discovery and event profiles, including failures and cancellations. |
 | `interactive_query_seconds` | Observed wall time of those backend invocations, with six fractional digits. It is not CPU time or response serialization time. |
@@ -43,13 +43,13 @@ Counts and bytes are decimal strings. Correcting or deleting events does not ref
 
 Accepted-event accounting matches the existing ingestion quota: every newly retained UUID counts, including identity controls and SDK no-ops that retain a canonical row even when the analytical `events` view hides that control. Retrying the same UUID adds nothing; an invalid atomic batch adds nothing. `COUNT(*) FROM events` therefore cannot reconcile these acceptance counters or a consumer's bill by itself.
 
-`acceptance_basis: durable_commit` describes the **accounting** boundary, separately from the producer response's acknowledgment contract. The available durable mode counts inside its committed SQLite acceptance transaction. The future buffered mode may acknowledge memory admission, but that response must not increase accepted usage: counting waits for recoverable native commit evidence. Buffered mode remains unavailable in configured deployments until that writer and shared providers exist.
+`acceptance_basis: durable_commit` identifies when counting takes place. Standalone counts within the committed SQLite acceptance transaction. Hosted counts from recoverable DuckLake commit evidence. Buffered acknowledgment alone does not increase usage.
 
 Query counts commit before dispatch. A query that never returns remains `lower_bound`, with `unresolved_executions` and `last_observed_at`. Its duration is observed cumulatively every 10 seconds and after actual backend return through the common maintenance loop. A process crash may lose an unobserved tail, including the complete duration of a short query, but not its durable admitted count. A crash between admission and dispatch may leave a counted attempt with no backend work. HTTP timeout and permit expiry do not fabricate a final duration.
 
 Query time belongs to its start bucket, even if it finishes after midnight. Other counters use durable acceptance/publication time, not the event's historical date. Past buckets can still increase when pending outcomes are published. `publication_status: unknown` means there is no global sealed-through-time guarantee across journals and the control store; callers must replay recent periods and replace previous totals, not add every polling response together.
 
-Storage sampling runs approximately hourly. A sample's cutoff is the earlier of bucket end and report creation. `observed_at`, `oldest_observed_at`, `sample_age_seconds`, and measured/expected project counts describe its coverage. After two hours it is `stale`, with the last measured value retained and identified as stale. Missing samples remain unknown. A partially measured tenant has `current_parquet_bytes: null`; Porcupine never fills the gaps with zero. Only the latest sample per project/UTC day is retained; v1 exposes no byte-time integral or hourly history.
+In v0.15.0, scheduled storage sampling runs approximately hourly in standalone. A sample's cutoff is the earlier of bucket end and report creation. `observed_at`, `oldest_observed_at`, `sample_age_seconds`, and measured/expected project counts describe its coverage. After two hours it is `stale`, with the last measured value retained and identified as stale. Missing samples remain unknown. A partially measured tenant has `current_parquet_bytes: null`; Porcupine never fills the gaps with zero. Only the latest sample per project/UTC day is retained; v1 exposes no byte-time integral or hourly history.
 
 ## History and recovery
 
@@ -73,4 +73,4 @@ The offline restore operation changes `usage_epoch` and the journal source incar
 
 The matching server variables are `PORCUPINE_USAGE_RETENTION_DAYS`, `PORCUPINE_USAGE_MAX_SNAPSHOTS`, and `PORCUPINE_USAGE_MAX_SNAPSHOT_BYTES`. The capacity limits encoded numerical snapshot data, not total process memory or database-file size. One constructor per control database is admitted before materialization, with a local construction guard and a recoverable, fenced reservation. Reservation expiry during a partition is not a global memory-limit guarantee.
 
-Standalone journals keep cumulative counters and durable query starts. Hosted publishes cumulative live and import counters from durable DuckLake commit evidence into PostgreSQL. The control store applies cumulative revisions idempotently and stores report snapshots. Live memory admission alone does not count in hosted. See the [usage design and causal boundaries](../design/usage-contract.md).
+Standalone journals keep cumulative counters and durable query starts. Hosted publishes cumulative live and import counters from durable DuckLake commit evidence into PostgreSQL. The control store applies cumulative revisions idempotently and stores report snapshots. Live memory admission alone does not count in hosted. See the [usage design and causal boundaries](../design/hosted-architecture.md#usage).

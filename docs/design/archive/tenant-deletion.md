@@ -1,5 +1,7 @@
 # Tenant deletion
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Decision record, 17 November 2026. **Unreleased.** Based on main `6cf9f4a`. The implementation provides immediate fences and resumable standalone logical cleanup. Current owner-local shared cleanup remains explicitly pending. Physical purge verification is not implemented.
 
 Tenant deletion must stop access before cleanup starts. Cleanup can fail or need an unavailable journal owner without making the tenant accessible again. The operation must preserve other tenants, including a shared human's memberships and tool connections.
