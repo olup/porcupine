@@ -29,7 +29,7 @@ Each row reports 20 flushes of 100 events. PUTs, GETs, and snapshots are per flu
 | Before compaction | On | 220 | 659.2 | 674.7 | 109 | 108.00 | 3 | 3 |
 | After compaction | Paused | 240 | 249.5 | 255.6 | 7 | 6.05 | 3 | 3 |
 
-The webhook phases added 102 PUTs and 102 whole-object GETs per flush for 100 bodies, a plan, and a manifest. Every flush wrote three `hosted_write_guard` Parquet files. The pauses at sequence 200 and after compaction differ in catalog layout as well as sequence, so those timings do not isolate the cost of scanning proof history.
+The webhook phases added 102 PUTs and 102 whole-object GETs per flush for 100 bodies, a plan, and a manifest. Every flush wrote three `hosted_write_guard` Parquet files. The paused-webhook samples at sequence 200 and after compaction differ in catalog layout as well as sequence, so those timings do not isolate the cost of scanning proof history.
 
 ## Source size
 
@@ -44,8 +44,8 @@ At `v0.15.0`, the scoped total is **16,100 physical lines**. It includes whitesp
 
 ```sh
 git ls-files 'internal/porcupine/hosted*.go' 'internal/lake/hosted*.go' \
-  'internal/lake/native*.go' 'internal/output/*.go' ':!**/*_test.go' |
-  xargs wc -l
+  'internal/lake/native*.go' 'internal/output/*.go' |
+  rg -v '_test\.go$' | xargs wc -l
 ```
 
 ## Flush operations
