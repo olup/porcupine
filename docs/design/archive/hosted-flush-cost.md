@@ -91,6 +91,18 @@ Every measured ordinary flush fell from three to one DuckLake snapshot and from 
 
 Four phases had lower p50 and p95 latency. The first webhook phase at sequence 20 was slower on the candidate, rising from 645.2 to 905.1 ms at p50 and from 817.3 to 2,455.9 ms at p95. The later webhook phase was faster. The test measures 20 flushes per phase in one fixed-order run on a shared runner. It cannot determine what caused the timing reversal or establish a general webhook latency change.
 
+### Reverse-order latency repeat
+
+A second job measured the candidate first, then v0.15.0, on one runner. It used the same 20 flushes of 100 events in the first two phases and went directly to compaction afterward. S3 GET, PUT, and snapshot counts matched the corresponding phases in the first run. [Reverse-order diagnostic](https://github.com/olup/porcupine/actions/runs/44276101941)
+
+| Webhook | Starting sequence | p50 (ms), v0.15.0 → v0.15.1 | p95 (ms), v0.15.0 → v0.15.1 |
+| --- | ---: | ---: | ---: |
+| Paused | 0 | 225.4 → 109.4 | 242.7 → 120.8 |
+| On | 20 | 675.3 → 461.4 | 702.2 → 548.5 |
+| Paused, after compaction | 40 | 229.0 → 115.3 | 349.1 → 122.1 |
+
+The first webhook slowdown did not repeat. The two runs leave its cause unresolved.
+
 ### Source size
 
 The expanded scope adds non-test `internal/lake/live_commit*.go`, `internal/lake/project_coordinator.go`, and `internal/porcupine/buffered_acceptance.go` to the original file selection. Run the source-count command above with those paths appended before the pipe.
