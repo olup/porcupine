@@ -22,7 +22,7 @@ import (
 func fixtureActor() auth.Principal {
 	return auth.Principal{ID: "reader", Permissions: []string{"events:read"}, Projects: []string{"*"}}
 }
-func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedExport) {
+func newExportWorkerFixture(t *testing.T, fake *exportTestS3) *ExportJobs {
 	t.Helper()
 	pragmas := url.Values{"_pragma": {"journal_mode(WAL)", "synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(5000)"}}
 	dsn := (&url.URL{Scheme: "file", Path: filepath.Join(t.TempDir(), "journal.sqlite")}).String() + "?" + pragmas.Encode()
@@ -93,6 +93,12 @@ func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedE
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	return s
+}
+
+func exportWorkerFixture(t *testing.T, fake *exportTestS3) (*ExportJobs, storedExport) {
+	t.Helper()
+	s := newExportWorkerFixture(t, fake)
 	created, err := s.Submit(t.Context(), "project", ExportRequest{IdempotencyKey: "fixture", SQL: "SELECT uuid,event,json_extract_string(properties,'$.amount') AS amount FROM events WHERE event=$name", Parameters: map[string]string{"name": "purchase"}}, fixtureActor())
 	if err != nil {
 		t.Fatal(err)

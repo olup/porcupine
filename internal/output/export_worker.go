@@ -27,9 +27,6 @@ func (s *ExportJobs) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.done = make(chan struct{})
-	if s.wake == nil {
-		s.wake = make(chan struct{}, 1)
-	}
 	go func() { defer close(s.done); s.exportsLoop(ctx) }()
 }
 
@@ -550,13 +547,11 @@ func (s *ExportJobs) RunOne(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	claimed, err := s.claimExport(ctx, job)
-	if err != nil {
-		release()
-		return true, nil
+	if err == nil {
+		s.runExport(ctx, claimed)
 	}
-	s.runExport(ctx, claimed)
 	release()
-	if s.retained != nil {
+	if err == nil && s.retained != nil {
 		s.finishExportActivity(claimed.ProjectID, claimed.AttemptID)
 	}
 	return true, nil

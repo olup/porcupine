@@ -79,7 +79,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 		if err = tx.Commit(); err != nil {
 			return ExportJob{}, apiError(503, "export storage unavailable")
 		}
-		s.Wake()
+		s.wakeWorker()
 		return job, nil
 	}
 	// Fast idempotency lookup avoids recapturing a snapshot for an admitted
@@ -108,7 +108,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 		}
 		return ExportJob{}, err
 	}
-	s.Wake()
+	s.wakeWorker()
 	return job, nil
 }
 
@@ -218,7 +218,7 @@ func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission e
 	return job, nil
 }
 
-func (s *ExportJobs) Wake() {
+func (s *ExportJobs) wakeWorker() {
 	if s.Enabled() {
 		select {
 		case s.wake <- struct{}{}:
@@ -312,7 +312,7 @@ func (s *ExportJobs) Cancel(ctx context.Context, project, id string, caller auth
 			cancel()
 		}
 	}
-	s.Wake()
+	s.wakeWorker()
 	return job.ExportJob, nil
 }
 
