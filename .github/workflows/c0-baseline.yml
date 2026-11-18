@@ -1,0 +1,23 @@
+name: Hosted flush baseline
+on:
+  push:
+    branches: [claude/lucid-mendel-m1dyzn-c0-flush-measurement]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
+            go run ./internal/cmd/ducklake-s3-integration -suite shared -race=false -timeout=15m \
+            -run '^TestDuckLakeS3SharedPostgresHostedFlushCost$' | tee "$RUNNER_TEMP/hosted-flush.log"
+          grep -q 'hosted-flush-cost {' "$RUNNER_TEMP/hosted-flush.log"
+        env:
+          PORCUPINE_MEASURE_HOSTED_FLUSH: "1"

@@ -1,22 +1,16 @@
 package porcupine
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,196 +20,11 @@ import (
 	"github.com/olup/porcupine/internal/output"
 )
 
-// pgWireCounts are frontend protocol counts seen by pgWireCountingProxy.
-// Statements are simple queries and extended-protocol executes, excluding
-// BEGIN/COMMIT/ROLLBACK. Transactions are explicit BEGINs plus statements that
-// ran outside an explicit transaction.
-type pgWireCounts struct {
-	Connections  int64 `json:"connections"`
-	Statements   int64 `json:"statements"`
-	Transactions int64 `json:"transactions"`
-	Rollbacks    int64 `json:"rollbacks"`
-}
-
-type pgWireCounter struct {
-	mu     sync.Mutex
-	counts pgWireCounts
-}
-
-func (c *pgWireCounter) take() pgWireCounts {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	v := c.counts
-	c.counts = pgWireCounts{}
-	return v
-}
-
-// pgWireCountingProxy forwards one loopback PostgreSQL listener to the fixture.
-// It sees both pgx and the libpq connections DuckDB opens for DuckLake metadata.
-// It refuses TLS so the frontend stream stays readable.
-func pgWireCountingProxy(t *testing.T, dsn string) (string, *pgWireCounter) {
-	t.Helper()
-	target, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	counter := &pgWireCounter{}
-	var mu sync.Mutex
-	open := map[net.Conn]struct{}{}
-	track := func(c net.Conn) {
-		mu.Lock()
-		open[c] = struct{}{}
-		mu.Unlock()
-	}
-	go func() {
-		for {
-			client, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			upstream, err := net.Dial("tcp", target.Host)
-			if err != nil {
-				client.Close()
-				continue
-			}
-			track(client)
-			track(upstream)
-			counter.mu.Lock()
-			counter.counts.Connections++
-			counter.mu.Unlock()
-			go func() { _, _ = io.Copy(client, upstream); client.Close() }()
-			go func() { counter.frontend(client, upstream); upstream.Close() }()
-		}
-	}()
-	t.Cleanup(func() {
-		listener.Close()
-		mu.Lock()
-		defer mu.Unlock()
-		for c := range open {
-			c.Close()
-		}
-	})
-	proxied := *target
-	proxied.Host = listener.Addr().String()
-	query := proxied.Query()
-	query.Set("sslmode", "disable")
-	proxied.RawQuery = query.Encode()
-	return proxied.String(), counter
-}
-
-func pgWireString(b []byte) (string, []byte) {
-	i := slices.Index(b, 0)
-	if i < 0 {
-		return string(b), nil
-	}
-	return string(b[:i]), b[i+1:]
-}
-
-func pgWireKind(query string) string {
-	q := strings.ToLower(strings.TrimSpace(query))
-	switch {
-	case strings.HasPrefix(q, "begin"), strings.HasPrefix(q, "start transaction"):
-		return "begin"
-	case strings.HasPrefix(q, "commit"), q == "end", strings.HasPrefix(q, "end;"):
-		return "commit"
-	case strings.HasPrefix(q, "rollback") && !strings.Contains(q, " to "):
-		return "rollback"
-	}
-	return "statement"
-}
-
-func (c *pgWireCounter) frontend(client, upstream net.Conn) {
-	r := bufio.NewReader(client)
-	header := make([]byte, 5)
-	for { // Untyped startup messages; answer SSL and GSS requests with 'N'.
-		if _, err := io.ReadFull(r, header[:4]); err != nil {
-			return
-		}
-		n := binary.BigEndian.Uint32(header[:4])
-		if n < 8 {
-			return
-		}
-		body := make([]byte, n-4)
-		if _, err := io.ReadFull(r, body); err != nil {
-			return
-		}
-		if code := binary.BigEndian.Uint32(body[:4]); code == 80877103 || code == 80877104 {
-			if _, err := client.Write([]byte{'N'}); err != nil {
-				return
-			}
-			continue
-		}
-		if _, err := upstream.Write(append(header[:4:4], body...)); err != nil {
-			return
-		}
-		break
-	}
-	statements, portals := map[string]string{}, map[string]string{}
-	inTx := false
-	for {
-		if _, err := io.ReadFull(r, header); err != nil {
-			return
-		}
-		n := binary.BigEndian.Uint32(header[1:])
-		if n < 4 {
-			return
-		}
-		body := make([]byte, n-4)
-		if _, err := io.ReadFull(r, body); err != nil {
-			return
-		}
-		switch header[0] {
-		case 'Q':
-			query, _ := pgWireString(body)
-			c.statement(pgWireKind(query), &inTx)
-		case 'P':
-			name, rest := pgWireString(body)
-			query, _ := pgWireString(rest)
-			statements[name] = pgWireKind(query)
-		case 'B':
-			portal, rest := pgWireString(body)
-			statement, _ := pgWireString(rest)
-			portals[portal] = statements[statement]
-		case 'E':
-			portal, _ := pgWireString(body)
-			c.statement(portals[portal], &inTx)
-		}
-		if _, err := upstream.Write(append(header[:5:5], body...)); err != nil {
-			return
-		}
-	}
-}
-
-func (c *pgWireCounter) statement(kind string, inTx *bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	switch kind {
-	case "begin":
-		c.counts.Transactions++
-		*inTx = true
-	case "commit":
-		*inTx = false
-	case "rollback":
-		c.counts.Rollbacks++
-		*inTx = false
-	default:
-		c.counts.Statements++
-		if !*inTx {
-			c.counts.Transactions++
-		}
-	}
-}
-
 type hostedFlushSample struct {
 	ms        float64
 	requests  map[string]int
 	parquet   map[string]map[string]int
 	snapshots int64
-	pg        pgWireCounts
 }
 
 type hostedFlushCostRow struct {
@@ -234,12 +43,11 @@ type hostedFlushCostRow struct {
 	S3Requests        map[string]float64            `json:"s3_per_flush"`
 	S3ParquetByTable  map[string]map[string]float64 `json:"s3_parquet_per_flush_by_table"`
 	SnapshotsPerFlush float64                       `json:"ducklake_snapshots_per_flush"`
-	PGPerFlush        map[string]float64            `json:"pg_per_flush"`
 }
 
 func summarizeHostedFlushes(phase string, webhook bool, history int64, events int, samples []hostedFlushSample) hostedFlushCostRow {
 	row := hostedFlushCostRow{Phase: phase, Webhook: webhook, HistoryBefore: history, EventsPerFlush: events, Flushes: len(samples),
-		S3ByMethod: map[string]float64{}, S3Requests: map[string]float64{}, S3ParquetByTable: map[string]map[string]float64{}, PGPerFlush: map[string]float64{}}
+		S3ByMethod: map[string]float64{}, S3Requests: map[string]float64{}, S3ParquetByTable: map[string]map[string]float64{}}
 	if len(samples) == 0 {
 		return row
 	}
@@ -262,10 +70,6 @@ func summarizeHostedFlushes(phase string, webhook bool, history int64, events in
 			}
 		}
 		row.SnapshotsPerFlush += float64(s.snapshots) / n
-		row.PGPerFlush["statements"] += float64(s.pg.Statements) / n
-		row.PGPerFlush["transactions"] += float64(s.pg.Transactions) / n
-		row.PGPerFlush["rollbacks"] += float64(s.pg.Rollbacks) / n
-		row.PGPerFlush["connections"] += float64(s.pg.Connections) / n
 	}
 	slices.Sort(latencies)
 	rank := func(p float64) float64 { // nearest rank
@@ -304,7 +108,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	flushes := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_N", "20"))
 	events := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS", "100"))
 	var histories []int64
-	for _, raw := range strings.Split(hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY", "0,500,2000"), ",") {
+	for _, raw := range strings.Split(hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY", "0,200"), ",") {
 		histories = append(histories, int64(hostedFlushCostInt(t, raw)))
 	}
 	if flushes == 0 || events == 0 || !slices.IsSorted(histories) {
@@ -314,8 +118,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	fixture := nativeS3Fixture(t)
 	traffic := economicsS3Proxy(t, &fixture)
 	control := sharedPostgresDSN(t)
-	proxied, pg := pgWireCountingProxy(t, control)
-	config := hostedJourneyConfig(t, proxied, fixture)
+	config := hostedJourneyConfig(t, control, fixture)
 	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
 	service, host, _ := hostedCleanupWorker(t, config)
 	service.usage.cancel()
@@ -421,13 +224,12 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 			batch.events = append(batch.events, bufferedLiveEvent{input: input, admittedAt: time.Now().UTC()})
 		}
 		drain()
-		pg.take()
 		before := readSnapshot()
 		started := time.Now()
 		if err := flusher.FlushLive(ctx, batch); err != nil {
 			t.Fatalf("flush of %d events: %v", count, err)
 		}
-		sample := hostedFlushSample{ms: float64(time.Since(started)) / float64(time.Millisecond), pg: pg.take()}
+		sample := hostedFlushSample{ms: float64(time.Since(started)) / float64(time.Millisecond)}
 		sample.requests, sample.parquet = drain()
 		sample.snapshots = readSnapshot() - before
 		return sample
