@@ -126,16 +126,7 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
 	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
-		return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			currentTenant, err := lockActiveHostedProject(ctx, tx, batch.Scope.Key.ProjectID)
-			if err != nil {
-				return err
-			}
-			if currentTenant != batch.TenantID {
-				return errHostedProjectFenced
-			}
-			return commit()
-		})
+		return f.commitLiveIfActive(ctx, batch.Scope.Key.ProjectID, batch.TenantID, commit)
 	})
 	if err != nil {
 		return err
@@ -154,6 +145,25 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	default:
 		return output.ErrPipelineConflict
 	}
+}
+
+// The writer's activity ticket and advisory session cover the native commit.
+// Deletion may fence further admissions after this check, but sealing must
+// drain this ticket and acquire the project session before moving the native fence.
+func (f *hostedLiveFlusher) commitLiveIfActive(ctx context.Context, project, tenant string, commit func() error) error {
+	if err := f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+		currentTenant, err := lockActiveHostedProject(ctx, tx, project)
+		if err != nil {
+			return err
+		}
+		if currentTenant != tenant {
+			return errHostedProjectFenced
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return commit()
 }
 
 // CommitImport coordinates already validated historical input. Upload storage,

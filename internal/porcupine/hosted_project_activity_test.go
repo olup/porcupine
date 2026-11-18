@@ -1,9 +1,11 @@
 package porcupine
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -88,5 +90,68 @@ func TestSharedHostedDeletionWaiterRechecksCommittedFence(t *testing.T) {
 	}
 	if err := <-waiter; !errors.Is(err, errHostedProjectFenced) {
 		t.Fatalf("admission did not see the committed deletion fence: %v", err)
+	}
+}
+
+func TestSharedHostedCommitAllowsQueryAdmissionAndFencesDeletion(t *testing.T) {
+	t.Parallel()
+	s := sharedDeletionFixture(t)
+	s.eventRules = &eventRules{clock: time.Now}
+	ctx := t.Context()
+	coordinator, err := lakeapi.NewPostgresProjectCoordinator(s.control, lakeapi.DefaultProjectCoordinatorConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &hostedLiveFlusher{coordinator: coordinator, publisher: &hostedEffectPublisher{control: s.control}}
+	key := lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "removed"}
+	session, err := coordinator.Acquire(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Release()
+	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
+		return f.commitLiveIfActive(ctx, key.ProjectID, defaultTenantID, func() error {
+			// The native commit has been entered but has not returned. A separate
+			// PostgreSQL transaction must admit a query in this same project.
+			bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			start := time.Now()
+			_, permit, err := s.acquireSharedQueryPermit(bounded, key.ProjectID, defaultTenantID)
+			if err != nil {
+				t.Fatalf("query admission blocked by paused live commit: %v", err)
+			}
+			t.Logf("query admission while commit paused: %s", time.Since(start))
+			permit.release()
+			if err := s.beginTenantDeletion(bounded, defaultTenantID); err != nil {
+				t.Fatalf("tenant deletion intent blocked by paused live commit: %v", err)
+			}
+			_, permit, err = s.acquireSharedQueryPermit(bounded, key.ProjectID, defaultTenantID)
+			if permit != nil {
+				permit.release()
+			}
+			if queryStatus(err) != 404 {
+				t.Fatalf("query admission did not observe tenant deletion fence: %v", err)
+			}
+			if err := f.sealDeletedProject(bounded, key); !errors.Is(err, errHostedProjectBusy) {
+				t.Fatalf("seal did not wait for the live writer's ticket: %v", err)
+			}
+			if other, err := coordinator.TryAcquire(bounded, key); !errors.Is(err, lakeapi.ErrProjectWriteBusy) {
+				if other != nil {
+					_ = other.Release()
+				}
+				t.Fatalf("second writer entered during live commit: %v", err)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.commitLiveIfActive(ctx, key.ProjectID, defaultTenantID, func() error {
+		t.Fatal("commit entered after tenant deletion intent")
+		return nil
+	})
+	if !errors.Is(err, errHostedProjectFenced) {
+		t.Fatalf("commit did not observe deletion fence: %v", err)
 	}
 }
