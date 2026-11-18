@@ -4,10 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
 	"time"
 
-	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -56,6 +54,7 @@ func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
 	sampler, _ := s.lake.(parquetUsageSampler)
 	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, false, config, clock), config: config, clock: clock, sampler: sampler}
 	s.eventRules.usage = recorder
+	s.queries.SetLocalRecorder(recorder)
 	return nil
 }
 func (u *usageRuntime) synchronize(ctx context.Context) error {
@@ -80,8 +79,8 @@ func (u *usageRuntime) synchronize(ctx context.Context) error {
 }
 func (s *Service) synchronizeUsage(ctx context.Context) error {
 	var err error
-	if s.hostedQueries != nil {
-		err = errors.Join(s.hostedQueries.observeReturns(ctx, s.control), s.hostedQueries.recorder.Observe(ctx))
+	if s.hostedReader != nil {
+		err = s.queries.ObserveHostedUsage(ctx)
 	}
 	if s.usage.recorder != nil {
 		err = errors.Join(err, s.usage.synchronize(ctx))
@@ -112,13 +111,13 @@ func (s *Service) startUsage() {
 				if u.recorder != nil {
 					_ = u.recorder.Prune(work, u.config.RetentionDays)
 				}
-				if s.hostedQueries != nil {
-					_ = s.hostedQueries.recorder.PruneExecutions(work, u.config.RetentionDays)
+				if s.hostedReader != nil {
+					_ = s.queries.PruneHostedUsage(work, u.config.RetentionDays)
 				}
 				nextSample = u.clock().Add(usage.SampleInterval)
 			}
-			if s.hostedQueries != nil && !u.clock().Before(nextHostedRecovery) {
-				if recovered, err := s.recoverHostedQueryUsage(work); err == nil && recovered < hostedQueryRecoverBatch {
+			if s.hostedReader != nil && !u.clock().Before(nextHostedRecovery) {
+				if caughtUp, err := s.queries.RecoverHostedUsage(work); err == nil && caughtUp {
 					nextHostedRecovery = u.clock().Add(time.Minute)
 				}
 			}
@@ -153,107 +152,6 @@ func (s *Service) stopUsage() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.synchronizeUsage(ctx)
-}
-
-// The durable start is committed before dispatch. Finish records elapsed native
-// scope in memory before releasing its permit; the common observation worker
-// persists cumulative time. A crash leaves the durable unresolved lower bound.
-type usageQueryScope struct {
-	execution *usage.Execution
-	finish    func() error
-	once      sync.Once
-	cause     error
-	metrics   *operationalMetrics
-	kind      int
-	started   time.Time
-}
-
-func (q *usageQueryScope) Begin() {
-	if q.metrics != nil {
-		q.started = time.Now()
-		q.metrics.activeQueries[q.kind].Add(1)
-	}
-	if q.execution != nil {
-		q.execution.Begin()
-	}
-}
-func (q *usageQueryScope) Finish() error {
-	q.once.Do(func() {
-		if !q.started.IsZero() {
-			q.metrics.activeQueries[q.kind].Add(-1)
-		}
-		if q.execution != nil {
-			q.execution.Finish()
-		}
-		q.cause = q.finish()
-	})
-	return q.cause
-}
-
-func (q *usageQueryScope) Return(ctx context.Context, nativeErr error) error {
-	// Take the timestamp before releasing the shared permit over PostgreSQL.
-	elapsed, contextErr := time.Since(q.started), ctx.Err()
-	stopped := q.Finish()
-	result := interactiveQueryResultError(ctx, stopped, nativeErr)
-	if q.metrics != nil {
-		if errors.Is(stopped, errSharedQueryPermitUncertain) {
-			contextErr = nil
-		}
-		q.metrics.ObserveDuration("porcupine_query_backend_duration_seconds", elapsed,
-			observability.Label{Name: "operation", Value: observedQueryKinds[q.kind]},
-			observability.Label{Name: "outcome", Value: queryOutcome(contextErr, result)})
-	}
-	return result
-}
-
-func (s *Service) beginUsageQuery(ctx context.Context, project, operation string) (_ context.Context, _ InteractiveQueryConfig, _ *usageQueryScope, resultErr error) {
-	kind := -1
-	if m := s.metrics; m != nil {
-		for i, candidate := range observedQueryKinds {
-			if candidate == operation {
-				kind = i
-				break
-			}
-		}
-		if kind >= 0 {
-			started := time.Now()
-			defer func() {
-				m.observeQueryAdmission(ctx.Err(), resultErr, operation, time.Since(started))
-			}()
-		}
-	}
-	native, limits, finish, err := s.beginInteractiveQuery(ctx, project)
-	if err != nil {
-		return nil, InteractiveQueryConfig{}, nil, err
-	}
-	scope := &usageQueryScope{finish: finish, kind: kind}
-	if kind >= 0 {
-		scope.metrics = s.metrics
-	}
-	if s.usage == nil {
-		return native, limits, scope, nil
-	}
-	// Resolve usage attribution from control storage before executing the query.
-	tenant, err := s.projectTenant(native, project)
-	if err != nil {
-		if stopped := finish(); stopped != nil {
-			err = interactiveQueryResultError(native, stopped, nil)
-		}
-		return nil, InteractiveQueryConfig{}, nil, err
-	}
-	recorder := s.usage.recorder
-	if s.hostedQueries != nil {
-		recorder = s.hostedQueries.recorder
-	}
-	execution, err := recorder.StartExecution(native, tenant.ID, project, operation)
-	if err != nil {
-		if stopped := finish(); stopped != nil {
-			return nil, InteractiveQueryConfig{}, nil, interactiveQueryResultError(native, stopped, nil)
-		}
-		return nil, InteractiveQueryConfig{}, nil, apiError(503, "usage admission unavailable; query was not executed")
-	}
-	scope.execution = execution
-	return native, limits, scope, nil
 }
 
 type parquetUsageSampler interface {
@@ -312,10 +210,6 @@ const (
 	hostedStorageSampleBatch   = 32
 	hostedStorageSampleTimeout = 10 * time.Second
 	hostedStorageSampleIdle    = time.Minute
-	// A live owner rewrites last_observed_at every ObservationInterval, and
-	// one usage loop pass is bounded far below this, with room for clock skew.
-	hostedQueryLostAfter    = 5 * time.Minute
-	hostedQueryRecoverBatch = 1000
 )
 
 // sampleHostedUsageStorage measures one bounded page of projects, after the
@@ -370,15 +264,4 @@ WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMI
 		return "", nil
 	}
 	return after, nil
-}
-
-// recoverHostedQueryUsage marks query executions lost once their owner has
-// stopped observing them. Hosted workers share one execution table, so the
-// standalone startup Recover would also mark other live workers' queries.
-// Ownership is the observation heartbeat instead: a live owner rewrites the
-// record's last_observed_at every ObservationInterval until it closes, so a
-// record unobserved for hostedQueryLostAfter belongs to a crashed, stopped or
-// partitioned worker. A later observation can clear that provisional state.
-func (s *Service) recoverHostedQueryUsage(ctx context.Context) (int64, error) {
-	return s.hostedQueries.recorder.RecoverStale(ctx, s.usage.clock().Add(-hostedQueryLostAfter), hostedQueryRecoverBatch)
 }

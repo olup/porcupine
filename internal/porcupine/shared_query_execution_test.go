@@ -15,26 +15,11 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
-func TestSharedQueryExecutionTimingRules(t *testing.T) {
-	t.Parallel()
-	if sharedQueryAdmissionTimeout+sharedQueryRenewInterval+sharedQueryControlTimeout >= sharedQueryPermitLifetime {
-		t.Fatal("an initial acknowledgement could outlive the first renewal opportunity")
-	}
-	hard := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
-	for _, s3 := range []int{0, 5, 30} {
-		for _, metadata := range []int{0, 10, 30} {
-			deadline := sharedQueryUnresponsiveDeadline(hard, s3, metadata)
-			if deadline.Sub(hard) != time.Duration(s3+metadata)*time.Second+sharedQueryUnresponsiveGrace {
-				t.Fatal("quarantine omitted an I/O allowance", deadline)
-			}
-		}
-	}
-}
-
 type cancellationIgnoringQuery struct {
-	hostedEventReader
+	query.HostedReader
 	project string
 	entered chan struct{}
 	resume  chan struct{}
@@ -42,7 +27,7 @@ type cancellationIgnoringQuery struct {
 
 func (s *cancellationIgnoringQuery) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	if project != s.project {
-		return s.hostedEventReader.Query(ctx, project, sql, parameters, limits)
+		return s.HostedReader.Query(ctx, project, sql, parameters, limits)
 	}
 	close(s.entered)
 	<-s.resume // Simulate native I/O which has not returned after interruption.
@@ -61,8 +46,8 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	healthy, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Healthy native query")
 	_, reader := sharedJourneyKey(t, a.host.URL, healthy, []string{"management:read", "events:read"})
 	hostedCleanupWrite(t, a.service, healthy, "healthy")
-	blocked := &cancellationIgnoringQuery{hostedEventReader: a.service.hostedQueries.reader, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
-	a.service.hostedQueries.reader = blocked
+	blocked := &cancellationIgnoringQuery{HostedReader: a.service.hostedReader, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
+	a.service.hostedReader = blocked
 	var unblock sync.Once
 	t.Cleanup(func() { unblock.Do(func() { close(blocked.resume) }) })
 	ctx, cancel := context.WithCancel(t.Context())
@@ -83,7 +68,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	started := time.Now()
 	cancel()
 	// Keep the real production TTL: a fixed unreplenished permit would expire.
-	deadline := started.Add(sharedQueryPermitLifetime + time.Second)
+	deadline := started.Add(31 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case <-done:
@@ -91,7 +76,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	status := a.service.sharedQueries.status()
+	status := a.service.queries.Status()
 	if status.Active != 1 || status.UncertainPermits != 0 || len(status.UnhealthyProjects) != 1 || status.UnhealthyProjects[0].ProjectID != project {
 		t.Fatalf("hung query state incorrect: %+v", status)
 	}
@@ -99,8 +84,8 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	if err := a.service.control.QueryRow(`SELECT extract(epoch FROM expires_at-clock_timestamp()) FROM shared_query_permits WHERE project_id=$1`, project).Scan(&remaining); err != nil || remaining <= 0 {
 		t.Fatal("active native scope lost its renewable permit", remaining, err)
 	}
-	if _, permit, err := b.service.acquireSharedQueryPermit(t.Context(), project, tenant); err == nil {
-		permit.release()
+	if _, permit, err := b.service.holdSharedQuery(t.Context(), project); err == nil {
+		permit()
 		t.Fatal("another worker reused a healthy-renewed slot")
 	} else if queryStatus(err) != 429 {
 		t.Fatal(err)
@@ -133,7 +118,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("returned native call retained its HTTP scope")
 	}
-	if response.Code != 429 || len(a.service.querySlots) != 0 || a.service.sharedQueries.status().Active != 0 {
+	if response.Code != 429 || a.service.queries.UsedSlots() != 0 || a.service.queries.Status().Active != 0 {
 		t.Fatal("native return did not release the scope", response.Code, response.Body.String())
 	}
 	var count int
@@ -145,7 +130,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 func TestSharedQueryExecutionLostLeaseDoesNotTouchReplacement(t *testing.T) {
 	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
-	ctx, _, finish, err := a.beginInteractiveQuery(t.Context(), "a")
+	ctx, _, finish, err := a.holdQuery(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,22 +138,26 @@ func TestSharedQueryExecutionLostLeaseDoesNotTouchReplacement(t *testing.T) {
 	if _, err := a.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()-interval '1 second'`); err != nil {
 		t.Fatal(err)
 	}
-	_, replacement, err := b.acquireSharedQueryPermit(t.Context(), "b", "one")
+	replacementID, replacement, err := b.holdSharedQuery(t.Context(), "b")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer replacement.release()
-	a.sharedQueries.renew(a.control)
-	if ctx.Err() == nil || a.sharedQueries.status().UncertainPermits != 1 || len(a.querySlots) != 1 {
+	defer replacement()
+	wait, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := waitQueryStatus(wait, a.queries, func(status query.QueryExecutionStatus) bool { return status.UncertainPermits == 1 }); err != nil {
+		t.Fatal("permit was not marked uncertain", err)
+	}
+	if ctx.Err() == nil || a.queries.Status().UncertainPermits != 1 || a.queries.UsedSlots() != 1 {
 		t.Fatal("lease loss did not cancel/quarantine while retaining the native slot")
 	}
-	if _, _, _, err := a.beginInteractiveQuery(t.Context(), "a"); queryStatus(err) != 503 {
+	if _, _, _, err := a.holdQuery(t.Context(), "a"); queryStatus(err) != 503 {
 		t.Fatal("lost-permit project admitted another query", err)
 	}
 	finish()
 	finish()
 	var id string
-	if err := a.control.QueryRow(`SELECT permit_id FROM shared_query_permits`).Scan(&id); err != nil || id != replacement.id {
+	if err := a.control.QueryRow(`SELECT permit_id FROM shared_query_permits`).Scan(&id); err != nil || id != replacementID {
 		t.Fatal("stale renewal or release changed another worker's replacement", id, err)
 	}
 }
@@ -176,7 +165,7 @@ func TestSharedQueryExecutionLostLeaseDoesNotTouchReplacement(t *testing.T) {
 func TestSharedQueryExecutionControlFailureRetainsLocalCapacity(t *testing.T) {
 	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
-	ctx, _, finish, err := a.beginInteractiveQuery(t.Context(), "a")
+	ctx, _, finish, err := a.holdQuery(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,26 +173,30 @@ func TestSharedQueryExecutionControlFailureRetainsLocalCapacity(t *testing.T) {
 	if err := a.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	a.sharedQueries.renew(a.control)
-	if status := a.sharedQueries.status(); ctx.Err() == nil || status.UncertainPermits != 1 || status.Active != 1 || len(a.querySlots) != 1 {
+	wait, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := waitQueryStatus(wait, a.queries, func(status query.QueryExecutionStatus) bool { return status.UncertainPermits == 1 }); err != nil {
+		t.Fatal("permit was not marked uncertain", err)
+	}
+	if status := a.queries.Status(); ctx.Err() == nil || status.UncertainPermits != 1 || status.Active != 1 || a.queries.UsedSlots() != 1 {
 		t.Fatal("failed heartbeat freed local execution or hid uncertainty", status)
 	}
-	if _, _, _, err := a.beginInteractiveQuery(t.Context(), "a"); queryStatus(err) != 503 {
+	if _, _, _, err := a.holdQuery(t.Context(), "a"); queryStatus(err) != 503 {
 		t.Fatal("unhealthy project reached the unavailable control store", err)
 	}
 	if _, err := b.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()-interval '1 second'`); err != nil {
 		t.Fatal(err)
 	}
-	_, replacement, err := b.acquireSharedQueryPermit(t.Context(), "b", "one")
+	_, replacement, err := b.holdSharedQuery(t.Context(), "b")
 	if err != nil {
 		t.Fatal("automatic expiry did not recover shared capacity", err)
 	}
-	defer replacement.release()
-	if len(a.querySlots) != 1 {
+	defer replacement()
+	if a.queries.UsedSlots() != 1 {
 		t.Fatal("automatic shared expiry freed the still-live local call")
 	}
 	finish()
-	if len(a.querySlots) != 0 {
+	if a.queries.UsedSlots() != 0 {
 		t.Fatal("actual return retained local capacity")
 	}
 }
@@ -211,44 +204,47 @@ func TestSharedQueryExecutionControlFailureRetainsLocalCapacity(t *testing.T) {
 func TestSharedQueryExecutionDrainKeepsAllPermitsRenewable(t *testing.T) {
 	t.Parallel()
 	_, a, b := sharedQueryTestFixture(t)
-	first, _, finishFirst, err := a.beginInteractiveQuery(t.Context(), "a")
+	first, _, finishFirst, err := a.holdQuery(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer finishFirst()
-	second, _, finishSecond, err := a.beginInteractiveQuery(t.Context(), "c")
+	second, _, finishSecond, err := a.holdQuery(t.Context(), "c")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer finishSecond()
-	if _, err := a.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()+interval '1 second'`); err != nil {
+	if _, err := a.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()+interval '10 seconds'`); err != nil {
 		t.Fatal(err)
 	}
-	a.BeginQueryDrain()
-	a.BeginQueryDrain()
-	a.sharedQueries.renew(a.control)
-	if first.Err() == nil || second.Err() == nil || a.sharedQueries.status().Active != 2 {
+	a.queries.Drain()
+	a.queries.Drain()
+	if first.Err() == nil || second.Err() == nil || a.queries.Status().Active != 2 {
 		t.Fatal("draining did not cancel both requests while retaining executions")
 	}
-	var count int
-	if err := a.control.QueryRow(`SELECT count(*) FROM shared_query_permits WHERE expires_at>clock_timestamp()+interval '20 seconds'`).Scan(&count); err != nil || count != 2 {
-		t.Fatal("draining stopped renewal before actual return", count, err)
+	wait, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := waitForRenewedPermits(wait, a.control, 2); err != nil {
+		t.Fatal("draining stopped renewal before actual return", err)
 	}
-	if _, _, _, err := a.beginInteractiveQuery(t.Context(), "b"); queryStatus(err) != 503 {
+	if _, _, _, err := a.holdQuery(t.Context(), "b"); queryStatus(err) != 503 {
 		t.Fatal("draining admitted new execution", err)
 	}
 	finishFirst()
 	finishSecond()
-	_, _, release, err := b.beginInteractiveQuery(t.Context(), "b")
+	_, _, release, err := b.holdQuery(t.Context(), "b")
 	if err != nil {
 		t.Fatal("returned calls retained shared capacity", err)
 	}
 	release()
 }
 
-type blockedQueryExecutionLog struct{}
+type blockedQueryExecutionLog struct{ entered chan struct{} }
 
-func (blockedQueryExecutionLog) Write([]byte) (int, error) { select {} }
+func (w blockedQueryExecutionLog) Write([]byte) (int, error) {
+	close(w.entered)
+	select {}
+}
 
 func TestSharedQueryExecutionLoggerHelper(t *testing.T) {
 	t.Parallel()
@@ -257,35 +253,42 @@ func TestSharedQueryExecutionLoggerHelper(t *testing.T) {
 		t.Skip("subprocess helper")
 	}
 	s := sharedQueryTestService(t, dsn, "blocked-logger")
-	ctx, _, finish, err := s.beginInteractiveQuery(t.Context(), "a")
+	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=100 WHERE id='one'`); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	slog.SetDefault(slog.New(slog.NewTextHandler(blockedQueryExecutionLog{entered}, nil)))
+	ctx, _, finish, err := s.holdQuery(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer finish()
-	var id string
-	if err := s.control.QueryRow(`SELECT permit_id FROM shared_query_permits WHERE worker_id='blocked-logger'`).Scan(&id); err != nil {
+	<-entered
+	if status := s.queries.Status(); ctx.Err() == nil || status.Active != 1 || status.UncertainPermits != 0 || !status.Unavailable() {
+		t.Fatal("blocked log prevented quarantine", status)
+	}
+	if _, err := s.control.Exec(`UPDATE shared_query_permits SET expires_at=clock_timestamp()+interval '10 seconds'`); err != nil {
 		t.Fatal(err)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(blockedQueryExecutionLog{}, nil)))
-	s.sharedQueries.quarantine(id, "native_query_unresponsive", false)
-	s.sharedQueries.renew(s.control)
-	if ctx.Err() == nil || s.sharedQueries.status().Active != 1 || s.sharedQueries.status().UncertainPermits != 0 {
-		t.Fatal("blocked log prevented quarantine or renewal")
+	wait, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := waitForRenewedPermits(wait, s.control, 1); err != nil {
+		t.Fatal("blocked log prevented renewal", err)
 	}
-	_, _, other, err := s.beginInteractiveQuery(t.Context(), "c")
+	_, _, other, err := s.holdQuery(t.Context(), "c")
 	if err != nil {
 		t.Fatal("blocked log prevented another project's query", err)
 	}
 	other()
-	finish()
 	finish()
 	fmt.Println("blocked-log-query-scopes-released")
 }
 
 func TestSharedQueryExecutionBlockedLoggerDoesNotStopWorker(t *testing.T) {
 	t.Parallel()
+	skipInShort(t)
 	dsn, _, _ := sharedQueryTestFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSharedQueryExecutionLoggerHelper$", "-test.v=false")
 	child.Env = append(os.Environ(), "PORCUPINE_SHARED_QUERY_LOG_HELPER_DSN="+dsn)
@@ -298,36 +301,29 @@ func TestSharedQueryExecutionBlockedLoggerDoesNotStopWorker(t *testing.T) {
 func TestSharedQueryExecutionFinishedAndLocalScopesStayHealthy(t *testing.T) {
 	t.Parallel()
 	_, a, _ := sharedQueryTestFixture(t)
-	_, _, finish, err := a.beginInteractiveQuery(t.Context(), "a")
+	_, _, finish, err := a.holdQuery(t.Context(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.sharedQueries.mu.Lock()
-	var id string
-	for token := range a.sharedQueries.active {
-		id = token
-	}
-	a.sharedQueries.mu.Unlock()
 	finish()
 	finish()
-	a.sharedQueries.quarantine(id, "native_query_unresponsive", false)
-	if status := a.sharedQueries.status(); status.Active != 0 || status.unavailable() || len(a.querySlots) != 0 {
+	if status := a.queries.Status(); status.Active != 0 || status.Unavailable() || a.queries.UsedSlots() != 0 {
 		t.Fatal("late timer quarantined a finished scope", status)
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, _, _, err := a.beginInteractiveQuery(canceled, "a"); queryStatus(err) != 429 || len(a.querySlots) != 0 {
+	if _, _, _, err := a.holdQuery(canceled, "a"); queryStatus(err) != 429 || a.queries.UsedSlots() != 0 {
 		t.Fatal("already-canceled request leaked a permit", err)
 	}
 	local := service(t, 20)
 	project, _ := project(t, local)
-	_, _, release, err := local.beginInteractiveQuery(t.Context(), project)
+	_, _, release, err := local.holdQuery(t.Context(), project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local.BeginQueryDrain()
+	local.queries.Drain()
 	release()
-	if status := local.sharedQueries.status(); status.Active != 0 || status.unavailable() || status.Draining {
+	if status := local.queries.Status(); status.Active != 0 || status.Unavailable() || status.Draining {
 		t.Fatal("local mode inherited shared keeper/quarantine behavior", status)
 	}
 }

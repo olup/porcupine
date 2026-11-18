@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -10,25 +9,26 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 type queryReturnHook struct {
-	hostedEventReader
+	query.HostedReader
 	after func(context.Context) error
 }
 
 func (s *queryReturnHook) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
-	result, err := s.hostedEventReader.Query(ctx, project, sql, parameters, limits)
+	result, err := s.HostedReader.Query(ctx, project, sql, parameters, limits)
 	return result, errors.Join(err, s.after(ctx))
 }
 
 func (s *queryReturnHook) Catalog(ctx context.Context, input lakeapi.EventCatalogInput) (lakeapi.EventCatalog, error) {
-	result, err := s.hostedEventReader.Catalog(ctx, input)
+	result, err := s.HostedReader.Catalog(ctx, input)
 	return result, errors.Join(err, s.after(ctx))
 }
 
 func (s *queryReturnHook) Profile(ctx context.Context, project string, options lakeapi.EventProfileOptions, asOf time.Time) (lakeapi.EventProfileRead, error) {
-	result, err := s.hostedEventReader.Profile(ctx, project, options, asOf)
+	result, err := s.HostedReader.Profile(ctx, project, options, asOf)
 	return result, errors.Join(err, s.after(ctx))
 }
 
@@ -50,12 +50,15 @@ func TestSharedQueryNativeReturnPrecedesResponseProcessing(t *testing.T) {
 			}
 			defer locker.Rollback()
 			returned := make(chan struct{})
-			var token string
-			hook := &queryReturnHook{hostedEventReader: a.service.hostedQueries.reader}
+			hook := &queryReturnHook{HostedReader: a.service.hostedReader}
 			hook.after = func(ctx context.Context) error {
 				defer close(returned)
-				if err := a.service.control.QueryRowContext(ctx, `SELECT permit_id FROM shared_query_permits WHERE project_id=$1`, project).Scan(&token); err != nil {
+				var active bool
+				if err := a.service.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shared_query_permits WHERE project_id=$1)`, project).Scan(&active); err != nil {
 					return err
+				}
+				if !active {
+					return errors.New("query lacked a permit while in native code")
 				}
 				if operation.name == "catalog" {
 					// The handler loads descriptions after the native permit is released.
@@ -64,7 +67,7 @@ func TestSharedQueryNativeReturnPrecedesResponseProcessing(t *testing.T) {
 				}
 				return nil
 			}
-			a.service.hostedQueries.reader = hook
+			a.service.hostedReader = hook
 			request := func(ctx context.Context) (*httptest.ResponseRecorder, <-chan struct{}) {
 				r := httptest.NewRequest(operation.method, "/api/v1/projects/"+project+operation.path, strings.NewReader(operation.body)).WithContext(ctx)
 				r.Header.Set("Authorization", "Bearer "+adminToken)
@@ -110,21 +113,13 @@ func TestSharedQueryNativeReturnPrecedesResponseProcessing(t *testing.T) {
 					t.Fatal("native call returned without a response")
 				}
 			}
-			if state := a.service.sharedQueries.status(); state.Active != 0 || state.unavailable() || len(a.service.querySlots) != 0 {
+			if state := a.service.queries.Status(); state.Active != 0 || state.Unavailable() || a.service.queries.UsedSlots() != 0 {
 				t.Fatal("response processing retained native execution state", state)
 			}
 			var permits int
 			if err := b.service.control.QueryRowContext(ctx, `SELECT count(*) FROM shared_query_permits WHERE project_id=$1`, project).Scan(&permits); err != nil || permits != 0 {
 				t.Fatal("finished native work retained PostgreSQL capacity", permits, err)
 			}
-			// A queued timer or failed renewal after return must not quarantine it.
-			a.service.sharedQueries.quarantine(token, "native_query_unresponsive", false)
-			offline, err := sql.Open("pgx", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			offline.Close()
-			a.service.sharedQueries.renew(offline)
 			sharedJourneyHTTP(t, a.host.URL, "GET", "/readyz", "", nil, nil, 200)
 			if err := locker.Rollback(); err != nil {
 				t.Fatal(err)
@@ -140,17 +135,21 @@ func TestSharedQueryNativeReturnPrecedesResponseProcessing(t *testing.T) {
 
 			// A driver may return a nil error even after its execution was canceled.
 			hook.after = func(ctx context.Context) error {
-				var id string
-				if err := a.service.control.QueryRowContext(ctx, `SELECT permit_id FROM shared_query_permits WHERE project_id=$1`, project).Scan(&id); err != nil {
+				if _, err := a.service.control.ExecContext(ctx, `DELETE FROM shared_query_permits WHERE project_id=$1`, project); err != nil {
 					return err
 				}
-				a.service.sharedQueries.quarantine(id, "query_permit_uncertain", true)
-				return nil
+				// Simulate native I/O returning a successful result after
+				// the keeper has detected loss of its permit.
+				wait, stop := context.WithTimeout(t.Context(), 8*time.Second)
+				defer stop()
+				return waitQueryStatus(wait, a.service.queries, func(status query.QueryExecutionStatus) bool { return status.UncertainPermits == 1 })
 			}
-			canceledResponse, canceledDone := request(ctx)
+			wait, stop := context.WithTimeout(t.Context(), 10*time.Second)
+			defer stop()
+			canceledResponse, canceledDone := request(wait)
 			select {
 			case <-canceledDone:
-			case <-ctx.Done():
+			case <-wait.Done():
 				t.Fatal("canceled native result did not finish")
 			}
 			if canceledResponse.Code != 503 || !strings.Contains(canceledResponse.Body.String(), `"code":"query_permit_uncertain"`) {

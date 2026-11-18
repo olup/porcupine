@@ -12,6 +12,7 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -33,7 +34,7 @@ type hostedRuntime struct {
 func openHostedProfile(c Config) (_ *Service, err error) {
 	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
-	config, err := normalizeInteractiveQueries(c.InteractiveQueries)
+	config, err := query.Normalize(c.InteractiveQueries)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +74,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 		return nil, err
 	}
 	h.native = s.lake.(*lakeapi.DuckLakeStore)
+	s.queries.Bind(control, s.shared.workerID, time.Duration(max(0, s.lakeS3RequestTimeoutSeconds)+max(0, s.lakeMetadataTimeoutSeconds))*time.Second)
 	if err := s.initializeOAuthClients(ctx); err != nil {
 		return nil, err
 	}
@@ -299,7 +301,7 @@ func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
 				running = true
 			}
 		}
-		active := s.sharedQueries.status().Active
+		active := s.queries.Status().Active
 		if !running && active == 0 {
 			return nil
 		}
@@ -334,7 +336,7 @@ func (s *Service) initializeHostedUsage(ctx context.Context, c *usage.Config) er
 }
 
 func (s *Service) BeginDrain() {
-	s.BeginQueryDrain()
+	s.queries.Drain()
 	if s.hosted != nil && s.hosted.maintenance != nil {
 		s.hosted.maintenance.stop()
 	}

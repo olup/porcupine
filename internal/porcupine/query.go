@@ -2,9 +2,12 @@ package porcupine
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/nativequery"
+	"github.com/olup/porcupine/internal/query"
 )
 
 type AnalyticsSchemaInput struct {
@@ -37,13 +40,13 @@ type AnalyticsLimits struct {
 }
 
 type AnalyticsSchema struct {
-	Enabled          bool                   `json:"enabled"`
-	Tables           []AnalyticsTable       `json:"tables"`
-	Limits           AnalyticsLimits        `json:"limits"`
-	SQL              AnalyticsSQL           `json:"sql"`
-	TenantBudgets    TenantBudgets          `json:"tenant_budgets" doc:"Configured tenant policy; effective limits are bounded by deployment ceilings. No aggregate tenant consumption is included."`
-	DeploymentLimits InteractiveQueryConfig `json:"deployment_limits" doc:"Worker safety ceilings, including analytical capacity shared with background work. Shared deployments additionally enforce tenant concurrency through PostgreSQL permits."`
-	Delivery         lakeapi.DeliveryStatus `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
+	Enabled          bool                         `json:"enabled"`
+	Tables           []AnalyticsTable             `json:"tables"`
+	Limits           AnalyticsLimits              `json:"limits"`
+	SQL              AnalyticsSQL                 `json:"sql"`
+	TenantBudgets    TenantBudgets                `json:"tenant_budgets" doc:"Configured tenant policy; effective limits are bounded by deployment ceilings. No aggregate tenant consumption is included."`
+	DeploymentLimits query.InteractiveQueryConfig `json:"deployment_limits" doc:"Worker safety ceilings, including analytical capacity shared with background work. Shared deployments additionally enforce tenant concurrency through PostgreSQL permits."`
+	Delivery         lakeapi.DeliveryStatus       `json:"delivery" doc:"Project queue depth and last delivery success. A generic worker error is included only while this project has pending events."`
 }
 
 type AnalyticsSchemaOutput struct{ Body AnalyticsSchema }
@@ -70,14 +73,6 @@ type AnalyticsQuery struct {
 
 type AnalyticsQueryOutput struct{ Body AnalyticsQuery }
 
-func analyticsLimits() AnalyticsLimits {
-	return AnalyticsLimits{
-		MaxSQLBytes: lakeapi.MaxSQLBytes, MaxRows: lakeapi.AnalyticsMaxRows, MaxResultBytes: lakeapi.AnalyticsMaxBytes,
-		MaxExecutionMS: 5000, MaxExecutionSeconds: 5, RequestTimeoutSeconds: 10, MaxMemoryBytes: lakeapi.DefaultDuckLakeMemoryMB << 20,
-		MemoryScope: "per_resident_project_engine", MaxConcurrentQueries: 2,
-	}
-}
-
 func (s *Service) analyticsProject(ctx context.Context, id string) error {
 	var exists int
 	if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&exists); err != nil {
@@ -90,15 +85,63 @@ func (s *Service) analyticsProject(ctx context.Context, id string) error {
 }
 
 func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInput) (*AnalyticsSchemaOutput, error) {
-	if err := s.analyticsProject(ctx, input.ID); err != nil {
+	project := input.ID
+	if err := s.analyticsProject(ctx, project); err != nil {
 		return nil, err
 	}
-	schema, err := s.lakeAnalyticsSchema(ctx, input.ID)
+	delivery, err := s.deliveryStatus(ctx, project)
+	if err != nil {
+		return nil, apiError(503, "delivery status unavailable")
+	}
+	columns := []AnalyticsColumn{
+		{"id", "BIGINT", "Durable event ID, returned as a decimal string."},
+		{"event_id", "BIGINT", "Alias of id."},
+		{"uuid", "VARCHAR", "Stable event identifier within the project."},
+		{"project_id", "VARCHAR", "Owning project, isolated in a separate analytical catalog."},
+		{"event", "VARCHAR", "Event name."},
+		{"event_type", "VARCHAR", "Canonical input category."},
+		{"source_id", "VARCHAR", "Authenticated producer namespace."},
+		{"message_id", "VARCHAR", "Original producer message ID."},
+		{"distinct_id", "VARCHAR", "Actor identifier captured with the event."},
+		{"person_id", "VARCHAR", "Current resolved project-local person."},
+		{"person_properties", "VARCHAR", "Current traits encoded as JSON."},
+		{"properties", "VARCHAR", "Custom JSON properties; use json_extract_string or JSON casts."},
+		{"context", "VARCHAR", "Canonical JSON context: page.url, page.referrer, browser.name, browser.version, device.type, os.name, locale and session_id when supplied. Use json_extract_string(context,'$.browser.name')."},
+		{"timestamp", "VARCHAR", "Original occurrence time in UTC RFC3339."},
+		{"event_time", "TIMESTAMP WITH TIME ZONE", "Original occurrence time for temporal SQL."},
+		{"timestamp_ms", "BIGINT", "Original occurrence time in Unix milliseconds."},
+		{"received_at", "VARCHAR", "Server receipt time in UTC RFC3339."},
+		{"received_at_ms", "BIGINT", "Server receipt time in Unix milliseconds."},
+		{"revision", "UBIGINT", "Current revision for compare-and-swap mutations."},
+		{"is_imported", "UTINYINT", "1 for historical imports; 0 for live ingestion."},
+	}
+	tenant, err := s.projectTenant(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	schema.Body.Enabled = s.lake != nil
-	return schema, nil
+	deployment := s.queries.Limits()
+	effective := deployment.Effective(query.InteractiveQueryConfig{
+		MaxConcurrent: tenant.Budgets.HotQueryMaxConcurrent, TimeoutMS: tenant.Budgets.HotQueryTimeoutMS,
+		MaxRows: tenant.Budgets.HotQueryMaxRows, MaxResultBytes: tenant.Budgets.HotQueryMaxResultBytes,
+	})
+	executionSeconds := (effective.TimeoutMS + 999) / 1000
+	limits := AnalyticsLimits{
+		MaxSQLBytes: lakeapi.MaxSQLBytes, MaxRows: effective.MaxRows, MaxResultBytes: effective.MaxResultBytes,
+		MaxExecutionMS: effective.TimeoutMS, MaxExecutionSeconds: executionSeconds, MaxConcurrentQueries: effective.MaxConcurrent,
+		RequestTimeoutSeconds:              executionSeconds + 5 + s.lakeMetadataTimeoutSeconds,
+		ObjectStorageRequestTimeoutSeconds: s.lakeS3RequestTimeoutSeconds, MetadataRequestTimeoutSeconds: s.lakeMetadataTimeoutSeconds,
+		MaxMemoryBytes: lakeapi.DefaultDuckLakeMemoryMB << 20, MemoryScope: "per_resident_project_engine",
+	}
+	if s.lakeS3RequestTimeoutSeconds > 0 {
+		limits.RequestTimeoutSeconds += s.lakeS3RequestTimeoutSeconds
+	}
+	if s.lakeMemoryMB > 0 {
+		limits.MaxMemoryBytes = s.lakeMemoryMB << 20
+	}
+	return &AnalyticsSchemaOutput{Body: AnalyticsSchema{Enabled: s.lake != nil, Tables: []AnalyticsTable{{Name: "events", Columns: columns}}, Limits: limits, TenantBudgets: tenant.Budgets, DeploymentLimits: deployment, Delivery: delivery,
+		SQL: AnalyticsSQL{Dialect: "duckdb", Functions: nativequery.Functions(),
+			Features:    []string{"SELECT", "GROUP BY", "CTEs", "subqueries", "joins", "UNION", "window functions", "scalar casts", "$name bound parameters"},
+			Unsupported: []string{"writes", "qualified tables", "private columns", "external sources", "table functions", "recursive CTEs", "time travel", "per-query memory and temporary-disk quotas", "remote catalogs"}}}}, nil
 }
 
 func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput) (*AnalyticsQueryOutput, error) {
@@ -111,7 +154,22 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	return s.lakeAnalyticsQuery(ctx, input)
+	result, bounds, err := s.queries.SQL(ctx, s.interactiveReader(), input.ID, input.Body.SQL, input.Body.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithDeadline(ctx, bounds.Deadline)
+	defer cancel()
+	delivery, err := s.deliveryStatus(ctx, input.ID)
+	if err != nil {
+		return nil, apiError(503, "delivery status unavailable")
+	}
+	output := AnalyticsQuery{Result: result, Delivery: delivery}
+	encoded, err := json.Marshal(output)
+	if err != nil || len(encoded) > bounds.MaxBytes {
+		return nil, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
+	}
+	return &AnalyticsQueryOutput{Body: output}, nil
 }
 
 var analyticsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)

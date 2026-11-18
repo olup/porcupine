@@ -10,6 +10,7 @@ import (
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
@@ -60,13 +61,13 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 			t.Fatal("unexpected hosted delivery status", delivery)
 		}
 	}
-	query := sharedJourneyQuery(t, a.host.URL, project, reader, "SELECT count(*) AS total FROM events", http.StatusOK)
-	rows := query["result"].(map[string]any)["data"].([]any)
+	response := sharedJourneyQuery(t, a.host.URL, project, reader, "SELECT count(*) AS total FROM events", http.StatusOK)
+	rows := response["result"].(map[string]any)["data"].([]any)
 	if len(rows) != 1 || rows[0].(map[string]any)["total"] != "0" {
 		t.Fatal("unexpected hosted analytical result", rows)
 	}
 	var admitted, unresolved int64
-	if err := control.QueryRowContext(ctx, `SELECT query_count,unresolved_queries FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, hostedQueryUsageSource, project).Scan(&admitted, &unresolved); err != nil || admitted != 3 || unresolved != 3 {
+	if err := control.QueryRowContext(ctx, `SELECT query_count,unresolved_queries FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, query.HostedUsageSource, project).Scan(&admitted, &unresolved); err != nil || admitted != 3 || unresolved != 3 {
 		t.Fatal("admission must be visible in PostgreSQL before observation", admitted, unresolved, err)
 	}
 	if a.service.db != nil || b.service.db != nil {
@@ -85,7 +86,7 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 		}
 	}
 	var micros int64
-	if err := control.QueryRowContext(ctx, `SELECT query_count,query_micros,unresolved_queries,(SELECT count(*) FROM hosted_query_test_activity) FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, hostedQueryUsageSource, project).Scan(&admitted, &micros, &unresolved, &activities); err != nil || admitted != 3 || micros < 1 || unresolved != 0 || activities != 0 {
+	if err := control.QueryRowContext(ctx, `SELECT query_count,query_micros,unresolved_queries,(SELECT count(*) FROM hosted_query_test_activity) FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, query.HostedUsageSource, project).Scan(&admitted, &micros, &unresolved, &activities); err != nil || admitted != 3 || micros < 1 || unresolved != 0 || activities != 0 {
 		t.Fatal("observations must converge without double counting", admitted, micros, unresolved, activities, err)
 	}
 

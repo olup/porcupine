@@ -87,7 +87,7 @@ func (s *Service) configureHostedPipelines(c *output.PipelineConfig, flusher *ho
 	d := output.HostedPipelineDependencies{
 		PipelineDependencies: output.PipelineDependencies{
 			Control: s.control, Clock: func() time.Time { return s.clock() },
-			Reader: s.lake, WebhookClient: s.pipelineClient, Acquire: s.acquirePipelineExport,
+			Reader: s.lake, WebhookClient: s.pipelineClient, Acquire: s.queries.TryBackground,
 			Usage: usage.NewRecorder(s.control, "pipelines-"+flusher.native.Config.SharedSourceID, s.clock),
 		},
 		Effects: effects,

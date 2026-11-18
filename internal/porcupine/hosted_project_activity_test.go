@@ -116,18 +116,18 @@ func TestSharedHostedCommitAllowsQueryAdmissionAndFencesDeletion(t *testing.T) {
 			bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 			start := time.Now()
-			_, permit, err := s.acquireSharedQueryPermit(bounded, key.ProjectID, defaultTenantID)
+			_, permit, err := s.holdSharedQuery(bounded, key.ProjectID)
 			if err != nil {
 				t.Fatalf("query admission blocked by paused live commit: %v", err)
 			}
 			t.Logf("query admission while commit paused: %s", time.Since(start))
-			permit.release()
+			permit()
 			if err := s.beginTenantDeletion(bounded, defaultTenantID); err != nil {
 				t.Fatalf("tenant deletion intent blocked by paused live commit: %v", err)
 			}
-			_, permit, err = s.acquireSharedQueryPermit(bounded, key.ProjectID, defaultTenantID)
+			_, permit, err = s.holdSharedQuery(bounded, key.ProjectID)
 			if permit != nil {
-				permit.release()
+				permit()
 			}
 			if queryStatus(err) != 404 {
 				t.Fatalf("query admission did not observe tenant deletion fence: %v", err)

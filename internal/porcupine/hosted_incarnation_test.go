@@ -13,6 +13,7 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 var shortHostedIncarnation = hostedIncarnationTiming{lease: 600 * time.Millisecond, renew: 100 * time.Millisecond, grace: 400 * time.Millisecond}
@@ -45,7 +46,7 @@ func TestSharedHostedIncarnationReclaimsOnlyDeadWorkerTickets(t *testing.T) {
 	skipInShort(t)
 	db, dsn := sharedControlFixture(t)
 	ctx := t.Context()
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestSharedHostedIncarnationReclaimsOnlyDeadWorkerTickets(t *testing.T) {
 		t.Fatal(err)
 	}
 	dead.crash(deadDB)
-	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}, interactiveConfig: queries}
+	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}}
 	for _, project := range []string{"removed", "kept"} {
 		if err := s.beginControlProjectDeletion(ctx, project); err != nil {
 			t.Fatal(err)
@@ -107,7 +108,7 @@ func TestSharedHostedIncarnationStopsBeforeItsTicketsAreReclaimable(t *testing.T
 	t.Parallel()
 	db, dsn := sharedControlFixture(t)
 	ctx := t.Context()
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}

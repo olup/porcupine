@@ -9,9 +9,10 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
-func TestHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
+func TestSharedHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
 	t.Parallel()
 	flushed := make(chan bufferedFlushBatch, 4)
 	lifetime, stopBuffer := context.WithCancel(context.Background())
@@ -28,10 +29,14 @@ func TestHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
 	if _, err := buffer.Accept(t.Context(), testBufferBatch(t, "project", 3), ingestionPeer{}, false); err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{shared: &sharedRuntime{workerID: "stuck-worker"}, hosted: &hostedRuntime{buffer: buffer, stopBuffer: stopBuffer, nativeGrace: 100 * time.Millisecond}}
-	// A native call that ignores cancellation never leaves the active set.
-	canceled := make(chan struct{})
-	s.sharedQueries.active = map[string]*sharedQueryExecution{"permit": {permit: &sharedQueryPermit{id: "permit"}, project: "other", cancel: func() { close(canceled) }}}
+	_, s, _ := sharedQueryTestFixture(t)
+	s.hosted = &hostedRuntime{buffer: buffer, stopBuffer: stopBuffer, nativeGrace: 100 * time.Millisecond}
+	// A read that ignores cancellation remains active during Close.
+	native, _, release, err := s.holdQuery(t.Context(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
 	started := time.Now()
 	err = s.Close()
 	elapsed := time.Since(started)
@@ -50,7 +55,7 @@ func TestHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
 		t.Fatal("close waited without a bound for a stuck analytical call", elapsed)
 	}
 	select {
-	case <-canceled:
+	case <-native.Done():
 	default:
 		t.Fatal("drain did not cancel the analytical call")
 	}
@@ -65,7 +70,7 @@ func TestHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
 // heldNativeQuery keeps a real project engine lease and DuckDB connection, as
 // a native call blocked in I/O would, until the test resumes it.
 type heldNativeQuery struct {
-	hostedEventReader
+	query.HostedReader
 	store   *lakeapi.DuckLakeStore
 	project string
 	entered chan struct{}
@@ -74,7 +79,7 @@ type heldNativeQuery struct {
 
 func (q *heldNativeQuery) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	if project != q.project {
-		return q.hostedEventReader.Query(ctx, project, sql, parameters, limits)
+		return q.HostedReader.Query(ctx, project, sql, parameters, limits)
 	}
 	p, release, err := q.store.LeaseProject(context.Background(), project)
 	if err != nil {
@@ -102,8 +107,8 @@ func TestSharedHostedCloseFlushesBehindStuckNativeQuery(t *testing.T) {
 	hostedCleanupWrite(t, a.service, project, "warm")
 	_, reader := sharedJourneyKey(t, b.host.URL, project, []string{"events:read"})
 	_, otherReader := sharedJourneyKey(t, b.host.URL, other, []string{"events:read"})
-	stuck := &heldNativeQuery{hostedEventReader: a.service.hostedQueries.reader, store: a.service.hosted.native, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
-	a.service.hostedQueries.reader = stuck
+	stuck := &heldNativeQuery{HostedReader: a.service.hostedReader, store: a.service.hosted.native, project: project, entered: make(chan struct{}), resume: make(chan struct{})}
+	a.service.hostedReader = stuck
 	unblocked := false
 	unblock := func() {
 		if !unblocked {
@@ -162,7 +167,7 @@ func TestSharedHostedCloseFlushesBehindStuckNativeQuery(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("returned native call retained its HTTP scope")
 	}
-	if active := a.service.sharedQueries.status().Active; active != 0 {
+	if active := a.service.queries.Status().Active; active != 0 {
 		t.Fatal("returned native call stayed active", active)
 	}
 }

@@ -110,7 +110,7 @@ func (i *hostedIncarnation) keep(ctx context.Context) {
 		switch {
 		case lost:
 			// Only reached with nothing outstanding; rejoin under a new identity.
-			work, cancel := context.WithTimeout(ctx, sharedQueryControlTimeout)
+			work, cancel := context.WithTimeout(ctx, hostedActivityControlTimeout)
 			_ = i.grant(work)
 			cancel()
 		case !time.Now().Before(deadline):
@@ -131,7 +131,7 @@ func (i *hostedIncarnation) renew(ctx context.Context, deadline time.Time) bool 
 	i.mu.Lock()
 	id := i.id
 	i.mu.Unlock()
-	work, cancel := context.WithTimeout(ctx, min(time.Until(deadline), sharedQueryControlTimeout))
+	work, cancel := context.WithTimeout(ctx, min(time.Until(deadline), hostedActivityControlTimeout))
 	defer cancel()
 	sent := time.Now()
 	result, err := i.control.ExecContext(work, `UPDATE hosted_worker_incarnations
@@ -205,7 +205,7 @@ func (i *hostedIncarnation) close() {
 	if outstanding != 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), sharedQueryControlTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), hostedActivityControlTimeout)
 	defer cancel()
 	_, _ = i.control.ExecContext(ctx, `DELETE FROM hosted_worker_incarnations
 WHERE incarnation_id=$1 AND NOT EXISTS(SELECT 1 FROM hosted_project_activity WHERE incarnation_id=$1)`, id)

@@ -128,11 +128,14 @@ func TestUsageQueryAdmissionPreservesTimeoutAndMeterFailure(t *testing.T) {
 			} else if _, err := s.db.Exec(`DROP TABLE usage_executions`); err != nil {
 				t.Fatal(err)
 			}
-			_, _, scope, err := s.beginUsageQuery(t.Context(), id, "sql")
-			if queryStatus(err) != want || scope != nil {
-				t.Fatalf("usage admission status=%d scope=%v err=%v, want %d", queryStatus(err), scope, err, want)
+			_, _, err := s.queries.SQL(t.Context(), queryReadHook{read: func(context.Context, lakeapi.QueryExecutionLimits) error {
+				t.Fatal("failed usage admission entered native code")
+				return nil
+			}}, id, "", nil)
+			if queryStatus(err) != want {
+				t.Fatalf("usage admission status=%d err=%v, want %d", queryStatus(err), err, want)
 			}
-			if len(s.querySlots) != 0 || len(s.tenantQueries.active) != 0 {
+			if s.queries.UsedSlots() != 0 {
 				t.Fatal("failed usage admission leaked query capacity")
 			}
 		})
