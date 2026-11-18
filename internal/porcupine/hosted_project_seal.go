@@ -225,7 +225,7 @@ ORDER BY d.project_id`)
 		err := s.sealHostedProject(work, project)
 		cancel()
 		if err != nil && !errors.Is(err, errHostedProjectBusy) && ctx.Err() == nil {
-			slog.Warn("hosted project seal pending", "project_id", project, "error", err)
+			slog.Warn("hosted project seal pending", "project_id", project)
 		}
 	}
 }

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -63,7 +64,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "DuckLake smoke failed:", err)
 		os.Exit(1)
 	}
-	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/profile/status, scheduled native backup")
+	fmt.Println("ok: compiled server ingestion, query visibility, stable retry ID, CLI native query/schema/profile/status, scheduled native backup, visibility probe, private metrics and JSON logs")
 }
 
 func run(ctx context.Context, serverPath, cliPath string) error {
@@ -100,14 +101,20 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 		return errors.New("cannot generate temporary administrator credential")
 	}
 	admin := hex.EncodeToString(secret)
+	logs, err := os.Create(filepath.Join(directory, "server.log"))
+	if err != nil {
+		return errors.New("cannot capture server logs")
+	}
+	defer logs.Close()
 	server := exec.CommandContext(ctx, serverPath)
 	server.Dir = directory
 	server.Env = environment(map[string]string{
 		"PORCUPINE_ADDR": address, "PORCUPINE_DB": filepath.Join(directory, "queue.db"),
-		"PORCUPINE_BACKUP_DIR":   filepath.Join(directory, "backups"),
+		"PORCUPINE_BACKUP_DIR":      filepath.Join(directory, "backups"),
+		"PORCUPINE_METRICS_ENABLED": "true", "PORCUPINE_METRICS_LISTEN": "127.0.0.1:0",
 		"PORCUPINE_DUCKLAKE_DIR": filepath.Join(directory, "lake"), "PORCUPINE_BOOTSTRAP_TOKEN": admin,
 	})
-	server.Stdout, server.Stderr = io.Discard, io.Discard
+	server.Stdout, server.Stderr = io.Discard, logs
 	if err := server.Start(); err != nil {
 		return errors.New("cannot start compiled server")
 	}
@@ -286,6 +293,106 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "backups", status.Backup.Latest, "manifest.json")); err != nil {
 		return errors.New("compiled CLI advertised a missing backup bundle")
+	}
+	if err := runVisibilityProbe(ctx, client, cliPath, origin, adminHeaders); err != nil {
+		return err
+	}
+	return checkTelemetry(ctx, client, origin, logs.Name(), admin, created.Token)
+}
+
+func runVisibilityProbe(ctx context.Context, client *http.Client, cliPath, origin string, adminHeaders map[string]string) error {
+	var project struct {
+		Project struct{ ID string } `json:"project"`
+	}
+	if err := call(ctx, client, origin, http.MethodPost, "/api/v1/projects", adminHeaders, map[string]string{"name": "visibility probe"}, 201, &project); err != nil {
+		return fmt.Errorf("create dedicated probe project: %w", err)
+	}
+	credentials := map[string]string{}
+	for env, permission := range map[string]string{"PORCUPINE_PROBE_INGEST_TOKEN": "events:write", "PORCUPINE_PROBE_QUERY_TOKEN": "events:read"} {
+		var key struct{ Token string }
+		body := map[string]any{"name": "visibility probe " + permission, "permissions": []string{permission}, "projects": []string{project.Project.ID}}
+		if err := call(ctx, client, origin, http.MethodPost, "/api/v1/access-keys", adminHeaders, body, 201, &key); err != nil {
+			return fmt.Errorf("create restricted probe key: %w", err)
+		}
+		credentials[env] = key.Token
+	}
+	probe := exec.CommandContext(ctx, cliPath, "visibility-probe", "--ingest-url", origin, "--project", project.Project.ID)
+	probe.Env = environment(credentials)
+	result, err := probe.CombinedOutput()
+	if err != nil || !bytes.Contains(result, []byte("visibility probe visible after ")) {
+		return fmt.Errorf("compiled visibility probe failed: %s", bytes.TrimSpace(result))
+	}
+	return nil
+}
+
+func checkTelemetry(ctx context.Context, client *http.Client, origin, logsPath string, secrets ...string) error {
+	logs, err := os.ReadFile(logsPath)
+	if err != nil {
+		return errors.New("cannot read server logs")
+	}
+	checkPrivate := func(body []byte) error {
+		for _, secret := range append(secrets, "compiled-smoke-stable", "SELECT missing_column") {
+			if bytes.Contains(body, []byte(secret)) {
+				return errors.New("server telemetry included secret or request data")
+			}
+		}
+		return nil
+	}
+	if err := checkPrivate(logs); err != nil {
+		return err
+	}
+	var metricsAddr string
+	scanner := bufio.NewScanner(bytes.NewReader(logs))
+	for scanner.Scan() {
+		var entry struct {
+			Level    string `json:"level"`
+			Message  string `json:"msg"`
+			Listener string `json:"listener"`
+			Address  string `json:"address"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil || entry.Level == "" || entry.Message == "" {
+			return errors.New("server stderr contained an invalid JSON log entry")
+		}
+		if entry.Message == "Porcupine listening" && entry.Listener == "metrics" {
+			metricsAddr = entry.Address
+		}
+	}
+	if scanner.Err() != nil || metricsAddr == "" {
+		return errors.New("server did not log its private listener")
+	}
+	if err := call(ctx, client, origin, http.MethodGet, "/metrics", nil, nil, 404, nil); err != nil {
+		return errors.New("public listener exposes /metrics")
+	}
+	metricsOrigin := "http://" + metricsAddr
+	if err := call(ctx, client, metricsOrigin, http.MethodGet, "/readyz", nil, nil, 404, nil); err != nil {
+		return errors.New("private listener exposes the application router")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsOrigin+"/metrics", nil)
+	if err != nil {
+		return errors.New("invalid logged metrics listener")
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("scrape private listener: %w", err)
+	}
+	defer res.Body.Close()
+	metrics, err := io.ReadAll(io.LimitReader(res.Body, 256<<10))
+	if err != nil || res.StatusCode != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/plain; version=0.0.4") {
+		return errors.New("private listener did not return Prometheus metrics")
+	}
+	if err := checkPrivate(metrics); err != nil {
+		return err
+	}
+	for _, sample := range []string{
+		`porcupine_ingestion_events_total{profile="standalone",durability="durable",outcome="accepted"} 2`,
+		`porcupine_ingestion_events_total{profile="standalone",durability="durable",outcome="duplicate"} 1`,
+		`porcupine_flush_attempts_total{profile="standalone",outcome="ok"}`,
+		`porcupine_query_backend_duration_seconds_count{profile="standalone",operation="sql",outcome="ok"}`,
+		`porcupine_queue_events{profile="standalone"}`,
+	} {
+		if !bytes.Contains(metrics, []byte(sample)) {
+			return fmt.Errorf("private listener missing %s", sample)
+		}
 	}
 	return nil
 }

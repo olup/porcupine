@@ -35,7 +35,20 @@ func (s *Service) advanceDeliveryCursor(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []eventapi.Event) (bool, error) {
+func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []eventapi.Event) (_ bool, resultErr error) {
+	if m := s.metrics; m != nil {
+		started := time.Now()
+		defer func() {
+			outcome := "ok"
+			if resultErr != nil {
+				outcome = "retry"
+				if ctx.Err() != nil {
+					outcome = "cancelled"
+				}
+			}
+			m.observeFlush(outcome, time.Since(started))
+		}()
+	}
 	projections := make([]lakeapi.EventProjection, 0, len(batch))
 	for _, event := range batch {
 		// Unedited events need no stored original: the first correction

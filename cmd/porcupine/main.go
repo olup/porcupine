@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,38 +23,133 @@ import (
 var defaultListenAddress = "127.0.0.1:8080"
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		var failure *serverFailure
+		if errors.As(err, &failure) {
+			slog.Error("Porcupine server failed", "stage", failure.stage, "reason", serverFailureReason(failure.err))
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
 
-func serve(config porcupine.Config, addr string) (result error) {
+type serverFailure struct {
+	stage string
+	err   error
+}
+
+func (e *serverFailure) Error() string { return "Porcupine server failed during " + e.stage }
+func (e *serverFailure) Unwrap() error { return e.err }
+
+func serverFailureReason(err error) string {
+	switch {
+	case errors.Is(err, syscall.EADDRINUSE):
+		return "address_in_use"
+	case errors.Is(err, syscall.EADDRNOTAVAIL):
+		return "address_unavailable"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission_denied"
+	case errors.Is(err, fs.ErrNotExist):
+		return "missing_file"
+	case errors.Is(err, syscall.ENOSPC):
+		return "disk_full"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	switch err.Error() {
+	case "PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization",
+		"PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization":
+		return "bootstrap_token_required"
+	case "SQLite has an operator restore in progress", "operator restore is incomplete",
+		"operator restore is incomplete; finish or discard the isolated restore before starting":
+		return "restore_incomplete"
+	}
+	return "unclassified"
+}
+
+type serverLog struct{ listener string }
+
+func (l serverLog) Write(data []byte) (int, error) {
+	// net/http may include peer information or arbitrary panic values.
+	slog.Warn("HTTP server error", "listener", l.listener)
+	return len(data), nil
+}
+
+func serve(config porcupine.Config, addr, metricsAddr string) (result error) {
 	s, err := porcupine.Open(config)
 	if err != nil {
-		return err
+		return &serverFailure{stage: "open_storage", err: err}
 	}
-	defer func() { result = errors.Join(result, s.Close()) }()
-	server := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: analyticsHTTPWriteTimeout(config.DuckLake) + time.Duration(config.InteractiveQueries.TimeoutMS)*time.Millisecond, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		<-ctx.Done()
-		s.BeginDrain()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			slog.Error("shutdown", "error", err)
+	defer func() {
+		if err := s.Close(); err != nil {
+			result = errors.Join(result, &serverFailure{stage: "close_storage", err: err})
 		}
 	}()
-	slog.Info("Porcupine listening", "address", addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
+
+	var private net.Listener
+	if metricsAddr != "" {
+		private, err = net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return &serverFailure{stage: "bind_metrics", err: err}
+		}
+		defer private.Close()
 	}
-	<-drained
-	return nil
+	public, err := net.Listen("tcp", addr)
+	if err != nil {
+		return &serverFailure{stage: "bind_api", err: err}
+	}
+	defer public.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	api := &http.Server{
+		Handler: s.Handler(), ErrorLog: log.New(serverLog{"api"}, "", 0),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: analyticsHTTPWriteTimeout(config.DuckLake) + time.Duration(config.InteractiveQueries.TimeoutMS)*time.Millisecond,
+		IdleTimeout:  60 * time.Second, MaxHeaderBytes: 16 << 10,
+	}
+	exits := make(chan error, 2)
+	go func() {
+		exits <- &serverFailure{stage: "serve_api", err: api.Serve(public)}
+	}()
+	slog.Info("Porcupine listening", "listener", "api", "address", public.Addr().String())
+
+	var metrics *http.Server
+	if private != nil {
+		metrics = &http.Server{
+			Handler: s.MetricsHandler(), ErrorLog: log.New(serverLog{"metrics"}, "", 0),
+			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second,
+			IdleTimeout: 30 * time.Second, MaxHeaderBytes: 4 << 10,
+		}
+		go func() {
+			exits <- &serverFailure{stage: "serve_metrics", err: metrics.Serve(private)}
+		}()
+		slog.Info("Porcupine listening", "listener", "metrics", "address", private.Addr().String())
+	}
+
+	select {
+	case <-ctx.Done():
+	case err := <-exits:
+		if !errors.Is(err, http.ErrServerClosed) {
+			result = err
+		}
+	}
+	s.BeginDrain()
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	servers := []*http.Server{api}
+	if metrics != nil {
+		servers = append(servers, metrics)
+	}
+	for _, server := range servers {
+		if err := server.Shutdown(shutdown); err != nil {
+			_ = server.Close()
+			result = errors.Join(result, &serverFailure{stage: "shutdown_http", err: err})
+		}
+	}
+	return result
 }
 
 func (s settings) serviceConfig() (string, porcupine.Config, error) {

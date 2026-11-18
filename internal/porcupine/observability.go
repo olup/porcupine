@@ -1,0 +1,338 @@
+package porcupine
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/olup/porcupine/internal/observability"
+)
+
+type operationalMetrics struct {
+	*observability.Registry
+	activeQueries [3]atomic.Int64
+	journal       atomic.Pointer[journalQueueSample]
+	stopSampling  context.CancelFunc
+	samplingDone  chan struct{}
+}
+
+type journalQueueSample struct {
+	events, bytes int64
+	oldest, at    time.Time
+}
+
+func (s *Service) startQueueSampling() {
+	m := s.metrics
+	if m == nil || s.db == nil {
+		return
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	m.stopSampling = stop
+	m.samplingDone = make(chan struct{})
+	go func() {
+		defer close(m.samplingDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for ctx.Err() == nil {
+			s.sampleJournalQueue(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (s *Service) sampleJournalQueue(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	var sample journalQueueSample
+	var oldest string
+	err := s.db.QueryRowContext(ctx, `SELECT pending_count,pending_bytes,
+COALESCE((SELECT received_at FROM events WHERE delivered=0 ORDER BY id LIMIT 1),'')
+FROM queue_usage WHERE id=1`).Scan(&sample.events, &sample.bytes, &oldest)
+	if err != nil {
+		return
+	}
+	if oldest != "" {
+		sample.oldest, err = time.Parse(time.RFC3339Nano, oldest)
+		if err != nil {
+			return
+		}
+	}
+	sample.at = time.Now()
+	s.metrics.journal.Store(&sample)
+}
+
+// MetricsHandler is served only on the dedicated listener.
+func (s *Service) MetricsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.metrics == nil || r.URL.Path != "/metrics" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", observability.ContentType)
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method == http.MethodGet {
+			s.metrics.Write(w, s.metricGauges())
+		}
+	})
+}
+
+func (s *Service) metricGauges() []observability.Gauge {
+	var gauges []observability.Gauge
+	add := func(name string, value float64) {
+		gauges = append(gauges, observability.Gauge{Name: "porcupine_" + name, Value: value})
+	}
+	var events, bytes int64
+	var oldest time.Time
+	eventCapacity, byteCapacity := s.queueMax, s.queueMaxBytes
+	var sampled bool
+	if s.hosted != nil {
+		buffer := s.hosted.buffer
+		snapshot := buffer.snapshot()
+		events, bytes, oldest = int64(snapshot.events), snapshot.bytes, snapshot.oldest
+		eventCapacity, byteCapacity = buffer.config.maxEvents, buffer.config.maxBytes
+		add("flush_inflight", float64(snapshot.inflight))
+		sampled = true
+	} else if sample := s.metrics.journal.Load(); sample != nil {
+		events, bytes, oldest = sample.events, sample.bytes, sample.oldest
+		add("queue_sample_timestamp_seconds", float64(sample.at.Unix()))
+		sampled = true
+	} else {
+		add("queue_sample_timestamp_seconds", 0)
+	}
+	if sampled {
+		add("queue_events", float64(events))
+		add("queue_bytes", float64(bytes))
+		var age float64
+		if !oldest.IsZero() {
+			age = max(0, s.clock().Sub(oldest).Seconds())
+		}
+		add("queue_oldest_seconds", age)
+	}
+	add("queue_capacity_events", float64(eventCapacity))
+	add("queue_capacity_bytes", float64(byteCapacity))
+	add("query_slots_used", float64(len(s.querySlots)))
+	add("query_slots_capacity", float64(cap(s.querySlots)))
+	for index, kind := range observedQueryKinds {
+		gauges = append(gauges, observability.Gauge{
+			Name: "porcupine_query_active", Value: float64(s.metrics.activeQueries[index].Load()),
+			Labels: []observability.Label{{Name: "operation", Value: kind}},
+		})
+	}
+	return gauges
+}
+
+var observedQueryKinds = [...]string{"sql", "catalog", "profile"}
+
+type httpObservation struct {
+	operation string
+}
+
+type httpObservationKey struct{}
+
+type observedResponse struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *observedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *observedResponse) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.ResponseWriter.WriteHeader(status)
+	if status >= 200 || status == http.StatusSwitchingProtocols {
+		w.status = status
+	}
+}
+
+func (w *observedResponse) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *observedResponse) FlushError() error {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+func requestGroup(path string) string {
+	switch path {
+	case "/healthz", "/readyz":
+		return "health"
+	case "/mcp":
+		return "mcp"
+	case "/openapi.json", "/openapi.yaml", "/openapi-3.0.json", "/openapi-3.0.yaml", "/ingest/v1/schema":
+		return "metadata"
+	case "/ingest/v1/events", "/capture/", "/batch/", "/i/v0/e/", "/e/", "/v1/track", "/v1/page", "/v1/identify", "/v1/batch":
+		return "ingestion"
+	}
+	switch {
+	case strings.HasPrefix(path, "/api/v1/"):
+		return "management"
+	case strings.HasPrefix(path, "/oauth/"), strings.HasPrefix(path, "/.well-known/"):
+		return "oauth"
+	default:
+		return "other"
+	}
+}
+
+func (s *Service) observeHTTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		group := requestGroup(r.URL.Path)
+		observation := httpObservation{}
+		if group == "management" {
+			r = r.WithContext(context.WithValue(r.Context(), httpObservationKey{}, &observation))
+		}
+		out := &observedResponse{ResponseWriter: w}
+		next.ServeHTTP(out, r)
+		status := out.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		elapsed := time.Since(started)
+		if m := s.metrics; m != nil {
+			route := observability.Label{Name: "route", Value: group}
+			m.Add("porcupine_http_requests_total", 1, route, observability.Label{Name: "status_class", Value: statusClass(status)})
+			m.ObserveDuration("porcupine_http_request_duration_seconds", elapsed, route)
+		}
+		if observation.operation != "" {
+			s.observeOperation(r.Context(), "http", observation.operation, status, elapsed)
+		} else if status >= 500 {
+			slog.Warn("HTTP request failed", "route", group, "status", status, "duration_ms", elapsed.Milliseconds())
+		}
+	})
+}
+
+func statusClass(status int) string {
+	switch status / 100 {
+	case 2:
+		return "2xx"
+	case 3:
+		return "3xx"
+	case 4:
+		return "4xx"
+	case 5:
+		return "5xx"
+	default:
+		return "other"
+	}
+}
+
+func (s *Service) observeOperation(ctx context.Context, transport, operation string, status int, elapsed time.Duration) {
+	outcome := "ok"
+	switch {
+	case status >= 400 && ctx.Err() != nil:
+		outcome = "cancelled"
+	case status >= 500:
+		outcome = "error"
+	case status >= 400:
+		outcome = "rejected"
+	}
+	if m := s.metrics; m != nil {
+		m.Add("porcupine_operations_total", 1,
+			observability.Label{Name: "transport", Value: transport},
+			observability.Label{Name: "operation", Value: operation},
+			observability.Label{Name: "outcome", Value: outcome})
+	}
+	if outcome == "error" {
+		slog.Warn("operation failed", "transport", transport, "operation", operation, "status", status, "duration_ms", elapsed.Milliseconds())
+	}
+}
+
+func (s *Service) observeAcceptance(ctx context.Context, result liveAcceptanceResult, err error) {
+	m := s.metrics
+	if m == nil {
+		return
+	}
+	durability := observability.Label{Name: "durability", Value: string(s.acceptance.Durability())}
+	outcome := "accepted"
+	if err != nil {
+		var rejected *managementError
+		var failure *acceptanceFailure
+		var budget *tenantIngestionError
+		switch {
+		case ctx.Err() != nil:
+			outcome = "cancelled"
+		case errors.As(err, &failure) && failure.pressure:
+			outcome = "pressure"
+		case errors.As(err, &budget), errors.As(err, &rejected) && rejected.GetStatus() < 500:
+			outcome = "rejected"
+		default:
+			outcome = "error"
+		}
+	}
+	m.Add("porcupine_ingestion_admissions_total", 1, durability, observability.Label{Name: "outcome", Value: outcome})
+	switch result := result.(type) {
+	case durableLiveResult:
+		m.observeIngestionEvents(acceptanceDurable, "accepted", uint64(result.accepted))
+		m.observeIngestionEvents(acceptanceDurable, "duplicate", uint64(result.duplicates))
+		m.observeIngestionEvents(acceptanceDurable, "identity_ignored", uint64(result.identityIgnored))
+	case bufferedLiveResult:
+		m.observeIngestionEvents(acceptanceBuffered, "buffered", uint64(result.received))
+	}
+}
+
+func (m *operationalMetrics) observeIngestionEvents(durability acceptanceDurability, outcome string, count uint64) {
+	m.Add("porcupine_ingestion_events_total", count,
+		observability.Label{Name: "durability", Value: string(durability)},
+		observability.Label{Name: "outcome", Value: outcome})
+}
+
+func (m *operationalMetrics) observeFlush(outcome string, elapsed time.Duration) {
+	m.Add("porcupine_flush_attempts_total", 1, observability.Label{Name: "outcome", Value: outcome})
+	m.ObserveDuration("porcupine_flush_duration_seconds", elapsed)
+}
+
+func (m *operationalMetrics) observeDropped(reason string, count int) {
+	m.Add("porcupine_flush_dropped_events_total", uint64(count), observability.Label{Name: "reason", Value: reason})
+}
+
+func queryOutcome(contextErr, err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(contextErr, context.Canceled), errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(contextErr, context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	default:
+		return "error"
+	}
+}
+
+func (m *operationalMetrics) observeQueryAdmission(contextErr, err error, operation string, elapsed time.Duration) {
+	outcome := queryOutcome(contextErr, err)
+	if outcome == "ok" {
+		outcome = "admitted"
+	} else if outcome == "error" {
+		var managed *managementError
+		if errors.As(err, &managed) && managed.GetStatus() == http.StatusTooManyRequests {
+			outcome = "limited"
+			if managed.Message == "analytics execution time limit reached" {
+				outcome = "timeout"
+			}
+		}
+	}
+	kind := observability.Label{Name: "operation", Value: operation}
+	m.Add("porcupine_query_admissions_total", 1, kind, observability.Label{Name: "outcome", Value: outcome})
+	m.ObserveDuration("porcupine_query_admission_duration_seconds", elapsed, kind)
+}

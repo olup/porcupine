@@ -163,6 +163,11 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	api := humago.New(m, config)
 	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
 		req, w := humago.Unwrap(ctx)
+		if observation, ok := ctx.Context().Value(httpObservationKey{}).(*httpObservation); ok {
+			if internal, _ := ctx.Context().Value(mcpDispatchKey{}).(bool); !internal {
+				observation.operation = ctx.Operation().OperationID
+			}
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		access := managementOperationAccess(ctx.Operation())
 		if access.ProjectParameter == "" && ctx.Operation().OperationID != "delete-project" {
@@ -690,7 +695,7 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		defer scope.Finish()
 		scope.Begin()
 		events, err := s.hostedQueries.reader.ListEvents(native, input.ID, min(input.Limit, limits.MaxRows), limits.MaxResultBytes)
-		if err := interactiveQueryResultError(native, scope.Finish(), err); err != nil {
+		if err := scope.Return(native, err); err != nil {
 			return nil, err
 		}
 		return &EventListOutput{Body: EventList{Events: events}}, nil

@@ -72,7 +72,7 @@ func (s *Service) lakeAnalyticsQuery(ctx context.Context, input *AnalyticsQueryI
 	defer cancel()
 	scope.Begin()
 	result, err := s.interactiveReader().Query(native, input.ID, input.Body.SQL, input.Body.Parameters, limits.executionLimits())
-	err = interactiveQueryResultError(native, scope.Finish(), err)
+	err = scope.Return(native, err)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (s *Service) lakeEventCatalog(ctx context.Context, input lakeapi.EventCatal
 	defer cancel()
 	scope.Begin()
 	result, err := s.interactiveReader().Catalog(native, input)
-	err = interactiveQueryResultError(native, scope.Finish(), err)
+	err = scope.Return(native, err)
 	if err != nil {
 		return nil, err
 	}

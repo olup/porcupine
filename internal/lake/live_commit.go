@@ -151,7 +151,7 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 		if err := guard(ctx, tx.Commit); err != nil {
 			return err
 		}
-		result = CommittedLiveBatch{Evidence: evidence}
+		result = CommittedLiveBatch{Evidence: evidence, Fresh: true}
 		return nil
 	})
 	if err != nil {

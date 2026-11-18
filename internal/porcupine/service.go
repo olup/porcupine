@@ -22,6 +22,7 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 	_ "modernc.org/sqlite"
@@ -51,9 +52,11 @@ type Config struct {
 	Shared              *SharedConfig
 	Usage               *usage.Config
 	HostedRecoveryFloor HostedRecoveryFloor
+	MetricsEnabled      bool
 }
 
 type Service struct {
+	metrics                     *operationalMetrics
 	hosted                      *hostedRuntime
 	control                     *sql.DB
 	localAdmission              contextMutex
@@ -134,6 +137,13 @@ func newServiceRuntime(c Config, interactiveConfig InteractiveQueryConfig) (*Ser
 	}
 	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
 		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+	if c.MetricsEnabled {
+		profile := c.Profile
+		if profile == "" {
+			profile = ProfileStandalone
+		}
+		s.metrics = &operationalMetrics{Registry: observability.NewRegistry(string(profile))}
+	}
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
 	s.deliveryMaxBytes = 4 << 20
@@ -365,12 +375,17 @@ func Open(c Config) (*Service, error) {
 		return nil, errors.Join(err, s.Close())
 	}
 	s.startUsage()
+	s.startQueueSampling()
 	return s, nil
 }
 
 func (s *Service) Close() error {
 	if s.hosted != nil {
 		return s.closeHosted()
+	}
+	if m := s.metrics; m != nil && m.stopSampling != nil {
+		m.stopSampling()
+		<-m.samplingDone
 	}
 	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
@@ -566,13 +581,13 @@ func (s *Service) Handler() http.Handler {
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
-	return s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.observeHTTP(s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/oauth/") {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
 		}
 		m.ServeHTTP(w, r)
-	}))
+	})))
 }
 
 type eventInput struct {
@@ -754,10 +769,12 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	if s.hosted != nil {
 		tenant, err := s.projectTenant(ctx, projectID)
 		if err != nil {
+			s.observeAcceptance(ctx, nil, err)
 			writeManagementProblem(w, err)
 			return
 		}
 		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID); err != nil {
+			s.observeAcceptance(ctx, nil, err)
 			if !writeTenantIngestionError(w, r, err, nativeResponse) {
 				w.Header().Set("Retry-After", "1")
 				problem(w, 503, "tenant ingestion policy unavailable")
@@ -765,7 +782,8 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			return
 		}
 	}
-	result, err := s.acceptance.Accept(r.Context(), prepared, peer, nativeResponse)
+	result, err := s.acceptance.Accept(ctx, prepared, peer, nativeResponse)
+	s.observeAcceptance(ctx, result, err)
 	if err != nil {
 		if writeTenantIngestionError(w, r, err, nativeResponse) {
 			return

@@ -1,0 +1,1114 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "id": null,
+  "uid": "porcupine-operator",
+  "title": "Porcupine operator dashboard",
+  "description": "Request outcomes, ingestion backlog, flushes, interactive query timing, and live visibility.",
+  "tags": [
+    "porcupine"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "server_job",
+        "label": "Server job",
+        "type": "textbox",
+        "query": "porcupine",
+        "current": {
+          "text": "porcupine",
+          "value": "porcupine"
+        }
+      },
+      {
+        "name": "worker",
+        "label": "Worker",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(up{job=\"$server_job\"}, instance)",
+        "query": {
+          "query": "label_values(up{job=\"$server_job\"}, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "probe_job",
+        "label": "Visibility probe job",
+        "type": "textbox",
+        "query": "porcupine-visibility-probe",
+        "current": {
+          "text": "porcupine-visibility-probe",
+          "value": "porcupine-visibility-probe"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Traffic and operations",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Scrape availability",
+      "description": "A value of 0 means Prometheus could not scrape a configured target. The probe series appears when you configure its scrape job.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "server · {{instance}}",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "up{job=\"$probe_job\"}",
+          "legendFormat": "probe · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP responses by status",
+      "description": "Response rate by route group and status class across the selected workers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, route, status_class) (rate(porcupine_http_requests_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{route}} · {{status_class}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP response latency p50 and p95",
+      "description": "Fleet p95 by route group. Buckets are combined after taking each target's rate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (profile, route, le) (rate(porcupine_http_request_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{profile}} · {{route}}",
+          "range": true
+        },
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (profile, route, le) (rate(porcupine_http_request_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{profile}} · {{route}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Management and MCP failures",
+      "description": "Rejected, failed, and cancelled calls by operation. In MCP, a tool can report a failure inside an HTTP 2xx response.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, transport, operation, outcome) (rate(porcupine_operations_total{job=\"$server_job\",instance=~\"$worker\",outcome!=\"ok\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{transport}} · {{operation}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Live ingestion",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Admission outcomes",
+      "description": "Rate of capture requests by acknowledgment mode and outcome. Pressure signals capacity rejections.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, durability, outcome) (rate(porcupine_ingestion_admissions_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{durability}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Event outcomes",
+      "description": "Event rate by acknowledgment mode and outcome. Buffered events have been admitted to memory.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: events/s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, durability, outcome) (rate(porcupine_ingestion_events_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{durability}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Queue utilization by worker",
+      "description": "Compare event and byte utilization to find which capacity is under pressure. Each line uses one worker's queue and limit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_queue_events{job=\"$server_job\",instance=~\"$worker\"} / porcupine_queue_capacity_events{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}} · events",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "porcupine_queue_bytes{job=\"$server_job\",instance=~\"$worker\"} / porcupine_queue_capacity_bytes{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}} · bytes",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Queued events by worker",
+      "description": "Worker queue depth, including work in flight in hosted mode.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_queue_events{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Queued bytes by worker",
+      "description": "Payload bytes in the worker queue, including work in flight in hosted mode.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_queue_bytes{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Oldest queued event by worker",
+      "description": "Time since the oldest currently queued event was admitted. Compare workers to find a stalled backlog.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_queue_oldest_seconds{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Flush and queue sampling",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Flush attempts",
+      "description": "Rate by outcome. In standalone this measures projection and queue acknowledgment. In hosted this measures live flush completion.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: attempts/s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, outcome) (rate(porcupine_flush_attempts_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Flush duration p50 and p95",
+      "description": "Fleet p95 for completed flush attempts. Check attempt outcomes when flush latency rises.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (profile, le) (rate(porcupine_flush_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{profile}}",
+          "range": true
+        },
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (profile, le) (rate(porcupine_flush_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{profile}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Hosted dropped events",
+      "description": "Rate of recorded hosted drops by reason. Events lost when a process dies are outside this metric.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: events/s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, reason) (rate(porcupine_flush_dropped_events_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Hosted flushes in flight",
+      "description": "Number of currently active flushes on each hosted worker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_flush_inflight{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Standalone queue sample age",
+      "description": "Seconds since each standalone worker last sampled its SQLite queue. The series starts after the first successful sample. Queue gauges can be stale when this age keeps rising.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_min(time() - (porcupine_queue_sample_timestamp_seconds{job=\"$server_job\",instance=~\"$worker\"} > 0), 0)",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Interactive queries",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Query admission outcomes",
+      "description": "Interactive admission rate by operation and outcome. Compare limited admissions with worker slot utilization.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile, operation, outcome) (rate(porcupine_query_admissions_total{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} · {{operation}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Query admission latency p50 and p95",
+      "description": "Fleet p95 by operation for time spent in admission.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (profile, operation, le) (rate(porcupine_query_admission_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{profile}} · {{operation}}",
+          "range": true
+        },
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (profile, operation, le) (rate(porcupine_query_admission_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{profile}} · {{operation}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Query backend latency p50 and p95",
+      "description": "Fleet p95 for time spent in the backend by operation and outcome. Compare this with time spent in admission.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (profile, operation, outcome, le) (rate(porcupine_query_backend_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{profile}} · {{operation}} · {{outcome}}",
+          "range": true
+        },
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (profile, operation, outcome, le) (rate(porcupine_query_backend_duration_seconds_bucket{job=\"$server_job\",instance=~\"$worker\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{profile}} · {{operation}} · {{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Query slot utilization by worker",
+      "description": "Used slots divided by the worker's configured slot capacity.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_query_slots_used{job=\"$server_job\",instance=~\"$worker\"} / porcupine_query_slots_capacity{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Active backend queries by worker",
+      "description": "Active backend calls by operation. A cancelled request can still have an active backend call until it returns.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "porcupine_query_active{job=\"$server_job\",instance=~\"$worker\"}",
+          "legendFormat": "{{profile}} · {{instance}} · {{operation}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "End-to-end visibility",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Visibility probe outcomes",
+      "description": "Runs per minute by outcome. Check failures and timeouts alongside latency, which is recorded for successful runs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 69
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: runs/min",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "60 * sum by (outcome) (rate(porcupine_visibility_probe_runs_total{job=\"$probe_job\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Capture acknowledgment to SQL visibility",
+      "description": "Lag between the capture response and the first SQL poll that finds the event. Percentiles cover successful runs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 69
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (instance, le) (rate(porcupine_visibility_probe_ack_to_visible_seconds_bucket{job=\"$probe_job\"}[$__rate_interval])))",
+          "legendFormat": "{{instance}} · p50",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (instance, le) (rate(porcupine_visibility_probe_ack_to_visible_seconds_bucket{job=\"$probe_job\"}[$__rate_interval])))",
+          "legendFormat": "{{instance}} · p95",
+          "range": true
+        }
+      ]
+    }
+  ]
+}

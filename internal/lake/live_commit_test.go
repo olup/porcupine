@@ -114,7 +114,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	stager := &liveProofStager{objects: a.Remote, attempt: fence.AcquisitionID}
 	result := commitLiveFixture(t, a, owner, batch, stager)
 	committed, ok := result.(CommittedLiveBatch)
-	if !ok || committed.Evidence.AcceptedLive != 3 || committed.Evidence.Sequence != 1 || !committed.Evidence.AccountedAt.Equal(firstTime) {
+	if !ok || !committed.Fresh || committed.Evidence.AcceptedLive != 3 || committed.Evidence.Sequence != 1 || !committed.Evidence.AccountedAt.Equal(firstTime) {
 		t.Fatal(result)
 	}
 	if len(stager.selected) != 1 || len(stager.selected[0]) != 1 || stager.selected[0][0].UUID != ordinaryID {
@@ -179,7 +179,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	b.liveClock = func() time.Time { return firstTime.Add(24 * time.Hour) }
 	recovered := &liveProofStager{objects: b.Remote, attempt: next.AcquisitionID}
 	replay := commitLiveFixture(t, b, successor, batch, recovered)
-	if got, ok := replay.(CommittedLiveBatch); !ok || !reflect.DeepEqual(got.Evidence, committed.Evidence) {
+	if got, ok := replay.(CommittedLiveBatch); !ok || got.Fresh || !reflect.DeepEqual(got.Evidence, committed.Evidence) {
 		t.Fatal("replay changed original proof", replay, committed)
 	}
 	if len(recovered.selected) != 0 {
@@ -225,7 +225,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 		t.Fatal("combined write let a previous writer commit", err)
 	}
 	secondProof, ok := secondResult.(CommittedLiveBatch)
-	if !ok || secondProof.Evidence.AcceptedLive != 1 || secondProof.Evidence.Sequence != 2 || secondProof.Evidence.Totals[0].Live != 1 {
+	if !ok || !secondProof.Fresh || secondProof.Evidence.AcceptedLive != 1 || secondProof.Evidence.Sequence != 2 || secondProof.Evidence.Totals[0].Live != 1 {
 		t.Fatal(secondResult)
 	}
 	assertIdentity(`{"plan":"new"}`)

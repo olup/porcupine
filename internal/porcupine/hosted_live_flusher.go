@@ -20,6 +20,7 @@ type hostedLiveFlusher struct {
 	publisher          *hostedEffectPublisher
 	policy             hostedIngestionPolicy
 	incarnation        *hostedIncarnation
+	metrics            *operationalMetrics
 	returnedActivities sync.Map
 }
 
@@ -135,6 +136,9 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	case lakeapi.DuplicateLiveBatch:
 		return nil
 	case lakeapi.CommittedLiveBatch:
+		if v.Fresh && f.metrics != nil {
+			f.metrics.observeIngestionEvents(acceptanceBuffered, "native_committed", uint64(v.Evidence.AcceptedLive))
+		}
 		if v.Evidence.Sequence <= seq {
 			return nil
 		}
