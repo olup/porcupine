@@ -77,7 +77,7 @@ func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 	if err := b.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	s.hosted = &hostedProfile{buffer: b}
+	s.hosted = &hostedRuntime{buffer: b}
 	t.Cleanup(func() { s.hosted = nil })
 	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
 	ingestion, ok := admin["hosted_ingestion"].(map[string]any)
