@@ -1,0 +1,35 @@
+name: Hosted flush paired comparison
+on:
+  push:
+    branches: [codex/c1-paired-flush-run]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Measure pinned before and after snapshots on the same runner
+        run: |
+          set -euo pipefail
+          for revision in 5128c9a fbf1139; do
+            target="$RUNNER_TEMP/measure-$revision"
+            git worktree add --detach "$target" "$revision"
+            cp internal/porcupine/hosted_flush_cost_test.go "$target/internal/porcupine/hosted_flush_cost_test.go"
+            (
+              cd "$target"
+              echo "Measuring $revision"
+              CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
+                go run ./internal/cmd/ducklake-s3-integration -suite shared -race=false -timeout=15m \
+                -run '^TestDuckLakeS3SharedPostgresHostedFlushCost$' | tee "$RUNNER_TEMP/flush-$revision.log"
+              grep -q 'hosted-flush-cost {' "$RUNNER_TEMP/flush-$revision.log"
+            )
+          done
+        env:
+          PORCUPINE_MEASURE_HOSTED_FLUSH: "1"
