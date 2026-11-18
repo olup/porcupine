@@ -5,10 +5,22 @@ on:
 permissions:
   contents: read
 jobs:
-  measure:
-    name: Alternate revisions on one runner
+  reproduce:
+    name: Reproduce the old flusher behavior
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - head_ref: f76bbe4
+            old_ref: 9b6afff
+            files: hosted_effect_publication.go hosted_live_flusher.go
+            failure: flush read the reservation 2 times, want one recovery read
+          - head_ref: 4ab1ae9
+            old_ref: cb10883
+            files: buffered_acceptance.go hosted_effect_publication.go hosted_live_flusher.go
+            failure: admitted identity could not flush after budget exhaustion tenant monthly ingestion budget exceeded
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -16,20 +28,22 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
-      - name: Measure both versions twice
+      - name: Run new assertions against old production code
+        env:
+          HEAD_REFERENCE: ${{ matrix.head_ref }}
+          OLD_REFERENCE: ${{ matrix.old_ref }}
+          FILES: ${{ matrix.files }}
+          FAILURE: ${{ matrix.failure }}
         run: |
           set -euo pipefail
-          test_file=internal/porcupine/hosted_flush_cost_test.go
-          cp "$test_file" "$RUNNER_TEMP/"
-          for ref in 9b6afff f76bbe4 f76bbe4 9b6afff; do
-            echo "Measuring $ref"
-            git checkout --detach "$ref"
-            cp "$RUNNER_TEMP/hosted_flush_cost_test.go" "$test_file"
-            CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
-              go run ./internal/cmd/ducklake-s3-integration -suite shared -race=false -timeout=15m \
-              -run '^TestDuckLakeS3SharedPostgresHostedFlushCost$' | tee "$RUNNER_TEMP/hosted-flush.log"
-            grep -q 'hosted-flush-cost {' "$RUNNER_TEMP/hosted-flush.log"
+          git checkout --detach "$HEAD_REFERENCE"
+          for name in $FILES; do
+            path="internal/porcupine/$name"
+            git restore --source "$OLD_REFERENCE" -- "$path"
           done
-        env:
-          PORCUPINE_MEASURE_HOSTED_FLUSH: "1"
-          PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY: "0"
+          if CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
+            go run ./internal/cmd/ducklake-s3-integration -suite shared -race=false -timeout=10m \
+            -run '^TestDuckLakeS3SharedPostgresHostedFlusher$' | tee "$RUNNER_TEMP/hosted-regression.log"; then
+            exit 1
+          fi
+          grep -F -- "$FAILURE" "$RUNNER_TEMP/hosted-regression.log"
