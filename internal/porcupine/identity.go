@@ -13,8 +13,6 @@ import (
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
-func isIdentityControl(event string) bool { return event == "$identify" || event == "$set" }
-
 func validIdentityID(id string) bool { return identityapi.ValidID(id) }
 
 func identityProfile(ctx context.Context, tx *sql.Tx, project, id string) (map[string]any, bool, error) {

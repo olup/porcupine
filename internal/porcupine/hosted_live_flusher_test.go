@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/acceptance"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,20 +153,20 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	batch := func(id string) bufferedFlushBatch {
+	batch := func(id string) acceptance.FlushBatch {
 		e := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "page", DistinctID: "person", Properties: json.RawMessage(`{"a":1}`), Context: json.RawMessage(`{}`), Timestamp: time.Now().UTC().Format(time.RFC3339Nano), ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-		return bufferedFlushBatch{id: id, projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: e}, admittedAt: time.Now().UTC()}}}
+		return acceptance.FlushBatch{ID: id, ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: e}, AdmittedAt: time.Now().UTC()}}}
 	}
 	empty := batch("empty")
-	identityEvent := empty.events[0].input.event
+	identityEvent := empty.Events[0].Input.Event
 	identityEvent.UUID = eventapi.NewID()
 	identityEvent.Event = "$identify"
 	identityEvent.Properties = json.RawMessage(`{"$set":{"plan":"team"}}`)
-	identityInput, er := validateLiveEvent(identityEvent)
+	identityInput, er := acceptance.ValidateInput(identityEvent)
 	if er != nil {
 		t.Fatal(er)
 	}
-	empty.events = append(empty.events, bufferedLiveEvent{input: identityInput, admittedAt: empty.events[0].admittedAt})
+	empty.Events = append(empty.Events, acceptance.BufferedEvent{Input: identityInput, AdmittedAt: empty.Events[0].AdmittedAt})
 	snapshot := func() int64 {
 		t.Helper()
 		p, release, err := sa.LeaseProject(t.Context(), project)
@@ -283,9 +284,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	oversized := batch("prepared-byte-cap")
-	oversized.events[0].input.event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
+	oversized.Events[0].Input.Event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
 	putsBefore := effectPuts.Load()
-	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, acceptance.ErrBatchTooLarge) {
 		t.Fatal("oversized preparation did not report a permanent pre-commit capacity error", err)
 	}
 	if effectPuts.Load() != putsBefore {
@@ -332,16 +333,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	loseCommit.Store(true)
 
 	body := batch("body")
-	retryIdentity := body.events[0].input.event
+	retryIdentity := body.Events[0].Input.Event
 	retryIdentity.UUID = eventapi.NewID()
 	retryIdentity.DistinctID = "native-conflict-person"
 	retryIdentity.Event = "$set"
 	retryIdentity.Properties = json.RawMessage(`{"$set":{"plan":"retry"}}`)
-	retryIdentityInput, err := validateLiveEvent(retryIdentity)
+	retryIdentityInput, err := acceptance.ValidateInput(retryIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body.events = append(body.events, bufferedLiveEvent{input: retryIdentityInput, admittedAt: body.events[0].admittedAt})
+	body.Events = append(body.Events, acceptance.BufferedEvent{Input: retryIdentityInput, AdmittedAt: body.Events[0].AdmittedAt})
 	rejectEffects.Store(true)
 	if err = fa.FlushLive(t.Context(), body); err == nil {
 		t.Fatal("failed precommit upload acknowledged input")
@@ -399,7 +400,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	boundaryErr := a.service.control.QueryRowContext(t.Context(), `
 		SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE project_id=$1 AND batch_id=$2),
 		       EXISTS(SELECT 1 FROM pipeline_effect_jobs WHERE project_id=$1 AND batch_id=$2)
-	`, project, body.id).Scan(&reserved, &published)
+	`, project, body.ID).Scan(&reserved, &published)
 	_, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=0 WHERE id=$1`, defaultTenantID)
 	close(resumeEffects)
 	if boundaryErr != nil || !reserved || published {
@@ -442,7 +443,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if er = a.service.control.QueryRow(`SELECT prefix FROM pipeline_effect_cleanup WHERE project_id=$1 AND owner_id=$2`, project, abandoned.AcquisitionID).Scan(&oldPrefix); er != nil {
 		t.Fatal("uncertain attempt ownership disappeared", er)
 	}
-	if er = a.service.control.QueryRow(`SELECT prefix FROM pipeline_effect_cleanup WHERE project_id=$1 AND owner_id=$2`, project, body.id).Scan(&newPrefix); er != nil {
+	if er = a.service.control.QueryRow(`SELECT prefix FROM pipeline_effect_cleanup WHERE project_id=$1 AND owner_id=$2`, project, body.ID).Scan(&newPrefix); er != nil {
 		t.Fatal(er)
 	}
 	if oldPrefix != abandoned.ArtifactPrefix || oldPrefix == newPrefix {
@@ -630,13 +631,13 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
 	blocked := batch("blocked")
-	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) || errors.Is(err, errHostedLiveBatchTooLarge) {
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) || errors.Is(err, acceptance.ErrBatchTooLarge) {
 		t.Fatal("full queue did not report a retryable capacity error", err)
 	}
 	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=1 WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
 		t.Fatal(err)
 	}
-	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, acceptance.ErrBatchTooLarge) {
 		t.Fatal("oversized reservation did not report a permanent pre-commit capacity error", err)
 	}
 	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
@@ -702,8 +703,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	other := batch("other-tenant")
-	other.projectID = otherProject
-	other.events[0].input.event.ProjectID = otherProject
+	other.ProjectID = otherProject
+	other.Events[0].Input.Event.ProjectID = otherProject
 	if err = fb.FlushLive(t.Context(), other); err != nil {
 		t.Fatal("full A blocked unrelated tenant B", err)
 	}
@@ -715,13 +716,13 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("same-batch replay needed new budget", err)
 	}
 	duplicate := body
-	duplicate.id = "duplicate-uuid-new-batch"
+	duplicate.ID = "duplicate-uuid-new-batch"
 	if err = fa.FlushLive(t.Context(), duplicate); err != nil {
 		t.Fatal("duplicate-only batch needed new budget/capacity", err)
 	}
 	identityDuplicate := empty
-	identityDuplicate.id = "known-identity-new-batch"
-	identityDuplicate.events = empty.events[1:]
+	identityDuplicate.ID = "known-identity-new-batch"
+	identityDuplicate.Events = empty.Events[1:]
 	if err = fa.FlushLive(t.Context(), identityDuplicate); err != nil {
 		t.Fatal("known identity needed new budget", err)
 	}
@@ -735,17 +736,17 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		}
 	}
 	mixed := fmt.Sprintf(`{"api_key":%q,"batch":[{"uuid":%q,"event":"page","distinct_id":"person"},{"uuid":%q,"event":"$identify","distinct_id":"person","$set":{"plan":"team"}}]}`,
-		ingest, body.events[0].input.event.UUID, eventapi.NewID())
+		ingest, body.Events[0].Input.Event.UUID, eventapi.NewID())
 	result := sharedJourneyHTTP(t, a.host.URL, "POST", "/batch/", "", []byte(mixed), nil, http.StatusOK)
 	if result["code"] != "ingestion_budget_exceeded" || result["accepted"] != float64(0) {
 		t.Fatal("exhausted monthly policy accepted mixed input", result)
 	}
-	if queued := a.service.hosted.buffer.snapshot().events; queued != 0 {
+	if queued := a.service.hosted.buffer.Snapshot().Events; queued != 0 {
 		t.Fatalf("denied requests left %d buffered events", queued)
 	}
 	newIdentity := identityInput
-	newIdentity.event.UUID = eventapi.NewID()
-	admittedIdentity := bufferedFlushBatch{id: "admitted-before-budget-exhausted", projectID: project, events: []bufferedLiveEvent{{input: newIdentity, admittedAt: time.Now().UTC()}}}
+	newIdentity.Event.UUID = eventapi.NewID()
+	admittedIdentity := acceptance.FlushBatch{ID: "admitted-before-budget-exhausted", ProjectID: project, Events: []acceptance.BufferedEvent{{Input: newIdentity, AdmittedAt: time.Now().UTC()}}}
 	if err = a.service.hosted.flusher.FlushLive(t.Context(), admittedIdentity); err != nil {
 		t.Fatal("admitted identity could not flush after budget exhaustion", err)
 	}
@@ -824,11 +825,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	var final int64
 	var proof string
 	err = a.service.control.QueryRow(`SELECT final_sequence,proof_sha FROM hosted_project_seals WHERE project_id=$1`, project).Scan(&final, &proof)
-	if err != nil || last.OperationID != unpublished.id || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
+	if err != nil || last.OperationID != unpublished.ID || final != last.Sequence || proof != last.ProofFingerprint || page.AcknowledgedThrough != final {
 		t.Fatalf("seal did not preserve and confirm the final native proof: %d, %q, %+v, %v", final, proof, last, err)
 	}
-	other.id = "other-tenant-after-a-seal"
-	other.events[0].input.event.UUID = eventapi.NewID()
+	other.ID = "other-tenant-after-a-seal"
+	other.Events[0].Input.Event.UUID = eventapi.NewID()
 	if err = fb.FlushLive(t.Context(), other); err != nil {
 		t.Fatal("sealed A blocked tenant B", err)
 	}

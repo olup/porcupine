@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/output"
 
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -317,7 +318,7 @@ func prepareMutation(current lakeapi.EventProjection, pending bool, operation st
 			if !ok || day == "" {
 				return lakeapi.EventProjection{}, apiError(503, "cookieless identity metadata is unavailable")
 			}
-			properties = cookielessProperties(properties, current.DistinctID, day)
+			properties = acceptance.CookielessProperties(properties, current.DistinctID, day)
 		} else {
 			if current.SourceID == "posthog" {
 				delete(snapshot.Properties, "cookieless")

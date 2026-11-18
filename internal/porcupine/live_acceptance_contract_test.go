@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/acceptance"
 )
 
 func TestLiveAcceptanceNativeAndVendorContractsByMode(t *testing.T) {
@@ -19,7 +21,7 @@ func TestLiveAcceptanceNativeAndVendorContractsByMode(t *testing.T) {
 			projectID, writer := project(t, s)
 			bindIngestionSource(t, s, writer, "checkout")
 			if buffered {
-				s.acceptance = newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error { return nil }))
+				s.acceptance = newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error { return nil })
 			}
 			mode := string(s.acceptance.Durability())
 			schema := resolveNativeContract(t, "native-response-v1.schema.json")
@@ -115,9 +117,9 @@ func TestBufferedHTTPBackpressureAndNoAcknowledgment(t *testing.T) {
 	s := service(t, 100)
 	_, key := project(t, s)
 	c := testBufferConfig()
-	c.maxEvents = 1
-	c.projectMaxEvents = 1
-	b := newTestBuffer(t, c, liveFlusherFunc(func(context.Context, bufferedFlushBatch) error { return nil }))
+	c.MaxEvents = 1
+	c.ProjectMaxEvents = 1
+	b := newTestBuffer(t, c, func(context.Context, acceptance.FlushBatch) error { return nil })
 	s.acceptance = b
 	nativeRequest(t, s, key, `{"type":"pageview","message_id":"one"}`, 200)
 	req := httptest.NewRequest("POST", "/ingest/v1/events", strings.NewReader(`{"type":"pageview","message_id":"two"}`))
@@ -126,7 +128,7 @@ func TestBufferedHTTPBackpressureAndNoAcknowledgment(t *testing.T) {
 	s.Handler().ServeHTTP(w, req)
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if w.Code != 503 || w.Header().Get("Retry-After") != "1" || body["received"] != nil || body["receipts"] != nil || b.snapshot().events != 1 {
+	if w.Code != 503 || w.Header().Get("Retry-After") != "1" || body["received"] != nil || body["receipts"] != nil || b.Snapshot().Events != 1 {
 		t.Fatal("rejected request acknowledged or partially admitted", w.Code, w.Header(), body)
 	}
 }
@@ -143,7 +145,7 @@ func TestLivePreparationIdentityNoopAndMalformedBatch(t *testing.T) {
 		t.Fatal("malformed outer batch partially committed")
 	}
 	batch, err := prepareLiveBatch("p", "", eventBatch{{UUID: "no-op", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$set": nil}}}, time.Now())
-	if err != nil || batch.events[0].identity.Operation != identityControlIgnored || batch.events[0].event.DistinctID != "" || string(batch.events[0].event.Properties) != `{}` {
+	if err != nil || batch.Events[0].Identity.Operation != identityControlIgnored || batch.Events[0].Event.DistinctID != "" || string(batch.Events[0].Event.Properties) != `{}` {
 		t.Fatal("pending invalid control was not parsed as a canonical no-op", batch, err)
 	}
 }
@@ -153,25 +155,22 @@ func TestHistoricalUploadsBypassLiveMemoryAdmission(t *testing.T) {
 	s := service(t, 100)
 	project, _ := project(t, s)
 	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{project})
-	buffer := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
+	buffer := newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error {
 		t.Error("historical import reached live flusher")
 		return nil
-	}))
+	})
 	s.acceptance = buffer
 	data := historicalJourney(t, "native")
 	job := createFormatImport(t, s, project, token, "native", "historical-durable", data)
 	done := finishFormatImport(t, s, project, token, job, data)
-	if done.Counts.Accepted != 3 || eventCount(t, s) != 3 || buffer.snapshot().events != 0 {
-		t.Fatal("historical checkpoint was replaced with volatile admission", done, buffer.snapshot())
+	if done.Counts.Accepted != 3 || eventCount(t, s) != 3 || buffer.Snapshot().Events != 0 {
+		t.Fatal("historical checkpoint was replaced with volatile admission", done, buffer.Snapshot())
 	}
 }
 
-type invalidLiveResult struct{}
-
-func (invalidLiveResult) liveAcceptanceResult() {}
 func TestLiveAcceptanceUnknownResultFailsClosed(t *testing.T) {
 	t.Parallel()
-	for _, result := range []liveAcceptanceResult{nil, invalidLiveResult{}} {
+	for _, result := range []acceptance.Result{nil, (*acceptance.BufferedResult)(nil)} {
 		if response, err := liveAcceptanceResponse(result, true); err == nil || response != nil {
 			t.Fatal("unknown result fabricated success", response, err)
 		}

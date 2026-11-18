@@ -1,4 +1,4 @@
-package porcupine
+package acceptance
 
 import (
 	"context"
@@ -15,18 +15,18 @@ func BenchmarkBufferedMemoryAdmission(b *testing.B) {
 		for _, projects := range []int{1, 128} {
 			b.Run(fmt.Sprintf("rows=%d/projects=%d", n, projects), func(b *testing.B) {
 				c := testBufferConfig()
-				c.maxBytes = 256 << 20
-				c.projectMaxBytes = c.maxBytes
-				c.flushBytes = c.maxBytes
-				c.maxEvents = 1000000
-				c.projectMaxEvents = c.maxEvents
-				c.flushInterval = time.Hour
-				buffer := newTestBuffer(b, c, liveFlusherFunc(func(context.Context, bufferedFlushBatch) error { return nil }))
-				batches := make([]preparedLiveBatch, projects)
+				c.MaxBytes = 256 << 20
+				c.ProjectMaxBytes = c.MaxBytes
+				c.FlushBytes = c.MaxBytes
+				c.MaxEvents = 1000000
+				c.ProjectMaxEvents = c.MaxEvents
+				c.FlushInterval = time.Hour
+				buffer := newTestBuffer(b, c, FlushFunc(func(context.Context, FlushBatch) error { return nil }))
+				batches := make([]Batch, projects)
 				for i := range batches {
-					batches[i] = testBufferBatch(b, fmt.Sprintf("project-%03d", i), n)
+					batches[i] = testBufferBatch(fmt.Sprintf("project-%03d", i), n)
 				}
-				charge := bufferedInputBytes(batches[0].events[0])
+				charge := bufferedInputBytes(batches[0].Events[0])
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
@@ -39,7 +39,7 @@ func BenchmarkBufferedMemoryAdmission(b *testing.B) {
 						buffer.mu.Unlock()
 						b.StartTimer()
 					}
-					if _, err := buffer.Accept(b.Context(), batches[i%projects], ingestionPeer{}, true); err != nil {
+					if _, err := buffer.Accept(b.Context(), batches[i%projects], Peer{}, true); err != nil {
 						b.Fatal(err)
 					}
 				}

@@ -53,8 +53,8 @@ Before Phase 3 there was no memory admission component to compare. An initial im
 Run the current component benchmark with:
 
 ```sh
-CGO_ENABLED=1 go test ./internal/porcupine -run '^$' \
+CGO_ENABLED=0 go test ./internal/acceptance -run '^$' \
   -bench '^BenchmarkBufferedMemoryAdmission$' -benchtime=100ms -count=2
 ```
 
-The package links the server's native dependencies, but this benchmark opens no native engine or network connection. Correctness tests cover capacity atomicity, concurrent admission, in-flight retention, retry identity, failed-flush backpressure, timers, flush concurrency, deadline expiry, immutable command ownership, cookieless day/privacy, native/vendor contracts, project scope, historical bypass, and startup availability. Full architecture validation remains separate.
+The benchmark runs without the native engine or a network connection. Correctness tests cover capacity atomicity, concurrent admission, in-flight retention, retry identity, failed-flush backpressure, timers, flush concurrency, deadline expiry, immutable command ownership, cookieless day/privacy, native/vendor contracts, project scope, historical bypass, and startup availability. Full architecture validation remains separate.

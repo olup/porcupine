@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
@@ -164,8 +165,8 @@ func TestLocalControlFailureBlocksAcceptanceAndReadiness(t *testing.T) {
 	if err := s.control.Close(); err != nil {
 		t.Fatal(err)
 	}
-	batch := preparedLiveBatch{projectID: projectID, events: []validatedLiveEvent{{event: eventapi.Event{ProjectID: projectID, UUID: "not-accepted", Event: "hello", DistinctID: "actor", Properties: []byte(`{}`), Timestamp: now(), ReceivedAt: now()}}}}
-	if _, err := s.acceptance.Accept(context.Background(), batch, ingestionPeer{}, false); err == nil {
+	batch := acceptance.Batch{ProjectID: projectID, Events: []acceptance.Input{{Event: eventapi.Event{ProjectID: projectID, UUID: "not-accepted", Event: "hello", DistinctID: "actor", Properties: []byte(`{}`), Timestamp: now(), ReceivedAt: now()}}}}
+	if _, err := s.acceptance.Accept(context.Background(), batch, acceptance.Peer{}, false); err == nil {
 		t.Fatal("accepted an event without authoritative control")
 	}
 	if eventCount(t, s) != 0 {

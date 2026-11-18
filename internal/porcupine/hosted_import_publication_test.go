@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/olup/porcupine/internal/acceptance"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -81,9 +82,9 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	live := func(id, uuid string) bufferedFlushBatch {
+	live := func(id, uuid string) acceptance.FlushBatch {
 		e := eventapi.Event{ProjectID: project, UUID: uuid, Event: "page", DistinctID: "browser", Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: "2026-11-17T01:00:00Z", ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-		return bufferedFlushBatch{id: id, projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: e}, admittedAt: time.Now().UTC()}}}
+		return acceptance.FlushBatch{ID: id, ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: e}, AdmittedAt: time.Now().UTC()}}}
 	}
 	hash := func(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 	makeInput := func(file string, previous lakeapi.ImportFileCheckpoint, phase string, ids ...string) lakeapi.ImportChunkInput {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
+	identityapi "github.com/olup/porcupine/internal/identity"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -100,7 +101,7 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 		return lakeapi.StagedLiveEffects{}, errors.New("selected output scope differs from frozen plan")
 	}
 	for _, e := range selected.Events {
-		if e.ProjectID != s.plan.Scope.Key.ProjectID || e.IdentitySnapshot != "" || isIdentityControl(e.Event) {
+		if e.ProjectID != s.plan.Scope.Key.ProjectID || e.IdentitySnapshot != "" || identityapi.IsControl(e.Event) {
 			return lakeapi.StagedLiveEffects{}, errors.New("private identity controls cannot enter output staging")
 		}
 	}

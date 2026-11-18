@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
@@ -21,7 +22,7 @@ type hostedRuntime struct {
 	incarnation   *hostedIncarnation
 	native        *lakeapi.DuckLakeStore
 	flusher       *hostedLiveFlusher
-	buffer        *bufferedAcceptance
+	buffer        *acceptance.Buffer
 	stopBuffer    context.CancelFunc
 	stopRecovery  context.CancelFunc
 	recoveryDone  chan struct{}
@@ -31,7 +32,7 @@ type hostedRuntime struct {
 }
 
 // openHostedProfile binds the shared providers before starting background work.
-func openHostedProfile(c Config) (_ *Service, err error) {
+func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, err error) {
 	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
 	config, err := query.Normalize(c.InteractiveQueries)
@@ -118,21 +119,22 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err := s.configureHostedExports(c.Exports, inc.registerTx, endActivity, h.exportSnapshotCut); err != nil {
 		return nil, err
 	}
-	buffer := defaultBufferConfig()
-	buffer.clock = s.clock
-	buffer.metrics = s.metrics
+	buffer.Clock = s.clock
+	if s.metrics != nil {
+		buffer.Metrics = s.metrics.Registry
+	}
 	if c.QueueMaxEvents > 0 {
-		buffer.maxEvents = c.QueueMaxEvents
-		buffer.projectMaxEvents = min(buffer.projectMaxEvents, buffer.maxEvents)
+		buffer.MaxEvents = c.QueueMaxEvents
+		buffer.ProjectMaxEvents = min(buffer.ProjectMaxEvents, buffer.MaxEvents)
 	}
 	if c.QueueMaxBytes > 0 {
-		buffer.maxBytes = c.QueueMaxBytes
-		buffer.projectMaxBytes = min(buffer.projectMaxBytes, buffer.maxBytes)
-		buffer.flushBytes = min(buffer.flushBytes, buffer.projectMaxBytes)
+		buffer.MaxBytes = c.QueueMaxBytes
+		buffer.ProjectMaxBytes = min(buffer.ProjectMaxBytes, buffer.MaxBytes)
+		buffer.FlushBytes = min(buffer.FlushBytes, buffer.ProjectMaxBytes)
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	h.stopBuffer = cancel
-	h.buffer, err = newBufferedAcceptance(lifetime, buffer, h.flusher, hostedCookielessKeys{control})
+	h.buffer, err = acceptance.NewBuffer(lifetime, buffer, h.flusher.FlushLive, h.flusher.lockLiveAdmission, (hostedCookielessKeys{control}).CookielessKey)
 	if err != nil {
 		return nil, err
 	}
@@ -341,6 +343,6 @@ func (s *Service) BeginDrain() {
 		s.hosted.maintenance.stop()
 	}
 	if s.hosted != nil && s.hosted.buffer != nil {
-		s.hosted.buffer.stopAdmission()
+		s.hosted.buffer.StopAdmission()
 	}
 }

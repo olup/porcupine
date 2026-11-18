@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
+	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/usage"
@@ -31,24 +32,6 @@ type eventRules struct {
 	knownEvents      func(context.Context, string, []string) (map[string]int64, error)
 }
 
-type preparedLiveBatch struct {
-	projectID  string
-	events     []validatedLiveEvent
-	cookieless bool
-}
-
-type ingestionPeer struct {
-	address   netip.Addr
-	userAgent string
-}
-
-type acceptanceFailure struct {
-	message         string
-	retry, pressure bool
-}
-
-func (e *acceptanceFailure) Error() string { return e.message }
-
 // durableAcceptance owns the live commit. Destinations can join its transaction,
 // but cannot decide when acceptance commits or acknowledges the producer.
 type durableAcceptance struct {
@@ -57,9 +40,9 @@ type durableAcceptance struct {
 	enqueueWebhooks func(context.Context, *sql.Tx, []eventapi.Event) error
 }
 
-func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time) (preparedLiveBatch, error) {
+func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time) (acceptance.Batch, error) {
 	received := receiptTime.Format(time.RFC3339Nano)
-	events := make([]validatedLiveEvent, 0, len(batch))
+	events := make([]acceptance.Input, 0, len(batch))
 	cookieless := false
 	for _, e := range batch {
 		if e.DistinctID == "" && e.ingestion == nil {
@@ -67,39 +50,39 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 				e.DistinctID = value
 			}
 		}
-		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
+		if e.DistinctID == ingestfmt.CookielessSentinel && !identityapi.IsControl(e.Event) {
 			cookieless = true
 		}
-		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !isIdentityControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
-			return preparedLiveBatch{}, errors.New("event and distinct_id are required and must fit limits")
+		if strings.TrimSpace(e.Event) == "" || len(e.Event) > 500 || !identityapi.IsControl(e.Event) && (e.ingestion == nil && strings.TrimSpace(e.DistinctID) == "" || len(e.DistinctID) > 1000) {
+			return acceptance.Batch{}, errors.New("event and distinct_id are required and must fit limits")
 		}
-		if strings.HasPrefix(e.Event, "$") && !isIdentityControl(e.Event) && e.Event != "$pageview" && e.Event != "$pageleave" && e.Event != "$autocapture" && e.Event != "$screen" && e.Event != "$exception" {
-			return preparedLiveBatch{}, errors.New("unsupported reserved control event")
+		if strings.HasPrefix(e.Event, "$") && !identityapi.IsControl(e.Event) && e.Event != "$pageview" && e.Event != "$pageleave" && e.Event != "$autocapture" && e.Event != "$screen" && e.Event != "$exception" {
+			return acceptance.Batch{}, errors.New("unsupported reserved control event")
 		}
 		if e.UUID == "" && e.ingestion == nil {
 			e.UUID = eventapi.NewID()
 		}
 		if e.ingestion == nil && len(e.UUID) > 128 {
-			return preparedLiveBatch{}, errors.New("uuid exceeds 128 characters")
+			return acceptance.Batch{}, errors.New("uuid exceeds 128 characters")
 		}
 		if e.Timestamp == "" {
 			e.Timestamp = received
 		} else {
 			t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
 			if err != nil {
-				return preparedLiveBatch{}, errors.New("timestamp must be RFC3339")
+				return acceptance.Batch{}, errors.New("timestamp must be RFC3339")
 			}
 			e.Timestamp = t.UTC().Format(time.RFC3339Nano)
 		}
 		if e.Properties == nil {
 			e.Properties = map[string]any{}
 		}
-		if isIdentityControl(e.Event) {
+		if identityapi.IsControl(e.Event) {
 			for key, raw := range map[string]json.RawMessage{"$set": e.Set, "$set_once": e.SetOnce} {
 				if len(raw) > 0 {
 					var value any
 					if err := json.Unmarshal(raw, &value); err != nil {
-						return preparedLiveBatch{}, errors.New("invalid identity properties")
+						return acceptance.Batch{}, errors.New("invalid identity properties")
 					}
 					e.Properties[key] = value
 				}
@@ -112,7 +95,7 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		}
 		props, err := json.Marshal(e.Properties)
 		if err != nil {
-			return preparedLiveBatch{}, errors.New("invalid properties")
+			return acceptance.Batch{}, errors.New("invalid properties")
 		}
 		prepared := eventapi.Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
 		metadata := e.ingestion
@@ -122,33 +105,33 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		}
 		if metadata != nil {
 			if err := prepareIngestionMetadata(&prepared, metadata, source); err != nil {
-				return preparedLiveBatch{}, err
+				return acceptance.Batch{}, err
 			}
 		}
-		input, err := validateLiveEvent(prepared)
+		input, err := acceptance.ValidateInput(prepared)
 		if err != nil {
-			return preparedLiveBatch{}, err
+			return acceptance.Batch{}, err
 		}
 		events = append(events, input)
 	}
-	return preparedLiveBatch{projectID: projectID, events: events, cookieless: cookieless}, nil
+	return acceptance.Batch{ProjectID: projectID, Events: events, Cookieless: cookieless}, nil
 }
 
-func (*durableAcceptance) Durability() acceptanceDurability { return acceptanceDurable }
+func (*durableAcceptance) Durability() acceptance.Durability { return acceptance.Durable }
 
-func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch, peer ingestionPeer, withReceipts bool) (liveAcceptanceResult, error) {
+func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, peer acceptance.Peer, withReceipts bool) (acceptance.Result, error) {
 	// Project exclusion covers the lookup through commit, including the first
 	// receipt prune. Only local policy and the transaction take the global lock.
-	release, err := a.rules.receiptGates.lock(ctx, batch.projectID)
+	release, err := a.rules.receiptGates.lock(ctx, batch.ProjectID)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
-	known, err := a.rules.coldKnown(lookup, batch.projectID, batch.eventValues())
+	known, err := a.rules.coldKnown(lookup, batch.ProjectID, batch.EventValues())
 	cancel()
 	if err != nil {
-		return nil, &acceptanceFailure{message: "storage unavailable", retry: true}
+		return nil, &acceptance.Failure{Message: "storage unavailable", Retry: true}
 	}
 	if a.rules.admission != nil {
 		if err := a.rules.admission.Lock(ctx); err != nil {
@@ -157,84 +140,80 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		defer a.rules.admission.Unlock()
 	}
 	if a.rules.prepareAcceptance != nil {
-		if err := a.rules.prepareAcceptance(ctx, batch.projectID); err != nil {
+		if err := a.rules.prepareAcceptance(ctx, batch.ProjectID); err != nil {
 			var managed *managementError
 			if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
 				return nil, managed
 			}
-			return nil, &acceptanceFailure{message: "ingestion policy unavailable", retry: true}
+			return nil, &acceptance.Failure{Message: "ingestion policy unavailable", Retry: true}
 		}
 	}
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, &acceptanceFailure{message: "storage unavailable"}
+		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	defer tx.Rollback()
 	// Serialize the journal's receipt, identity and capacity checks.
 	if _, err = tx.Exec(`UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, &acceptanceFailure{message: "storage unavailable"}
+		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	acceptedAt := a.rules.clock().UTC()
 	var pending, pendingBytes int64
 	if err = tx.QueryRow(`SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
-		return nil, &acceptanceFailure{message: "storage unavailable"}
+		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	var cookielessID string
 	var day string
-	if batch.cookieless {
+	if batch.Cookieless {
 		// Choose the identity day under the SQLite write lock so delayed requests
 		// cannot recreate an expired key after another request rotates it.
 		day = acceptedAt.Format("2006-01-02")
 		secret, err := dailyCookielessKey(tx, day)
 		if err != nil {
-			return nil, &acceptanceFailure{message: "storage unavailable"}
+			return nil, &acceptance.Failure{Message: "storage unavailable"}
 		}
-		cookielessID = cookielessDistinctID(secret, batch.projectID, peer.address, peer.userAgent)
+		cookielessID = acceptance.CookielessDistinctID(secret, batch.ProjectID, peer.Address, peer.UserAgent)
 	}
 	accepted, duplicates, identityIgnored := 0, 0, 0
-	var receipts []ingestionReceipt
+	var receipts []acceptance.DurableReceipt
 	var acceptedBytes int64
 	var webhookEvents []eventapi.Event
-	for _, input := range batch.events {
-		e := input.event
-		exists, lookupErr := localReceipt(ctx, tx, batch.projectID, e.UUID)
+	for _, input := range batch.Events {
+		e := input.Event
+		exists, lookupErr := localReceipt(ctx, tx, batch.ProjectID, e.UUID)
 		if lookupErr != nil {
-			return nil, &acceptanceFailure{message: "storage unavailable"}
+			return nil, &acceptance.Failure{Message: "storage unavailable"}
 		}
 		coldID, cold := known[e.UUID]
 		if cold && !exists {
 			if withReceipts {
-				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(coldID, 10), UUID: e.UUID, Duplicate: true})
+				receipts = append(receipts, acceptance.DurableReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(coldID, 10), UUID: e.UUID, Duplicate: true})
 			}
 			duplicates++
 			continue
 		}
 		if exists {
 			if withReceipts {
-				id, idErr := localReceiptEventID(ctx, tx, batch.projectID, e.UUID)
+				id, idErr := localReceiptEventID(ctx, tx, batch.ProjectID, e.UUID)
 				if idErr != nil {
-					return nil, &acceptanceFailure{message: "receipt event ID unavailable"}
+					return nil, &acceptance.Failure{Message: "receipt event ID unavailable"}
 				}
 				if id <= 0 {
-					return nil, &acceptanceFailure{message: "receipt event ID unavailable"}
+					return nil, &acceptance.Failure{Message: "receipt event ID unavailable"}
 				}
-				receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(id, 10), UUID: e.UUID, Duplicate: true})
+				receipts = append(receipts, acceptance.DurableReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(id, 10), UUID: e.UUID, Duplicate: true})
 			}
 			duplicates++
 			continue
 		}
 		if pending+int64(accepted) >= int64(a.rules.queueMax) {
-			return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
+			return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
 		}
-		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
-			e.DistinctID = cookielessID
-			e.Properties = cookielessProperties(e.Properties, cookielessID, day)
-			if e.SourceID != "" {
-				e.Context = ingestfmt.ScrubContext(e.Context)
-			}
+		if e.DistinctID == ingestfmt.CookielessSentinel && !identityapi.IsControl(e.Event) {
+			e = acceptance.ResolveCookieless(e, cookielessID, day)
 		}
 		identityInput := e
-		if isIdentityControl(e.Event) {
+		if identityapi.IsControl(e.Event) {
 			if e.SourceID != "" {
 				e.Context = json.RawMessage(`{}`)
 				identityInput.Context = e.Context
@@ -245,57 +224,57 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		}
 		size := queueEventBytes(e)
 		if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-			return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
+			return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
 		}
 		e.ID, err = insertAcceptedEvent(ctx, tx, e)
 		if err != nil {
-			return nil, &acceptanceFailure{message: "storage unavailable"}
+			return nil, &acceptance.Failure{Message: "storage unavailable"}
 		}
-		if isIdentityControl(e.Event) {
+		if identityapi.IsControl(e.Event) {
 			identityInput.ID = e.ID
-			ignored, identityErr := applyParsedIdentityControl(ctx, tx, &identityInput, *input.identity)
+			ignored, identityErr := applyParsedIdentityControl(ctx, tx, &identityInput, *input.Identity)
 			e = identityInput
 			if identityErr != nil {
-				return nil, &acceptanceFailure{message: "identity storage unavailable"}
+				return nil, &acceptance.Failure{Message: "identity storage unavailable"}
 			}
 			if ignored {
 				identityIgnored++
 			}
 			size = queueEventBytes(e)
 			if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-				return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
+				return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
 			}
 		}
-		if !isIdentityControl(e.Event) {
+		if !identityapi.IsControl(e.Event) {
 			webhookEvents = append(webhookEvents, e)
 		}
 		if withReceipts {
-			receipts = append(receipts, ingestionReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(e.ID, 10), UUID: e.UUID})
+			receipts = append(receipts, acceptance.DurableReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(e.ID, 10), UUID: e.UUID})
 		}
 		accepted++
 		acceptedBytes += size
 	}
-	if err = consumeTenantEventsTx(ctx, tx, batch.projectID, acceptedAt, int64(accepted)); err != nil {
+	if err = consumeTenantEventsTx(ctx, tx, batch.ProjectID, acceptedAt, int64(accepted)); err != nil {
 		var budget *tenantIngestionError
 		if errors.As(err, &budget) {
 			return nil, err
 		}
-		return nil, &acceptanceFailure{message: "storage unavailable"}
+		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	if a.enqueueWebhooks != nil {
 		if err = a.enqueueWebhooks(ctx, tx, webhookEvents); err != nil {
-			return nil, &acceptanceFailure{message: "webhook queue unavailable", retry: true}
+			return nil, &acceptance.Failure{Message: "webhook queue unavailable", Retry: true}
 		}
 	}
 	if a.rules.usage != nil {
-		if err = a.rules.usage.AddTx(ctx, tx, batch.projectID, acceptedAt, usage.Counters{Live: int64(accepted)}, 0); err != nil {
-			return nil, &acceptanceFailure{message: "storage unavailable"}
+		if err = a.rules.usage.AddTx(ctx, tx, batch.ProjectID, acceptedAt, usage.Counters{Live: int64(accepted)}, 0); err != nil {
+			return nil, &acceptance.Failure{Message: "storage unavailable"}
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, &acceptanceFailure{message: "storage unavailable"}
+		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
-	return durableLiveResult{accepted: accepted, duplicates: duplicates, identityIgnored: identityIgnored, receipts: receipts}, nil
+	return acceptance.DurableResult{Accepted: accepted, Duplicates: duplicates, IdentityIgnored: identityIgnored, Receipts: receipts}, nil
 }
 
 func insertAcceptedEvent(ctx context.Context, tx *sql.Tx, event eventapi.Event) (int64, error) {

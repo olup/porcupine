@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -65,12 +66,12 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "hosted", DistinctID: "c",
 		Properties: json.RawMessage("{}"), Context: json.RawMessage("{}"),
 		Timestamp: now.Format(time.RFC3339Nano), ReceivedAt: now.Format(time.RFC3339Nano)}
-	input, err := validateLiveEvent(event)
+	input, err := acceptance.ValidateInput(event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := flusher.FlushLive(ctx, bufferedFlushBatch{id: "pitr-flush", projectID: project,
-		events: []bufferedLiveEvent{{input: input, admittedAt: now}}}); err != nil {
+	if err := flusher.FlushLive(ctx, acceptance.FlushBatch{ID: "pitr-flush", ProjectID: project,
+		Events: []acceptance.BufferedEvent{{Input: input, AdmittedAt: now}}}); err != nil {
 		t.Fatal(err)
 	}
 	return scope

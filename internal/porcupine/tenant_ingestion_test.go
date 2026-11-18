@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/importer"
 )
 
@@ -309,8 +310,8 @@ func TestTenantIngestionAcceptanceClockAndNoProjectRefund(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := s.acceptance.Accept(t.Context(), prepared, ingestionPeer{}, false)
-	if err != nil || durableResultForTest(t, accepted).accepted != 1 {
+	accepted, err := s.acceptance.Accept(t.Context(), prepared, acceptance.Peer{}, false)
+	if err != nil || durableResultForTest(t, accepted).Accepted != 1 {
 		t.Fatal(accepted, err)
 	}
 	if old := tenantAccepted(t, s, defaultTenantID, "2026-12-01T00:00:00Z"); old != 0 {

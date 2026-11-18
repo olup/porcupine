@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/acceptance"
 )
 
 // AcceptanceMode selects the live acknowledgment contract for the deployment profile.
@@ -26,80 +26,26 @@ func validateAcceptanceMode(mode AcceptanceMode) error {
 	}
 }
 
-type acceptanceDurability string
-
-const (
-	acceptanceDurable  acceptanceDurability = "durable"
-	acceptanceBuffered acceptanceDurability = "buffered"
-)
-
 type liveAcceptor interface {
-	Accept(context.Context, preparedLiveBatch, ingestionPeer, bool) (liveAcceptanceResult, error)
-	Durability() acceptanceDurability
+	Accept(context.Context, acceptance.Batch, acceptance.Peer, bool) (acceptance.Result, error)
+	Durability() acceptance.Durability
 }
 
-type liveAcceptanceResult interface{ liveAcceptanceResult() }
-type durableLiveResult struct {
-	accepted, duplicates, identityIgnored int
-	receipts                              []ingestionReceipt
-}
-
-func (durableLiveResult) liveAcceptanceResult() {}
-
-type bufferedReceipt struct {
-	MessageID string `json:"message_id"`
-	UUID      string `json:"uuid"`
-}
-type bufferedLiveResult struct {
-	received int
-	receipts []bufferedReceipt
-}
-
-func (bufferedLiveResult) liveAcceptanceResult() {}
-
-func liveAcceptanceResponse(result liveAcceptanceResult, receipts bool) (map[string]any, error) {
+func liveAcceptanceResponse(result acceptance.Result, receipts bool) (map[string]any, error) {
 	switch result := result.(type) {
-	case durableLiveResult:
-		response := map[string]any{"status": 1, "durability": acceptanceDurable, "accepted": result.accepted, "duplicates": result.duplicates, "identity_ignored": result.identityIgnored}
+	case acceptance.DurableResult:
+		response := map[string]any{"status": 1, "durability": acceptance.Durable, "accepted": result.Accepted, "duplicates": result.Duplicates, "identity_ignored": result.IdentityIgnored}
 		if receipts {
-			response["receipts"] = result.receipts
+			response["receipts"] = result.Receipts
 		}
 		return response, nil
-	case bufferedLiveResult:
-		response := map[string]any{"status": 1, "durability": acceptanceBuffered, "received": result.received}
+	case acceptance.BufferedResult:
+		response := map[string]any{"status": 1, "durability": acceptance.Buffered, "received": result.Received}
 		if receipts {
-			response["receipts"] = result.receipts
+			response["receipts"] = result.Receipts
 		}
 		return response, nil
 	default:
 		return nil, errors.New("live acceptance returned an invalid acknowledgment")
 	}
-}
-
-type validatedLiveEvent struct {
-	event    eventapi.Event
-	identity *identityControl
-}
-
-func validateLiveEvent(e eventapi.Event) (validatedLiveEvent, error) {
-	input := validatedLiveEvent{event: e}
-	if isIdentityControl(e.Event) {
-		control, err := parseIdentityControl(e)
-		if err != nil {
-			return validatedLiveEvent{}, err
-		}
-		input.identity = &control
-		input.event.DistinctID, input.event.Properties = "", []byte(`{}`)
-		if e.SourceID != "" {
-			input.event.Context = []byte(`{}`)
-		}
-	}
-	return input, nil
-}
-func (b preparedLiveBatch) eventValues() []eventapi.Event {
-	events := make([]eventapi.Event, len(b.events))
-	for i, input := range b.events {
-		events[i] = input.event
-	}
-	return events
 }

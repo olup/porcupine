@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -24,7 +25,7 @@ sealed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 CHECK ((final_sequence = 0 AND proof_sha = '') OR (final_sequence > 0 AND length(proof_sha) = 64)));`
 
 var (
-	errHostedProjectFenced = errors.New("hosted project is fenced")
+	errHostedProjectFenced = acceptance.ErrProjectFenced
 	errHostedProjectBusy   = errors.New("hosted project still has incomplete operations")
 )
 
