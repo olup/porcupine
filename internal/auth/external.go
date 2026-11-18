@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,7 +23,6 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // ExternalConfig describes one trusted access-token issuer. No token can select
@@ -175,6 +175,10 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 		Type      string `json:"typ"`
 		KeyID     string `json:"kid"`
 	}
+	// RFC 9068 access tokens carry an explicit JOSE type (at+jwt by default)
+	// and a kid. The header is limited to exactly alg, typ and kid, so a token
+	// cannot carry jwk, jku, x5u, x5c, crit or other parameters that would
+	// select keys or change processing.
 	if exactFields(header, []string{"alg", "typ", "kid"}, []string{"alg", "typ", "kid"}) != nil || strictJSON(header, &h) != nil || !slices.Contains(v.config.Algorithms, h.Algorithm) || !slices.Contains(v.config.TokenTypes, h.Type) || h.KeyID == "" || len(h.KeyID) > 128 {
 		return nil, errors.New("unsupported access token header")
 	}
@@ -182,10 +186,10 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 	if e != nil {
 		return nil, errors.New("invalid access token claims")
 	}
-	var claims jwt.MapClaims
+	var claims map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
-	if uniqueJSON(payload) != nil || decoder.Decode(&claims) != nil {
+	if uniqueJSON(payload) != nil || decoder.Decode(&claims) != nil || claims == nil {
 		return nil, errors.New("invalid access token claims")
 	}
 	if _, bound := claims["cnf"]; bound {
@@ -213,26 +217,46 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 	if e != nil {
 		return nil, e
 	}
-	parser := jwt.NewParser(jwt.WithJSONNumber(), jwt.WithValidMethods(v.config.Algorithms), jwt.WithIssuer(v.config.Issuer), jwt.WithAudience(audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(v.config.ClockSkew), jwt.WithTimeFunc(func() time.Time { return now }))
-	token, e := parser.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return key, nil })
-	if e != nil || !token.Valid {
+	// The header was checked above, so the compact JWS signs exactly the
+	// decoded payload; the algorithm list is the token's own allowed alg.
+	signed, e := jose.ParseSignedCompact(raw, []jose.SignatureAlgorithm{jose.SignatureAlgorithm(h.Algorithm)})
+	if e != nil {
 		return nil, errors.New("invalid access token")
 	}
+	verified, e := signed.Verify(key)
+	if e != nil || !bytes.Equal(verified, payload) {
+		return nil, errors.New("invalid access token")
+	}
+	if issuer, ok := claims["iss"].(string); !ok || issuer != v.config.Issuer {
+		return nil, errors.New("invalid access token issuer")
+	}
 	// A token for both resources would erase the API/MCP boundary.
-	aud, e := claims.GetAudience()
-	if e != nil || len(aud) != 1 || aud[0] != audience {
+	var aud []string
+	switch value := claims["aud"].(type) {
+	case string:
+		aud = []string{value}
+	case []any:
+		for _, item := range value {
+			s, ok := item.(string)
+			if !ok {
+				return nil, errors.New("access token requires one exact resource audience")
+			}
+			aud = append(aud, s)
+		}
+	}
+	if len(aud) != 1 || aud[0] != audience {
 		return nil, errors.New("access token requires one exact resource audience")
 	}
-	exp, e := claims.GetExpirationTime()
-	if e != nil || exp == nil {
-		return nil, errors.New("access token expiry required")
-	}
-	iat, e := claims.GetIssuedAt()
-	if e != nil || iat == nil || !exp.After(iat.Time) || exp.Sub(iat.Time) > v.config.MaxTokenLifetime || !now.Before(exp.Time) {
+	exp := externalTime(claims["exp"])
+	iat := externalTime(claims["iat"])
+	if !exp.After(iat) || exp.Sub(iat) > v.config.MaxTokenLifetime || !now.Before(exp) || iat.After(now.Add(v.config.ClockSkew)) {
 		return nil, errors.New("invalid access token lifetime")
 	}
-	sub, e := claims.GetSubject()
-	if e != nil || sub == "" || len(sub) > 256 {
+	if _, exists := claims["nbf"]; exists && externalTime(claims["nbf"]).After(now.Add(v.config.ClockSkew)) {
+		return nil, errors.New("access token is not yet valid")
+	}
+	sub, ok := claims["sub"].(string)
+	if !ok || sub == "" || len(sub) > 256 {
 		return nil, errors.New("access token subject required")
 	}
 	scope, ok := claims["scope"].(string)
@@ -280,7 +304,7 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 			return nil, errors.New("project list required")
 		}
 	}
-	g := &ExternalGrant{issuer: v.config.Issuer, subject: sub, tenant: authority.TenantID, permissions: scopes, projects: authority.Projects, all: authority.ProjectScope == "all", operator: authority.Operator, expires: exp.Time}
+	g := &ExternalGrant{issuer: v.config.Issuer, subject: sub, tenant: authority.TenantID, permissions: scopes, projects: authority.Projects, all: authority.ProjectScope == "all", operator: authority.Operator, expires: exp}
 	if g.operator {
 		if g.tenant != "" || authority.ProjectScope != "" || len(g.projects) != 0 || !slices.Equal(scopes, []string{"instance:admin"}) {
 			return nil, errors.New("operator claims cannot mix tenant authority")
@@ -298,17 +322,29 @@ func (v *ExternalVerifier) Verify(ctx context.Context, raw, audience string, now
 	return g, nil
 }
 
+// externalKeyStaleGrace bounds how long the last successfully fetched key set
+// keeps verifying tokens past its cache expiry while every refresh fails. It
+// covers short provider outages only: a successful fetch replaces the set at
+// once, so a key the provider removed stops working immediately.
+const externalKeyStaleGrace = time.Hour
+
 func (v *ExternalVerifier) key(ctx context.Context, kid, algorithm string, now time.Time) (any, error) {
 	for {
 		v.mu.Lock()
-		if now.Before(v.validUntil) {
-			if k := v.keys[kid+"\x00"+algorithm]; k != nil {
-				v.mu.Unlock()
-				return k, nil
-			}
+		k := v.keys[kid+"\x00"+algorithm]
+		if k != nil && now.Before(v.validUntil) {
+			v.mu.Unlock()
+			return k, nil
 		}
+		// After a failed refresh, a key from the last good set stays usable
+		// until the grace ends. It does not wait behind a pending refresh, so
+		// a hanging provider adds little latency to cached keys.
+		stale := k != nil && v.lastRefreshFailed && now.Before(v.validUntil.Add(externalKeyStaleGrace))
 		if pending := v.refreshing; pending != nil {
 			v.mu.Unlock()
+			if stale {
+				return k, nil
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -320,16 +356,27 @@ func (v *ExternalVerifier) key(ctx context.Context, kid, algorithm string, now t
 			fresh := now.Before(v.validUntil)
 			failed := v.lastRefreshFailed
 			v.mu.Unlock()
+			if stale {
+				return k, nil
+			}
 			if fresh && !failed {
 				return nil, errors.New("unknown access token signing key")
 			}
 			return nil, ErrExternalKeysUnavailable
 		}
 		v.lastRefresh = now
-		v.refreshing = make(chan struct{})
+		started := make(chan struct{})
+		v.refreshing = started
 		v.mu.Unlock()
 		// A canceled caller must not cancel a refresh shared by other requests.
 		go v.refresh(now)
+		// The caller that starts a refresh waits for its result, so a key
+		// removed by a successful fetch is rejected rather than served stale.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-started:
+		}
 	}
 }
 
@@ -339,6 +386,14 @@ func (v *ExternalVerifier) refresh(now time.Time) {
 	keys, err := v.fetchKeys(ctx)
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	switch {
+	case err == nil && v.lastRefreshFailed:
+		slog.Info("Porcupine refreshed external signing keys after a failure")
+	case err != nil && !v.lastRefreshFailed && len(v.keys) > 0:
+		slog.Warn("Porcupine could not refresh external signing keys; cached keys remain usable until the stale grace ends", "stale_until", v.validUntil.Add(externalKeyStaleGrace).UTC())
+	case err != nil && !v.lastRefreshFailed:
+		slog.Warn("Porcupine could not fetch external signing keys")
+	}
 	v.lastRefreshFailed = err != nil
 	if err == nil {
 		v.keys = keys
@@ -365,54 +420,143 @@ func (v *ExternalVerifier) fetchKeys(ctx context.Context) (map[string]any, error
 	if e != nil || len(data) > 256<<10 {
 		return nil, ErrExternalKeysUnavailable
 	}
-	var set jose.JSONWebKeySet
+	var set struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
 	if uniqueJSON(data) != nil || json.Unmarshal(data, &set) != nil || len(set.Keys) == 0 || len(set.Keys) > 32 {
 		return nil, ErrExternalKeysUnavailable
 	}
-	var raw struct {
-		Keys []map[string]json.RawMessage `json:"keys"`
-	}
-	if json.Unmarshal(data, &raw) != nil || len(raw.Keys) != len(set.Keys) {
-		return nil, ErrExternalKeysUnavailable
-	}
+	// Providers publish keys that never verify access tokens, such as
+	// Keycloak's encryption key or curves outside the supported algorithms.
+	// Those are skipped. A malformation still invalidates the whole set when it
+	// makes the document untrustworthy or a usable key ambiguous; each such
+	// case below says why.
 	keys := map[string]any{}
 	seen := map[string]bool{}
-	for i, k := range set.Keys {
-		if k.KeyID == "" || len(k.KeyID) > 128 || seen[k.KeyID] || k.IsPublic() == false || !k.Valid() || (k.Use != "" && k.Use != "sig") {
+	for _, entry := range set.Keys {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(entry, &fields) != nil || fields == nil {
+			// A non-object entry means the document is not a JWK Set.
 			return nil, ErrExternalKeysUnavailable
 		}
-		seen[k.KeyID] = true
-		if operations, exists := raw.Keys[i]["key_ops"]; exists {
+		_, private := fields["d"]
+		_, secret := fields["k"]
+		if private || secret {
+			// Published private or symmetric material means the provider
+			// leaked a key, so no sibling key in that document is trusted.
+			return nil, ErrExternalKeysUnavailable
+		}
+		// Exact member names: encoding/json would match struct fields
+		// case-insensitively.
+		member := map[string]string{}
+		for _, name := range []string{"kty", "use", "alg", "crv", "kid"} {
+			if raw, ok := fields[name]; ok {
+				var value string
+				if json.Unmarshal(raw, &value) != nil {
+					// A parameter with the wrong JSON type is a broken document.
+					return nil, ErrExternalKeysUnavailable
+				}
+				member[name] = value
+			}
+		}
+		if use := member["use"]; use != "" && use != "sig" {
+			continue
+		}
+		if operations, exists := fields["key_ops"]; exists {
 			var ops []string
-			if len(operations) == 0 || operations[0] != '[' || json.Unmarshal(operations, &ops) != nil || !slices.Equal(ops, []string{"verify"}) {
+			if len(operations) == 0 || operations[0] != '[' || json.Unmarshal(operations, &ops) != nil {
+				return nil, ErrExternalKeysUnavailable
+			}
+			if member["use"] == "" && !slices.Contains(ops, "verify") && !slices.Contains(ops, "sign") {
+				continue // An encryption or key-wrapping key described only by key_ops.
+			}
+			// A signing key must allow verification only. Mixed or
+			// contradictory declarations make its purpose ambiguous.
+			if !slices.Equal(ops, []string{"verify"}) {
 				return nil, ErrExternalKeysUnavailable
 			}
 		}
-		if !slices.Contains(v.config.Algorithms, k.Algorithm) {
-			continue
+		candidates := externalKeyAlgorithms(member["kty"], member["crv"])
+		algorithm := member["alg"]
+		if algorithm != "" {
+			if !slices.Contains(v.config.Algorithms, algorithm) {
+				continue
+			}
+			// A key that names an allowed algorithm its material cannot
+			// verify, such as ES384 on P-256, is a misconfigured signing key.
+			if !slices.Contains(candidates, algorithm) {
+				return nil, ErrExternalKeysUnavailable
+			}
+		} else {
+			// Without alg, infer it only when exactly one configured
+			// algorithm fits the key type and curve. Two RSA algorithms would
+			// let one key verify under either, so such a key is skipped.
+			var fits []string
+			for _, candidate := range candidates {
+				if slices.Contains(v.config.Algorithms, candidate) {
+					fits = append(fits, candidate)
+				}
+			}
+			if len(fits) != 1 {
+				continue
+			}
+			algorithm = fits[0]
+		}
+		kid := member["kid"]
+		if kid == "" || len(kid) > 128 {
+			continue // Tokens must name a kid of at most 128 bytes, so this key is never selected.
+		}
+		if seen[kid] {
+			// Two usable keys with one kid would make key selection ambiguous.
+			return nil, ErrExternalKeysUnavailable
+		}
+		seen[kid] = true
+		var k jose.JSONWebKey
+		if k.UnmarshalJSON(entry) != nil || !k.IsPublic() || !k.Valid() {
+			// A usable key with broken material is a provider fault to surface.
+			return nil, ErrExternalKeysUnavailable
 		}
 		switch p := k.Key.(type) {
 		case *rsa.PublicKey:
-			if p.N.BitLen() < 2048 || p.N.BitLen() > 8192 || p.N.Bit(0) != 1 || p.E < 3 || p.E > 1<<31-1 || p.E%2 == 0 || !slices.Contains([]string{"RS256", "RS384", "RS512"}, k.Algorithm) {
+			if p.N.BitLen() < 2048 || p.N.BitLen() > 8192 || p.N.Bit(0) != 1 || p.E < 3 || p.E > 1<<31-1 || p.E%2 == 0 {
 				return nil, ErrExternalKeysUnavailable
 			}
 		case *ecdsa.PublicKey:
-			if map[string]int{"ES256": 256, "ES384": 384, "ES512": 521}[k.Algorithm] != p.Curve.Params().BitSize {
+			if map[string]int{"ES256": 256, "ES384": 384, "ES512": 521}[algorithm] != p.Curve.Params().BitSize {
 				return nil, ErrExternalKeysUnavailable
 			}
 		case ed25519.PublicKey:
-			if k.Algorithm != "EdDSA" {
-				return nil, ErrExternalKeysUnavailable
-			}
 		default:
 			return nil, ErrExternalKeysUnavailable
 		}
-		if method := jwt.GetSigningMethod(k.Algorithm); method == nil {
-			return nil, ErrExternalKeysUnavailable
-		}
-		keys[k.KeyID+"\x00"+k.Algorithm] = k.Key
+		keys[kid+"\x00"+algorithm] = k.Key
 	}
 	return keys, nil
+}
+
+// externalKeyAlgorithms lists the supported signature algorithms a key's
+// material can verify. Other key types and curves verify none of them.
+func externalKeyAlgorithms(kty, crv string) []string {
+	switch {
+	case kty == "RSA":
+		return []string{"RS256", "RS384", "RS512"}
+	case kty == "EC" && crv == "P-256":
+		return []string{"ES256"}
+	case kty == "EC" && crv == "P-384":
+		return []string{"ES384"}
+	case kty == "EC" && crv == "P-521":
+		return []string{"ES512"}
+	case kty == "OKP" && crv == "Ed25519":
+		return []string{"EdDSA"}
+	}
+	return nil
+}
+
+// externalTime reads a NumericDate already checked to be a positive integer.
+func externalTime(value any) time.Time {
+	number, _ := value.(json.Number)
+	seconds, _ := number.Int64()
+	return time.Unix(seconds, 0)
 }
 
 func exactFields(data []byte, allowed, required []string) error {

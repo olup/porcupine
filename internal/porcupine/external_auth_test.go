@@ -214,7 +214,8 @@ func TestExternalMCPReauthenticatesEveryRequest(t *testing.T) {
 		t.Fatal("MCP session retained expired external authority", err)
 	}
 	f.broken.Store(true)
-	f.now.Store(f.clock.Add(12 * time.Minute).UnixMilli())
+	// Past the stale-key grace, an outage fails closed.
+	f.now.Store(f.clock.Add(2 * time.Hour).UnixMilli())
 	fresh := f.token(t, "reader", defaultTenantID, "management:read events:read", s.resources.mcpResource, id)
 	r := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1"},"capabilities":{}}}`))
 	r.Header.Set("Authorization", "Bearer "+fresh)
@@ -264,6 +265,9 @@ func TestExternalNativeOperatorSurvivesIssuerOutage(t *testing.T) {
 	native := request(t, s, "POST", "/api/v1/oauth-clients/"+account["client_id"].(string)+"/api-keys", operator, `{"name":"Operator key","audience":"api","permissions":["instance:admin"],"projects":["*"]}`, 201)["token"].(string)
 	f.broken.Store(true)
 	f.now.Store(f.clock.Add(6 * time.Minute).UnixMilli())
+	// The last good key set covers a short outage past cache expiry, then fails closed.
+	request(t, s, "GET", "/api/v1/status", f.operator(t), "", 200)
+	f.now.Store(f.clock.Add(2 * time.Hour).UnixMilli())
 	fresh := f.operator(t)
 	request(t, s, "GET", "/api/v1/status", fresh, "", 503)
 	status := request(t, s, "GET", "/api/v1/status", native, "", 200)
