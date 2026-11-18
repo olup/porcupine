@@ -1,0 +1,25 @@
+name: C4 prior behavior
+on:
+  push:
+    branches: [codex/c4-control-locks-regression]
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Observe both regression failures on the old lock behavior
+        shell: bash
+        run: |
+          if CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- go test ./internal/porcupine ./internal/lake -v -count=1 -run '^TestShared(HostedCommitAllowsQueryAdmissionAndFencesDeletion|PostgresCoordinatorAcquireTimeoutAndCancellation)$' >"$RUNNER_TEMP/c4-before.log" 2>&1; then
+            cat "$RUNNER_TEMP/c4-before.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/c4-before.log"
+          rg -F 'query admission blocked by paused live commit:' "$RUNNER_TEMP/c4-before.log"
+          rg -F 'blocked acquisition did not hit coordinator timeout: context deadline exceeded' "$RUNNER_TEMP/c4-before.log"

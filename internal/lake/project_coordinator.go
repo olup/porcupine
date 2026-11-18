@@ -99,7 +99,7 @@ func (c *PostgresProjectCoordinator) acquire(parent context.Context, key Project
 	if err := parent.Err(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(parent, c.config.AcquireTimeout)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	acquireError := func(fallback error) error {
 		if err := parent.Err(); err != nil {

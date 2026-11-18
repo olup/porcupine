@@ -128,7 +128,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 // Deletion may fence further admissions after this check, but sealing must
 // drain this ticket and acquire the project session before moving the native fence.
 func (f *hostedLiveFlusher) commitLiveIfActive(ctx context.Context, project, tenant string, commit func() error) error {
-	if err := f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+	return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
 		currentTenant, err := lockActiveHostedProject(ctx, tx, project)
 		if err != nil {
 			return err
@@ -136,11 +136,8 @@ func (f *hostedLiveFlusher) commitLiveIfActive(ctx context.Context, project, ten
 		if currentTenant != tenant {
 			return errHostedProjectFenced
 		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	return commit()
+		return commit()
+	})
 }
 
 // CommitImport coordinates already validated historical input. Upload storage,
