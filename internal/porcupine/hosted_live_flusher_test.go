@@ -151,8 +151,25 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(er)
 	}
 	empty.events = append(empty.events, bufferedLiveEvent{input: identityInput, admittedAt: empty.events[0].admittedAt})
+	snapshot := func() int64 {
+		t.Helper()
+		p, release, err := sa.LeaseProject(t.Context(), project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		var id int64
+		if err := p.DB.QueryRowContext(t.Context(), `SELECT max(snapshot_id) FROM ducklake_snapshots('lake')`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	before := snapshot()
 	if err = fa.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal(err)
+	}
+	if got := snapshot() - before; got != 1 {
+		t.Fatalf("clean live flush advanced %d native snapshots, want 1", got)
 	}
 	if err = fb.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal("cold stable replay", err)
@@ -662,11 +679,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	ackLost := batch("failed-native-ack")
 	failACK.Store(true)
-	if err = fa.FlushLive(t.Context(), ackLost); err != nil {
-		t.Fatal("confirmed PG publication retained volatile input on ACK failure", err)
+	if err = fa.FlushLive(t.Context(), ackLost); err != nil || !failACK.Load() {
+		t.Fatalf("live flush attempted standalone native ACK: %v", err)
 	}
-	if failACK.Load() {
-		t.Fatal("native ACK failure boundary not exercised")
+	if err = fa.RecoverProject(t.Context(), key); err != nil || failACK.Load() {
+		t.Fatalf("best-effort ACK failure boundary not exercised: %v", err)
 	}
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold ACK retry", err)
