@@ -1,10 +1,8 @@
 # Hosted historical uploads
 
-The internal hosted integration gate connects the existing HTTP import operations
-and CGO-free CLI to the PostgreSQL and S3 backend. Existing deployments still
-use the journal backend. Enabling the integration in a deployment requires
-hosted project lifecycle, restore, all proof recovery callers, and the hosted
-acceptance gates in [hosted architecture](hosted-architecture.md).
+The hosted profile uses the existing HTTP import operations and CGO-free CLI
+with PostgreSQL and S3. Standalone and owner-routed deployments keep their
+journal backend. See [hosted architecture](hosted-architecture.md).
 
 The same project-scoped credentials, format adapters, chunk checksums and
 limits apply to native, PostHog and Segment input. An administrator with current authority can resume a job under

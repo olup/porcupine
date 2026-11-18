@@ -303,6 +303,42 @@ func TestSharedNativeRegistryBoundsBlockedMetadata(t *testing.T) {
 	if _, err := lock.Exec(`SELECT 1 FROM pc_native_projects WHERE project_id='blocked' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
+	var blocker int
+	if err := lock.QueryRow(`SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	r.timeout = 10 * time.Second
+	wait, stopWaiting := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopWaiting()
+	result := make(chan error, 1)
+	go func() {
+		result <- r.markReady(wait, "blocked")
+	}()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		var blocked bool
+		if err := db.QueryRowContext(wait, `SELECT EXISTS (
+SELECT 1 FROM pg_locks WHERE NOT granted AND $1 = ANY(pg_blocking_pids(pid))
+)`, blocker).Scan(&blocked); err != nil {
+			t.Fatal("observing the metadata lock wait", err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case err := <-result:
+			t.Fatal("metadata update returned before waiting for the lock", err)
+		case <-wait.Done():
+			t.Fatal("metadata update did not wait for the lock", wait.Err())
+		case <-poll.C:
+		}
+	}
+	stopWaiting()
+	if err := <-result; err == nil {
+		t.Fatal("cancelled metadata update ignored its context")
+	}
+
 	r.timeout = 50 * time.Millisecond
 	work, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -319,5 +355,11 @@ func TestSharedNativeRegistryBoundsBlockedMetadata(t *testing.T) {
 	r.timeout = time.Second
 	if record, err := r.lookup(t.Context(), "blocked"); err != nil || record.Ready {
 		t.Fatal("expired metadata update published readiness", record, err)
+	}
+	if err := r.markReady(t.Context(), "blocked"); err != nil {
+		t.Fatal("retrying readiness after the lock was released", err)
+	}
+	if record, err := r.lookup(t.Context(), "blocked"); err != nil || !record.Ready {
+		t.Fatal("successful retry did not publish readiness", record, err)
 	}
 }

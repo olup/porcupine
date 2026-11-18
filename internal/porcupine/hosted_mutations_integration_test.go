@@ -176,7 +176,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	// A cold worker publishes the original after native response loss. Lose the
 	// returned PostgreSQL COMMIT response after the receipt and cursor commit.
 	var losePublication atomic.Bool
-	lostDB, err := installLostHostedCommit(b.service.shared.config.DatabaseURL, fb.publisher, &losePublication)
+	lostDB, err := installLostHostedCommit(b.controlDSN, fb.publisher, &losePublication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,4 +355,35 @@ FROM hosted_mutation_intents WHERE project_id=$1 AND key_hash=$2 AND state='abor
 
 	_, err = b.service.editEvent(actorContext, edit)
 	mutationErrorStatus(t, err, 403)
+
+	priorSeal, err := fb.native.PendingNativeEffects(ctx, scope, 0, 20)
+	if err != nil || priorSeal.AcknowledgedThrough != priorSeal.NativeHighWater {
+		t.Fatalf("pre-seal history not acknowledged: %+v %v", priorSeal, err)
+	}
+	readyActor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:edit"})
+	readyContext := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: readyActor, Projects: []string{project}, Permissions: []string{"events:edit"}})
+	ready, err := a.service.editEvent(readyContext, mutationEdit(project, laterUUID, "ready-at-project-fence", "0"))
+	if err != nil || ready.Body.State != "pending" {
+		t.Fatal(ready, err)
+	}
+	for _, node := range []*sharedJourneyNode{a, b} {
+		node.service.deletionCancel()
+		<-node.service.deletionDone
+	}
+	if err := a.service.beginControlProjectDeletion(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := fb.sealDeletedProject(ctx, scope.Key); err != nil {
+		t.Fatal("seal did not settle an accepted mutation", err)
+	}
+	settled, err := hostedMutationBy(ctx, a.service.control, scope, defaultTenantID, "mutation_id", ready.Body.MutationID)
+	if err != nil || settled.state != "applied" {
+		t.Fatal(settled.state, err)
+	}
+	page, err = fb.native.PendingNativeEffects(ctx, scope, priorSeal.NativeHighWater, 1)
+	if err != nil || page.NativeHighWater != priorSeal.NativeHighWater+1 || page.AcknowledgedThrough != page.NativeHighWater || len(page.Evidence) != 1 || page.Evidence[0].OperationID != ready.Body.MutationID {
+		t.Fatal(page, err)
+	}
+	_, err = b.service.editEvent(readyContext, edit)
+	mutationErrorStatus(t, err, 503)
 }

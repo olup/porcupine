@@ -1,10 +1,10 @@
 # Server configuration
 
-**Unreleased.** These settings belong to the server executable, not the standalone API client. The published v0.14.0 image uses the older environment/Compose setup.
+These settings belong to the server executable. The standalone API client has its own connection settings.
 
 `porcupine init` creates `porcupine.json` with mode 0600 and random bootstrap and pipeline secrets. It refuses to overwrite an existing file. The server reads that file by default. `--config FILE` takes precedence over `PORCUPINE_CONFIG`. A missing explicitly selected file is an error. Environment settings on the server process override matching JSON values. A host shell's environment is not automatically passed into a container.
 
-Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Database identity, provider discovery, and remote storage connectivity are checked at actual startup.
+Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Startup checks the configured database and analytical registry. Confirm analytical S3 access with an ingestion and query before routing traffic.
 
 A fresh builtin instance needs the generated bootstrap token. An already initialized builtin instance may omit it; a configured token must contain at least 16 characters. Changing the configured token does not replace an existing stored credential. [External authentication](external-auth.md) instead uses a trusted operator JWT and rejects bootstrap, SMTP, and builtin provider settings. Preserve generated secrets when applying the [recommended laptop and VM profiles](../hosting.md#configure-the-development-build).
 
@@ -14,9 +14,9 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 | Section | Common keys and purpose |
 | --- | --- |
-| Top level | `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
-| `acceptance` | `mode`: omitted or `"durable"` preserves journal-backed acceptance; `"buffered"` is reserved and rejected until the hosted writer and shared state providers exist |
-| `storage` | `journal`, `control`, `ducklake`: local paths; omit `control` for shared PostgreSQL |
+| Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
+| `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
+| `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `usage` | `retention_days` (365), `max_snapshots` (16), `max_snapshot_bytes` (134217728): [numerical history and report capacity](usage.md) |
@@ -25,18 +25,21 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `email` | `admin_email`, `host`, `port`, `tls`, `from`, `username`, `password_file` |
 | `oidc` | `issuer`, `client_id`, and either `client_secret` or `client_secret_file` |
 | `ducklake` | `memory_mb`, `threads`, `max_open_projects`, maintenance/cleanup settings, `postgres_url` or `postgres_url_file`, and analytical `s3` |
-| `shared` | `control_database_url` or its `_file` variant, `worker_id`, `worker_url`, and `routing_secret` or its `_file` variant |
+| `shared` | `control_database_url` or `control_database_url_file`: hosted PostgreSQL connection |
 | `pipeline` | `key` or `key_file` for destination encryption, plus allowed `s3_endpoints` |
 | `export` | Separate export-result `s3` settings and job/output limits |
 | `backup` | `directory` or separate backup `s3`, plus `interval`, `timeout`, and `retain` |
 
-`PORCUPINE_ACCEPTANCE_MODE` overrides `acceptance.mode`. Selecting shared PostgreSQL does not select buffered acceptance. No available configuration acknowledges live input without the SQLite commit.
+`PORCUPINE_PROFILE` and `PORCUPINE_ACCEPTANCE_MODE` override `profile` and
+`acceptance.mode`. Buffered acknowledgment requires both `profile: "hosted"`
+and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-profile-composition.md)
+for PostgreSQL, object storage, and recovery-floor settings.
 
-The default generated local control path is the journal path plus `.control`. Shared mode requires PostgreSQL control, PostgreSQL DuckLake catalogs, analytical S3, and a separate local journal per worker. See [shared deployment](shared-deployment.md).
+In standalone the generated control path is the journal path plus `.control`. In hosted, omit both paths and configure PostgreSQL and S3.
 
 `init` explicitly writes `queue.receipt_retention: "0"`. Optional pruning makes acceptance depend on DuckLake after a project's first prune. Changing back to zero stops pruning but does not restore missing receipts. See the [receipt contract](receipts.md#bounded-receipts).
 
-When switching a generated local configuration to shared PostgreSQL, remove `storage.control` before setting `shared.control_database_url` or its file variant. A local control file and PostgreSQL control cannot both be configured. This setting does not migrate existing data.
+Initialize a hosted worker with `porcupine init --hosted`. Use fresh PostgreSQL metadata and a dedicated analytical S3 prefix.
 
 `ducklake.s3`, `backup.s3`, and `export.s3` have distinct destinations. Common fields are `bucket`, `prefix`, `region`, `endpoint`, `path_style`, `access_key_id`, `secret_access_key`, and `session_token`. Empty explicit credentials use the configured AWS credential chain. Analytical and backup S3 also support `ca_cert_file` and `request_timeout_seconds`. A query destination does not configure analytical storage or backups.
 
@@ -48,18 +51,17 @@ The initial `email.admin_email` gives that address instance administration throu
 
 ## Container setup
 
-Use a fresh data volume for the unreleased schema. Build and initialize the source checkout:
+Initialize a fresh data volume with the tagged image. Start in the matching Git checkout.
 
 ```sh
-docker compose build porcupine
-docker compose --profile setup run --rm init
-docker compose --profile tools run --rm config-check
-docker compose up -d porcupine
+docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
+docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
+docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
-The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The single Compose file has profiles for setup tools and optional PostgreSQL; providers use the same JSON file.
+The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](../design/hosted-profile-composition.md).
 
-The published v0.14.0 image lacks these config commands. Do not apply its release overlay to this source-build setup. Use the [tagged release procedure](hosting-options.md) for that image.
+For a source build, run `docker compose build porcupine` first and omit the release overlay. For an existing v0.14.0 volume, use the [fresh-storage cutover procedure](../hosting.md#move-from-v0140).
 
 ## Replace an existing configuration
 
@@ -70,20 +72,20 @@ For a container-owned volume, stop the server and edit a private copy. Install i
 ```sh
 umask 077
 porcupine_config_copy=$(mktemp -d)
-docker compose stop porcupine
-docker compose cp porcupine:/data/porcupine.json "$porcupine_config_copy/porcupine.json"
+docker compose -f compose.yaml -f compose.release.yaml stop porcupine
+docker compose -f compose.yaml -f compose.release.yaml cp porcupine:/data/porcupine.json "$porcupine_config_copy/porcupine.json"
 chmod 600 "$porcupine_config_copy/porcupine.json"
 # Edit $porcupine_config_copy/porcupine.json with your local editor.
-docker compose run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$porcupine_config_copy/porcupine.json"
-docker compose --profile tools run --rm config-check
-docker compose up -d porcupine
+docker compose -f compose.yaml -f compose.release.yaml run --rm --no-deps -T porcupine config install --config /data/porcupine.json < "$porcupine_config_copy/porcupine.json"
+docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
+docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
 A plain host copy can change ownership and make a private file unreadable to UID 65532. `config install` writes as the container user. Keep the copy outside source control, remove it when finished, and preserve the complete private configuration with recovery material.
 
 ## Interactive query ceilings
 
-These deployment settings belong to the unreleased tenant implementation. A tenant budget can lower a ceiling but cannot raise it.
+A tenant budget can lower a deployment ceiling.
 
 | JSON path | Environment equivalent | Default | Accepted range |
 | --- | --- | --- | --- |
@@ -94,4 +96,4 @@ These deployment settings belong to the unreleased tenant implementation. A tena
 
 An unset value uses its default. The concurrency pool also retains the background export safety slot. These settings do not change per-engine memory budgets or provide process isolation. Configure them within the host's measured resource capacity. Query readers discover their effective limits through `get-event-schema`. [Tenant budgets](tenants.md#interactive-query-limits)
 
-Shared PostgreSQL also has [metadata timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision). Those I/O allowances can extend native execution beyond a SQL deadline. Shared workers retain execution-scoped reservations and quarantine affected interactive engines; automatic expiry can allow physical concurrency overshoot during a partition. Local mode has no shared reservation keeper.
+The hosted profile also has [metadata timeouts and worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision). Those I/O allowances can extend native execution beyond a SQL deadline. Hosted workers retain execution-scoped reservations and quarantine affected interactive engines; automatic expiry can allow physical concurrency overshoot during a partition. Local mode has no shared reservation keeper.

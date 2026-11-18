@@ -238,11 +238,6 @@ func (s *ExportJobs) exportCanContinue(ctx context.Context, job storedExport) er
 	if err := s.requireActive(ctx, job.ProjectID); err != nil {
 		return err
 	}
-	if s.retained == nil {
-		if err := s.requireOwner(ctx, job.ProjectID); err != nil {
-			return err
-		}
-	}
 	current, err := s.loadExport(ctx, job.ProjectID, job.ID)
 	if err != nil {
 		return errExportPressure
@@ -482,7 +477,7 @@ func (s *ExportJobs) cleanupExport(ctx context.Context, job storedExport) error 
 		if err := retainArtifactOwnership(ctx, s.control, job.ProjectID, "export", s.store, file.key, file.id); err != nil {
 			return err
 		}
-		if err = s.removeExportArtifact(ctx, file.key, file.id); err != nil {
+		if err = s.retireExportArtifact(ctx, file.key, file.id); err != nil {
 			return err
 		}
 		if _, err = s.db.ExecContext(ctx, `DELETE FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND file_index=$3`, job.ID, file.attempt, file.index); err != nil {

@@ -1,10 +1,9 @@
 # Native historical import outcomes
 
-This internal, disabled component commits historical chunks and reconciles their
-usage through the existing hosted publication cursor. The
-[hosted upload integration](hosted-import-uploads.md) uses this component behind
-an internal gate. Standalone imports continue to use the durable SQLite
-transaction.
+The hosted profile commits historical chunks under the native project guard and
+reconciles their usage through the shared publication cursor. The
+[hosted upload flow](hosted-import-uploads.md) uses this protocol. Standalone
+imports use the durable SQLite transaction.
 
 ## Native transaction
 
@@ -59,7 +58,7 @@ outcome lookup and publication remain available after sealing; new native writes
 require the open guard. A missing sequence, changed fingerprint, unknown kind,
 or mismatched file head fails closed.
 
-The disabled `hostedLiveFlusher.CommitImport` holds the common project session
+The native import path holds the common project session
 through original lookup, reconciliation, cursor preflight, native commit and
 publication. `PrepareNoOutputStreamTx` admits and charges the one shared cursor
 row before native data commits. Exhausted metadata capacity therefore rejects a

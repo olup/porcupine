@@ -194,17 +194,6 @@ func (s *Service) deliveryStatus(ctx context.Context, projectID string) (lakeapi
 		status.PendingUnknown = true
 		return status, nil
 	}
-	if s.shared != nil {
-		owner, _, err := s.sharedProjectOwner(ctx, projectID)
-		if err != nil {
-			return status, err
-		}
-		status.OwnerWorkerID = owner
-		if owner != s.shared.config.WorkerID {
-			status.PendingUnknown = true
-			return status, nil
-		}
-	}
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*), COALESCE((SELECT received_at FROM events WHERE project_id=$1 AND delivered=0 ORDER BY id LIMIT 1),'') FROM events WHERE project_id=$2 AND delivered=0`, projectID, projectID).Scan(&status.Pending, &status.OldestPendingReceivedAt); err != nil {
 		return status, err
 	}

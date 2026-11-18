@@ -28,6 +28,7 @@ import (
 )
 
 type Config struct {
+	Profile        DeploymentProfile
 	DBPath         string
 	ControlDBPath  string
 	BootstrapToken string
@@ -36,28 +37,27 @@ type Config struct {
 	AcceptanceMode AcceptanceMode
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
-	ReceiptRetention   time.Duration
-	AllowedOrigins     []string
-	TrustedProxies     []string
-	Clock              func() time.Time
-	DuckLake           *lakeapi.DuckLakeConfig
-	Pipelines          *output.PipelineConfig
-	Exports            *output.ExportConfig
-	OAuth              *OAuthConfig
-	Auth               *AuthConfig
-	NativeBackup       *lakeapi.NativeBackupConfig
-	InteractiveQueries *InteractiveQueryConfig
-	Shared             *SharedConfig
-	Usage              *usage.Config
-	// Internal integration gate until hosted lifecycle, backup and acceptance are activated together.
-	hostedImports bool
+	ReceiptRetention    time.Duration
+	AllowedOrigins      []string
+	TrustedProxies      []string
+	Clock               func() time.Time
+	DuckLake            *lakeapi.DuckLakeConfig
+	Pipelines           *output.PipelineConfig
+	Exports             *output.ExportConfig
+	OAuth               *OAuthConfig
+	Auth                *AuthConfig
+	NativeBackup        *lakeapi.NativeBackupConfig
+	InteractiveQueries  *InteractiveQueryConfig
+	Shared              *SharedConfig
+	Usage               *usage.Config
+	HostedRecoveryFloor HostedRecoveryFloor
 }
 
 type Service struct {
+	hosted                      *hostedRuntime
 	control                     *sql.DB
 	localAdmission              contextMutex
 	shared                      *sharedRuntime
-	sharedIngestion             *sharedIngestionState
 	lakeS3Storage               bool
 	lakeS3RequestTimeoutSeconds int
 	lakeMetadataTimeoutSeconds  int
@@ -104,12 +104,78 @@ type Service struct {
 	usage                 *usageRuntime
 }
 
+func newServiceRuntime(c Config, interactiveConfig InteractiveQueryConfig) (*Service, error) {
+	var err error
+	var oauth *oauthRuntime
+	var resources *resourceRuntime
+	if c.Auth != nil && c.Auth.Mode == "external" {
+		resources, err = normalizeExternalRuntime(*c.Auth)
+		if err != nil {
+			return nil, err
+		}
+	} else if c.OAuth != nil {
+		var err error
+		oauth, err = normalizeOAuthConfig(*c.OAuth)
+		if err != nil {
+			return nil, err
+		}
+		resources = newResourceRuntime(oauth.issuer)
+	}
+	proxies, err := parseTrustedProxies(c.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+	if c.Clock == nil {
+		c.Clock = time.Now
+	}
+	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
+		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+	s.captureSlots = make(chan struct{}, 32)
+	s.deliveryMaxEvents = 100
+	s.deliveryMaxBytes = 4 << 20
+	s.importSlots = make(chan struct{}, 2)
+	s.tokenSlots = make(chan struct{}, 8)
+	s.statusSlots = make(chan struct{}, 1)
+	return s, nil
+}
+
+func (s *Service) initializeDuckLake(config lakeapi.DuckLakeConfig) error {
+	var err error
+	s.lake, err = lakeapi.NewDuckLake(config)
+	if err != nil {
+		return err
+	}
+	s.lakeS3Storage = config.S3 != nil
+	if s.lakeS3Storage {
+		s.lakeS3RequestTimeoutSeconds = config.S3.RequestTimeoutSeconds
+		if s.lakeS3RequestTimeoutSeconds == 0 {
+			s.lakeS3RequestTimeoutSeconds = 5
+		}
+	}
+	s.lakeMemoryMB = config.MemoryLimitMB
+	if config.PostgresURL != "" {
+		s.lakeMetadataTimeoutSeconds = config.MetadataTimeoutSeconds
+		if s.lakeMetadataTimeoutSeconds == 0 {
+			s.lakeMetadataTimeoutSeconds = 10
+		}
+	}
+	if s.lakeMemoryMB == 0 {
+		s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
+	}
+	s.deliveryMaxEvents = 1000
+	return nil
+}
+
 func Open(c Config) (*Service, error) {
 	if err := ValidateConfig(c); err != nil {
 		return nil, err
 	}
-	if err := validateSharedConfiguration(c); err != nil {
-		return nil, err
+	if c.Profile == ProfileHosted {
+		return openHostedProfile(c)
 	}
 	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
 	if err != nil {
@@ -127,16 +193,14 @@ func Open(c Config) (*Service, error) {
 	if c.DBPath == "" {
 		c.DBPath = "./data/porcupine.db"
 	}
-	if c.Shared == nil {
-		if c.ControlDBPath == "" {
-			c.ControlDBPath = localControlPath(c.DBPath)
-		}
-		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
-			return nil, err
-		}
-		if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
-			return nil, err
-		}
+	if c.ControlDBPath == "" {
+		c.ControlDBPath = localControlPath(c.DBPath)
+	}
+	if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+		return nil, err
+	}
+	if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
+		return nil, err
 	}
 	if err := checkNativeRestoreMarker(c.DBPath); err != nil {
 		return nil, err
@@ -154,21 +218,6 @@ func Open(c Config) (*Service, error) {
 	if c.QueueMaxBytes == 0 {
 		c.QueueMaxBytes = DefaultQueueMaxBytes
 	}
-	var oauth *oauthRuntime
-	var resources *resourceRuntime
-	if c.Auth != nil && c.Auth.Mode == "external" {
-		resources, err = normalizeExternalRuntime(*c.Auth)
-		if err != nil {
-			return nil, err
-		}
-	} else if c.OAuth != nil {
-		var err error
-		oauth, err = normalizeOAuthConfig(*c.OAuth)
-		if err != nil {
-			return nil, err
-		}
-		resources = newResourceRuntime(oauth.issuer)
-	}
 	if c.Exports != nil && c.DuckLake == nil {
 		return nil, errors.New("exports require an analytical store")
 	}
@@ -177,14 +226,7 @@ func Open(c Config) (*Service, error) {
 			return nil, err
 		}
 	}
-	proxies, err := parseTrustedProxies(c.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
-	if c.Clock == nil {
-		c.Clock = time.Now
-	}
-	origins, err := parseAllowedOrigins(c.AllowedOrigins)
+	s, err := newServiceRuntime(c, interactiveConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -192,41 +234,21 @@ func Open(c Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	var control *sql.DB
-	if c.Shared == nil {
-		control, err = openLocalSQLite(c.ControlDBPath)
-	} else {
-		control, err = openSharedControl(context.Background(), *c.Shared)
-	}
+	control, err := openLocalSQLite(c.ControlDBPath)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	if c.Shared == nil {
-		if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
-			control.Close()
-			db.Close()
-			return nil, err
-		}
+	if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
+		control.Close()
+		db.Close()
+		return nil, err
 	}
-	s := &Service{db: db, backups: backups, eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
-	s.control = control
-	if c.Shared != nil {
-		copyConfig := *c.Shared
-		copyConfig.RoutingSecret = append([]byte(nil), copyConfig.RoutingSecret...)
-		s.shared = &sharedRuntime{config: copyConfig}
-	}
+	s.db, s.control, s.backups = db, control, backups
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	durable := &durableAcceptance{db: db, rules: s.eventRules}
 	s.acceptance = durable
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
-	s.captureSlots = make(chan struct{}, 32)
-	s.deliveryMaxEvents = 100
-	s.deliveryMaxBytes = 4 << 20
-	s.importSlots = make(chan struct{}, 2)
-	s.tokenSlots = make(chan struct{}, 8)
-	s.statusSlots = make(chan struct{}, 1)
 	fail := func(err error) (*Service, error) {
 		if s.lake != nil {
 			s.lake.Close()
@@ -236,21 +258,15 @@ func Open(c Config) (*Service, error) {
 		}
 		db.Close()
 		if s.control != nil && s.control != db {
-			s.closeSharedRouting()
 			s.control.Close()
 		}
 		s.projectionGuard.close()
 		return nil, err
 	}
-	if c.Shared == nil {
-		err = initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
-	} else {
-		err = initializeSharedControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled())
-	}
-	if err != nil {
+	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
 		return fail(err)
 	}
-	if err := migrateSQLite(context.Background(), db, journalSchema); err != nil {
+	if err := initializeLocalControl(context.Background(), control, c.BootstrapToken, interactiveConfig, s.externalAuthEnabled()); err != nil {
 		return fail(err)
 	}
 	s.projectionGuard, err = openProjectionGuard(c.DBPath)
@@ -278,12 +294,9 @@ func Open(c Config) (*Service, error) {
 		tx.Rollback()
 		return fail(err)
 	}
-	var lakeBound, sharedBound bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id'),EXISTS(SELECT 1 FROM metadata WHERE key='shared_worker_id')`).Scan(&lakeBound, &sharedBound); err != nil {
+	var lakeBound bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM metadata WHERE key='ducklake_source_id')`).Scan(&lakeBound); err != nil {
 		return txFail(err)
-	}
-	if sharedBound && s.shared == nil {
-		return txFail(errors.New("this worker journal requires its shared control configuration"))
 	}
 	if lakeBound && c.DuckLake == nil {
 		return txFail(errors.New("this SQLite database requires its configured DuckLake store"))
@@ -305,54 +318,15 @@ func Open(c Config) (*Service, error) {
 	if err = tx.Commit(); err != nil {
 		return txFail(err)
 	}
-	if s.shared == nil {
-		if err := s.bindLocalControl(context.Background()); err != nil {
-			return fail(err)
-		}
-		s.eventRules.admission = &s.localAdmission
-		s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
+	if err := s.bindLocalControl(context.Background()); err != nil {
+		return fail(err)
 	}
-	if s.shared != nil {
-		if err := s.bindSharedControl(context.Background()); err != nil {
-			return fail(err)
-		}
-		if err := s.initializeSharedRouting(context.Background()); err != nil {
-			return fail(err)
-		}
-		if err := s.initializeSharedIngestion(context.Background()); err != nil {
-			return fail(err)
-		}
-		if c.DuckLake != nil {
-			lakeConfig := *c.DuckLake
-			if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='shared_source_id'`).Scan(&lakeConfig.SharedSourceID); err != nil {
-				return fail(errors.New("shared analytical source identity unavailable"))
-			}
-			c.DuckLake = &lakeConfig
-		}
-	}
+	s.eventRules.admission = &s.localAdmission
+	s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
 	if c.DuckLake != nil {
-		s.lake, err = lakeapi.NewDuckLake(*c.DuckLake)
-		if err != nil {
+		if err := s.initializeDuckLake(*c.DuckLake); err != nil {
 			return fail(err)
 		}
-		s.lakeS3Storage = c.DuckLake.S3 != nil
-		if s.lakeS3Storage {
-			s.lakeS3RequestTimeoutSeconds = c.DuckLake.S3.RequestTimeoutSeconds
-			if s.lakeS3RequestTimeoutSeconds == 0 {
-				s.lakeS3RequestTimeoutSeconds = 5
-			}
-		}
-		s.lakeMemoryMB = c.DuckLake.MemoryLimitMB
-		if c.DuckLake.PostgresURL != "" {
-			s.lakeMetadataTimeoutSeconds = c.DuckLake.MetadataTimeoutSeconds
-			if s.lakeMetadataTimeoutSeconds == 0 {
-				s.lakeMetadataTimeoutSeconds = 10
-			}
-		}
-		if s.lakeMemoryMB == 0 {
-			s.lakeMemoryMB = lakeapi.DefaultDuckLakeMemoryMB
-		}
-		s.deliveryMaxEvents = 1000
 	}
 	if err := s.initializeOAuthClients(context.Background()); err != nil {
 		return fail(err)
@@ -368,21 +342,6 @@ func Open(c Config) (*Service, error) {
 	}
 	if err := s.initializeUsage(context.Background(), c.Usage); err != nil {
 		return fail(err)
-	}
-	if c.hostedImports {
-		native, ok := s.lake.(*lakeapi.DuckLakeStore)
-		if c.Shared == nil || !ok || s.usage == nil {
-			return fail(errors.New("hosted imports require shared storage and usage"))
-		}
-		coordinator, err := lakeapi.NewPostgresProjectCoordinator(s.control, lakeapi.DefaultProjectCoordinatorConfig())
-		if err != nil {
-			return fail(err)
-		}
-		flusher, err := newHostedLiveFlusher(s.control, native, coordinator, s.usage.store)
-		if err != nil {
-			return fail(err)
-		}
-		s.imports = newHostedImportManager(s.eventRules, flusher)
 	}
 	if err := s.configurePipelines(c.Pipelines); err != nil {
 		return fail(err)
@@ -405,19 +364,14 @@ func Open(c Config) (*Service, error) {
 	if err := s.startNativeBackups(); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
-	s.startSharedIngestion()
 	s.startUsage()
 	return s, nil
 }
 
 func (s *Service) Close() error {
-	if s.shared != nil {
-		s.BeginQueryDrain()
-		if s.sharedQueries.status().Active != 0 {
-			return errors.New("shared analytics execution is still active; permit renewal continues until it returns")
-		}
+	if s.hosted != nil {
+		return s.closeHosted()
 	}
-	s.stopSharedIngestion()
 	s.stopNativeBackups()
 	if s.lakeMaintenanceCancel != nil {
 		s.lakeMaintenanceCancel()
@@ -438,7 +392,6 @@ func (s *Service) Close() error {
 	if s.lake != nil {
 		lakeErr = s.lake.Close()
 	}
-	s.closeSharedRouting()
 	var controlErr error
 	if s.control != s.db {
 		controlErr = s.control.Close()
@@ -527,7 +480,6 @@ func readBody(w http.ResponseWriter, r *http.Request, ingestion bool) ([]byte, b
 			return nil, false
 		}
 	}
-	*r = *sharedReplayRequest(r, raw)
 	return raw, true
 }
 
@@ -582,7 +534,11 @@ func (s *Service) Handler() http.Handler {
 			problem(w, 503, "analytics execution unavailable")
 			return
 		}
-		if err := s.db.PingContext(r.Context()); err != nil {
+		if s.hosted != nil && !s.hosted.buffer.available() {
+			problem(w, 503, "ingestion buffer unavailable")
+			return
+		}
+		if s.db != nil && s.db.PingContext(r.Context()) != nil {
 			problem(w, 503, "storage unavailable")
 			return
 		}
@@ -610,13 +566,13 @@ func (s *Service) Handler() http.Handler {
 	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
 		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
 	}
-	return s.sharedRoutingMiddleware(s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/oauth/") {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
 		}
 		m.ServeHTTP(w, r)
-	})))
+	}))
 }
 
 type eventInput struct {
@@ -751,10 +707,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	projectID := a.Projects[0]
 	if err := s.requireProjectActive(r.Context(), projectID); err != nil {
-		writeSharedRouteProblem(w, err)
-		return
-	}
-	if s.forwardSharedProject(w, r, projectID) {
+		writeManagementProblem(w, err)
 		return
 	}
 	ctx, finish, active := s.activity.begin(r.Context(), projectID)
@@ -764,9 +717,11 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	defer finish()
 	r = r.WithContext(ctx)
-	if err := s.ensureProjectLocal(ctx, projectID, a); err != nil {
-		writeSharedRouteProblem(w, err)
-		return
+	if s.hosted == nil {
+		if err := s.ensureProjectLocal(ctx, projectID, a); err != nil {
+			writeManagementProblem(w, err)
+			return
+		}
 	}
 	mode, policyErr := s.projectIngestionMode(r.Context(), projectID)
 	if policyErr != nil {
@@ -793,6 +748,20 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		peer.address, err = s.clientIP(r)
 		if err != nil {
 			problem(w, 400, "invalid cookieless client address")
+			return
+		}
+	}
+	if s.hosted != nil {
+		tenant, err := s.projectTenant(ctx, projectID)
+		if err != nil {
+			writeManagementProblem(w, err)
+			return
+		}
+		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID); err != nil {
+			if !writeTenantIngestionError(w, r, err, nativeResponse) {
+				w.Header().Set("Retry-After", "1")
+				problem(w, 503, "tenant ingestion policy unavailable")
+			}
 			return
 		}
 	}

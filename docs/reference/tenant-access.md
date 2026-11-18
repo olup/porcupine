@@ -1,7 +1,5 @@
 # Give a team access to its tenant
 
-**Unreleased.** This workflow requires a matching development server and CLI. The published v0.14.0 release does not include tenant memberships or tenant-administrator login.
-
 A tenant groups a team's projects under shared usage budgets. These examples assume a fresh tenant-enabled deployment. Use this guide to give a team control of its projects without giving it control of the deployment. A tenant administrator can create projects, invite members, and manage the team's service accounts. The instance operator keeps infrastructure settings and hard usage budgets.
 
 ## Invite the first tenant administrator

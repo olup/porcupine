@@ -47,10 +47,11 @@ func run(args []string, input io.Reader, output io.Writer) error {
 	}
 	if len(command) >= 1 && command[0] == "init" {
 		docker := len(command) == 2 && command[1] == "--docker"
-		if len(command) > 1 && !docker {
-			return errors.New("usage: porcupine init [--config FILE] [--docker]")
+		hosted := len(command) == 2 && command[1] == "--hosted"
+		if len(command) > 1 && !docker && !hosted {
+			return errors.New("usage: porcupine init [--config FILE] [--docker|--hosted]")
 		}
-		if err := writeInitialConfig(path, docker); err != nil {
+		if err := writeProfileConfig(path, docker, hosted); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintf(output, "Created %s with private permissions. Keep it out of source control.\nRun porcupine config check --config %s before starting.\n", path, path)
@@ -73,6 +74,24 @@ func run(args []string, input io.Reader, output io.Writer) error {
 		return err
 	}
 	if restore {
+		switch porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")) {
+		case porcupine.ProfileHosted:
+			return errors.New("hosted profile recovery uses PostgreSQL and S3")
+		case "", porcupine.ProfileStandalone:
+		default:
+			return errors.New("restore-native-backup requires the standalone profile")
+		}
+		for _, name := range []string{
+			"PORCUPINE_CONTROL_DATABASE_URL", "PORCUPINE_CONTROL_DATABASE_URL_FILE",
+			"PORCUPINE_DUCKLAKE_POSTGRES_URL", "PORCUPINE_DUCKLAKE_POSTGRES_URL_FILE",
+		} {
+			if s.get(name) != "" {
+				return errors.New("restore-native-backup cannot use PostgreSQL storage settings")
+			}
+		}
+		if mode := porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")); mode != "" && mode != porcupine.AcceptanceModeDurable {
+			return errors.New("restore-native-backup requires durable acceptance")
+		}
 		return s.runNativeRestore(context.Background(), input, output)
 	}
 	addr, config, err := s.serviceConfig()
@@ -90,12 +109,19 @@ func run(args []string, input io.Reader, output io.Writer) error {
 			"PORCUPINE_QUERY_MAX_CONCURRENT": "2", "PORCUPINE_QUERY_TIMEOUT_MS": "5000", "PORCUPINE_QUERY_MAX_ROWS": "1000", "PORCUPINE_QUERY_MAX_RESULT_BYTES": "1048576",
 			"PORCUPINE_DUCKLAKE_DIR": config.DuckLake.Directory,
 		}
+		if config.Profile == porcupine.ProfileHosted {
+			delete(defaults, "PORCUPINE_DB")
+			delete(defaults, "PORCUPINE_DUCKLAKE_DIR")
+		} else {
+			defaults["PORCUPINE_PROFILE"] = string(porcupine.ProfileStandalone)
+			defaults["PORCUPINE_ACCEPTANCE_MODE"] = string(porcupine.AcceptanceModeDurable)
+		}
 		for key, value := range defaults {
 			if _, ok := values[key]; !ok {
 				values[key] = value
 			}
 		}
-		if _, ok := values["PORCUPINE_CONTROL_DB"]; !ok && config.Shared == nil {
+		if _, ok := values["PORCUPINE_CONTROL_DB"]; !ok && config.Profile != porcupine.ProfileHosted {
 			values["PORCUPINE_CONTROL_DB"] = values["PORCUPINE_DB"] + ".control"
 		}
 		encoder := json.NewEncoder(output)
@@ -117,13 +143,14 @@ func validateServerConfig(addr string, config porcupine.Config) error {
 	if config.BootstrapToken != "" && len(config.BootstrapToken) < 16 {
 		return errors.New("a configured bootstrap_token must have at least 16 characters; run porcupine init for a fresh instance")
 	}
-	if config.Shared != nil && (config.DuckLake.PostgresURL == "" || config.DuckLake.S3 == nil) {
-		return errors.New("shared deployment requires PostgreSQL DuckLake metadata and analytical S3 data")
-	}
 	return porcupine.ValidateConfig(config)
 }
 
 func writeInitialConfig(path string, docker bool) error {
+	return writeProfileConfig(path, docker, false)
+}
+
+func writeProfileConfig(path string, docker, hosted bool) error {
 	var config FileConfig
 	config.Listen = "127.0.0.1:8080"
 	config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "./data/porcupine.db", "./data/porcupine.db.control", "./data/ducklake"
@@ -131,6 +158,11 @@ func writeInitialConfig(path string, docker bool) error {
 	if docker {
 		config.Listen = "0.0.0.0:8080"
 		config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "/data/porcupine.db", "/data/porcupine.db.control", "/data/ducklake"
+	}
+	if hosted {
+		config.Profile = string(porcupine.ProfileHosted)
+		config.Acceptance.Mode = string(porcupine.AcceptanceModeBuffered)
+		config.Storage.Journal, config.Storage.Control, config.Storage.DuckLake = "", "", ""
 	}
 	var token, key [32]byte
 	if _, err := rand.Read(token[:]); err != nil {

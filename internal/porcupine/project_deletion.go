@@ -121,6 +121,8 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+type projectCleanupContextKey struct{}
+
 func (s *Service) deleteProject(ctx context.Context, id string) error {
 	if s.sealHostedProject != nil {
 		return s.deleteHostedProject(ctx, id)
@@ -136,16 +138,10 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		return apiError(503, "project deletion is waiting for local work; retry DELETE")
 	}
 	defer finishActivity()
-	ctx = allowSharedDeletedProject(ctx)
+	ctx = context.WithValue(ctx, projectCleanupContextKey{}, true)
 	var alreadyCompleted bool
 	if err := s.control.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&alreadyCompleted); err == nil && alreadyCompleted {
 		return nil
-	}
-	if s.shared != nil {
-		owner, _, err := s.sharedProjectOwner(ctx, id)
-		if err != nil || owner != s.shared.config.WorkerID {
-			return apiError(503, "project deletion requires its available journal owner")
-		}
 	}
 	if err := s.beginControlProjectDeletion(ctx, id); err != nil {
 		return err
@@ -157,11 +153,6 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	if !staged {
 		if err := s.ensureProjectLocal(ctx, id, auth.Principal{}); err != nil {
 			return err
-		}
-	}
-	if s.shared != nil {
-		if err := s.waitSharedProjectQueries(ctx, id); err != nil {
-			return apiError(503, "project deletion is waiting for active queries; retry DELETE")
 		}
 	}
 	ctx, release, err := s.projectionContext(ctx)
@@ -227,6 +218,9 @@ func (s *Service) startDeletionRecovery() {
 func (s *Service) resumeProjectDeletions(ctx context.Context) {
 	if s.sealHostedProject != nil {
 		s.resumeHostedProjectSeals(ctx)
+		if s.hosted != nil {
+			s.resumeHostedProjectCleanup(ctx)
+		}
 		return
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT project_id FROM project_deletions WHERE completed=0 ORDER BY rowid`)
@@ -242,13 +236,7 @@ func (s *Service) resumeProjectDeletions(ctx context.Context) {
 		ids = append(ids, id)
 	}
 	rows.Close()
-	query := `SELECT project_id FROM project_deletions WHERE completed=0`
-	var args []any
-	if s.shared != nil {
-		query = `SELECT d.project_id FROM project_deletions d JOIN shared_project_owners o ON o.project_id=d.project_id WHERE d.completed=0 AND o.worker_id=$1`
-		args = []any{s.shared.config.WorkerID}
-	}
-	rows, err = s.control.QueryContext(ctx, query, args...)
+	rows, err = s.control.QueryContext(ctx, `SELECT project_id FROM project_deletions WHERE completed=0`)
 	if err == nil {
 		known := map[string]bool{}
 		for _, id := range ids {

@@ -13,7 +13,7 @@ func (s settings) oidcConfiguration() (*porcupine.OIDCConfig, error) {
 	}
 	issuer := s.get("PORCUPINE_OIDC_ISSUER")
 	clientID := s.get("PORCUPINE_OIDC_CLIENT_ID")
-	secret, err := s.sharedSecretSetting("PORCUPINE_OIDC_CLIENT_SECRET")
+	secret, err := s.secretSetting("PORCUPINE_OIDC_CLIENT_SECRET")
 	if err != nil {
 		return nil, err
 	}

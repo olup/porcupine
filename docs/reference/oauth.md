@@ -1,10 +1,8 @@
 # OAuth client credentials
 
-Compose overlay commands below use the matching v0.14.0 tagged checkout. The unreleased development build uses the [single-file setup](../hosting.md#configure-the-development-build).
-
 A backend or unattended agent can exchange its client ID and secret at `/oauth/token` and use the resulting short-lived Bearer token for either the HTTP API or MCP. Porcupine issues tokens in the same process as the analytics API and stores grants in its control database. A [service key](service-keys.md) offers a fixed Bearer credential for one audience.
 
-For interactive applications, Porcupine supports [email sign-in for CLI and MCP](connect-your-team.md). **Unreleased:** [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human accounts alongside email OTP, including authorized administration. Tool connections use Porcupine authorization codes with S256 PKCE; upstream provider tokens are not Porcupine credentials.
+For interactive applications, Porcupine supports [email sign-in for CLI and MCP](connect-your-team.md). [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human accounts alongside email OTP, including authorized administration. Tool connections use Porcupine authorization codes with S256 PKCE; upstream provider tokens are not Porcupine credentials.
 
 ## Operator configuration
 
@@ -16,7 +14,7 @@ For interactive applications, Porcupine supports [email sign-in for CLI and MCP]
 
 The issuer is an origin with no path, credentials, query, or fragment. HTTPS is required except for HTTP on localhost or a loopback IP. A trailing slash normalizes away. Set the real external HTTPS origin behind a reverse proxy. Discovery URLs use this pinned issuer, never the request Host header.
 
-[compose.oauth.yaml](https://github.com/olup/porcupine/blob/v0.14.0/compose.oauth.yaml) adds these settings to the base deployment. Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
+Set the equivalent `oauth.issuer`, `oauth.token_lifetime_seconds`, and `oauth.allow_legacy_keys` in the [private server configuration](configuration.md). Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
 
 A configured issuer disables legacy API and MCP Bearer keys by default. Leaving OAuth entirely unconfigured retains legacy authentication for offline use and migration; it does not enable OAuth endpoints. Set `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS=true` only for an explicit migration period. Public PostHog ingestion keys remain separate and continue to work without OAuth for `mixed` projects. Projects with `server_only` ingestion require an API-resource OAuth token or a private [service key](service-keys.md).
 

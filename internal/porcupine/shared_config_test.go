@@ -3,15 +3,16 @@ package porcupine
 import (
 	"strings"
 	"testing"
+	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func sharedConfigurationFixture() Config {
-	return Config{Shared: &SharedConfig{
-		DatabaseURL: "postgres://fixture:private-shared-dsn-password@control.internal/metadata?sslmode=require",
-		WorkerID:    "worker-one", RouteURL: "https://worker-one.internal", RoutingSecret: []byte("private-routing-secret-at-least-32-bytes"),
-	}, DuckLake: &lakeapi.DuckLakeConfig{Directory: "/srv/worker-one/lake", PostgresURL: "postgres://fixture:private-lake-dsn-password@lake.internal/catalogs?sslmode=require", S3: &lakeapi.DuckLakeS3Config{Bucket: "analytical-fixture", Prefix: "data", Region: "eu-west-3"}}}
+	const dsn = "postgres://fixture:private-shared-dsn-password@control.internal/metadata?sslmode=require"
+	return Config{Profile: ProfileHosted, AcceptanceMode: AcceptanceModeBuffered, Shared: &SharedConfig{DatabaseURL: dsn},
+		DuckLake: &lakeapi.DuckLakeConfig{PostgresURL: dsn, S3: &lakeapi.DuckLakeS3Config{Bucket: "analytical-fixture", Prefix: "data", Region: "eu-west-3"},
+			CleanupGrace: 4 * time.Hour, RestoreWindow: time.Hour, RestoreMaxReaderTime: time.Hour, RestoreSafetyMargin: time.Hour}}
 }
 
 func assertPrivateSharedConfigError(t *testing.T, err error) {
@@ -19,7 +20,7 @@ func assertPrivateSharedConfigError(t *testing.T, err error) {
 	if err == nil {
 		t.Fatal("invalid shared runtime configuration accepted")
 	}
-	for _, private := range []string{"private-shared-dsn-password", "private-lake-dsn-password", "private-routing-secret-at-least-32-bytes"} {
+	for _, private := range []string{"private-shared-dsn-password", "private-lake-dsn-password"} {
 		if strings.Contains(err.Error(), private) {
 			t.Fatal("shared validation error exposed credentials")
 		}
@@ -38,18 +39,11 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 		{"complete shared", sharedConfigurationFixture()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := validateSharedConfiguration(tc.config); err != nil {
+			if err := ValidateConfig(tc.config); err != nil {
 				t.Fatal("valid mode rejected", err)
 			}
 		})
 	}
-	t.Run("control only", func(t *testing.T) {
-		c := sharedConfigurationFixture()
-		c.DuckLake = nil
-		if err := validateSharedConfiguration(c); err != nil {
-			t.Fatal(err)
-		}
-	})
 	for _, tc := range []struct {
 		name   string
 		change func(*Config)
@@ -62,12 +56,6 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 		{"NUL database", func(c *Config) {
 			c.Shared.DatabaseURL = "postgres://control.internal/metadata\x00private-shared-dsn-password"
 		}},
-		{"missing worker", func(c *Config) { c.Shared.WorkerID = "" }},
-		{"blank worker", func(c *Config) { c.Shared.WorkerID = " \t " }},
-		{"oversized worker", func(c *Config) { c.Shared.WorkerID = strings.Repeat("x", 129) }},
-		{"missing route", func(c *Config) { c.Shared.RouteURL = "" }},
-		{"missing routing key", func(c *Config) { c.Shared.RoutingSecret = nil }},
-		{"short routing key", func(c *Config) { c.Shared.RoutingSecret = make([]byte, 31) }},
 		{"missing lake PostgreSQL", func(c *Config) { c.DuckLake.PostgresURL = "" }},
 		{"missing lake S3", func(c *Config) { c.DuckLake.S3 = nil }},
 		{"local analytics in shared mode", func(c *Config) { c.DuckLake = &lakeapi.DuckLakeConfig{Directory: "/srv/local-only"} }},
@@ -75,21 +63,24 @@ func TestSharedRuntimeConfigurationBoundaries(t *testing.T) {
 		{"S3 backup", func(c *Config) {
 			c.NativeBackup = &lakeapi.NativeBackupConfig{S3: &lakeapi.DuckLakeS3Config{Bucket: "fixture-backup"}}
 		}},
-		{"native PostgreSQL without shared control", func(c *Config) { c.Shared = nil }},
+		{"hosted without shared control", func(c *Config) { c.Shared = nil }},
+		{"PostgreSQL control in standalone mode", func(c *Config) {
+			c.Profile = ProfileStandalone
+			c.AcceptanceMode = AcceptanceModeDurable
+			c.DuckLake = nil
+		}},
+		{"PostgreSQL analytics in standalone mode", func(c *Config) {
+			c.Profile = ProfileStandalone
+			c.AcceptanceMode = AcceptanceModeDurable
+			c.Shared = nil
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := sharedConfigurationFixture()
 			tc.change(&c)
-			assertPrivateSharedConfigError(t, validateSharedConfiguration(c))
+			assertPrivateSharedConfigError(t, ValidateConfig(c))
 		})
 	}
-	t.Run("32 byte routing key", func(t *testing.T) {
-		c := sharedConfigurationFixture()
-		c.Shared.RoutingSecret = make([]byte, 32)
-		if err := validateSharedConfiguration(c); err != nil {
-			t.Fatal("minimum routing key rejected", err)
-		}
-	})
 }
 
 func TestSharedNativeConfigurationValidationWithoutEngine(t *testing.T) {

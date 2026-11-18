@@ -440,11 +440,11 @@ func (s *PipelineJobs) Replace(ctx context.Context, project, id string, change P
 }
 
 func (s *PipelineJobs) pipelineRunPage(ctx context.Context, p storedPipeline, limit, offset int) ([]PipelineRun, error) {
-	if s.pg != nil {
-		return s.pgWebhookRunPage(ctx, p.ProjectID, p.ID, limit, offset)
-	}
 	if p.Kind == "s3" {
 		return s.s3PipelineRunPage(ctx, p.ProjectID, p.ID, limit, offset)
+	}
+	if s.pg != nil {
+		return s.pgWebhookRunPage(ctx, p.ProjectID, p.ID, limit, offset)
 	}
 	return s.webhookPipelineRunPage(ctx, p.ProjectID, p.ID, limit, offset)
 }
@@ -478,10 +478,10 @@ func (s *PipelineJobs) Run(ctx context.Context, project, id, runID string) (*Pip
 		return nil, pipelineLookupError(err)
 	}
 	var run PipelineRun
-	if s.pg != nil {
-		run, err = s.pgWebhookRun(ctx, p.ProjectID, p.ID, runID)
-	} else if p.Kind == "s3" {
+	if p.Kind == "s3" {
 		run, err = s.getS3PipelineRun(ctx, p.ProjectID, p.ID, runID)
+	} else if s.pg != nil {
+		run, err = s.pgWebhookRun(ctx, p.ProjectID, p.ID, runID)
 	} else {
 		run, err = s.getWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)
 	}
@@ -506,15 +506,18 @@ func (s *PipelineJobs) Retry(ctx context.Context, project, id, runID string) (bo
 		return false, apiError(409, "pipeline is paused")
 	}
 	var requeued bool
-	if s.pg != nil {
-		requeued, err = s.pgRetryWebhookRun(ctx, p.ProjectID, p.ID, runID)
-	} else if p.Kind == "s3" {
+	if p.Kind == "s3" {
 		requeued, err = s.retryS3PipelineRun(ctx, p.ProjectID, p.ID, runID)
+	} else if s.pg != nil {
+		requeued, err = s.pgRetryWebhookRun(ctx, p.ProjectID, p.ID, runID)
 	} else {
 		requeued, err = s.retryWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, apiError(404, "pipeline run not found")
+	}
+	if errors.Is(err, ErrPipelineAuthority) {
+		return false, pipelineHostedError(err)
 	}
 	if err != nil {
 		return false, apiError(503, "pipeline retry unavailable")

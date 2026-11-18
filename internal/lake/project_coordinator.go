@@ -17,6 +17,7 @@ import (
 // Epochs must be ordered across physical sessions, without sequence caching.
 const ProjectCoordinatorSchemaV1 = `CREATE SEQUENCE shared_native_write_epoch AS BIGINT INCREMENT BY 1 MINVALUE 1 NO MAXVALUE START WITH 1 CACHE 1 NO CYCLE`
 
+var ErrProjectWriteBusy = errors.New("project write coordinator is busy")
 var ErrProjectWriteSessionLost = errors.New("project write session lost")
 var ErrProjectWriteFenceStale = errors.New("project write fence is stale or belongs to another stream")
 var ErrProjectWriteSealed = errors.New("project stream is sealed")
@@ -82,13 +83,33 @@ func projectAdvisoryKey(key ProjectWriteKey) int64 {
 	return int64(binary.BigEndian.Uint64(digest[:8]))
 }
 func (c *PostgresProjectCoordinator) Acquire(ctx context.Context, key ProjectWriteKey) (*ProjectWriteSession, error) {
+	return c.acquire(ctx, key, false)
+}
+
+// TryAcquire lets background work yield to an occupied project or local slot.
+func (c *PostgresProjectCoordinator) TryAcquire(ctx context.Context, key ProjectWriteKey) (*ProjectWriteSession, error) {
+	return c.acquire(ctx, key, true)
+}
+
+func (c *PostgresProjectCoordinator) acquire(ctx context.Context, key ProjectWriteKey, try bool) (*ProjectWriteSession, error) {
 	if key.SourceID == "" || key.ProjectID == "" {
 		return nil, errors.New("project write scope is required")
 	}
-	select {
-	case c.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if try {
+		select {
+		case c.slots <- struct{}{}:
+		default:
+			return nil, ErrProjectWriteBusy
+		}
+	} else {
+		select {
+		case c.slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	conn, err := c.control.Conn(ctx)
 	if err != nil {
@@ -103,9 +124,21 @@ func (c *PostgresProjectCoordinator) Acquire(ctx context.Context, key ProjectWri
 	session := &ProjectWriteSession{owner: c, conn: conn, key: key, lock: projectAdvisoryKey(key), done: make(chan struct{}), stopProbe: make(chan struct{}), acquisition: event.NewID()}
 	// Capture PID in the acquisition statement, before any second statement can
 	// be routed elsewhere by an unsupported transaction-pooling proxy.
-	var ignored any
-	if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_lock($1),pg_backend_pid()", session.lock).Scan(&ignored, &session.pid); err != nil {
-		return fail()
+	if try {
+		var acquired bool
+		if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1),pg_backend_pid()", session.lock).Scan(&acquired, &session.pid); err != nil {
+			return fail()
+		}
+		if !acquired {
+			_ = conn.Close()
+			<-c.slots
+			return nil, ErrProjectWriteBusy
+		}
+	} else {
+		var ignored any
+		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_lock($1),pg_backend_pid()", session.lock).Scan(&ignored, &session.pid); err != nil {
+			return fail()
+		}
 	}
 	if err := session.checkPhysicalSession(ctx); err != nil {
 		return fail()

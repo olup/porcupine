@@ -10,9 +10,9 @@ With MCP connected, ask:
 
 > Find the project I want to analyze. Inspect its SQL schema and observed event names. Count each event by UTC day, and explain which data and identity fields you used.
 
-On development builds, `porcupine_schema` returns the schema and observed event names in one read-only call, then `porcupine_query` runs the SQL. Specify `project_id` when the credential can access several projects. These tools are not in v0.14.0.
+`porcupine_schema` returns the schema and observed event names in one read-only call, then `porcupine_query` runs the SQL. Specify `project_id` when the credential can access several projects.
 
-On v0.14.0, discover operation contracts with `porcupine_docs`, then call them through `porcupine_call`:
+For lower-level operations, discover their contracts with `porcupine_docs`, then call them through `porcupine_call`:
 
 1. `list-projects` to resolve a name to a project ID.
 2. `get-event-schema` to read columns, supported functions, and limits.
@@ -71,7 +71,7 @@ porcupine query-events --id "$PROJECT_ID" --body @query.json
 
 Replace the event name and property key with values observed in your project. Bound parameters keep values separate from SQL. The [SQL reference](reference/analytics.md) lists supported syntax, bindings, and execution limits.
 
-**Unreleased:** [tenant budgets](reference/tenants.md#interactive-query-limits) can lower a project's interactive query deadline, result size, and concurrency. `get-event-schema` returns configured `tenant_budgets`, `deployment_limits`, and effective `limits`. SQL, catalog discovery, and event profiles share the tenant's interactive places; requests return `429` when capacity is full. Only the instance operator changes hard budgets. Tenant administrators can read their own aggregate usage. These controls are not included in v0.14.0.
+[Tenant budgets](reference/tenants.md#interactive-query-limits) can lower a project's interactive query deadline, result size, and concurrency. `get-event-schema` returns configured `tenant_budgets`, `deployment_limits`, and effective `limits`. SQL, catalog discovery, and event profiles share the tenant's interactive places; requests return `429` when capacity is full. Only the instance operator changes hard budgets. Tenant administrators can read their own aggregate usage.
 
 Use the [DuckDB SQL recipes](reference/duckdb-recipes.md) for trends, sessions, funnels, retention and percentiles. They state their metric definitions and are tested against a known fixture through MCP.
 

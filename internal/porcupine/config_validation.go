@@ -33,22 +33,14 @@ func ValidateConfig(c Config) error {
 			return errors.New("external settings require auth.mode external")
 		}
 	}
-	if err := validateAcceptanceMode(c.AcceptanceMode); err != nil {
+	if err := validateDeploymentProfile(c); err != nil {
 		return err
 	}
 	if _, err := usage.Normalize(c.Usage); err != nil {
 		return err
 	}
-	if err := validateSharedConfiguration(c); err != nil {
-		return err
-	}
 	if _, err := normalizeInteractiveQueries(c.InteractiveQueries); err != nil {
 		return err
-	}
-	if c.Shared != nil {
-		if _, err := validateSharedRouteURL(c.Shared.RouteURL); err != nil {
-			return err
-		}
 	}
 	if c.QueueMaxBytes < 0 {
 		return errors.New("queue byte limit must be nonnegative")

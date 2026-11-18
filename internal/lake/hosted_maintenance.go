@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -16,7 +17,7 @@ func (s *DuckLakeStore) MaintainHostedProject(ctx context.Context, session *Proj
 	if session == nil || s.SharedCatalog == nil || session.key.SourceID != s.Config.SharedSourceID {
 		return stats, ErrProjectWriteFenceStale
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, hostedCompactionTimeout)
 	defer cancel()
 	err = session.RunNative(ctx, func(nativeCtx context.Context) (err error) {
 		if err := s.cleanup.Lock(nativeCtx); err != nil {
@@ -43,7 +44,7 @@ func (s *DuckLakeStore) MaintainHostedProject(ctx context.Context, session *Proj
 		defer func() { err = errors.Join(err, p.DB.Close()) }()
 		started := time.Now()
 		for _, statement := range []string{
-			"CALL ducklake_merge_adjacent_files('lake',max_compacted_files=>1,max_file_size=>1048576)",
+			fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake',max_compacted_files=>1,max_file_size=>%d)", hostedMergeFileSize),
 			"CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)",
 		} {
 			if err := retryNativeTransaction(nativeCtx, func() error {

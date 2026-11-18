@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,16 +14,14 @@ import (
 func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 	t.Parallel()
 	dsn := sharedPostgresDSN(t)
+	fixture := nativeS3Fixture(t)
 	firstHost := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + firstHost.Listener.Addr().String()
-	openWorker := func(name string, host *httptest.Server) *oauthIntegration {
+	openWorker := func(host *httptest.Server) *oauthIntegration {
 		t.Helper()
-		origin := "http://" + host.Listener.Addr().String()
-		s, err := Open(Config{
-			DBPath: filepath.Join(t.TempDir(), "journal.db"), BootstrapToken: adminToken,
-			Shared: &SharedConfig{DatabaseURL: dsn, WorkerID: name, RouteURL: origin, RoutingSecret: []byte(sharedJourneySecret)},
-			OAuth:  &OAuthConfig{Issuer: issuer, Email: &EmailConfig{SendCode: func(context.Context, string, string) error { return nil }}},
-		})
+		config := hostedJourneyConfig(t, dsn, fixture)
+		config.OAuth = &OAuthConfig{Issuer: issuer, Email: &EmailConfig{SendCode: func(context.Context, string, string) error { return nil }}}
+		s, err := Open(config)
 		if err != nil {
 			host.Close()
 			t.Fatal(err)
@@ -37,8 +34,8 @@ func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 		t.Cleanup(func() { host.Close(); client.CloseIdleConnections(); s.Close() })
 		return f
 	}
-	a := openWorker("tenant-machine-a", firstHost)
-	b := openWorker("tenant-machine-b", httptest.NewUnstartedServer(nil))
+	a := openWorker(firstHost)
+	b := openWorker(httptest.NewUnstartedServer(nil))
 	admin := a.token(t, "bootstrap", adminToken, a.s.resources.apiResource).AccessToken
 	var tenant struct {
 		Tenant Tenant `json:"tenant"`
@@ -51,6 +48,7 @@ func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 	a.call(t, "POST", base, admin, TenantServiceAccountSpec{Name: "shared agent", Projects: []string{project.Project.ID}, Permissions: []string{"events:read"}}, 201, &machine)
 	var key AccessKeyCreated
 	b.call(t, "POST", base+"/"+machine.ClientID+"/api-keys", admin, ServiceKeySpec{Name: "shared key", Audience: "api", Projects: []string{project.Project.ID}, Permissions: []string{"events:read"}}, 201, &key)
+	hostedCleanupWrite(t, a.s, project.Project.ID, "tenant event")
 	path := "/api/v1/projects/" + project.Project.ID + "/events"
 	issued := a.token(t, machine.ClientID, machine.ClientSecret, a.s.resources.apiResource).AccessToken
 	for _, worker := range []*oauthIntegration{a, b} {

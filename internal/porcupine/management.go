@@ -209,32 +209,13 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 		}
 		if access.ProjectParameter != "" && ctx.Operation().OperationID != "delete-project" {
 			if err := s.requireProjectActive(ctx.Context(), ctx.Param(access.ProjectParameter)); err != nil {
-				writeSharedRouteProblem(w, err)
+				writeManagementProblem(w, err)
 				return
 			}
 		}
 		if access.TenantParameter != "" {
 			if err := requireTenantActive(ctx.Context(), s.control, tenantID); err != nil {
-				writeSharedRouteProblem(w, err)
-				return
-			}
-		}
-		needsOwner := s.projectOperationNeedsOwner(ctx.Operation().OperationID)
-		if access.Permission == "imports:write" && s.imports != nil && s.imports.hosted != nil {
-			needsOwner = false
-		}
-		if s.shared != nil && access.ProjectParameter != "" && needsOwner {
-			project := ctx.Param(access.ProjectParameter)
-			if ctx.Operation().OperationID == "delete-project" {
-				var completed bool
-				if err := s.control.QueryRowContext(ctx.Context(), `SELECT completed FROM project_deletions WHERE project_id=$1`, project).Scan(&completed); err == nil && completed {
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
-				ctx = huma.WithContext(ctx, allowSharedDeletedProject(ctx.Context()))
-				req = req.WithContext(ctx.Context())
-			}
-			if s.forwardSharedProject(w, req, project) {
+				writeManagementProblem(w, err)
 				return
 			}
 		}
@@ -246,9 +227,9 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 			}
 			defer finish()
 			ctx = huma.WithContext(ctx, child)
-			if needsOwner {
+			if s.hosted == nil && needsJournalAnchor(ctx.Operation().OperationID) {
 				if err := s.ensureProjectLocal(child, ctx.Param(access.ProjectParameter), a); err != nil {
-					writeSharedRouteProblem(w, err)
+					writeManagementProblem(w, err)
 					return
 				}
 			}
@@ -294,7 +275,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListKeys)
 	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
 	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
-	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent queued events awaiting delivery; use query-events for analytical history", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
+	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent events in the configured storage profile; use query-events for analytical history", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
 	queryOperation := op("query-events", "POST", "/api/v1/projects/{id}/query", "Execute agent-written read-only SQL against this project's events in the discovered dialect", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
 	queryOperation.Description = `Agents write the SQL. First discover the table, allowed functions and limits with get-event-schema, then inspect observed names and properties with get-event-catalog. Porcupine uses DuckDB SQL, $name bound parameters and fresh reads.
@@ -318,7 +299,9 @@ Queries see only this project's delivered logical events. event_time is a UTC te
 	huma.Register(api, op("edit-event", "PATCH", "/api/v1/projects/{id}/events/{uuid}", "Queue an audited full event correction with expected_revision and idempotency_key", auth.OperationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.editEvent)
 	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone. Analytical visibility changes after projection. Previously started queries or sends can still complete, and published customer outputs are outside this operation.", auth.OperationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending, applied, or failed", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
-	s.registerQuarantine(api, op)
+	if s.hosted == nil {
+		s.registerQuarantine(api, op)
+	}
 	s.registerTenants(api, op)
 	s.registerUsage(api, op)
 	s.registerTenantMembers(api, op)
@@ -445,10 +428,11 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 	if err != nil || tx.Commit() != nil {
 		return nil, apiError(500, "storage error")
 	}
-	if s.shared != nil {
-		if err := s.assignSharedProjectOwner(ctx, p.ID); err != nil {
-			return nil, apiError(503, "project ownership registration unavailable")
+	if s.hosted != nil {
+		if err := s.initializeHostedProject(ctx, p.ID); err != nil {
+			return nil, apiError(503, "hosted project initialization unavailable")
 		}
+		return &ProjectCreateOutput{Body: ProjectCreated{Project: p, IngestToken: raw}}, nil
 	}
 	if err := s.ensureProjectLocal(ctx, p.ID, principal(ctx)); err != nil {
 		return nil, err
@@ -694,6 +678,19 @@ FROM access_keys k LEFT JOIN oauth_clients c ON c.client_id=k.id WHERE k.id<>$1 
 }
 
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
+	if s.hostedQueries != nil {
+		native, limits, scope, err := s.beginUsageQuery(ctx, input.ID, "catalog")
+		if err != nil {
+			return nil, err
+		}
+		defer scope.Finish()
+		scope.Begin()
+		events, err := s.hostedQueries.reader.ListEvents(native, input.ID, min(input.Limit, limits.MaxRows), limits.MaxResultBytes)
+		if err := interactiveQueryResultError(native, scope.Finish(), err); err != nil {
+			return nil, err
+		}
+		return &EventListOutput{Body: EventList{Events: events}}, nil
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata,is_imported FROM events WHERE project_id=$1 AND identity_snapshot='' ORDER BY id DESC LIMIT $2`, input.ID, input.Limit)
 	if err != nil {
 		return nil, apiError(500, "storage error")
@@ -716,4 +713,13 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		return nil, apiError(500, "storage error")
 	}
 	return &EventListOutput{Body: EventList{Events: events}}, nil
+}
+
+func writeManagementProblem(w http.ResponseWriter, err error) {
+	var managed *managementError
+	if errors.As(err, &managed) {
+		write(w, managed.GetStatus(), managed)
+		return
+	}
+	problem(w, http.StatusServiceUnavailable, "project metadata unavailable")
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
 	"github.com/olup/porcupine/internal/usage"
 )
 
 // The project-row lock is also taken by shared query admission. Once this fence
-// commits, no worker can start another project query or owner operation.
+// commits, no worker can start another project query or operation.
 func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
@@ -51,8 +52,8 @@ ON CONFLICT(project_id) DO UPDATE SET tenant_id=excluded.tenant_id WHERE project
 	return tx.Commit()
 }
 
-// Finalization removes active ownership only after the owner has drained and
-// cleaned its payloads and external objects. The deletion tombstone is permanent.
+// Finalization removes the project after payload and object cleanup.
+// The deletion tombstone is permanent.
 func (s *Service) completeControlProjectDeletion(ctx context.Context, id string) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
@@ -78,10 +79,17 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	if completed {
 		return tx.Commit()
 	}
+	if err := s.completeProjectDeletionTx(ctx, tx, id, tenant); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) completeProjectDeletionTx(ctx context.Context, tx *sql.Tx, id, tenant string) error {
 	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
 	}
-	if s.usage != nil && project != "" {
+	if s.usage != nil && tenant != "" {
 		at := s.clock()
 		if err := s.usage.store.RecordStorageSampleTx(ctx, tx, usage.StorageSample{TenantID: tenant, ProjectID: id, Day: usage.Day(at), ObservedAt: usage.Stamp(at), Bytes: 0}); err != nil {
 			return err
@@ -93,5 +101,5 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	if _, err := tx.ExecContext(ctx, `UPDATE project_deletions SET completed=1 WHERE project_id=$1`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }

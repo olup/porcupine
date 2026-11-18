@@ -237,6 +237,16 @@ func (p *PGPipelineEffects) ReleaseAbsentReservationTx(ctx context.Context, tx *
 // native import commits. It reserves no output plan, body, references or proof
 // slots. The caller holds the common project session through native publication.
 func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string) error {
+	return p.prepareNoOutputStreamTx(ctx, tx, scope, tenant, false)
+}
+
+// PrepareDeletingMutationStreamTx belongs to terminal reconciliation of a
+// durably Ready mutation under the fenced project coordinator session.
+func (p *PGPipelineEffects) PrepareDeletingMutationStreamTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string) error {
+	return p.prepareNoOutputStreamTx(ctx, tx, scope, tenant, true)
+}
+
+func (p *PGPipelineEffects) prepareNoOutputStreamTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, deleting bool) error {
 	if tx == nil || !scope.valid() || !pipelineID(tenant) {
 		return ErrPipelineConflict
 	}
@@ -245,7 +255,11 @@ func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql
 		return err
 	}
 	var projectTenant string
-	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`, scope.ProjectID).Scan(&projectTenant); err != nil {
+	ownerQuery := `SELECT tenant_id FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1) AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=projects.tenant_id) FOR UPDATE`
+	if deleting {
+		ownerQuery = `SELECT p.tenant_id FROM projects p JOIN project_deletions d ON d.project_id=p.id AND d.tenant_id=p.tenant_id WHERE p.id=$1 AND d.completed=0 FOR UPDATE OF p`
+	}
+	if err := tx.QueryRowContext(ctx, ownerQuery, scope.ProjectID).Scan(&projectTenant); err != nil {
 		return err
 	}
 	if projectTenant != tenant {
@@ -289,7 +303,8 @@ func (p *PGPipelineEffects) PrepareNoOutputStreamTx(ctx context.Context, tx *sql
 
 // PublishNoOutputEffectsTx joins verified native evidence to an already owned
 // stream cursor. Publication needs no new metadata admission after native commit.
-// Cumulative usage commits in this same transaction before native ACK.
+// A deletion fence stops new admission. The existing cursor still settles
+// committed evidence and cumulative usage before native ACK.
 func (p *PGPipelineEffects) PublishNoOutputEffectsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, v PipelinePublication) (bool, error) {
 	return p.publishNoOutputEffectsTx(ctx, tx, scope, tenant, v, false)
 }

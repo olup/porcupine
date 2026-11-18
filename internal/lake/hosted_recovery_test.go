@@ -17,6 +17,18 @@ func TestDuckLakeS3SharedPostgresRecoveryExistingOnly(t *testing.T) {
 	t.Parallel()
 	ctx, a, b, config := sharedNativeStores(t)
 	unknown := ProjectWriteKey{config.SharedSourceID, "unknown"}
+	if absent, err := b.HostedProjectCatalogAbsent(ctx, unknown); err != nil || !absent {
+		t.Fatal("unknown catalog lacked an absence proof", absent, err)
+	}
+	orphan := ProjectWriteKey{config.SharedSourceID, "orphan-schema"}
+	orphanSchema := SharedNativeSchema(SharedNativeCatalogID(orphan.SourceID, orphan.ProjectID))
+	if _, err := a.SharedCatalog.ExecContext(ctx, "CREATE SCHEMA "+orphanSchema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = a.SharedCatalog.Exec("DROP SCHEMA " + orphanSchema) })
+	if absent, err := b.HostedProjectCatalogAbsent(ctx, orphan); err != nil || absent {
+		t.Fatal("orphan schema was treated as absent", absent, err)
+	}
 	if _, err := b.LookupHostedProjectExisting(ctx, unknown); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("unknown project did not fail closed", err)
 	}

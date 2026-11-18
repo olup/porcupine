@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/olup/porcupine/internal/delivery"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -16,17 +17,16 @@ import (
 	"github.com/olup/porcupine/internal/usage"
 )
 
-// This adapter has no production caller. Its only authority is the explicit
-// native credential persisted on the real PG definition, never a producer JWT.
+// Publication uses persisted pipeline authority and the native commit proof.
 type hostedEffectPublisher struct {
-	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
-	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 	control               *sql.DB
 	effects               *output.PGPipelineEffects
 	usage                 *usage.Store
 	objects               *lakeapi.DuckLakeObjectStore
 	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
 	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
+	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -414,9 +414,12 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 		return err
 	}
 	publishTx := func(ctx context.Context, tx *sql.Tx) error {
+		var advanced bool
 		switch e.Kind {
 		case lakeapi.NativeCommitLive:
-			if _, err := p.effects.PublishReservedEffectsTx(ctx, tx, b, v); err != nil {
+			var err error
+			advanced, err = p.effects.PublishReservedEffectsTx(ctx, tx, b, v)
+			if err != nil {
 				return err
 			}
 		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
@@ -427,7 +430,8 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 					return output.ErrPipelineConflict
 				}
 			}
-			advanced, err := publishNoOutput(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
+			var err error
+			advanced, err = publishNoOutput(ctx, tx, pipelineScope(e.Scope), e.TenantID, v)
 			if err != nil {
 				return err
 			}
@@ -455,6 +459,14 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 			}
 		default:
 			return output.ErrPipelineConflict
+		}
+		// A replay of an already committed checkpoint has no new acceptance.
+		count := e.AcceptedLive + e.AcceptedImport
+		if advanced && count > 0 {
+			start, _ := tenantMonth(e.AccountedAt)
+			if err := addTenantEventsTx(ctx, tx, e.TenantID, start.Format(time.RFC3339), count); err != nil {
+				return err
+			}
 		}
 		return p.usage.PublishSourceTotalsTx(ctx, tx, reports)
 	}

@@ -308,10 +308,12 @@ func TestTenantDeletionStartRollsBackEveryFenceAndRevocation(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(ka, "after-rollback"), 200)
 }
 
-func TestSharedTenantDeletionFencesAndReportsLocalCleanupPending(t *testing.T) {
+func TestSharedHostedTenantDeletionFencesAndReportsCleanupPending(t *testing.T) {
 	t.Parallel()
 	s := sharedDeletionFixture(t)
 	s.eventRules = &eventRules{clock: time.Now}
+	s.hosted = &hostedRuntime{}
+	s.sealHostedProject = func(context.Context, string) error { return nil }
 	if _, err := s.control.Exec(`INSERT INTO tenants SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default'; UPDATE projects SET tenant_id='B' WHERE id='kept'`); err != nil {
 		t.Fatal(err)
 	}
@@ -337,8 +339,8 @@ func TestSharedTenantDeletionFencesAndReportsLocalCleanupPending(t *testing.T) {
 	}
 	s.resumeTenantDeletions(t.Context())
 	status, err := s.tenantDeletionStatus(t.Context(), defaultTenantID)
-	if err != nil || status.State != "deleting" || status.ErrorCode != "shared_local_cleanup_pending" || status.PhysicalPurge != "pending_verification" {
-		t.Fatal("owner-local backend claimed full cleanup", status, err)
+	if err != nil || status.State != "deleting" || status.ErrorCode != "hosted_cleanup_pending" || status.PhysicalPurge != "pending_verification" {
+		t.Fatal("hosted backend claimed cleanup before completion", status, err)
 	}
 }
 

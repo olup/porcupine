@@ -9,25 +9,17 @@ import (
 )
 
 func (s settings) sharedConfiguration() (*porcupine.SharedConfig, error) {
-	database, err := s.sharedSecretSetting("PORCUPINE_CONTROL_DATABASE_URL")
+	database, err := s.secretSetting("PORCUPINE_CONTROL_DATABASE_URL")
 	if err != nil {
 		return nil, err
 	}
-	worker, route := s.get("PORCUPINE_WORKER_ID"), s.get("PORCUPINE_WORKER_URL")
-	secret, err := s.sharedSecretSetting("PORCUPINE_SHARED_ROUTING_SECRET")
-	if err != nil {
-		return nil, err
-	}
-	if database == "" && worker == "" && route == "" && secret == "" {
+	if database == "" {
 		return nil, nil
 	}
-	if database == "" || worker == "" || route == "" || len(secret) < 32 {
-		return nil, errors.New("shared deployment requires PORCUPINE_CONTROL_DATABASE_URL, PORCUPINE_WORKER_ID, PORCUPINE_WORKER_URL and a routing secret of at least 32 bytes")
-	}
-	return &porcupine.SharedConfig{DatabaseURL: database, WorkerID: worker, RouteURL: route, RoutingSecret: []byte(secret)}, nil
+	return &porcupine.SharedConfig{DatabaseURL: database}, nil
 }
 
-func (s settings) sharedSecretSetting(name string) (string, error) {
+func (s settings) secretSetting(name string) (string, error) {
 	value, file := s.get(name), s.get(name+"_FILE")
 	if value != "" && file != "" {
 		return "", errors.New(name + " and its _FILE option are mutually exclusive")

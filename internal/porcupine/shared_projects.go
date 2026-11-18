@@ -8,27 +8,14 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 )
 
-// Only foreign-key anchors are copied into the owner's local journal. Shared
-// credentials are authenticated against control storage, never against these
-// uncredentialed local actor records.
 func (s *Service) ensureProjectLocal(ctx context.Context, project string, a auth.Principal) error {
-	if s.shared != nil {
-		owner, _, err := s.sharedProjectOwner(ctx, project)
-		if err != nil {
-			return err
-		}
-		if owner != s.shared.config.WorkerID {
-			return apiError(503, "project journal belongs to another worker")
-		}
-	} else {
-		var deleted bool
-		if err := s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, project).Scan(&deleted); err != nil {
-			return apiError(503, "project metadata unavailable")
-		}
-		allowDeleted, _ := ctx.Value(sharedDeletedProjectContextKey{}).(bool)
-		if deleted && !allowDeleted {
-			return apiError(404, "project not found")
-		}
+	var deleted bool
+	if err := s.control.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, project).Scan(&deleted); err != nil {
+		return apiError(503, "project metadata unavailable")
+	}
+	allowDeleted, _ := ctx.Value(projectCleanupContextKey{}).(bool)
+	if deleted && !allowDeleted {
+		return apiError(404, "project not found")
 	}
 	var p Project
 	err := s.control.QueryRowContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE id=$1`, project).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
@@ -77,16 +64,10 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 	return nil
 }
 
-func (s *Service) projectOperationNeedsOwner(operation string) bool {
+func needsJournalAnchor(operation string) bool {
 	switch operation {
-	case "get-event-schema":
-		return s.hostedQueries == nil
 	case "query-events", "get-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project":
 		return false
-	case "create-event-export", "list-event-exports", "get-event-export", "cancel-event-export", "list-event-export-files":
-		return !s.exports.UsesSharedControl()
-	case "create-pipeline", "list-pipelines", "get-pipeline", "pause-pipeline", "resume-pipeline", "delete-pipeline", "replace-pipeline-credentials", "list-pipeline-runs", "get-pipeline-run", "retry-pipeline-run":
-		return !s.pipelines.UsesSharedControl()
 	default:
 		return true
 	}

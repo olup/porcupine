@@ -1,10 +1,13 @@
 # Stateless hosted architecture
 
-Decision record, 17 November 2026. **Target, not implemented.** The published release is v0.14.0. Current shared deployments still require owner-local SQLite volumes. This design replaces the hosted proposal in [the earlier SaaS notes](saas-and-compute-plans.md#future-saas-architecture-to-evaluate); it does not change the standalone durability contract.
+This decision record was started on 17 November 2026. The opt-in hosted profile
+implements the PostgreSQL and S3 storage model below. Standalone keeps its SQLite journal. See
+[hosted setup](hosted-profile-composition.md) for the configuration and tested
+behavior.
 
 ## Two acceptance contracts
 
-| Contract | Standalone | Hosted target |
+| Contract | Standalone | Hosted |
 | --- | --- | --- |
 | Live success response | SQLite journal committed | Validated and admitted to bounded worker memory |
 | Durable event data | Journal, then DuckLake | DuckLake commit, with Parquet on S3 |
@@ -140,7 +143,7 @@ Import checkpointing must recover the **original** chunk outcome, not reclassify
 
 `internal/importer/historical.go` owns the shared historical row decisions. Source/version/profile ownership checks, person deletion guards, control sanitization, and safe explicit identify evidence moved from `internal/porcupine/import_rows_accept.go` into this pure reducer. Its detached state and returned changes contain no storage access or allocated IDs. SQLite still owns deduplication before reduction, transaction-local reads between rows, accepted IDs and clocks, snapshots, savepoint rollback, queue admission, receipts, and usage. This extraction does not enable a hosted import backend or change its checkpoint contract.
 
-The disabled [native historical import component](hosted-native-imports.md) commits original chunk outcomes and shares the live proof sequence, cumulative usage and publication cursor. Native schema 5 upgrades empty prototypes explicitly and refuses populated unpublished hosted-v4 catalogs before schema alteration. The [hosted upload integration](hosted-import-uploads.md) uses this component from the existing HTTP and CLI flow behind an internal gate. The current deployment still uses journal imports.
+The [native historical import component](hosted-native-imports.md) commits original chunk outcomes and shares the live proof sequence, cumulative usage and publication cursor. Native schema 5 upgrades empty prototypes explicitly and refuses populated unpublished hosted-v4 catalogs before schema alteration. The [hosted upload integration](hosted-import-uploads.md) uses this component from the existing HTTP and CLI flow in the hosted profile. Standalone imports keep their journal.
 
 Serialized SHA-256 state contains a partial raw input block, not just a digest. Keep it with immutable upload/parser objects on S3 or recompute it from retained chunks. Only final digests, offsets and references belong in PostgreSQL.
 
@@ -183,3 +186,13 @@ Every phase has a focused PR with before/after evidence and remaining limits. Co
 | User architecture note | This record, decisions and owner questions | Preserves the decisions, adds the complete source-table inventory, and separates implementable guarantees from unproven time/lease/restore claims. |
 
 No reference guide is removed. This is a design target, not a release or capacity announcement.
+
+### Scheduled query delivery
+
+A hosted SQL-to-S3 pipeline closes each receipt window at a reconciled analytical cut. The worker pins a DuckLake snapshot under the project write session, then releases the session before streaming the window. The snapshot includes previously committed live events in the half-open receipt interval and excludes historical imports. Buffered events that have yet to reach DuckLake when the cut is pinned can miss that window. Replaying the same run uses the same snapshot.
+
+PostgreSQL leases allow another worker to recover an interrupted run. The creator's scoped authority and the destination revision are checked before the claim, during streaming and before the immutable S3 manifest is published. A durable manifest checkpoint lets a worker reconcile a published marker after a lost commit without rerunning SQL. The winning database transaction advances the cursor and records compressed output usage. Unpublished uploads retain their original encrypted credentials and their capacity charge until cleanup. Rotation leaves a checkpointed window recoverable at the same destination. If the window has yet to reach the checkpoint, rotation retires the attempt and advances the cursor.
+
+Hosted attempts reserve one proof slot and space for up to 128 files in the shared output capacity budget. Each uses the configured execution timeout and the lower of the configured output limit and 64 MiB. At most 100 settled runs are retained per schedule.
+
+After a project is sealed and its activities drain, cleanup inventories the exact provider versions and unfinished upload IDs of unpublished scheduled files. The sweep requires the verified recovery floor and checks the marker again before deletion. A matching published result remains in the customer bucket. Unrecognized markers, unavailable original credentials, and legacy object records without destination authority keep cleanup pending. Customer credentials need permission to list and remove versions and multipart uploads within Porcupine's attempt prefixes.

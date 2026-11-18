@@ -90,7 +90,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 	}
 	token := eventapi.NewID()
 	lifetimeMS := sharedQueryPermitLifetime.Milliseconds()
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.config.WorkerID, lifetimeMS)
+	_, err = tx.ExecContext(ctx, `INSERT INTO shared_query_permits(permit_id,tenant_id,project_id,worker_id,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, token, tenantID, project, s.shared.workerID, lifetimeMS)
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
@@ -112,7 +112,7 @@ func (s *Service) acquireSharedQueryPermit(ctx context.Context, project, tenantI
 		}
 		return InteractiveQueryConfig{}, nil, sharedQueryPermitError(ctx, err)
 	}
-	return limits, &sharedQueryPermit{id: token, worker: s.shared.config.WorkerID, project: project, control: s.control, hosted: hosted}, nil
+	return limits, &sharedQueryPermit{id: token, worker: s.shared.workerID, project: project, control: s.control, hosted: hosted}, nil
 }
 
 func sharedQueryPermitError(ctx context.Context, err error) error {
@@ -120,39 +120,4 @@ func sharedQueryPermitError(ctx context.Context, err error) error {
 		return lakeapi.DuckLakeQueryError(ctx, err)
 	}
 	return apiError(503, "shared query admission unavailable")
-}
-
-// waitSharedProjectQueries is called after the durable project deletion fence is
-// committed, which prevents further permits. Files remain intact until existing
-// readers release their permits or their renewable TTL expires. Expiry can also
-// follow a network partition, so it is not proof that a native reader stopped.
-func (s *Service) waitSharedProjectQueries(ctx context.Context, project string) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if _, err := s.control.ExecContext(ctx, `DELETE FROM shared_query_permits WHERE project_id=$1 AND expires_at<=clock_timestamp()`, project); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return apiError(503, "shared query state unavailable")
-		}
-		var active int
-		if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM shared_query_permits WHERE project_id=$1`, project).Scan(&active); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return apiError(503, "shared query state unavailable")
-		}
-		if active == 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }

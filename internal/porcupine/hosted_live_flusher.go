@@ -7,20 +7,19 @@ import (
 	"sync"
 	"time"
 
-	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 )
 
-// hostedLiveFlusher is deliberately absent from Service construction. Enabling
-// buffered acceptance also needs the full shared API, consent, assembly and send
-// providers. This constructor requires real PG, native and object storage.
+const hostedPolicyRefreshInterval = 10 * time.Second
+
 type hostedLiveFlusher struct {
-	native      *lakeapi.DuckLakeStore
-	coordinator *lakeapi.PostgresProjectCoordinator
-	publisher   *hostedEffectPublisher
-	policy      hostedIngestionPolicy
+	native             *lakeapi.DuckLakeStore
+	coordinator        *lakeapi.PostgresProjectCoordinator
+	publisher          *hostedEffectPublisher
+	policy             hostedIngestionPolicy
+	returnedActivities sync.Map
 }
 
 func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store) (*hostedLiveFlusher, error) {
@@ -55,12 +54,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		return err
 	}
 	defer session.Release()
-	ticket := eventapi.NewID()
-	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
-	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
-		return err
-	}
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
 			return e
@@ -103,7 +97,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		if e != nil {
 			return e
 		}
-		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing, admission: &f.policy}
+		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: b.admitted}
 		result, e := f.native.CommitLiveGuarded(ctx, fence, batch, ids, stager, func(ctx context.Context, commit func() error) error {
 			return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
 				currentTenant, err := lockActiveHostedProject(ctx, tx, key.ProjectID)
@@ -148,7 +142,7 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 	}
 	defer session.Release()
 	var result lakeapi.NativeCommitEvidence
-	err = session.RunNative(ctx, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, input.Key.Scope.Key.ProjectID, func(ctx context.Context) error {
 		scope, err := f.native.LookupHostedProjectExisting(ctx, input.Key.Scope.Key)
 		if err != nil {
 			return err
@@ -160,7 +154,7 @@ func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.Impo
 		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
+		if err = f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
 			return err
 		}
 		result, err = f.commitImportHeld(ctx, session, fence, input, nil)
@@ -210,12 +204,7 @@ func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.Proj
 		return err
 	}
 	defer session.Release()
-	ticket := eventapi.NewID()
-	defer endHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket)
-	if err := beginHostedProjectActivity(ctx, f.publisher.control, key.ProjectID, ticket); err != nil {
-		return err
-	}
-	return session.RunNative(ctx, func(ctx context.Context) error {
+	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
 			return e
@@ -238,7 +227,7 @@ func (f *hostedLiveFlusher) reconcileHostedWrites(ctx context.Context, session *
 	if err := f.reconcile(ctx, session, scope, fence, tenant); err != nil {
 		return err
 	}
-	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant)
+	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, false)
 }
 
 func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
@@ -335,11 +324,11 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now().UTC()
-	start, end := tenantMonth(now)
+	start, _ := tenantMonth(now)
 	month := start.Format(time.RFC3339)
-	if p.month != month || time.Since(p.refreshed) >= sharedIngestionRefreshInterval {
+	if p.month != month || time.Since(p.refreshed) >= hostedPolicyRefreshInterval {
 		// One grouped shared read, never a per-event control call or escrow.
-		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(sum(u.live_events+u.import_events),0) FROM tenants t LEFT JOIN usage_rollups u ON u.tenant_id=t.id AND u.day_start >= $1 AND u.day_start < $2 GROUP BY t.id,t.ingestion_allowed,t.ingestion_monthly_events`, month, end.Format(time.RFC3339))
+		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1`, month)
 		if err != nil {
 			return err
 		}

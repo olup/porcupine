@@ -1,6 +1,6 @@
 # Buffered acceptance component
 
-Phase 3 implementation notes. Buffered production mode remains unavailable. The published v0.14.0 release and current shared deployments retain durable SQLite acceptance. The [hosted architecture](hosted-architecture.md) describes the full target.
+> Historical Phase 3 component notes. For the released configuration and behavior, see [hosted setup](hosted-profile-composition.md).
 
 ## Shared input and distinct outcomes
 

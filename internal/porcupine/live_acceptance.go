@@ -7,8 +7,7 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
-// AcceptanceMode selects the live acknowledgment contract. Buffered acceptance
-// remains unavailable until the hosted durable writer and state providers exist.
+// AcceptanceMode selects the live acknowledgment contract for the deployment profile.
 type AcceptanceMode string
 
 const (
@@ -21,7 +20,7 @@ func validateAcceptanceMode(mode AcceptanceMode) error {
 	case "", AcceptanceModeDurable:
 		return nil
 	case AcceptanceModeBuffered:
-		return errors.New("buffered acceptance is unavailable until the hosted durable writer and shared state providers are implemented")
+		return errors.New("buffered acceptance requires the hosted profile")
 	default:
 		return errors.New("acceptance mode must be durable or buffered")
 	}

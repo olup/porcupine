@@ -1,6 +1,6 @@
 # Numerical usage
 
-**Unreleased.** `list-usage` exposes technical consumption to the instance operator. It is available through HTTP, the standalone CLI and MCP. Tenant administrators and project readers cannot read this deployment-wide report; `get-tenant-usage` remains their monthly ingestion-budget view.
+`list-usage` exposes technical consumption to the instance operator. It is available through HTTP, the standalone CLI and MCP. Tenant administrators and project readers cannot read this deployment-wide report; `get-tenant-usage` remains their monthly ingestion-budget view.
 
 Porcupine records measurements. It does not define prices, subscriptions, invoices or rules for charging incomplete work. An external control plane reads this authenticated API rather than Porcupine's database.
 
@@ -57,7 +57,7 @@ Storage sampling runs approximately hourly. A sample's cutoff is the earlier of 
 
 The default numerical retention is 365 days. Deleted tenants/projects retain opaque IDs and numbers under this policy, with deletion flags; no names, email addresses, SQL, credentials or event payload are stored in this usage history. Opaque IDs remain linkable identifiers, not a claim of anonymization.
 
-The offline restore operation changes `usage_epoch` and the journal source incarnation. A consumer must treat a changed epoch as a recovery boundary and reconcile its own historical baseline; adding restored counters to previously collected totals would double count work. Old snapshot cursors are rejected. Before restoring a shared PostgreSQL control database, stop/fence all writers and reconcile pending sources, then rotate the usage epoch under operator control before resuming. Automatic PostgreSQL rewind detection and a complete distributed recovery tool are not implemented; do not restore a running shared deployment and continue billing as if its counters were monotone.
+The offline restore operation changes `usage_epoch` and the journal source incarnation. A consumer must treat a changed epoch as a recovery boundary and reconcile its own historical baseline; adding restored counters to previously collected totals would double count work. Old snapshot cursors are rejected. Before restoring a hosted PostgreSQL control database, stop/fence all writers and reconcile pending sources, then rotate the usage epoch under operator control before resuming. Automatic PostgreSQL rewind detection and a complete distributed recovery tool are not implemented; do not restore a running hosted deployment and continue billing as if its counters were monotone.
 
 ## Configure retention and snapshot capacity
 
@@ -73,4 +73,4 @@ The offline restore operation changes `usage_epoch` and the journal source incar
 
 The matching server variables are `PORCUPINE_USAGE_RETENTION_DAYS`, `PORCUPINE_USAGE_MAX_SNAPSHOTS`, and `PORCUPINE_USAGE_MAX_SNAPSHOT_BYTES`. The capacity limits encoded numerical snapshot data, not total process memory or database-file size. One constructor per control database is admitted before materialization, with a local construction guard and a recoverable, fenced reservation. Reservation expiry during a partition is not a global memory-limit guarantee.
 
-SQLite journals keep per-source/project/day cumulative counters and durable query starts. The control store receives idempotent cumulative revisions and stores the report snapshots; it uses local SQLite or configured shared PostgreSQL. There is no extra SQL trigger or permanent record for each ingested event/batch. Future hosted native-commit reconciliation must publish the same cumulative contract from durable native evidence; that buffered ingestion mode is not enabled by these counters. See the [usage design and causal boundaries](../design/usage-contract.md).
+Standalone journals keep cumulative counters and durable query starts. Hosted publishes cumulative live and import counters from durable DuckLake commit evidence into PostgreSQL. The control store applies cumulative revisions idempotently and stores report snapshots. Live memory admission alone does not count in hosted. See the [usage design and causal boundaries](../design/usage-contract.md).

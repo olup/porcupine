@@ -2,17 +2,17 @@
 
 Humans sign in with their email identity and authorize each CLI or MCP connection. A backend or shared team agent uses a service credential. The server checks the same permissions through HTTP, CLI, and MCP.
 
-**Unreleased:** an instance can replace builtin sign-in with an [external access-token issuer](reference/external-auth.md). That provider manages people and grants. Porcupine still enforces tenant/project boundaries and manages native machine keys; local email invitations and memberships are disabled in that mode. The steps below describe builtin sign-in.
+An instance can replace builtin sign-in with an [external access-token issuer](reference/external-auth.md). That provider manages people and grants. Porcupine still enforces tenant/project boundaries and manages native machine keys; local email invitations and memberships are disabled in that mode. The steps below describe builtin sign-in.
 
 ## Connect a person
 
-For v0.14.0, [configure team sign-in](reference/connect-your-team.md) and [invite their email address](reference/email-accounts.md). The invitation grants access and sends a notice. It does not create a sign-in code. The person requests a verification code when connecting a tool, then selects the projects and permissions to authorize.
+[Configure team sign-in](reference/connect-your-team.md) and [invite their email address](reference/email-accounts.md). The invitation grants access and sends a notice. It does not create a sign-in code. The person requests a verification code when connecting a tool, then selects the projects and permissions to authorize.
 
 [Connect your tools](connect-tools.md) has the user-facing steps. Credentials and email codes belong in the client's authorization flow, not an agent prompt.
 
 ## Let a team manage itself
 
-**Unreleased.** Development builds separate three levels of access:
+Porcupine has three levels of access:
 
 | Level | Can manage |
 | --- | --- |
@@ -45,6 +45,6 @@ A team-owned service account has its own lifecycle. Revoking its creator's membe
 
 ## Remove access
 
-Revoke a tool connection, key, or membership through the management API, CLI, or MCP. In development builds, membership changes invalidate affected human-tool grants while preserving unrelated tenant memberships and team credentials. Instance operators can also [unlink a sign-in identity](reference/identity-recovery.md) for recovery. Unlinking is not a permanent provider ban.
+Revoke a tool connection, key, or membership through the management API, CLI, or MCP. Membership changes invalidate affected human-tool grants while preserving unrelated tenant memberships and team credentials. Instance operators can also [unlink a sign-in identity](reference/identity-recovery.md) for recovery. Unlinking is not a permanent provider ban.
 
 Authentication does not create access. An email code or Google/OIDC login proves identity; the person's current memberships and grants determine what they can do.

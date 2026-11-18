@@ -15,6 +15,7 @@ import (
 // FileConfig is the operator configuration. Environment tags are also the
 // allowlist, so a newly supported setting cannot be forgotten by validation.
 type FileConfig struct {
+	Profile    string `json:"profile,omitempty" env:"PORCUPINE_PROFILE"`
 	Acceptance struct {
 		Mode string `json:"mode,omitempty" env:"PORCUPINE_ACCEPTANCE_MODE"`
 	} `json:"acceptance"`
@@ -56,6 +57,7 @@ type FileConfig struct {
 		CleanupGrace           string       `json:"cleanup_grace,omitempty" env:"PORCUPINE_DUCKLAKE_CLEANUP_GRACE"`
 		CleanupInterval        string       `json:"cleanup_interval,omitempty" env:"PORCUPINE_DUCKLAKE_CLEANUP_INTERVAL"`
 		RestoreWindow          string       `json:"restore_window,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_WINDOW"`
+		RestoreFloorFile       string       `json:"restore_floor_file,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_FLOOR_FILE"`
 		RestoreMaxReaderTime   string       `json:"restore_max_reader_time,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_MAX_READER_TIME"`
 		RestoreSafetyMargin    string       `json:"restore_safety_margin,omitempty" env:"PORCUPINE_DUCKLAKE_RESTORE_SAFETY_MARGIN"`
 		S3                     S3FileConfig `json:"s3" envprefix:"PORCUPINE_DUCKLAKE_S3_"`
@@ -111,10 +113,6 @@ type FileConfig struct {
 	Shared struct {
 		ControlDatabaseURL     string `json:"control_database_url,omitempty" env:"PORCUPINE_CONTROL_DATABASE_URL" secret:"true"`
 		ControlDatabaseURLFile string `json:"control_database_url_file,omitempty" env:"PORCUPINE_CONTROL_DATABASE_URL_FILE" secret:"true"`
-		WorkerID               string `json:"worker_id,omitempty" env:"PORCUPINE_WORKER_ID"`
-		WorkerURL              string `json:"worker_url,omitempty" env:"PORCUPINE_WORKER_URL"`
-		RoutingSecret          string `json:"routing_secret,omitempty" env:"PORCUPINE_SHARED_ROUTING_SECRET" secret:"true"`
-		RoutingSecretFile      string `json:"routing_secret_file,omitempty" env:"PORCUPINE_SHARED_ROUTING_SECRET_FILE" secret:"true"`
 	} `json:"shared"`
 }
 
@@ -209,6 +207,10 @@ func validateEnvironment() error {
 	for _, item := range os.Environ() {
 		name, _, _ := strings.Cut(item, "=")
 		if strings.HasPrefix(name, "PORCUPINE_") && !known[name] {
+			switch name {
+			case "PORCUPINE_WORKER_ID", "PORCUPINE_WORKER_URL", "PORCUPINE_SHARED_ROUTING_SECRET", "PORCUPINE_SHARED_ROUTING_SECRET_FILE":
+				return fmt.Errorf("%s is obsolete because owner routing has been removed", name)
+			}
 			return fmt.Errorf("unknown environment variable %s", name)
 		}
 	}
@@ -250,7 +252,13 @@ func readSettings(input io.Reader) (settings, error) {
 		if errors.As(err, &valueType) {
 			return nil, fmt.Errorf("invalid configuration type for %s at byte %d", valueType.Field, valueType.Offset)
 		}
-		// Other decoder errors can quote secret input. Do not return their text.
+		// Match only complete errors for known legacy keys. Other decoder errors
+		// can quote secret input, so their text must stay out of diagnostics.
+		switch err.Error() {
+		case `json: unknown field "worker_id"`, `json: unknown field "worker_url"`,
+			`json: unknown field "routing_secret"`, `json: unknown field "routing_secret_file"`:
+			return nil, errors.New("owner routing has been removed; remove worker_id, worker_url, routing_secret, and routing_secret_file from configuration")
+		}
 		return nil, errors.New("invalid configuration: use the documented JSON keys and value types")
 	}
 	if dec.Decode(&struct{}{}) != io.EOF {

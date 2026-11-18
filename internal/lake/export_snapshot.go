@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -36,7 +37,11 @@ func (s *DuckLakeStore) ExportAtSnapshot(ctx context.Context, project, raw strin
 	return s.export(ctx, project, raw, parameters, nil, &snapshot, maxRowBytes, callbacks)
 }
 
-func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot ExportSnapshot) error {
+func (s *DuckLakeStore) ExportWindowAtSnapshot(ctx context.Context, project, raw string, parameters map[string]string, window AnalyticalWindow, snapshot ExportSnapshot, maxRowBytes int64, callbacks ExportStreamCallbacks) (ExportStreamResult, error) {
+	return s.export(ctx, project, raw, parameters, &window, &snapshot, maxRowBytes, callbacks)
+}
+
+func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot ExportSnapshot, window *AnalyticalWindow) error {
 	var identity string
 	if snapshot.CatalogID == "" || snapshot.Version < 0 {
 		return ErrExportSnapshotUnavailable
@@ -53,6 +58,9 @@ func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot Expo
 	view := duckLakeEventsSelect
 	for _, table := range []string{"lake.current_events", "lake.identity_links", "lake.identity_profiles"} {
 		view = strings.Replace(view, table+" ", "(SELECT * FROM "+table+version+") ", 1)
+	}
+	if window != nil {
+		view = fmt.Sprintf("SELECT * FROM (%s) WHERE received_at_ms >= %d AND received_at_ms < %d AND is_imported=0", view, window.StartMS, window.EndMS)
 	}
 	_, err := conn.ExecContext(ctx, "CREATE TEMP VIEW events AS "+view)
 	return err

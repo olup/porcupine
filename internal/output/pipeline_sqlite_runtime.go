@@ -35,16 +35,16 @@ type PipelineConfig struct {
 }
 
 type PipelineJobs struct {
-	pg                          *hostedPipelineRuntime
-	db, control                 *sql.DB
-	clock                       func() time.Time
-	lake                        PipelineReader
-	usage                       *usage.Recorder
-	loadActor                   func(context.Context, string) (auth.Principal, error)
-	credentialMissing           func(error) bool
-	requireActive, requireOwner func(context.Context, string) error
-	beginActivity               func(context.Context, string) (context.Context, func(), bool)
-	acquire                     func(context.Context) (func(), bool)
+	pg                *hostedPipelineRuntime
+	db, control       *sql.DB
+	clock             func() time.Time
+	lake              PipelineReader
+	usage             *usage.Recorder
+	loadActor         func(context.Context, string) (auth.Principal, error)
+	credentialMissing func(error) bool
+	requireActive     func(context.Context, string) error
+	beginActivity     func(context.Context, string) (context.Context, func(), bool)
+	acquire           func(context.Context) (func(), bool)
 
 	activeS3Mu     sync.Mutex
 	activeS3ID     string
@@ -273,6 +273,10 @@ func (s *PipelineJobs) Start() {
 	if s.pg != nil {
 		if s.pg.step != nil {
 			start("webhook", rt.webhookWake, s.RunWebhook)
+		}
+		if s.pg.scheduled.ready() {
+			start("s3", rt.s3Wake, s.RunS3)
+			start("retired-s3", make(chan struct{}, 1), s.cleanHostedScheduledRetirement)
 		}
 		return
 	}

@@ -48,7 +48,6 @@ type IdentitySnapshot struct {
 
 type DeliveryStatus struct {
 	PendingUnknown          bool   `json:"pending_unknown,omitempty" doc:"True on a shared query worker which does not own this project's SQLite queue. Do not interpret pending=0 as a drained queue; get-event-schema is routed to its owner for authoritative status."`
-	OwnerWorkerID           string `json:"owner_worker_id,omitempty"`
 	Enabled                 bool   `json:"enabled"`
 	Pending                 int64  `json:"pending"`
 	OldestPendingReceivedAt string `json:"oldest_pending_received_at,omitempty" doc:"Receipt time of the earliest queued original by acceptance order, including quarantined events, in this project"`

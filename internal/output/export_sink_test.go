@@ -37,6 +37,31 @@ func (f *exportTestS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.objects = map[string][]byte{}
 	}
 	switch {
+	case r.Method == "GET" && r.URL.Query().Has("versions"):
+		prefix := r.URL.Query().Get("prefix")
+		var versions strings.Builder
+		versions.WriteString(`<ListVersionsResult><IsTruncated>false</IsTruncated>`)
+		for object := range f.objects {
+			_, key, _ := strings.Cut(strings.TrimPrefix(object, "/"), "/")
+			if strings.HasPrefix(key, prefix) {
+				fmt.Fprintf(&versions, `<Version><Key>%s</Key><VersionId>null</VersionId></Version>`, key)
+			}
+		}
+		versions.WriteString(`</ListVersionsResult>`)
+		f.mu.Unlock()
+		io.WriteString(w, versions.String())
+	case r.Method == "GET" && r.URL.Query().Has("uploads"):
+		f.mu.Unlock()
+		io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
+	case r.Method == "GET" && r.URL.Query().Has("uploadId"):
+		_, exists := f.parts[r.URL.Query().Get("uploadId")]
+		f.mu.Unlock()
+		if !exists {
+			w.WriteHeader(404)
+			io.WriteString(w, `<Error><Code>NoSuchUpload</Code></Error>`)
+			return
+		}
+		io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated></ListPartsResult>`)
 	case r.Method == "POST" && r.URL.Query().Has("uploads"):
 		f.seq++
 		id := fmt.Sprintf("upload-%d", f.seq)

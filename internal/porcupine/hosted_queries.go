@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -17,8 +18,13 @@ type interactiveReader interface {
 	Profile(context.Context, string, lakeapi.EventProfileOptions, time.Time) (lakeapi.EventProfileRead, error)
 }
 
+type hostedEventReader interface {
+	interactiveReader
+	ListEvents(context.Context, string, int, int) ([]eventapi.Event, error)
+}
+
 type hostedQueryRuntime struct {
-	reader   interactiveReader
+	reader   hostedEventReader
 	recorder *usage.Recorder
 	register func(context.Context, *sql.Tx, string, string) error
 	finish   func(context.Context, *sql.DB, string, string) error

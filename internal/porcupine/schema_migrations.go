@@ -58,6 +58,8 @@ PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 	usage.JournalSchema,
 	// 8: attempt fencing and old destination ownership after credential replacement.
 	output.PipelineSQLiteRetirementSchemaV1,
+	// 9: retire the old owner-routed admission cache.
+	`DROP TABLE shared_tenant_cache`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
@@ -99,7 +101,10 @@ var hostedImportSchema string
 // 6: usage. 7: globally ordered native write epochs on the dedicated session.
 // 8: shared pipelines. 9: project catalog descriptions. 10: hosted query executions.
 // 11: hosted mutations. 12: hosted historical upload checkpoints. 13: shared output jobs.
-// 14: hosted project activity and native seals.
+// 14: hosted project activity and native seals. 15: retained project cleanup.
+// 16: scheduled S3 pipeline state and attempts.
+// 17: retire owner routing and journal usage publication.
+// 18: carry forward hosted usage still present in the retained daily rollups.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -115,6 +120,15 @@ var sharedControlSteps = []string{
 	hostedImportSchema,
 	output.PipelineJobsPostgresSchemaV1 + output.PipelineDeliverySchemaV1 + output.ExportPostgresSchemaV1,
 	hostedProjectLifecycleSchema,
+	hostedProjectCleanupSchema,
+	output.ScheduledPipelinePostgresSchemaV1,
+	`DROP TABLE shared_project_owners, shared_workers, shared_route_nonces, worker_tenant_usage`,
+	`INSERT INTO tenant_usage(tenant_id,period_start,accepted_events)
+SELECT u.tenant_id, left(u.day_start,7) || '-01T00:00:00Z', sum(u.live_events + u.import_events)
+FROM usage_rollups u JOIN tenants t ON t.id=u.tenant_id
+WHERE u.live_events>0 OR u.import_events>0
+GROUP BY u.tenant_id,left(u.day_start,7)
+ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
@@ -143,6 +157,17 @@ func migrateSQLite(ctx context.Context, db *sql.DB, store schemaStore) error {
 	var version int
 	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
+	}
+	if store.name == journalSchema.name {
+		for _, key := range []string{"shared_worker_id", "shared_control_source_id", "shared_worker_volume_id"} {
+			found, err := sqliteMetadataHas(ctx, tx, key, "")
+			if err != nil {
+				return err
+			}
+			if found {
+				return errors.New("this SQLite journal belongs to an unsupported owner-routed deployment")
+			}
+		}
 	}
 	latest := len(store.steps)
 	if version > latest {

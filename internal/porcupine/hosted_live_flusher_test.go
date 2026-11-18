@@ -291,7 +291,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	var loseCommit atomic.Bool
-	wrapped, er := installLostHostedCommit(a.service.shared.config.DatabaseURL, fa.publisher, &loseCommit)
+	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit)
 	if er != nil {
 		t.Fatal(er)
 	}
@@ -352,6 +352,15 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 3 {
 		t.Fatal("wrong atomic usage", n, err)
 	}
+	assertAccepted := func(want int64) {
+		t.Helper()
+		var accepted int64
+		err := b.service.control.QueryRow(`SELECT coalesce(sum(accepted_events),0) FROM tenant_usage WHERE tenant_id=$1`, defaultTenantID).Scan(&accepted)
+		if err != nil || accepted != want {
+			t.Fatalf("monthly acceptance ledger = %d, want %d: %v", accepted, want, err)
+		}
+	}
+	assertAccepted(3)
 	// A restored cursor must match the original retained native proof even when
 	// the cursor already equals high-water and there are no pending effects.
 	_, originalHash, er := fa.publisher.checkpoint(t.Context(), scope, defaultTenantID)
@@ -405,6 +414,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 3 {
 		t.Fatal("usage escaped rollback", n, err)
 	}
+	assertAccepted(3)
 	binding, er := fa.publisher.reservation(t.Context(), scope)
 	if er != nil {
 		t.Fatal(er)
@@ -496,6 +506,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
 		t.Fatal("recovery double charged", n, err)
 	}
+	assertAccepted(4)
 
 	// Capacity failure rolls native sequence/data/usage back before any body PUT.
 	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project)

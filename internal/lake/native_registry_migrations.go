@@ -24,6 +24,16 @@ next_attempt bigint NOT NULL,last_attempt bigint NOT NULL,last_success bigint NO
 state text NOT NULL CHECK(state IN ('running','waiting','failed','ok','interrupted')),
 failed integer NOT NULL DEFAULT 0 CHECK(failed IN (0,1)),
 PRIMARY KEY(source_id,project_id),FOREIGN KEY(source_id,project_id) REFERENCES pc_native_projects(source_id,project_id));`,
+	`CREATE TABLE pc_native_hosted_deletion (
+source_id text NOT NULL,project_id text NOT NULL,stream_id text NOT NULL,
+final_sequence bigint NOT NULL CHECK(final_sequence>=0),
+PRIMARY KEY(source_id,project_id),FOREIGN KEY(source_id,project_id) REFERENCES pc_native_projects(source_id,project_id));`,
+	`CREATE TABLE pc_native_compaction (
+source_id text NOT NULL,project_id text NOT NULL,attempt_id text NOT NULL,
+next_attempt bigint NOT NULL,last_attempt bigint NOT NULL,
+state text NOT NULL CHECK(state IN ('running','waiting','failed','ok','interrupted')),
+checked_layout_snapshot bigint NOT NULL DEFAULT 0,
+PRIMARY KEY(source_id,project_id),FOREIGN KEY(source_id,project_id) REFERENCES pc_native_projects(source_id,project_id));`,
 }
 
 // Caller holds the domain initialization advisory lock. Catalog metadata can

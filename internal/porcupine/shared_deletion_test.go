@@ -16,10 +16,8 @@ func sharedDeletionFixture(t *testing.T) *Service {
 	if err := initializeSharedControl(t.Context(), db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{control: db, shared: &sharedRuntime{config: SharedConfig{WorkerID: "deletion-test"}}, interactiveConfig: queries}
-	if _, err := db.Exec(`INSERT INTO shared_workers(worker_id,volume_id,route_url,registration_token) VALUES('owner-a','volume-a','http://a.invalid','token-a'),('owner-b','volume-b','http://b.invalid','token-b');
- INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('removed','default','Removed','now','mixed'),('kept','default','Kept','now','mixed');
- INSERT INTO shared_project_owners(project_id,worker_id) VALUES('removed','owner-a'),('kept','owner-b')`); err != nil {
+	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}, interactiveConfig: queries}
+	if _, err := db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('removed','default','Removed','now','mixed'),('kept','default','Kept','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -77,10 +75,6 @@ INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,p
 	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
-	var owners int
-	if err := s.control.QueryRow(`SELECT count(*) FROM shared_project_owners WHERE project_id='removed'`).Scan(&owners); err != nil || owners != 1 {
-		t.Fatal("deletion fence lost durable owner before cleanup", owners, err)
-	}
 	current, err := loadEmailHuman(ctx, s.control, human.ID)
 	if err != nil || !slices.Equal(current.Projects, []string{"kept"}) || !slices.Equal(current.Permissions, []string{"events:read"}) {
 		t.Fatal("human scopes were not pruned", current, err)
@@ -128,9 +122,6 @@ INSERT INTO oauth_refresh_tokens(token_hash,grant_id,family_id,client_id,scope,p
 	var completed bool
 	if err := s.control.QueryRow(`SELECT completed FROM project_deletions WHERE project_id='removed'`).Scan(&completed); err != nil || !completed {
 		t.Fatal("permanent tombstone missing", err)
-	}
-	if err := s.control.QueryRow(`SELECT count(*) FROM shared_project_owners`).Scan(&owners); err != nil || owners != 1 {
-		t.Fatal("owner cleanup changed unrelated project", owners, err)
 	}
 	var projects, usage int
 	if err := s.control.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 1 {
@@ -248,6 +239,6 @@ func TestSharedProjectDeletionRollsBackFenceOnGrantFailure(t *testing.T) {
 	}
 	err := s.control.QueryRow(`SELECT id FROM projects WHERE id='removed'`).Scan(new(string))
 	if errors.Is(err, sql.ErrNoRows) || err != nil {
-		t.Fatal("begin removed project before owner cleanup", err)
+		t.Fatal("begin removed project before cleanup", err)
 	}
 }

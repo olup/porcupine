@@ -84,6 +84,21 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	}
 	var initialized string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized)
+	var storedProfile string
+	profileErr := tx.QueryRowContext(ctx, "SELECT value FROM metadata WHERE key='deployment_profile'").Scan(&storedProfile)
+	if profileErr != nil && !errors.Is(profileErr, sql.ErrNoRows) {
+		return profileErr
+	}
+	if errors.Is(profileErr, sql.ErrNoRows) {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return errors.New("hosted profile requires a fresh PostgreSQL control database")
+		}
+		if _, profileErr := tx.ExecContext(ctx, "INSERT INTO metadata(key,value) VALUES('deployment_profile','hosted')"); profileErr != nil {
+			return profileErr
+		}
+	} else if storedProfile != string(ProfileHosted) {
+		return errors.New("PostgreSQL control database belongs to another deployment profile")
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if external {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('initialized','1'),('auth_mode','external')`); err != nil {

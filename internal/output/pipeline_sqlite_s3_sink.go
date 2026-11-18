@@ -42,6 +42,7 @@ type pipelineS3Sink struct {
 	ctx                       context.Context
 	s                         *PipelineJobs
 	work                      *s3PipelineWork
+	hosted                    *hostedScheduledWork
 	store                     *exportstore.Store
 	config                    ExportConfig
 	encoder                   *delivery.RowEncoder
@@ -102,25 +103,12 @@ func (w *pipelineS3Sink) row(values []json.RawMessage) error {
 	return nil
 }
 func (w *pipelineS3Sink) beginFile() error {
-	if len(w.files) >= 10000 {
+	if len(w.files) >= 10000 || w.hosted != nil && len(w.files) >= hostedScheduledMaxFiles {
 		return errPipelineOutputLimit
 	}
 	key := fmt.Sprintf("%s/%d/%s/part-%06d.%s.gz", w.work.pipeline.ID, w.work.start, w.work.attemptID, len(w.files)+1, w.work.spec.Format)
-	checkpoint, checkpointErr := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$3)`, w.work.id, key, w.work.claimID)
-	if err := pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
-		return err
-	}
-	upload, err := w.store.Begin(w.ctx, key)
+	upload, err := w.beginUpload(key)
 	if err != nil {
-		return err
-	}
-	checkpoint, checkpointErr = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=$1 WHERE run_id=$2 AND object_key=$3 AND EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$2 AND state='running' AND claim_id=$4)`, upload.ID(), w.work.id, key, w.work.claimID)
-	if err = pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
-		// The durable key still permits deletion after an ambiguous Complete. Abort
-		// this newly-created ID immediately if checkpointing it failed.
-		cleanup, cancel := context.WithTimeout(context.Background(), 10e9)
-		defer cancel()
-		_ = upload.Abort(cleanup)
 		return err
 	}
 	w.current = &pipelineS3File{Key: w.work.spec.Destination.Prefix + "/" + key}
@@ -134,6 +122,29 @@ func (w *pipelineS3Sink) beginFile() error {
 		return w.writeDecoded(w.encoder.Header())
 	}
 	return nil
+}
+func (w *pipelineS3Sink) beginUpload(key string) (*exportstore.Upload, error) {
+	if w.hosted != nil {
+		return w.beginHostedUpload(key)
+	}
+	checkpoint, checkpointErr := w.s.db.ExecContext(w.ctx, `INSERT INTO pipeline_s3_files(run_id,object_key) SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$3)`, w.work.id, key, w.work.claimID)
+	if err := pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
+		return nil, err
+	}
+	upload, err := w.store.Begin(w.ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	checkpoint, checkpointErr = w.s.db.ExecContext(w.ctx, `UPDATE pipeline_s3_files SET upload_id=$1 WHERE run_id=$2 AND object_key=$3 AND EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$2 AND state='running' AND claim_id=$4)`, upload.ID(), w.work.id, key, w.work.claimID)
+	if err = pipelineCheckpoint(checkpoint, checkpointErr); err != nil {
+		// The durable key still permits deletion after an ambiguous Complete. Abort
+		// this newly-created ID immediately if checkpointing it failed.
+		cleanup, cancel := context.WithTimeout(context.Background(), 10e9)
+		defer cancel()
+		_ = upload.Abort(cleanup)
+		return nil, err
+	}
+	return upload, nil
 }
 func (w *pipelineS3Sink) writeDecoded(data []byte) error {
 	if int64(len(data)) > w.config.MaxOutputBytes-w.decoded {
@@ -184,7 +195,14 @@ func (w *pipelineS3Sink) finishFile() error {
 	if err := w.gzip.Close(); err != nil {
 		return err
 	}
-	if err := w.upload.Complete(w.ctx); err != nil {
+	complete := func(*sql.Tx) error { return w.upload.Complete(w.ctx) }
+	var err error
+	if w.hosted == nil {
+		err = complete(nil)
+	} else {
+		err = w.s.withHostedScheduledRun(w.ctx, w.hosted, complete)
+	}
+	if err != nil {
 		return err
 	}
 	w.current.SHA256 = hex.EncodeToString(w.digest.Sum(nil))

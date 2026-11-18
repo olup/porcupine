@@ -30,6 +30,9 @@ func usageMetadata(ctx context.Context, db *sql.DB, key, value string) (string, 
 	return current, err
 }
 func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
+	if s.hosted != nil {
+		return s.initializeHostedUsage(ctx, c)
+	}
 	config, err := usage.Normalize(c)
 	if err != nil {
 		return err
@@ -50,7 +53,7 @@ func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
 		return err
 	}
 	sampler, _ := s.lake.(parquetUsageSampler)
-	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, s.shared != nil, config, clock), config: config, clock: clock, sampler: sampler}
+	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, false, config, clock), config: config, clock: clock, sampler: sampler}
 	s.eventRules.usage = recorder
 	return nil
 }
@@ -168,8 +171,7 @@ func (s *Service) beginUsageQuery(ctx context.Context, project, operation string
 	if s.usage == nil {
 		return native, limits, &usageQueryScope{finish: finish}, nil
 	}
-	// Analytical reads can execute on a non-owner with no local project anchor.
-	// Freeze the authoritative control scope rather than manufacturing an anchor.
+	// Resolve usage attribution from control storage before executing the query.
 	tenant, err := s.projectTenant(native, project)
 	if err != nil {
 		if stopped := finish(); stopped != nil {
@@ -200,8 +202,8 @@ func (s *Service) sampleUsageStorage(ctx context.Context) error {
 	if sampler == nil || s.hostedQueries != nil {
 		return nil
 	}
-	// Only locally anchored projects are sampled. A remote owner is never opened
-	// through discovery or manufactured to fill a missing measurement.
+	// Sample the projects in the standalone journal. Hosted samples are recorded
+	// by hosted maintenance.
 	after := ""
 	for {
 		rows, err := s.db.QueryContext(ctx, `SELECT id,tenant_id FROM projects WHERE id>$1 ORDER BY id LIMIT 100`, after)
@@ -228,9 +230,6 @@ func (s *Service) sampleUsageStorage(ctx context.Context) error {
 		}
 		for _, p := range batch {
 			after = p.id
-			if err = s.requireSharedProjectOwner(ctx, p.id); err != nil {
-				continue
-			}
 			bytes, e := sampler.CurrentParquetBytes(ctx, p.id)
 			if e != nil {
 				if ctx.Err() != nil {
