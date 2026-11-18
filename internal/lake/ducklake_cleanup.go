@@ -11,7 +11,8 @@ import (
 // lease are checked under the same lock as DeleteProject: a stale selection
 // must never recreate a project that was removed in the meantime.
 func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
-	if s.Config.DisableCleanup {
+	// Hosted catalogs need the write fence; CleanupHostedDue owns them.
+	if s.Config.DisableCleanup || s.Config.Hosted {
 		return nil
 	}
 	started := time.Now()
@@ -111,7 +112,7 @@ func (p *ProjectLake) cleanupHistory(ctx context.Context, snapshotBefore, fileBe
 
 func (s *DuckLakeStore) CleanupStatus(ctx context.Context) (DuckLakeCleanupStatus, error) {
 	status := DuckLakeCleanupStatus{Enabled: !s.Config.DisableCleanup, SnapshotRetentionSeconds: int64(s.Config.SnapshotRetention / time.Second), ObsoleteFileGraceSeconds: int64(s.Config.CleanupGrace / time.Second), IntervalSeconds: int64(s.Config.CleanupInterval / time.Second)}
-	if s.SharedCatalog != nil {
+	if s.SharedCatalog != nil && !s.Config.Hosted {
 		status.SnapshotRetentionSeconds = max(status.SnapshotRetentionSeconds, int64(sharedNativeReaderHorizon/time.Second))
 		status.ObsoleteFileGraceSeconds = max(status.ObsoleteFileGraceSeconds, int64(sharedNativeReaderHorizon/time.Second))
 	}
@@ -125,6 +126,7 @@ func (s *DuckLakeStore) CleanupStatus(ctx context.Context) (DuckLakeCleanupStatu
 	summary, err := s.registry.cleanupSummary(ctx)
 	status.RegisteredCatalogs, status.CompletedCatalogs = summary.Registered, summary.Completed
 	status.FailedCatalogs, status.RunningCatalogs = summary.Failed, summary.Running
+	status.SnapshotsExpired, status.FilesDeleted, status.LastError = summary.SnapshotsExpired, summary.FilesDeleted, summary.LastError
 	attempted, succeeded := summary.LastAttempt, summary.LastSuccess
 	if attempted > 0 {
 		status.LastAttempt = time.UnixMilli(attempted).UTC().Format(time.RFC3339Nano)
