@@ -128,7 +128,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	limits := output.PipelineDemand{References: 100, QueuedBytes: 1 << 20, MetadataRows: 1000, ArtifactBytes: 128 << 20, ProofSlots: 4}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); e != nil {
 				return e
 			}
@@ -222,7 +222,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	// unresolved reservation, rather than encoding all fanout then rejecting.
 	generous := output.PipelineDemand{References: 1000, QueuedBytes: 256 << 20, MetadataRows: 10000, ArtifactBytes: 256 << 20, ProofSlots: 10}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], generous); e != nil {
 				return e
 			}
@@ -280,7 +280,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); e != nil {
 				return e
 			}
