@@ -16,6 +16,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/query"
 	"golang.org/x/oauth2"
 )
 
@@ -30,7 +31,7 @@ func TestSharedAuthEmailOAuthAcrossWorkersAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { first.Close() })
-	queries, err := normalizeInteractiveQueries(nil)
+	queries, err := query.Normalize(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

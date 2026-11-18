@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -13,7 +14,7 @@ func TestSharedUsageCumulativeSourcesAndSnapshotReplay(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	controlA, dsn := sharedControlFixture(t)
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(t.Context(), controlA, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"bytes"
-	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,34 +43,6 @@ SELECT 'd',$1,id,'webhook','test','paused','{}',X'00',0 FROM access_keys LIMIT 1
 		t.Fatal(err)
 	}
 	s.Close()
-}
-
-func TestBatchQueriesShareOneSlot(t *testing.T) {
-	t.Parallel()
-	s := &Service{querySlots: make(chan struct{}, 2), batchSlot: make(chan struct{}, 1)}
-	ctx := context.Background()
-	release, ok := s.acquirePipelineExport(ctx)
-	if !ok {
-		t.Fatal("idle batch refused")
-	}
-	if _, ok = s.acquirePipelineExport(ctx); ok {
-		t.Fatal("concurrent heavy export admitted")
-	}
-	select {
-	case s.querySlots <- struct{}{}:
-	default:
-		t.Fatal("interactive query starved")
-	}
-	release()
-	if _, ok = s.acquirePipelineExport(ctx); ok {
-		t.Fatal("batch started during interactive use")
-	}
-	<-s.querySlots
-	release, ok = s.acquirePipelineExport(ctx)
-	if !ok {
-		t.Fatal("batch slot leaked")
-	}
-	release()
 }
 
 func TestClosedWindowWaitsForEarlierProjectAdmissions(t *testing.T) {

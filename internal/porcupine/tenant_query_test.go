@@ -9,6 +9,7 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testing.T) {
@@ -19,12 +20,12 @@ func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testin
 	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
-	_, _, release, err := s.beginInteractiveQuery(context.Background(), a)
+	_, _, release, err := s.holdQuery(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{a, b} {
-		if _, _, _, err = s.beginInteractiveQuery(context.Background(), p); queryStatus(err) != 429 {
+		if _, _, _, err = s.holdQuery(context.Background(), p); queryStatus(err) != 429 {
 			t.Fatal("projects bypass shared tenant slots", err)
 		}
 	}
@@ -36,68 +37,69 @@ func TestTenantInteractiveAdmissionSharesProjectsAndPreservesHeavySlot(t *testin
 	if _, err = s.control.Exec(`UPDATE projects SET tenant_id=? WHERE id=?`, other.ID, c); err != nil {
 		t.Fatal(err)
 	}
-	_, _, otherRelease, err := s.beginInteractiveQuery(context.Background(), c)
+	_, _, otherRelease, err := s.holdQuery(context.Background(), c)
 	if err != nil {
 		t.Fatal("independent tenant blocked", err)
 	}
 	otherRelease()
 	release()
 	release()
-	if len(s.querySlots) != 0 || len(s.tenantQueries.active) != 0 {
+	if s.queries.UsedSlots() != 0 {
 		t.Fatal("query admission leaked")
 	}
-	// Failure to reserve global capacity must roll back the tenant reservation.
-	for range cap(s.querySlots) {
-		s.querySlots <- struct{}{}
-	}
-	if _, _, _, err = s.beginInteractiveQuery(context.Background(), a); queryStatus(err) != 429 {
-		t.Fatal("global slots ignored", err)
-	}
-	for range cap(s.querySlots) {
-		<-s.querySlots
-	}
-	if len(s.tenantQueries.active) != 0 {
-		t.Fatal("global refusal leaked tenant slot")
-	}
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, _, _, err = s.beginInteractiveQuery(canceled, a); err == nil {
-		t.Fatal("canceled request admitted")
-	}
-	if len(s.querySlots) != 0 || len(s.tenantQueries.active) != 0 {
-		t.Fatal("canceled request leaked capacity")
-	}
-	// Heavy exports retain their existing global admission, independent of tenant slots.
-	tenantRelease, ok := s.tenantQueries.acquire(defaultTenantID, 1)
+	// Fill worker capacity with both kinds of work. The global refusal
+	// must not charge admission to the unrelated tenant.
+	heavyRelease, ok := s.queries.TryBackground(t.Context())
 	if !ok {
-		t.Fatal("tenant slot not released")
+		t.Fatal("idle worker refused the export")
 	}
-	heavyRelease, ok := s.acquirePipelineExport(context.Background())
-	if !ok {
-		t.Fatal("tenant slots affected background export")
-	}
-	_, _, release, err = s.beginInteractiveQuery(context.Background(), c)
+	_, _, release, err = s.holdQuery(t.Context(), c)
 	if err != nil {
 		t.Fatal("heavy export consumed all interactive capacity", err)
 	}
-	release()
+	if _, _, _, err = s.holdQuery(t.Context(), a); queryStatus(err) != 429 {
+		t.Fatal("global slots ignored", err)
+	}
 	heavyRelease()
-	tenantRelease()
-	// Existing work is not canceled when an operator lowers concurrency, but no
-	// further work is admitted until the active count is below the new ceiling.
-	first, _ := s.tenantQueries.acquire("lower", 2)
-	second, _ := s.tenantQueries.acquire("lower", 2)
-	if _, ok = s.tenantQueries.acquire("lower", 1); ok {
-		t.Fatal("lowered policy ignored")
+	if _, ok = s.queries.TryBackground(t.Context()); ok {
+		t.Fatal("batch started during interactive use")
+	}
+	release()
+	_, _, release, err = s.holdQuery(t.Context(), a)
+	if err != nil {
+		t.Fatal("global refusal leaked tenant slot", err)
+	}
+	release()
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, _, err = s.holdQuery(canceled, a); err == nil {
+		t.Fatal("canceled request admitted")
+	}
+	if s.queries.UsedSlots() != 0 {
+		t.Fatal("canceled request leaked capacity")
+	}
+	// Decreasing the limit leaves existing work alone but blocks new reads.
+	_, _, first, err := s.holdQuery(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+	_, _, second, err := s.holdQuery(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second()
+	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=$1`, other.ID); err != nil {
+		t.Fatal(err)
 	}
 	first()
-	if _, ok = s.tenantQueries.acquire("lower", 1); ok {
-		t.Fatal("equal active count admitted")
+	if _, _, _, err = s.holdQuery(t.Context(), c); queryStatus(err) != 429 {
+		t.Fatal("equal active count admitted", err)
 	}
 	second()
-	third, ok := s.tenantQueries.acquire("lower", 1)
-	if !ok {
-		t.Fatal("slots not recovered")
+	_, _, third, err := s.holdQuery(t.Context(), c)
+	if err != nil {
+		t.Fatal("slots not recovered", err)
 	}
 	third()
 }
@@ -139,7 +141,7 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 			t.Fatal("byte policy ignored including empty result", err)
 		}
 	}
-	if _, err := s.lakeEventCatalog(context.Background(), lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
+	if _, err := s.eventCatalog(context.Background(), &lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
 		t.Fatal("catalog byte policy ignored", err)
 	}
 	if _, err := s.eventProfile(context.Background(), &lakeapi.EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
@@ -153,14 +155,14 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	}
 	set(5000, 1000, 1<<20)
 	query(`SELECT count(*) AS n FROM events`)
-	_, _, release, err := s.beginInteractiveQuery(context.Background(), id)
+	_, _, release, err := s.holdQuery(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1 WHERE id=?`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.lakeEventCatalog(context.Background(), lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
+	if _, err = s.eventCatalog(context.Background(), &lakeapi.EventCatalogInput{ID: id, Limit: 20}); queryStatus(err) != 429 {
 		t.Fatal("catalog bypassed tenant admission", err)
 	}
 	if _, err = s.eventProfile(context.Background(), &lakeapi.EventProfileInput{ID: id, Event: batch[0].Event.Event, SampleLimit: 5, PropertyLimit: 5, PropertyKind: "all"}); queryStatus(err) != 429 {
@@ -181,7 +183,7 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 	if strings.Contains(string(encoded), "ingested_events") || strings.Contains(string(encoded), "used_events") {
 		t.Fatal("discovery leaked aggregate tenant usage")
 	}
-	if len(s.querySlots) != 0 || len(s.tenantQueries.active) != 0 {
+	if s.queries.UsedSlots() != 0 {
 		t.Fatal("failure leaked query capacity")
 	}
 }
@@ -200,7 +202,9 @@ func (s *recordingQueryLimits) Query(ctx context.Context, project, sql string, p
 func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) {
 	t.Parallel()
 	s := duckLakeJourneyService(t)
-	s.interactiveConfig = InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 6000, MaxRows: 2000, MaxResultBytes: 4 << 20}
+	s.queries = query.New(query.InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 6000, MaxRows: 2000, MaxResultBytes: 4 << 20}, s.clock, nil)
+	s.queries.Bind(s.control, "", 0)
+	s.queries.SetLocalRecorder(s.usage.recorder)
 	spy := &recordingQueryLimits{LakeStore: s.lake}
 	s.lake = spy
 	id, _ := project(t, s)
@@ -235,12 +239,12 @@ func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) 
 
 func TestInteractiveQueryConfigurationCeilings(t *testing.T) {
 	t.Parallel()
-	for _, c := range []InteractiveQueryConfig{{MaxConcurrent: 1}, {TimeoutMS: -1}, {TimeoutMS: 60001}, {MaxRows: 100001}, {MaxResultBytes: 255}} {
-		if _, err := normalizeInteractiveQueries(&c); err == nil {
+	for _, c := range []query.InteractiveQueryConfig{{MaxConcurrent: 1}, {TimeoutMS: -1}, {TimeoutMS: 60001}, {MaxRows: 100001}, {MaxResultBytes: 255}} {
+		if _, err := query.Normalize(&c); err == nil {
 			t.Fatal("unsafe config accepted", c)
 		}
 	}
-	c, err := normalizeInteractiveQueries(nil)
+	c, err := query.Normalize(nil)
 	if err != nil || c.MaxConcurrent != 2 || c.TimeoutMS != 5000 || c.MaxRows != 1000 || c.MaxResultBytes != 1<<20 {
 		t.Fatal(c, err)
 	}

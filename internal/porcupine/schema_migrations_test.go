@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 // assertSQLiteUnchanged checks that a rejected database kept its version and tables.
@@ -165,7 +167,7 @@ func TestRestoreAcceptsOlderSchemaVersionAndStartMigratesIt(t *testing.T) {
 func TestSharedControlRecordsAndEnforcesSchemaVersion(t *testing.T) {
 	t.Parallel()
 	db, _ := sharedControlFixture(t)
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	ctx := context.Background()
 	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
@@ -210,7 +212,7 @@ func TestSharedControlRefusesUnknownUnversionedSchemas(t *testing.T) {
 				return objects
 			}
 			before := inventory()
-			limits, _ := normalizeInteractiveQueries(nil)
+			limits, _ := query.Normalize(nil)
 			if err := initializeSharedControl(ctx, db, adminToken, limits, false); err == nil || !strings.Contains(err.Error(), "unversioned shared control") {
 				t.Fatalf("unknown shared schema accepted: %v", err)
 			}

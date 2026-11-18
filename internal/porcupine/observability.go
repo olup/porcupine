@@ -14,10 +14,9 @@ import (
 
 type operationalMetrics struct {
 	*observability.Registry
-	activeQueries [3]atomic.Int64
-	journal       atomic.Pointer[journalQueueSample]
-	stopSampling  context.CancelFunc
-	samplingDone  chan struct{}
+	journal      atomic.Pointer[journalQueueSample]
+	stopSampling context.CancelFunc
+	samplingDone chan struct{}
 }
 
 type journalQueueSample struct {
@@ -123,18 +122,8 @@ func (s *Service) metricGauges() []observability.Gauge {
 	}
 	add("queue_capacity_events", float64(eventCapacity))
 	add("queue_capacity_bytes", float64(byteCapacity))
-	add("query_slots_used", float64(len(s.querySlots)))
-	add("query_slots_capacity", float64(cap(s.querySlots)))
-	for index, kind := range observedQueryKinds {
-		gauges = append(gauges, observability.Gauge{
-			Name: "porcupine_query_active", Value: float64(s.metrics.activeQueries[index].Load()),
-			Labels: []observability.Label{{Name: "operation", Value: kind}},
-		})
-	}
-	return gauges
+	return s.queries.AppendGauges(gauges)
 }
-
-var observedQueryKinds = [...]string{"sql", "catalog", "profile"}
 
 type httpObservation struct {
 	operation string
@@ -304,35 +293,4 @@ func (m *operationalMetrics) observeFlush(outcome string, elapsed time.Duration)
 
 func (m *operationalMetrics) observeDropped(reason string, count int) {
 	m.Add("porcupine_flush_dropped_events_total", uint64(count), observability.Label{Name: "reason", Value: reason})
-}
-
-func queryOutcome(contextErr, err error) string {
-	switch {
-	case err == nil:
-		return "ok"
-	case errors.Is(contextErr, context.Canceled), errors.Is(err, context.Canceled):
-		return "cancelled"
-	case errors.Is(contextErr, context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	default:
-		return "error"
-	}
-}
-
-func (m *operationalMetrics) observeQueryAdmission(contextErr, err error, operation string, elapsed time.Duration) {
-	outcome := queryOutcome(contextErr, err)
-	if outcome == "ok" {
-		outcome = "admitted"
-	} else if outcome == "error" {
-		var managed *managementError
-		if errors.As(err, &managed) && managed.GetStatus() == http.StatusTooManyRequests {
-			outcome = "limited"
-			if managed.Message == "analytics execution time limit reached" {
-				outcome = "timeout"
-			}
-		}
-	}
-	kind := observability.Label{Name: "operation", Value: operation}
-	m.Add("porcupine_query_admissions_total", 1, kind, observability.Label{Name: "outcome", Value: outcome})
-	m.ObserveDuration("porcupine_query_admission_duration_seconds", elapsed, kind)
 }

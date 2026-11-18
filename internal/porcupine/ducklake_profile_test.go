@@ -116,9 +116,16 @@ func TestDuckLakeEventProfileAgentHTTPMCPAndRevocation(t *testing.T) {
 func TestDuckLakeEventProfileSharesQueryBudget(t *testing.T) {
 	t.Parallel()
 	s, a, _, _, reader, event, _ := profileJourneyFixture(t)
-	s.querySlots <- struct{}{}
-	s.querySlots <- struct{}{}
-	defer func() { <-s.querySlots; <-s.querySlots }()
+	background, ok := s.queries.TryBackground(t.Context())
+	if !ok {
+		t.Fatal("idle worker refused the export")
+	}
+	defer background()
+	_, _, release, err := s.holdQuery(t.Context(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
 	request(t, s, http.MethodGet, profileRequestPath(a, event), reader, "", http.StatusTooManyRequests)
 }
 

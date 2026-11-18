@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/query"
 )
 
 //go:embed control_schema.sql
@@ -70,7 +71,7 @@ func openSharedControl(ctx context.Context, config SharedConfig) (*sql.DB, error
 
 // Serialize schema installation and initial credentials across all processes.
 // The lock is transactional, so a failed bootstrap leaves no partial authority.
-func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries InteractiveQueryConfig, external bool) error {
+func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken string, queries query.InteractiveQueryConfig, external bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
