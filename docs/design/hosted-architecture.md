@@ -60,7 +60,7 @@ Shared output jobs recheck creator authority and destination revision. Scheduled
 
 ## Usage
 
-Usage charges the actual durable transition. Buffered acknowledgment alone adds no hosted usage. Native evidence supplies cumulative accepted live/import counts split by project, UTC day, and source. The control store applies revisions idempotently. Publication and admission policy can observe different points in time. The durable hosted allowance uses `tenant_usage`, which combines retained live and import rows, while reporting preserves the split. Deletion gives no refund.
+Usage counts the actual durable transition. Buffered acknowledgment alone adds no hosted usage. Native evidence supplies cumulative accepted live/import counts split by project, UTC day, and source. The control store applies revisions idempotently. Publication and admission policy can observe different points in time. The durable hosted allowance uses `tenant_usage`, which combines retained live and import rows, while reporting preserves the split. Deletion gives no refund.
 
 Interactive query starts persist before dispatch. Duration measures monotonic time through actual native return. An incomplete execution keeps its last recorded lower bound and unresolved count. Output meters count a unique durable delivery acknowledgment or the final published compressed bytes. The operator report retains bounded numerical snapshots for stable pagination and uses an epoch to identify incompatible restored history. Current Parquet usage is a sample of referenced current files, including delete files. At v0.15.0 scheduled Parquet sampling is standalone-only. Missing samples are unknown. [Usage metrics and API](../reference/usage.md)
 

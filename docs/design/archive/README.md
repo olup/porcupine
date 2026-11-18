@@ -1,6 +1,6 @@
 # Hosted design and verification archive
 
-These records describe their original commits, test fixtures, and decisions. For deployment instructions and release status, use [Hosted architecture](../hosted-architecture.md).
+These records describe their original commits, test fixtures, and decisions. The archive preserves the hosted notes as of commit `f42a1bc` with updated links. For deployment instructions and release status, use [Hosted architecture](../hosted-architecture.md).
 
 | Earlier source | Current guidance | Archived evidence |
 | --- | --- | --- |
