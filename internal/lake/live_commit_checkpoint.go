@@ -18,7 +18,7 @@ FROM lake.hosted_write_guard WHERE id=1 AND source_id=? AND project_id=? AND cat
 	if err != nil {
 		return err
 	}
-	if checkpoint.Sequence < 0 || checkpoint.Sequence > high || ack < 0 || ack > checkpoint.Sequence {
+	if checkpoint.Sequence < 0 || checkpoint.Sequence > high || ack < 0 || ack > high {
 		return ErrNativeEvidenceGap
 	}
 	if checkpoint.Sequence < high {
