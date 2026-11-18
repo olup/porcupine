@@ -389,6 +389,24 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err := a.service.beginControlProjectDeletion(t.Context(), key.ProjectID); err != nil {
 		t.Fatal(err)
 	}
+	binding, err := fb.publisher.reservation(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A reservation concurrent with or older than the import proof
+	// contradicts the write protocol and must stay owned for investigation.
+	if _, err := a.service.control.ExecContext(t.Context(), `UPDATE pipeline_effect_reservations SET epoch=$1 WHERE project_id=$2`, nextProof.FenceEpoch, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := fb.sealDeletedProject(t.Context(), key); !errors.Is(err, output.ErrPipelineConflict) {
+		t.Fatalf("contradictory evidence did not stop recovery: %v", err)
+	}
+	if retained, err := fb.publisher.reservation(t.Context(), scope); err != nil || retained.Epoch != nextProof.FenceEpoch {
+		t.Fatalf("conflicting reservation did not stay owned: %+v, %v", retained, err)
+	}
+	if _, err := a.service.control.ExecContext(t.Context(), `UPDATE pipeline_effect_reservations SET epoch=$1 WHERE project_id=$2`, binding.Epoch, project); err != nil {
+		t.Fatal(err)
+	}
 	if err := fb.sealDeletedProject(t.Context(), key); !errors.Is(err, output.ErrPipelineConflict) {
 		t.Fatal("deletion acknowledged an import without a checkpoint provider", err)
 	}
