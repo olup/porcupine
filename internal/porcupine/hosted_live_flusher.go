@@ -45,6 +45,7 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 	return func() { _ = tx.Rollback() }, nil
 }
 
+// FlushLive processes batches admitted by the buffered ingestion path.
 func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch) error {
 	if b.id == "" || b.projectID == "" || len(b.events) == 0 {
 		return output.ErrPipelineConflict
@@ -74,7 +75,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 			return e
 		}
 		if !recovery {
-			e = f.commitLiveBatch(ctx, session, fence, batch, b.admitted)
+			e = f.commitLiveBatch(ctx, session, fence, batch)
 			if !errors.Is(e, lakeapi.ErrNativeEffectsPending) {
 				return e
 			}
@@ -88,7 +89,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
 			return e
 		}
-		return f.commitLiveBatch(ctx, session, fence, batch, b.admitted)
+		return f.commitLiveBatch(ctx, session, fence, batch)
 	})
 }
 
@@ -103,7 +104,7 @@ func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi
 	return err == nil, err
 }
 
-func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch, admitted bool) error {
+func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch) error {
 	seq, hash, err := f.publisher.checkpoint(ctx, batch.Scope, batch.TenantID)
 	if err != nil {
 		return err
@@ -119,22 +120,13 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 			if err != nil {
 				return lakeapi.StagedLiveEffects{}, err
 			}
-			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
+			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing}
 		}
 		return stager.StageLiveEffects(ctx, selected)
 	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
 	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
-		return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			currentTenant, err := lockActiveHostedProject(ctx, tx, batch.Scope.Key.ProjectID)
-			if err != nil {
-				return err
-			}
-			if currentTenant != batch.TenantID {
-				return errHostedProjectFenced
-			}
-			return commit()
-		})
+		return f.commitLiveIfActive(ctx, batch.Scope.Key.ProjectID, batch.TenantID, commit)
 	})
 	if err != nil {
 		return err
@@ -146,17 +138,32 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		if v.Evidence.Sequence <= seq {
 			return nil
 		}
-		binding, err := f.publisher.reservation(ctx, batch.Scope)
-		if err != nil {
-			return err
-		}
-		if stager == nil {
+		if stager == nil || stager.binding == (output.PipelineBinding{}) {
 			return output.ErrPipelineConflict
 		}
-		return f.publisher.publishEvidence(ctx, binding, v.Evidence, nil, false, stager.uploadedManifest)
+		return f.publisher.publishEvidence(ctx, stager.binding, v.Evidence, nil, false, stager.uploadedManifest)
 	default:
 		return output.ErrPipelineConflict
 	}
+}
+
+// The writer's activity ticket and advisory session cover the native commit.
+// Deletion may fence further admissions after this check, but sealing must
+// drain this ticket and acquire the project session before moving the native fence.
+func (f *hostedLiveFlusher) commitLiveIfActive(ctx context.Context, project, tenant string, commit func() error) error {
+	if err := f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+		currentTenant, err := lockActiveHostedProject(ctx, tx, project)
+		if err != nil {
+			return err
+		}
+		if currentTenant != tenant {
+			return errHostedProjectFenced
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return commit()
 }
 
 // CommitImport coordinates already validated historical input. Upload storage,

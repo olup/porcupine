@@ -118,7 +118,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	at := a.service.clock()
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "accepted", DistinctID: "actor",
 		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
-	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project, admitted: true,
+	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project,
 		events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: at}}}
 	for _, node := range []*sharedJourneyNode{a, b} {
 		if err := node.service.hosted.flusher.FlushLive(ctx, batch); err != nil {

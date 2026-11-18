@@ -288,7 +288,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	var losePG atomic.Bool
-	lostDB, err := installLostHostedCommit(a.controlDSN, fa.publisher, &losePG)
+	lostDB, err := installLostHostedCommit(a.controlDSN, fa.publisher, &losePG, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		if err != nil {
 			return err
 		}
-		stager := reservingHostedStager{publisher: fb.publisher, session: pendingSession, fence: fence, plan: plan, routing: routing, admission: &fb.policy}
+		stager := reservingHostedStager{publisher: fb.publisher, session: pendingSession, fence: fence, plan: plan, routing: routing}
 		if _, err = stager.StageLiveEffects(ctx, lakeapi.SelectedLiveEffects{Scope: scope, TenantID: defaultTenantID, BatchID: "pending-live", Sequence: seq + 1}); err != nil {
 			return err
 		}

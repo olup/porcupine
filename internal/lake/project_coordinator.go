@@ -31,11 +31,12 @@ type ProjectWriteFence struct {
 }
 type ProjectCoordinatorConfig struct {
 	MaxConcurrent               int
+	AcquireTimeout              time.Duration
 	ProbeInterval, ProbeTimeout time.Duration
 }
 
 func DefaultProjectCoordinatorConfig() ProjectCoordinatorConfig {
-	return ProjectCoordinatorConfig{MaxConcurrent: 4, ProbeInterval: time.Second, ProbeTimeout: 2 * time.Second}
+	return ProjectCoordinatorConfig{MaxConcurrent: 4, AcquireTimeout: 5 * time.Second, ProbeInterval: time.Second, ProbeTimeout: 2 * time.Second}
 }
 
 // PostgresProjectCoordinator requires a direct PostgreSQL endpoint or session
@@ -49,8 +50,8 @@ type PostgresProjectCoordinator struct {
 }
 
 func NewPostgresProjectCoordinator(control *sql.DB, c ProjectCoordinatorConfig) (*PostgresProjectCoordinator, error) {
-	if control == nil || c.MaxConcurrent <= 0 || c.ProbeInterval <= 0 || c.ProbeTimeout <= 0 {
-		return nil, errors.New("project coordinator requires control storage and positive connection/probe limits")
+	if control == nil || c.MaxConcurrent <= 0 || c.AcquireTimeout <= 0 || c.ProbeInterval <= 0 || c.ProbeTimeout <= 0 {
+		return nil, errors.New("project coordinator requires control storage and positive connection, acquisition and probe limits")
 	}
 	if max := control.Stats().MaxOpenConnections; max > 0 && c.MaxConcurrent >= max {
 		return nil, errors.New("project coordinator must leave control connections available for other operations")
@@ -91,12 +92,23 @@ func (c *PostgresProjectCoordinator) TryAcquire(ctx context.Context, key Project
 	return c.acquire(ctx, key, true)
 }
 
-func (c *PostgresProjectCoordinator) acquire(ctx context.Context, key ProjectWriteKey, try bool) (*ProjectWriteSession, error) {
+func (c *PostgresProjectCoordinator) acquire(parent context.Context, key ProjectWriteKey, try bool) (*ProjectWriteSession, error) {
 	if key.SourceID == "" || key.ProjectID == "" {
 		return nil, errors.New("project write scope is required")
 	}
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(parent, c.config.AcquireTimeout)
+	defer cancel()
+	acquireError := func(fallback error) error {
+		if err := parent.Err(); err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ErrProjectWriteBusy
+		}
+		return fallback
 	}
 	if try {
 		select {
@@ -108,18 +120,20 @@ func (c *PostgresProjectCoordinator) acquire(ctx context.Context, key ProjectWri
 		select {
 		case c.slots <- struct{}{}:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, acquireError(ErrProjectWriteBusy)
 		}
 	}
 	conn, err := c.control.Conn(ctx)
 	if err != nil {
 		<-c.slots
-		return nil, errors.New("project coordinator control connection unavailable")
+		return nil, acquireError(errors.New("project coordinator control connection unavailable"))
 	}
 	fail := func() (*ProjectWriteSession, error) {
+		// A canceled acquisition can race with a granted session lock. Close
+		// the physical backend rather than returning a possible owner to the pool.
 		discardProjectConnection(conn)
 		<-c.slots
-		return nil, ErrProjectWriteSessionLost
+		return nil, acquireError(ErrProjectWriteSessionLost)
 	}
 	session := &ProjectWriteSession{owner: c, conn: conn, key: key, lock: projectAdvisoryKey(key), done: make(chan struct{}), stopProbe: make(chan struct{}), acquisition: event.NewID()}
 	// Capture PID in the acquisition statement, before any second statement can
@@ -152,7 +166,10 @@ func (c *PostgresProjectCoordinator) acquire(ctx context.Context, key ProjectWri
 	if err := conn.QueryRowContext(ctx, `SELECT CASE WHEN pg_backend_pid()=$1 THEN nextval('shared_native_write_epoch') END`, session.pid).Scan(&session.epoch); err != nil || session.epoch <= 0 {
 		return fail()
 	}
-	session.ctx, session.cancel = context.WithCancelCause(ctx)
+	if ctx.Err() != nil {
+		return fail()
+	}
+	session.ctx, session.cancel = context.WithCancelCause(parent)
 	go session.probe()
 	return session, nil
 }

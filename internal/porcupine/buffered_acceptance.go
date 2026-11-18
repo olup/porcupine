@@ -35,7 +35,6 @@ type bufferedFlushBatch struct {
 	id, projectID string
 	events        []bufferedLiveEvent
 	oldest        time.Time
-	admitted      bool
 	bytes         int64
 }
 
@@ -345,7 +344,7 @@ func (b *bufferedAcceptance) run() {
 			if len(p.ready) == 0 && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.flushInterval)
 				if b.draining || p.pendingBytes >= b.config.flushBytes || !now.Before(due) {
-					p.ready = []*bufferedFlushBatch{{id: eventapi.NewID(), projectID: project, events: p.pending, admitted: true, oldest: p.oldest, bytes: p.pendingBytes}}
+					p.ready = []*bufferedFlushBatch{{id: eventapi.NewID(), projectID: project, events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}}
 					p.pending = nil
 					p.pendingBytes = 0
 					p.oldest = time.Time{}
