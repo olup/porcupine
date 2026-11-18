@@ -253,8 +253,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	oversized := batch("prepared-byte-cap")
 	oversized.events[0].input.event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
 	putsBefore := effectPuts.Load()
-	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) {
-		t.Fatal("oversized preparation accepted", err)
+	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("oversized preparation did not report a permanent pre-commit capacity error", err)
 	}
 	if effectPuts.Load() != putsBefore {
 		t.Fatal("preparation bound uploaded an object before refusal")
