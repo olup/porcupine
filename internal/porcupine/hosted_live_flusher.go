@@ -146,14 +146,10 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		if v.Evidence.Sequence <= seq {
 			return nil
 		}
-		binding, err := f.publisher.reservation(ctx, batch.Scope)
-		if err != nil {
-			return err
-		}
-		if stager == nil {
+		if stager == nil || stager.binding == (output.PipelineBinding{}) {
 			return output.ErrPipelineConflict
 		}
-		return f.publisher.publishEvidence(ctx, binding, v.Evidence, nil, false, stager.uploadedManifest)
+		return f.publisher.publishEvidence(ctx, stager.binding, v.Evidence, nil, false, stager.uploadedManifest)
 	default:
 		return output.ErrPipelineConflict
 	}

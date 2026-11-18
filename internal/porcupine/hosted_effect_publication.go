@@ -126,11 +126,13 @@ type reservingHostedStager struct {
 	admission        *hostedIngestionPolicy
 	admitted         bool
 	uploadedManifest lakeapi.ImmutableObjectRef
+	binding          output.PipelineBinding
 }
 
 func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
 	p := s.publisher
 	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
+	s.binding = output.PipelineBinding{}
 	if !s.admitted {
 		if err := s.admission.admit(ctx, selected.TenantID); err != nil {
 			return lakeapi.StagedLiveEffects{}, err
@@ -234,7 +236,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	}
 
 	// Recheck the saved creator, lifecycle and every revision in the transaction
-	// which acquires capacity. No external I/O happens while these locks are held.
+	// which acquires capacity. Commit the reservation before any S3 PUT so a
+	// successor can account for abandoned objects and settle a retained native
+	// proof after a crash. Publication waits for that proof.
 	err = s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
@@ -281,6 +285,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		}
 	}
 
+	s.binding = binding
 	s.uploadedManifest = staged.Manifest
 	return staged, nil
 }

@@ -323,7 +323,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	var loseCommit atomic.Bool
-	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit)
+	var reservationReads atomic.Int64
+	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit, &reservationReads)
 	if er != nil {
 		t.Fatal(er)
 	}
@@ -394,13 +395,25 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	case <-t.Context().Done():
 		t.Fatal("admitted upload did not enter")
 	}
+	readsBeforePublication := reservationReads.Load()
+	var reserved, published bool
+	boundaryErr := a.service.control.QueryRowContext(t.Context(), `
+		SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE project_id=$1 AND batch_id=$2),
+		       EXISTS(SELECT 1 FROM pipeline_effect_jobs WHERE project_id=$1 AND batch_id=$2)
+	`, project, body.id).Scan(&reserved, &published)
 	_, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=0 WHERE id=$1`, defaultTenantID)
 	close(resumeEffects)
+	if boundaryErr != nil || !reserved || published {
+		t.Fatal("first S3 PUT must see committed reservation and no published output", reserved, published, boundaryErr)
+	}
 	if er != nil {
 		t.Fatal(er)
 	}
 	if err = <-completed; err != nil {
 		t.Fatal("native retry lost its staged plan or admission after budget reduction", err)
+	}
+	if reads := reservationReads.Load() - readsBeforePublication; reads != 0 {
+		t.Fatalf("fresh publication reread the reservation %d times", reads)
 	}
 	fa.publisher.loadRule = nil
 	trackEffectKeys.Store(false)
