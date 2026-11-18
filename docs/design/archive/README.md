@@ -13,6 +13,6 @@ These records describe their original commits, test fixtures, and decisions. The
 | Hosted maintenance fence and restore drill | [Recovery and retention](../hosted-architecture.md#recovery-and-retention) | [Maintenance experiment](hosted-maintenance-fence.md), [fixture and provider checks](hosted-restore-drill.md) |
 | Tenant deletion | [Deletion](../hosted-architecture.md#deletion) | [Original ownership and fence decisions](tenant-deletion.md) |
 | Usage contract | [Usage](../hosted-architecture.md#usage), [operator metrics and API](../../reference/usage.md) | [Original contract and acceptance cost](usage-contract.md) |
-| Hosted buffered visibility and economics | [Live admission and shutdown](../hosted-architecture.md#live-admission-and-shutdown) | [Visibility, crash loss, and outage fixture](hosted-buffered-visibility.md), [S3 request measurements](hosted-economics.md) |
+| Hosted buffered visibility and economics | [Live admission and shutdown](../hosted-architecture.md#live-admission-and-shutdown) | [Visibility, crash loss, and outage fixture](hosted-buffered-visibility.md), [S3 request measurements](hosted-economics.md), [v0.15.0 flush baseline](hosted-flush-cost.md) |
 | Owner-routed deployment and compute plans | [Hosted storage and coordination](../hosted-architecture.md) | [Shared deployment proposal](shared-deployment-design.md), [SaaS and separate compute](saas-and-compute-plans.md) |
 | v0.14 review | [Roadmap](../../roadmap.md) | [Review follow-up](review-v0.14.md) |
