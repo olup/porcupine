@@ -313,18 +313,17 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 // EnsureHostedPipelineCapacityTx provisions finite scope defaults. Operator
 // policy already stored for a scope takes precedence over deployment defaults.
 func (s *PipelineJobs) EnsureHostedPipelineCapacityTx(ctx context.Context, tx *sql.Tx, tenant, project string) error {
-	instanceRefs, instanceBytes := s.config.WebhookMaxQueuedEvents, s.config.WebhookMaxQueuedBytes
+	tenantRefs, tenantBytes := s.config.WebhookMaxQueuedEvents, s.config.WebhookMaxQueuedBytes
 	projectRefs, projectBytes := s.config.WebhookProjectMaxQueuedEvents, s.config.WebhookProjectMaxQueuedBytes
 	if !s.Enabled() {
-		instanceRefs, instanceBytes = 10000, 64<<20
+		tenantRefs, tenantBytes = 10000, 64<<20
 		projectRefs, projectBytes = 1000, 16<<20
 	}
 	for _, scope := range []struct {
 		kind, id string
 		demand   PipelineDemand
 	}{
-		{"instance", "", PipelineDemand{References: int64(instanceRefs), QueuedBytes: instanceBytes, MetadataRows: 65536, ArtifactBytes: 1 << 30, ProofSlots: 128}},
-		{"tenant", tenant, PipelineDemand{References: int64(instanceRefs), QueuedBytes: instanceBytes, MetadataRows: 16384, ArtifactBytes: 256 << 20, ProofSlots: 32}},
+		{"tenant", tenant, PipelineDemand{References: int64(tenantRefs), QueuedBytes: tenantBytes, MetadataRows: 16384, ArtifactBytes: 256 << 20, ProofSlots: 32}},
 		{"project", project, PipelineDemand{References: int64(projectRefs), QueuedBytes: projectBytes, MetadataRows: 4096, ArtifactBytes: 128 << 20, ProofSlots: 4}},
 	} {
 		d := scope.demand

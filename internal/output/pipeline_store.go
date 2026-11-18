@@ -8,9 +8,9 @@ import (
 )
 
 // ConfigureCapacityTx changes admission limits without invalidating capacity
-// already owned by reservations or backlog. Call in instance/tenant/project order.
+// already owned by reservations or backlog. Call in tenant/project order.
 func (p *PGPipelineEffects) ConfigureCapacityTx(ctx context.Context, tx *sql.Tx, kind, id string, d PipelineDemand) error {
-	if tx == nil || !d.positive() || !(kind == "instance" && id == "" || kind == "tenant" && pipelineID(id) || kind == "project" && pipelineID(id)) {
+	if tx == nil || !d.positive() || !pipelineID(id) || (kind != "tenant" && kind != "project") {
 		return ErrPipelineConflict
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO pipeline_capacity(scope_kind,scope_id,limit_refs,limit_bytes,limit_rows,limit_artifacts,limit_proofs) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(scope_kind,scope_id) DO UPDATE SET limit_refs=$3,limit_bytes=$4,limit_rows=$5,limit_artifacts=$6,limit_proofs=$7`, kind, id, d.References, d.QueuedBytes, d.MetadataRows, d.ArtifactBytes, d.ProofSlots)
@@ -25,7 +25,8 @@ const pipelineScopeWhere = `source_id=$1 AND project_id=$2 AND catalog_id=$3 AND
 // All mutating operations take capacity locks first, then stream, then targets.
 // External code must acquire its common project session before opening the TX.
 func (p *PGPipelineEffects) lockCapacity(ctx context.Context, tx *sql.Tx, b PipelineBinding, admit bool) error {
-	for _, scope := range [][2]string{{"instance", ""}, {"tenant", b.TenantID}, {"project", b.Scope.ProjectID}} {
+	var capacityErr error
+	for _, scope := range pipelineCapacityScopes(b) {
 		var limit, used PipelineDemand
 		err := tx.QueryRowContext(ctx, `SELECT limit_refs,limit_bytes,limit_rows,limit_artifacts,limit_proofs,used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind=$1 AND scope_id=$2 FOR UPDATE`, scope[0], scope[1]).Scan(&limit.References, &limit.QueuedBytes, &limit.MetadataRows, &limit.ArtifactBytes, &limit.ProofSlots, &used.References, &used.QueuedBytes, &used.MetadataRows, &used.ArtifactBytes, &used.ProofSlots)
 		if err != nil {
@@ -34,16 +35,24 @@ func (p *PGPipelineEffects) lockCapacity(ctx context.Context, tx *sql.Tx, b Pipe
 		if admit {
 			a, l, u := b.Demand.values(), limit.values(), used.values()
 			for i := range a {
-				if a[i] > l[i] || u[i] > l[i]-a[i] {
-					return ErrPipelineCapacity
+				if a[i] > l[i] {
+					return ErrPipelineDemandTooLarge
+				}
+				if u[i] > l[i]-a[i] {
+					capacityErr = ErrPipelineCapacity
 				}
 			}
 		}
 	}
-	return nil
+	return capacityErr
 }
+
+func pipelineCapacityScopes(b PipelineBinding) [2][2]string {
+	return [2][2]string{{"tenant", b.TenantID}, {"project", b.Scope.ProjectID}}
+}
+
 func (p *PGPipelineEffects) charge(ctx context.Context, tx *sql.Tx, b PipelineBinding, d PipelineDemand, sign int64) error {
-	for _, s := range [][2]string{{"instance", ""}, {"tenant", b.TenantID}, {"project", b.Scope.ProjectID}} {
+	for _, s := range pipelineCapacityScopes(b) {
 		r, e := tx.ExecContext(ctx, `UPDATE pipeline_capacity SET used_refs=used_refs+$3,used_bytes=used_bytes+$4,used_rows=used_rows+$5,used_artifacts=used_artifacts+$6,used_proofs=used_proofs+$7 WHERE scope_kind=$1 AND scope_id=$2`, s[0], s[1], sign*d.References, sign*d.QueuedBytes, sign*d.MetadataRows, sign*d.ArtifactBytes, sign*d.ProofSlots)
 		if e != nil {
 			return e

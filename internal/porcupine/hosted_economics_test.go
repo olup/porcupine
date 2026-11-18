@@ -210,7 +210,7 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	publisher := flushers[0].publisher
 	if err := publisher.transaction(ctx, func(tx *sql.Tx) error {
 		limits := output.PipelineDemand{References: 100, QueuedBytes: 1 << 20, MetadataRows: 1000, ArtifactBytes: 128 << 20, ProofSlots: 4}
-		scopes := [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"tenant", noisyTenant}, {"project", noisyProject}}
+		scopes := [][2]string{{"tenant", defaultTenantID}, {"tenant", noisyTenant}, {"project", noisyProject}}
 		for _, cohort := range projects {
 			for _, project := range cohort {
 				scopes = append(scopes, [2]string{"project", project})
