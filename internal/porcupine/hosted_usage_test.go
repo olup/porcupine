@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/olup/porcupine/internal/acceptance"
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/usage"
@@ -118,8 +119,8 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	at := a.service.clock()
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "accepted", DistinctID: "actor",
 		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
-	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project,
-		events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: at}}}
+	batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project,
+		Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
 	for _, node := range []*sharedJourneyNode{a, b} {
 		if err := node.service.hosted.flusher.FlushLive(ctx, batch); err != nil {
 			t.Fatal(err)

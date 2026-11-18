@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -75,7 +76,7 @@ func TestDuckLakeS3SharedPostgresHostedWebhookSendGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "page", DistinctID: "person", Properties: json.RawMessage(`{"x":1}`), Context: json.RawMessage(`{}`), Timestamp: time.Now().UTC().Format(time.RFC3339Nano), ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if err := f.FlushLive(ctx, bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: time.Now().UTC()}}}); err != nil {
+	if err := f.FlushLive(ctx, acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: time.Now().UTC()}}}); err != nil {
 		t.Fatal(err)
 	}
 	db := a.service.control

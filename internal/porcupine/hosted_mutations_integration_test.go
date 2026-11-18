@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
@@ -65,11 +66,11 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	uuid, laterUUID := eventapi.NewID(), eventapi.NewID()
-	live := func(project, uuid string) bufferedFlushBatch {
+	live := func(project, uuid string) acceptance.FlushBatch {
 		e := eventapi.Event{ProjectID: project, UUID: uuid, Event: "original", DistinctID: "browser", Properties: json.RawMessage(`{"private":true}`), Context: json.RawMessage(`{}`), Timestamp: "2026-11-17T01:00:00Z", ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-		return bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: e}, admittedAt: time.Now().UTC()}}}
+		return acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: e}, AdmittedAt: time.Now().UTC()}}}
 	}
-	for _, batch := range []bufferedFlushBatch{live(project, uuid), live(project, laterUUID), live(other, uuid)} {
+	for _, batch := range []acceptance.FlushBatch{live(project, uuid), live(project, laterUUID), live(other, uuid)} {
 		if err := fa.FlushLive(ctx, batch); err != nil {
 			t.Fatal(err)
 		}

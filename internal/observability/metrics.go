@@ -57,6 +57,12 @@ func (r *Registry) ObserveDuration(name string, elapsed time.Duration, labels ..
 	r.mu.Unlock()
 }
 
+// ObserveFlush records one standalone delivery or hosted flush attempt.
+func (r *Registry) ObserveFlush(outcome string, elapsed time.Duration) {
+	r.Add("porcupine_flush_attempts_total", 1, Label{Name: "outcome", Value: outcome})
+	r.ObserveDuration("porcupine_flush_duration_seconds", elapsed)
+}
+
 type Label struct{ Name, Value string }
 
 type Gauge struct {

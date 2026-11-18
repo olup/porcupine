@@ -1,13 +1,8 @@
 package porcupine
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -103,34 +98,4 @@ func dailyCookielessKey(tx *sql.Tx, day string) ([]byte, error) {
 		return nil, err
 	}
 	return secret, nil
-}
-
-func cookielessDistinctID(secret []byte, project string, ip netip.Addr, userAgent string) string {
-	mac := hmac.New(sha256.New, secret)
-	for _, value := range []string{project, ip.String(), userAgent} {
-		var length [8]byte
-		binary.BigEndian.PutUint64(length[:], uint64(len(value)))
-		mac.Write(length[:])
-		mac.Write([]byte(value))
-	}
-	return "cookieless_" + hex.EncodeToString(mac.Sum(nil))
-}
-
-func cookielessProperties(raw json.RawMessage, id, day string) json.RawMessage {
-	var properties map[string]any
-	// These properties were decoded and marshaled during request validation.
-	if err := json.Unmarshal(raw, &properties); err != nil {
-		panic(err)
-	}
-	for _, key := range []string{"$device_id", "$user_id", "$anon_distinct_id", "$session_id", "$window_id", "$ip", "ip", "ip_address", "client_ip", "remote_addr", "x-forwarded-for"} {
-		delete(properties, key)
-	}
-	properties["distinct_id"] = id
-	properties["cookieless"] = true
-	properties["identity_day"] = day
-	result, err := json.Marshal(properties)
-	if err != nil {
-		panic(err)
-	}
-	return result
 }

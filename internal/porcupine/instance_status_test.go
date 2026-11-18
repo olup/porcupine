@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/exportstore"
 	"github.com/olup/porcupine/internal/output"
 
@@ -84,12 +85,12 @@ func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 	if _, err := s.control.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at) VALUES($1,$2,$3,$4)`, projectID, defaultTenantID, "app", now()); err != nil {
 		t.Fatal(err)
 	}
-	b := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
-		return errHostedLiveBatchTooLarge
-	}))
+	b := newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error {
+		return acceptance.ErrBatchTooLarge
+	})
 	s.hosted = &hostedRuntime{buffer: b}
 	_, reader := key(t, s, []string{"management:read"}, []string{projectID})
-	if _, err := b.Accept(ctx, testBufferBatch(t, projectID, 2), ingestionPeer{}, false); err != nil {
+	if _, err := b.Accept(ctx, testBufferBatch(t, projectID, 2), acceptance.Peer{}, false); err != nil {
 		t.Fatal(err)
 	}
 	drainCtx, cancel := context.WithTimeout(ctx, time.Second)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
+	identityapi "github.com/olup/porcupine/internal/identity"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -279,7 +280,7 @@ func readHostedAssemblyFragment(ctx context.Context, objects *lakeapi.DuckLakeOb
 		if err := decoder.Decode(new(any)); err != io.EOF {
 			return nil, errors.New("extra webhook fragment event data")
 		}
-		if event.UUID != fragment.EventUUIDs[i] || event.ProjectID != claim.Scope.Key.ProjectID || event.IdentitySnapshot != "" || isIdentityControl(event.Event) || !claim.Target.Rule.Matches(event.Event) {
+		if event.UUID != fragment.EventUUIDs[i] || event.ProjectID != claim.Scope.Key.ProjectID || event.IdentitySnapshot != "" || identityapi.IsControl(event.Event) || !claim.Target.Rule.Matches(event.Event) {
 			return nil, errors.New("webhook fragment member differs from frozen claim")
 		}
 		received, err := time.Parse(time.RFC3339Nano, event.ReceivedAt)

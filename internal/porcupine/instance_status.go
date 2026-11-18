@@ -96,8 +96,8 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		}
 	}
 	if s.hosted != nil && principal(ctx).Admin() {
-		ingestion := s.hosted.buffer.snapshot()
-		result.HostedIngestion = &HostedIngestionStatus{DroppedRequests: ingestion.droppedRequests, DroppedEvents: ingestion.droppedEvents}
+		ingestion := s.hosted.buffer.Snapshot()
+		result.HostedIngestion = &HostedIngestionStatus{DroppedRequests: ingestion.DroppedRequests, DroppedEvents: ingestion.DroppedEvents}
 	}
 	if s.db == nil {
 		result.Checks.SQLite = dependencyNotConfigured

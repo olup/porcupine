@@ -86,10 +86,3 @@ func decodeIngestionMetadata(event *eventapi.Event, raw string) error {
 	event.SourceID, event.MessageID, event.EventType, event.Context = value.SourceID, value.MessageID, value.EventType, value.Context
 	return nil
 }
-
-type ingestionReceipt struct {
-	MessageID string `json:"message_id"`
-	EventID   string `json:"event_id"`
-	UUID      string `json:"uuid"`
-	Duplicate bool   `json:"duplicate"`
-}

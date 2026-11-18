@@ -46,7 +46,7 @@ func (s *Service) deliverIsolatedBatch(ctx context.Context, batch []eventapi.Eve
 					outcome = "cancelled"
 				}
 			}
-			m.observeFlush(outcome, time.Since(started))
+			m.ObserveFlush(outcome, time.Since(started))
 		}()
 	}
 	projections := make([]lakeapi.EventProjection, 0, len(batch))

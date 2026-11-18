@@ -26,6 +26,8 @@ type Command struct {
 	Set, SetOnce      json.RawMessage
 }
 
+func IsControl(name string) bool { return name == "$identify" || name == "$set" }
+
 func ValidID(id string) bool {
 	return strings.TrimSpace(id) != "" && len(id) <= 1000 && id != ingest.CookielessSentinel && !strings.HasPrefix(id, "cookieless_")
 }
@@ -33,7 +35,7 @@ func ValidID(id string) bool {
 // Parse preserves SDK invalid-control no-ops. Invalid JSON remains an error;
 // invalid identity IDs and trait shapes produce an Ignored command.
 func Parse(name, target string, raw json.RawMessage) (Command, error) {
-	if name != "$identify" && name != "$set" {
+	if !IsControl(name) {
 		return Command{}, errors.New("unsupported identity operation")
 	}
 	if !ValidID(target) {

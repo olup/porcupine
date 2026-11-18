@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/observability"
 )
 
@@ -99,11 +100,10 @@ func (s *Service) metricGauges() []observability.Gauge {
 	eventCapacity, byteCapacity := s.queueMax, s.queueMaxBytes
 	var sampled bool
 	if s.hosted != nil {
-		buffer := s.hosted.buffer
-		snapshot := buffer.snapshot()
-		events, bytes, oldest = int64(snapshot.events), snapshot.bytes, snapshot.oldest
-		eventCapacity, byteCapacity = buffer.config.maxEvents, buffer.config.maxBytes
-		add("flush_inflight", float64(snapshot.inflight))
+		snapshot := s.hosted.buffer.Snapshot()
+		events, bytes, oldest = int64(snapshot.Events), snapshot.Bytes, snapshot.Oldest
+		eventCapacity, byteCapacity = snapshot.CapacityEvents, snapshot.CapacityBytes
+		add("flush_inflight", float64(snapshot.Inflight))
 		sampled = true
 	} else if sample := s.metrics.journal.Load(); sample != nil {
 		events, bytes, oldest = sample.events, sample.bytes, sample.oldest
@@ -258,7 +258,7 @@ func (s *Service) observeOperation(ctx context.Context, transport, operation str
 	}
 }
 
-func (s *Service) observeAcceptance(ctx context.Context, result liveAcceptanceResult, err error) {
+func (s *Service) observeAcceptance(ctx context.Context, result acceptance.Result, err error) {
 	m := s.metrics
 	if m == nil {
 		return
@@ -267,12 +267,12 @@ func (s *Service) observeAcceptance(ctx context.Context, result liveAcceptanceRe
 	outcome := "accepted"
 	if err != nil {
 		var rejected *managementError
-		var failure *acceptanceFailure
+		var failure *acceptance.Failure
 		var budget *tenantIngestionError
 		switch {
 		case ctx.Err() != nil:
 			outcome = "cancelled"
-		case errors.As(err, &failure) && failure.pressure:
+		case errors.As(err, &failure) && failure.Pressure:
 			outcome = "pressure"
 		case errors.As(err, &budget), errors.As(err, &rejected) && rejected.GetStatus() < 500:
 			outcome = "rejected"
@@ -282,28 +282,19 @@ func (s *Service) observeAcceptance(ctx context.Context, result liveAcceptanceRe
 	}
 	m.Add("porcupine_ingestion_admissions_total", 1, durability, observability.Label{Name: "outcome", Value: outcome})
 	switch result := result.(type) {
-	case durableLiveResult:
-		m.observeIngestionEvents(acceptanceDurable, "accepted", uint64(result.accepted))
-		m.observeIngestionEvents(acceptanceDurable, "duplicate", uint64(result.duplicates))
-		m.observeIngestionEvents(acceptanceDurable, "identity_ignored", uint64(result.identityIgnored))
-	case bufferedLiveResult:
-		m.observeIngestionEvents(acceptanceBuffered, "buffered", uint64(result.received))
+	case acceptance.DurableResult:
+		m.observeIngestionEvents(acceptance.Durable, "accepted", uint64(result.Accepted))
+		m.observeIngestionEvents(acceptance.Durable, "duplicate", uint64(result.Duplicates))
+		m.observeIngestionEvents(acceptance.Durable, "identity_ignored", uint64(result.IdentityIgnored))
+	case acceptance.BufferedResult:
+		m.observeIngestionEvents(acceptance.Buffered, "buffered", uint64(result.Received))
 	}
 }
 
-func (m *operationalMetrics) observeIngestionEvents(durability acceptanceDurability, outcome string, count uint64) {
+func (m *operationalMetrics) observeIngestionEvents(durability acceptance.Durability, outcome string, count uint64) {
 	m.Add("porcupine_ingestion_events_total", count,
 		observability.Label{Name: "durability", Value: string(durability)},
 		observability.Label{Name: "outcome", Value: outcome})
-}
-
-func (m *operationalMetrics) observeFlush(outcome string, elapsed time.Duration) {
-	m.Add("porcupine_flush_attempts_total", 1, observability.Label{Name: "outcome", Value: outcome})
-	m.ObserveDuration("porcupine_flush_duration_seconds", elapsed)
-}
-
-func (m *operationalMetrics) observeDropped(reason string, count int) {
-	m.Add("porcupine_flush_dropped_events_total", uint64(count), observability.Label{Name: "reason", Value: reason})
 }
 
 func queryOutcome(contextErr, err error) string {

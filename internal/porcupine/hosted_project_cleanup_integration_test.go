@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -117,7 +118,12 @@ func TestDuckLakeS3SharedPostgresHostedProjectCleanup(t *testing.T) {
 
 func hostedCleanupWorker(t *testing.T, c Config) (*Service, *httptest.Server, func()) {
 	t.Helper()
-	s, err := Open(c)
+	return hostedCleanupWorkerWithBuffer(t, c, acceptance.DefaultBufferConfig())
+}
+
+func hostedCleanupWorkerWithBuffer(t *testing.T, c Config, buffer acceptance.BufferConfig) (*Service, *httptest.Server, func()) {
+	t.Helper()
+	s, err := open(c, buffer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +152,7 @@ func hostedCleanupWrite(t *testing.T, s *Service, project, name string) string {
 	at := time.Now().UTC()
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: name, DistinctID: "actor",
 		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: at.Format(time.RFC3339Nano), ReceivedAt: at.Format(time.RFC3339Nano)}
-	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: at}}}
+	batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
 	if err := s.hosted.flusher.FlushLive(t.Context(), batch); err != nil {
 		t.Fatal("commit hosted live event", err)
 	}

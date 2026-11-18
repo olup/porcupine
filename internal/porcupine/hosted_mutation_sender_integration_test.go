@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -81,7 +82,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 	flush := func(uuid string) {
 		t.Helper()
 		event := eventapi.Event{ProjectID: project, UUID: uuid, Event: "page", DistinctID: "person", Properties: json.RawMessage(`{"x":1}`), Context: json.RawMessage(`{}`), Timestamp: time.Now().UTC().Format(time.RFC3339Nano), ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-		if err := f.FlushLive(ctx, bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: time.Now().UTC()}}}); err != nil {
+		if err := f.FlushLive(ctx, acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: time.Now().UTC()}}}); err != nil {
 			t.Fatal(err)
 		}
 	}

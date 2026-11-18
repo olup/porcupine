@@ -24,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
@@ -230,11 +231,11 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	epoch := time.Now().UTC().Add(-windows * time.Minute)
 	flush := func(flusher *hostedLiveFlusher, project string, window, count int, span, step time.Duration) {
 		t.Helper()
-		batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project}
+		batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project}
 		at := epoch.Add(time.Duration(window) * span)
 		for i := range count {
 			instant := at.Add(time.Duration(i) * step).Format(time.RFC3339Nano)
-			input, err := validateLiveEvent(eventapi.Event{
+			input, err := acceptance.ValidateInput(eventapi.Event{
 				ProjectID: project, UUID: eventapi.NewID(), Event: "page",
 				DistinctID: fmt.Sprintf("visitor-%d", i%100),
 				Properties: json.RawMessage(`{"page":"/pricing","plan":"team"}`),
@@ -243,7 +244,7 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			batch.events = append(batch.events, bufferedLiveEvent{input: input, admittedAt: time.Now().UTC()})
+			batch.Events = append(batch.Events, acceptance.BufferedEvent{Input: input, AdmittedAt: time.Now().UTC()})
 		}
 		if err := flusher.FlushLive(ctx, batch); err != nil {
 			t.Fatalf("flush %s window %d (%d events): %v", project, window, count, err)

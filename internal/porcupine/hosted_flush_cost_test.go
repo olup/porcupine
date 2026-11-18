@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
@@ -188,18 +189,18 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour)
 	flush := func(count int) hostedFlushSample {
 		t.Helper()
-		batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project}
+		batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project}
 		for i := range count {
 			at = at.Add(time.Millisecond)
 			instant := at.Format(time.RFC3339Nano)
-			input, err := validateLiveEvent(eventapi.Event{
+			input, err := acceptance.ValidateInput(eventapi.Event{
 				ProjectID: project, UUID: eventapi.NewID(), Event: "page", DistinctID: fmt.Sprintf("visitor-%d", i%100),
 				Properties: json.RawMessage(`{"page":"/pricing","plan":"team"}`), Context: json.RawMessage(`{}`), Timestamp: instant, ReceivedAt: instant,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			batch.events = append(batch.events, bufferedLiveEvent{input: input, admittedAt: time.Now().UTC()})
+			batch.Events = append(batch.Events, acceptance.BufferedEvent{Input: input, AdmittedAt: time.Now().UTC()})
 		}
 		drain()
 		before := readSnapshot()

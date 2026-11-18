@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/auth"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -181,11 +182,15 @@ func (s *Service) initializeDuckLake(config lakeapi.DuckLakeConfig) error {
 }
 
 func Open(c Config) (*Service, error) {
+	return open(c, acceptance.DefaultBufferConfig())
+}
+
+func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	if err := ValidateConfig(c); err != nil {
 		return nil, err
 	}
 	if c.Profile == ProfileHosted {
-		return openHostedProfile(c)
+		return openHostedProfile(c, buffer)
 	}
 	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
 	if err != nil {
@@ -549,7 +554,7 @@ func (s *Service) Handler() http.Handler {
 			problem(w, 503, "analytics execution unavailable")
 			return
 		}
-		if s.hosted != nil && !s.hosted.buffer.available() {
+		if s.hosted != nil && !s.hosted.buffer.Available() {
 			problem(w, 503, "ingestion buffer unavailable")
 			return
 		}
@@ -758,9 +763,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 400, err.Error())
 		return
 	}
-	peer := ingestionPeer{userAgent: r.UserAgent()}
-	if prepared.cookieless {
-		peer.address, err = s.clientIP(r)
+	peer := acceptance.Peer{UserAgent: r.UserAgent()}
+	if prepared.Cookieless {
+		peer.Address, err = s.clientIP(r)
 		if err != nil {
 			problem(w, 400, "invalid cookieless client address")
 			return
@@ -793,8 +798,8 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			write(w, managed.GetStatus(), managed)
 			return
 		}
-		var failure *acceptanceFailure
-		if errors.As(err, &failure) && failure.retry {
+		var failure *acceptance.Failure
+		if errors.As(err, &failure) && failure.Retry {
 			w.Header().Set("Retry-After", "1")
 		}
 		problem(w, 503, err.Error())

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
@@ -47,11 +48,11 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 }
 
 // FlushLive processes batches admitted by the buffered ingestion path.
-func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch) error {
-	if b.id == "" || b.projectID == "" || len(b.events) == 0 {
+func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBatch) error {
+	if b.ID == "" || b.ProjectID == "" || len(b.Events) == 0 {
 		return output.ErrPipelineConflict
 	}
-	key := lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: b.projectID}
+	key := lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: b.ProjectID}
 	session, err := f.coordinator.Acquire(ctx, key)
 	if err != nil {
 		return err
@@ -64,12 +65,12 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		}
 		fence := session.Fence(scope.StreamID)
 		var tenant string
-		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, b.projectID).Scan(&tenant); e != nil {
+		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, b.ProjectID).Scan(&tenant); e != nil {
 			return e
 		}
-		batch := lakeapi.LiveCommitBatch{ID: b.id, TenantID: tenant, Scope: scope}
-		for _, input := range b.events {
-			batch.Inputs = append(batch.Inputs, lakeapi.LiveCommitInput{Event: input.input.event, Identity: input.input.identity, AdmittedAt: input.admittedAt})
+		batch := lakeapi.LiveCommitBatch{ID: b.ID, TenantID: tenant, Scope: scope}
+		for _, input := range b.Events {
+			batch.Inputs = append(batch.Inputs, lakeapi.LiveCommitInput{Event: input.Input.Event, Identity: input.Input.Identity, AdmittedAt: input.AdmittedAt})
 		}
 		recovery, e := f.needsLiveRecovery(ctx, scope, tenant)
 		if e != nil {
@@ -137,7 +138,7 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		return nil
 	case lakeapi.CommittedLiveBatch:
 		if v.Fresh && f.metrics != nil {
-			f.metrics.observeIngestionEvents(acceptanceBuffered, "native_committed", uint64(v.Evidence.AcceptedLive))
+			f.metrics.observeIngestionEvents(acceptance.Buffered, "native_committed", uint64(v.Evidence.AcceptedLive))
 		}
 		if v.Evidence.Sequence <= seq {
 			return nil

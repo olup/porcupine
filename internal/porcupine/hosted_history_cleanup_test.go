@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -196,7 +197,7 @@ func hostedHistoryWrite(t *testing.T, s *Service, project, name, marker string) 
 	}
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: name, DistinctID: "actor",
 		Properties: properties, Context: json.RawMessage(`{}`), Timestamp: at.Format(time.RFC3339Nano), ReceivedAt: at.Format(time.RFC3339Nano)}
-	batch := bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: []bufferedLiveEvent{{input: validatedLiveEvent{event: event}, admittedAt: at}}}
+	batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
 	if err := s.hosted.flusher.FlushLive(t.Context(), batch); err != nil {
 		t.Fatal("commit hosted live event", err)
 	}

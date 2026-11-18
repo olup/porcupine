@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
@@ -58,9 +59,9 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 				}
 				return errors.New("destination storage unavailable")
 			}}
-			result, err := writer.Accept(t.Context(), prepared, ingestionPeer{address: netip.MustParseAddr("192.0.2.1"), userAgent: "browser"}, true)
-			var failure *acceptanceFailure
-			if !errors.As(err, &failure) || failure.message != "webhook queue unavailable" || !failure.retry || participantCalls != 1 || result != nil {
+			result, err := writer.Accept(t.Context(), prepared, acceptance.Peer{Address: netip.MustParseAddr("192.0.2.1"), UserAgent: "browser"}, true)
+			var failure *acceptance.Failure
+			if !errors.As(err, &failure) || failure.Message != "webhook queue unavailable" || !failure.Retry || participantCalls != 1 || result != nil {
 				t.Fatalf("failed commit returned an acknowledgment: %+v %v", result, err)
 			}
 			for _, table := range []string{"events", "identity_links", "event_receipts", "acceptance_test_destination", "tenant_usage"} {
@@ -144,9 +145,9 @@ func durableAcceptanceForTest(t testing.TB, s *Service) *durableAcceptance {
 	}
 	return a
 }
-func durableResultForTest(t testing.TB, result liveAcceptanceResult) durableLiveResult {
+func durableResultForTest(t testing.TB, result acceptance.Result) acceptance.DurableResult {
 	t.Helper()
-	a, ok := result.(durableLiveResult)
+	a, ok := result.(acceptance.DurableResult)
 	if !ok {
 		t.Fatal("expected durable result", result)
 	}
@@ -190,7 +191,7 @@ func journalAdmissionSnapshot(t *testing.T, s *Service) string {
 	return string(raw)
 }
 
-func sharedIdentityBatch(t *testing.T, project, prefix string) preparedLiveBatch {
+func sharedIdentityBatch(t *testing.T, project, prefix string) acceptance.Batch {
 	t.Helper()
 	batch, err := prepareLiveBatch(project, "", eventBatch{
 		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},

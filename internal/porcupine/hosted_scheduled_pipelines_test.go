@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -37,7 +38,7 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 				ExportLimits: output.ExportConfig{MaxExecutionSeconds: 45}},
 			OAuth: &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true},
 		}
-		s, err := openHostedProfile(cfg)
+		s, err := openHostedProfile(cfg, acceptance.DefaultBufferConfig())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,8 +71,8 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 		t.Helper()
 		e := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: name, DistinctID: "person", Properties: json.RawMessage(`{}`),
 			Context: json.RawMessage(`{}`), Timestamp: time.Now().UTC().Format(time.RFC3339Nano), ReceivedAt: at.Format(time.RFC3339Nano)}
-		err := s.hosted.flusher.FlushLive(ctx, bufferedFlushBatch{id: eventapi.NewID(), projectID: project,
-			events: []bufferedLiveEvent{{input: validatedLiveEvent{event: e}, admittedAt: at}}})
+		err := s.hosted.flusher.FlushLive(ctx, acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project,
+			Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: e}, AdmittedAt: at}}})
 		if err != nil {
 			t.Fatal(err)
 		}

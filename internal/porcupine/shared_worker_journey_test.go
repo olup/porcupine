@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -107,7 +108,11 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 	if input.OAuthIssuer != "" {
 		cfg.OAuth = &OAuthConfig{Issuer: input.OAuthIssuer}
 	}
-	s, err := Open(cfg)
+	buffer := acceptance.DefaultBufferConfig()
+	if input.HostedFlushInterval > 0 {
+		buffer.FlushInterval = input.HostedFlushInterval
+	}
+	s, err := open(cfg, buffer)
 	if err != nil {
 		listener.Close()
 		t.Fatal("start shared subprocess", err)
@@ -117,14 +122,6 @@ func TestSharedWorkerProcessHelper(t *testing.T) {
 			t.Error("worker close:", err)
 		}
 	}()
-	// Change the timer before the fixture accepts events. The scheduler reads
-	// the interval under the same lock.
-	if input.HostedLake != nil && input.HostedFlushInterval > 0 {
-		buffer := s.hosted.buffer
-		buffer.mu.Lock()
-		buffer.config.flushInterval = input.HostedFlushInterval
-		buffer.mu.Unlock()
-	}
 	server := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
 	done := make(chan error, 1)
@@ -239,6 +236,10 @@ func hostedJourneyConfig(t *testing.T, control string, fixture duckLakeS3Fixture
 
 func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture, configure ...func(*Config)) (*sharedJourneyNode, *sharedJourneyNode) {
 	t.Helper()
+	return sharedNativeJourneyPairWithBuffer(t, fixture, acceptance.DefaultBufferConfig(), configure...)
+}
+func sharedNativeJourneyPairWithBuffer(t *testing.T, fixture duckLakeS3Fixture, buffer acceptance.BufferConfig, configure ...func(*Config)) (*sharedJourneyNode, *sharedJourneyNode) {
+	t.Helper()
 	control := sharedPostgresDSN(t)
 	var nodes [2]*sharedJourneyNode
 	for i := range nodes {
@@ -246,7 +247,7 @@ func sharedNativeJourneyPair(t *testing.T, fixture duckLakeS3Fixture, configure 
 		for _, configure := range configure {
 			configure(&config)
 		}
-		s, host, _ := hostedCleanupWorker(t, config)
+		s, host, _ := hostedCleanupWorkerWithBuffer(t, config, buffer)
 		nodes[i] = &sharedJourneyNode{service: s, host: host, controlDSN: control}
 	}
 	return nodes[0], nodes[1]

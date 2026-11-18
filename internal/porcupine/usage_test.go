@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/usage"
@@ -214,10 +215,10 @@ func TestUsageBufferedMemoryAdmissionIsNotDurableAcceptedUsage(t *testing.T) {
 	id, token := project(t, s)
 	// Private prototype wiring only. Config still refuses buffered mode until its
 	// recoverable hosted writer exists; no product bypass is added for this test.
-	buffer := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
+	buffer := newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error {
 		t.Error("unexpected native flush in memory-admission test")
 		return nil
-	}))
+	})
 	s.acceptance = buffer
 	result := nativeRequest(t, s, token, `{"type":"track","message_id":"memory-only","actor_id":"u","name":"message"}`, 200)
 	if result["durability"] != "buffered" || result["received"] != float64(1) || result["accepted"] != nil {

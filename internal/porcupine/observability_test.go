@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -205,32 +204,4 @@ func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 	requireMetric(t, metrics, `porcupine_query_active{profile="standalone",operation="sql"} 0`)
 	requireMetric(t, metrics, `porcupine_query_slots_used{profile="standalone"} 0`)
 	requireMetric(t, metrics, `porcupine_query_backend_duration_seconds_count{profile="standalone",operation="sql",outcome="cancelled"} 1`)
-}
-
-func TestOperationalHostedFlushRetryAndDrop(t *testing.T) {
-	t.Parallel()
-	m := &operationalMetrics{Registry: observability.NewRegistry("hosted")}
-	c := testBufferConfig()
-	c.metrics = m
-	c.flushBytes = 1
-	calls, results := make(chan bufferedFlushBatch, 2), make(chan error, 2)
-	b := newTestBuffer(t, c, blockingTestWriter(calls, results))
-	if _, err := b.Accept(t.Context(), testBufferBatch(t, "private-project", 1), ingestionPeer{}, false); err != nil {
-		t.Fatal(err)
-	}
-	nextFlush(t, calls)
-	results <- errors.New("private-backend-error")
-	nextFlush(t, calls)
-	results <- errHostedLiveBatchTooLarge
-	waitBuffer(t, b, func(s bufferSnapshot) bool { return s.droppedEvents == 1 })
-	var out strings.Builder
-	m.Write(&out, nil)
-	metrics := out.String()
-	requireMetric(t, metrics, `porcupine_flush_attempts_total{profile="hosted",outcome="retry"} 1`)
-	requireMetric(t, metrics, `porcupine_flush_attempts_total{profile="hosted",outcome="dropped"} 1`)
-	requireMetric(t, metrics, `porcupine_flush_dropped_events_total{profile="hosted",reason="oversized"} 1`)
-	requireMetric(t, metrics, `porcupine_flush_duration_seconds_count{profile="hosted"} 2`)
-	if strings.Contains(metrics, "private-") {
-		t.Fatal("flush telemetry exposed project or error detail")
-	}
 }
