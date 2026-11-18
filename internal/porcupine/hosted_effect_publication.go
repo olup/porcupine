@@ -145,8 +145,8 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	objects := []hostedPreparedObject{}
 	var preparedBytes int64
 	stager.put = func(_ context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
-		if int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
-			return lakeapi.ImmutableObjectRef{}, output.ErrPipelineCapacity
+		if int64(len(raw)) > lakeapi.MaxImmutableEffectObjectBytes || int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
+			return lakeapi.ImmutableObjectRef{}, errors.Join(errHostedLiveBatchTooLarge, output.ErrPipelineCapacity)
 		}
 		ref, _, e := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, raw)
 		if e == nil {
@@ -156,6 +156,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		return ref, e
 	}
 	staged, err := stager.StageLiveEffects(ctx, selected)
+	if errors.Is(err, delivery.ErrWebhookCapacity) {
+		return staged, errors.Join(errHostedLiveBatchTooLarge, err)
+	}
 	if err != nil {
 		return staged, err
 	}
@@ -224,7 +227,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	if len(prepared) > 0 {
 		preview, _ := json.Marshal(hostedPublicationManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: binding.PreparedSHA256, AcquisitionID: s.fence.AcquisitionID, Epoch: s.fence.Epoch, Sequence: selected.Sequence, Outputs: prepared, PlanRef: pipelineRef(planRef)})
 		if int64(len(preview))+int64(len(prepared)+1)*6144 > binding.ManifestBytesLimit {
-			return staged, output.ErrPipelineCapacity
+			return staged, errors.Join(errHostedLiveBatchTooLarge, output.ErrPipelineCapacity)
 		}
 	}
 
@@ -233,6 +236,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	err = s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
+	if errors.Is(err, output.ErrPipelineDemandTooLarge) {
+		return staged, errors.Join(errHostedLiveBatchTooLarge, err)
+	}
 	if err != nil {
 		return staged, err
 	}
