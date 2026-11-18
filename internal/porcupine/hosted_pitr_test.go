@@ -1,12 +1,14 @@
 package porcupine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 
 const pitrRestorePoint = "before_event_mutations"
 
-func TestHostedPostgresPITR(t *testing.T) {
+func TestSharedHostedPostgresPITR(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	bin := os.Getenv("PORCUPINE_TEST_PITR_POSTGRES_BIN")
@@ -38,6 +40,14 @@ func TestHostedPostgresPITR(t *testing.T) {
 	hostedConfig.DuckLake.MaintenanceInterval = time.Hour
 	hostedConfig.DuckLake.CleanupGrace = 72 * time.Hour
 	hostedConfig.DuckLake.RestoreWindow = 24 * time.Hour
+	// The drill supports restores only at or after its named restore point.
+	var restoreFloor atomic.Pointer[time.Time]
+	hostedConfig.HostedRecoveryFloor = func(context.Context) (time.Time, error) {
+		if floor := restoreFloor.Load(); floor != nil {
+			return *floor, nil
+		}
+		return time.Time{}, errors.New("restore point not recorded")
+	}
 	hosted, hostedHTTP, closeHosted := hostedCleanupWorker(t, hostedConfig)
 	primary := pitrWorker{hostedHTTP, hosted}
 	projectA, _ := sharedJourneyProject(t, primary.URL, defaultTenantID, "original project")
@@ -65,6 +75,8 @@ func TestHostedPostgresPITR(t *testing.T) {
 	if len(referencedKeys) == 0 {
 		t.Fatal("the recovery target must reference S3 Parquet")
 	}
+	restoreAt := time.Now()
+	restoreFloor.Store(&restoreAt)
 	if _, err := admin.ExecContext(t.Context(), "SELECT pg_create_restore_point($1)", pitrRestorePoint); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +96,20 @@ func TestHostedPostgresPITR(t *testing.T) {
 	sharedJourneyHTTP(t, primary.URL, http.MethodDelete, eventPath, editor, deletion, nil, 202)
 	if err := hosted.hosted.flusher.RecoverProject(t.Context(), projectKey); err != nil {
 		t.Fatal(err)
+	}
+	// Hosted history cleanup with its clock past every grace still keeps the
+	// files that the restore point references.
+	for day := range 12 {
+		if err := hosted.hosted.native.CleanupHostedDue(t.Context(), time.Now().Add(time.Duration(30+day)*24*time.Hour), hosted.hosted.flusher.coordinator, hosted.cleanupHostedHistory); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var expired int64
+	if err := hosted.control.QueryRowContext(t.Context(), `SELECT snapshots_expired FROM pc_native_cleanup WHERE project_id=$1`, projectA).Scan(&expired); err != nil {
+		t.Fatal(err)
+	}
+	if expired == 0 {
+		t.Fatal("history cleanup did not expire any snapshots before PITR")
 	}
 	sharedJourneyHTTP(t, primary.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, adminToken, nil, nil, 204)
 	pitrAssertEvent(t, primary.URL, projectA, editor, "")

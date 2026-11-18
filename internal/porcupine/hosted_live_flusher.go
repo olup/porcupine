@@ -150,7 +150,10 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		if err != nil {
 			return err
 		}
-		return f.publisher.publish(ctx, binding, v.Evidence)
+		if stager == nil {
+			return output.ErrPipelineConflict
+		}
+		return f.publisher.publishEvidence(ctx, binding, v.Evidence, nil, false, stager.uploadedManifest)
 	default:
 		return output.ErrPipelineConflict
 	}
@@ -301,7 +304,7 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		}
 		evidence := page.Evidence[0]
 		if deleting {
-			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true)
+			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true, lakeapi.ImmutableObjectRef{})
 		} else if evidence.Kind == lakeapi.NativeCommitMutation {
 			err = f.publisher.publishOn(ctx, binding, evidence, session)
 		} else {

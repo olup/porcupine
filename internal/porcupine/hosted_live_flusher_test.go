@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,17 +75,22 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
 	var rejectEffects, blockEffects, trackEffectKeys atomic.Bool
-	var effectPuts atomic.Int64
+	var effectPuts, effectGets atomic.Int64
 	effectKeys := make(chan string, 16)
 	effectEntered, resumeEffects := make(chan struct{}), make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
-			effectPuts.Add(1)
-			if trackEffectKeys.Load() {
-				select {
-				case effectKeys <- r.URL.Path:
-				default:
+		if strings.Contains(r.URL.Path, "/effects/") {
+			switch r.Method {
+			case http.MethodPut:
+				effectPuts.Add(1)
+				if trackEffectKeys.Load() {
+					select {
+					case effectKeys <- r.URL.Path:
+					default:
+					}
 				}
+			case http.MethodGet:
+				effectGets.Add(1)
 			}
 		}
 		if rejectEffects.Load() && r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
@@ -325,6 +331,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	loseCommit.Store(true)
 
 	body := batch("body")
+	retryIdentity := body.events[0].input.event
+	retryIdentity.UUID = eventapi.NewID()
+	retryIdentity.DistinctID = "native-conflict-person"
+	retryIdentity.Event = "$set"
+	retryIdentity.Properties = json.RawMessage(`{"$set":{"plan":"retry"}}`)
+	retryIdentityInput, err := validateLiveEvent(retryIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.events = append(body.events, bufferedLiveEvent{input: retryIdentityInput, admittedAt: body.events[0].admittedAt})
 	rejectEffects.Store(true)
 	if err = fa.FlushLive(t.Context(), body); err == nil {
 		t.Fatal("failed precommit upload acknowledged input")
@@ -341,10 +357,14 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	realNativeDB := nativeProject.DB
 	var loseNative, failACK, stageConflict atomic.Bool
+	var getsBeforePublication int64
 	bridged, er := installHostedNativeBoundary(realNativeDB, &loseNative, &failACK, func() error {
 		if stageConflict.CompareAndSwap(true, false) {
 			fa.policy.refreshed = time.Time{}
 			return &duckdb.Error{Type: duckdb.ErrorTypeTransaction, Msg: "injected native conflict after effect staging"}
+		}
+		if trackEffectKeys.Load() {
+			getsBeforePublication = effectGets.Load()
 		}
 		return nil
 	})
@@ -353,22 +373,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	nativeProject.DB = bridged
 	releaseNative()
-	defer func() { nativeProject.DB = realNativeDB; bridged.Close() }()
+	restoreNative := sync.OnceFunc(func() {
+		nativeProject.DB = realNativeDB
+		bridged.Close()
+	})
+	defer restoreNative()
 	var ruleReads int
 	fa.publisher.loadRule = func(ctx context.Context, _, _ string, target output.PipelineTarget) ([]byte, error) {
 		ruleReads++
 		return sa.Remote.ReadImmutableEffectObject(ctx, scope, nativeRef(target.Rule))
 	}
-	retryIdentity := body.events[0].input.event
-	retryIdentity.UUID = eventapi.NewID()
-	retryIdentity.DistinctID = "native-conflict-person"
-	retryIdentity.Event = "$set"
-	retryIdentity.Properties = json.RawMessage(`{"$set":{"plan":"retry"}}`)
-	retryIdentityInput, err := validateLiveEvent(retryIdentity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body.events = append(body.events, bufferedLiveEvent{input: retryIdentityInput, admittedAt: body.events[0].admittedAt})
 	stageConflict.Store(true)
 	trackEffectKeys.Store(true)
 
@@ -404,6 +418,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err := realNativeDB.QueryRowContext(t.Context(), `SELECT traits FROM lake.identity_profiles WHERE identified_id='native-conflict-person'`).Scan(&traits); err != nil || traits != `{"plan":"retry"}` {
 		t.Fatalf("identity projection after retry = %q, %v", traits, err)
 	}
+	if got := effectGets.Load() - getsBeforePublication; got != 2 {
+		t.Fatalf("fresh publication made %d effect GETs, want 2 (manifest and plan)", got)
+	}
+	restoreNative()
 	if _, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=NULL WHERE id=$1`, defaultTenantID); er != nil {
 		t.Fatal(er)
 	}
@@ -527,7 +545,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	missing := original
 	missing.Effects.Manifest.Key += "missing"
-	if _, er = fb.publisher.verify(t.Context(), binding, missing); er == nil {
+	if _, er = fb.publisher.verify(t.Context(), binding, missing, lakeapi.ImmutableObjectRef{}); er == nil {
 		t.Fatal("missing manifest accepted")
 	}
 	get, er := fixture.client.GetObject(t.Context(), &s3.GetObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key)})
@@ -558,11 +576,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(m.PlanRef.Key), Body: bytes.NewReader([]byte("modified plan latest"))}); er != nil {
 			t.Fatal(er)
 		}
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er != nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er != nil {
 			t.Fatal("actual version pin did not survive overwrite", er)
 		}
 	} else {
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er == nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er == nil {
 			t.Fatal("tampered immutable manifest accepted")
 		}
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key), Body: bytes.NewReader(originalRaw)}); er != nil {
@@ -573,8 +591,12 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`DROP TRIGGER reject_hosted_usage ON usage_rollups; DROP FUNCTION reject_hosted_usage()`); err != nil {
 		t.Fatal(err)
 	}
+	getsBeforeRecovery := effectGets.Load()
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold publication", err)
+	}
+	if got := effectGets.Load() - getsBeforeRecovery; got != 4 {
+		t.Fatalf("cold publication made %d effect GETs, want 4 (manifest, plan, delivery, fragment)", got)
 	}
 	if err = fa.FlushLive(t.Context(), crash); err != nil {
 		t.Fatal("original native proof replay", err)
@@ -721,6 +743,19 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	fa.policy.refreshed = time.Time{}
 	setPipelineState("active")
+	finalProject, finalRelease, er := sa.LeaseProject(t.Context(), project)
+	if er != nil {
+		t.Fatal(er)
+	}
+	finalDB := finalProject.DB
+	finalBridge, er := installHostedNativeBoundary(finalDB, &loseNative, &failACK, nil)
+	if er != nil {
+		finalRelease()
+		t.Fatal(er)
+	}
+	finalProject.DB = finalBridge
+	finalRelease()
+	defer func() { finalProject.DB = finalDB; finalBridge.Close() }()
 	nativeLost := batch("lost-native-response")
 	loseNative.Store(true)
 	if err = fa.FlushLive(t.Context(), nativeLost); err == nil {

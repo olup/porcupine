@@ -571,7 +571,11 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 			}
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID)
+	owner, err := credentialTenantOwner(ctx, tx, body.Permissions, body.Projects)
+	if err != nil {
+		return nil, apiError(503, "credential ownership unavailable")
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id,owner_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID, owner)
 	if err == nil && tenantID != "" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, tenantID)
 	}
