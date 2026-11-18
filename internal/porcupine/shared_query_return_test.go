@@ -42,6 +42,7 @@ func TestSharedQueryNativeReturnPrecedesResponseProcessing(t *testing.T) {
 		t.Run(operation.name, func(t *testing.T) {
 			t.Parallel()
 			a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
+			stopHostedUsageLoops(a)
 			project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Native return")
 			hostedCleanupWrite(t, a.service, project, "described")
 			locker, err := b.service.control.BeginTx(t.Context(), nil)
