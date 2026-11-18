@@ -63,22 +63,40 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 
 func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 	t.Parallel()
-	s := service(t, 20)
-	a, _ := project(t, s)
-	_, reader := key(t, s, []string{"management:read"}, []string{a})
+	ctx := t.Context()
+	queries, err := normalizeInteractiveQueries(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := newServiceRuntime(Config{}, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.control, err = openLocalSQLite(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.control.Close() })
+	if err := initializeLocalControl(ctx, s.control, adminToken, queries, false); err != nil {
+		t.Fatal(err)
+	}
+	const projectID = "status-project"
+	if _, err := s.control.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at) VALUES($1,$2,$3,$4)`, projectID, defaultTenantID, "app", now()); err != nil {
+		t.Fatal(err)
+	}
 	b := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
 		return errHostedLiveBatchTooLarge
 	}))
-	if _, err := b.Accept(t.Context(), testBufferBatch(t, a, 2), ingestionPeer{}, false); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	if err := b.Drain(ctx); err != nil {
-		t.Fatal(err)
-	}
 	s.hosted = &hostedRuntime{buffer: b}
-	t.Cleanup(func() { s.hosted = nil })
+	_, reader := key(t, s, []string{"management:read"}, []string{projectID})
+	if _, err := b.Accept(ctx, testBufferBatch(t, projectID, 2), ingestionPeer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	drainCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := b.Drain(drainCtx); err != nil {
+		t.Fatal(err)
+	}
 	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
 	ingestion, ok := admin["hosted_ingestion"].(map[string]any)
 	if !ok || ingestion["dropped_requests"] != float64(1) || ingestion["dropped_events"] != float64(2) {
