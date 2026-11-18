@@ -3,7 +3,6 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -21,31 +20,18 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	if s.lake == nil {
 		return nil, apiError(503, "analytics storage is not configured")
 	}
-	native, limits, scope, err := s.beginUsageQuery(ctx, input.ID, "profile")
+	result, bounds, err := s.queries.Profile(ctx, s.interactiveReader(), input.ID, options)
 	if err != nil {
 		return nil, err
 	}
-	defer scope.Finish()
-	deadline, _ := native.Deadline()
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	ctx, cancel := context.WithDeadline(ctx, bounds.Deadline)
 	defer cancel()
-	asOf := s.clock().UTC().Truncate(time.Millisecond)
-	scope.Begin()
-	read, err := s.interactiveReader().Profile(native, input.ID, options, asOf)
-	err = scope.Return(native, err)
-	if err != nil {
-		return nil, err
-	}
-	result, err := lakeapi.SummarizeEventProfile(read, options, asOf)
-	if err != nil {
-		return nil, err
-	}
 	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apiError(503, "delivery status unavailable")
 	}
 	encoded, err := json.Marshal(result)
-	if err != nil || len(encoded) > limits.MaxResultBytes {
+	if err != nil || len(encoded) > bounds.MaxBytes {
 		return nil, apiError(429, "event profile result byte limit reached")
 	}
 	return &EventProfileOutput{Body: result}, nil

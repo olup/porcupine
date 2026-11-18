@@ -122,7 +122,8 @@ func monthlyAllowanceValue(value *int64) any {
 }
 
 func (s *Service) defaultTenantBudgets() TenantBudgets {
-	return TenantBudgets{HotQueryMaxConcurrent: s.interactiveConfig.MaxConcurrent, HotQueryTimeoutMS: s.interactiveConfig.TimeoutMS, HotQueryMaxRows: s.interactiveConfig.MaxRows, HotQueryMaxResultBytes: s.interactiveConfig.MaxResultBytes}
+	limits := s.queries.Limits()
+	return TenantBudgets{HotQueryMaxConcurrent: limits.MaxConcurrent, HotQueryTimeoutMS: limits.TimeoutMS, HotQueryMaxRows: limits.MaxRows, HotQueryMaxResultBytes: limits.MaxResultBytes}
 }
 
 func (s *Service) insertTenant(ctx context.Context, name string, budgets TenantBudgets) (Tenant, error) {

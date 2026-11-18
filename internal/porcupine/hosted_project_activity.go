@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
+
+const hostedActivityControlTimeout = 2 * time.Second
 
 const hostedProjectLifecycleSchema = `CREATE TABLE hosted_project_activity (
 project_id TEXT NOT NULL, activity_id TEXT NOT NULL,
@@ -125,7 +128,7 @@ func (i *hostedIncarnation) beginActivity(ctx context.Context, db *sql.DB, proje
 }
 
 func endHostedProjectActivity(ctx context.Context, db *sql.DB, project, activityID string) error {
-	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedQueryControlTimeout)
+	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), hostedActivityControlTimeout)
 	defer cancel()
 	return finishHostedProjectActivity(bounded, db, project, activityID)
 }

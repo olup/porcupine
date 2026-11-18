@@ -135,17 +135,36 @@ func (l *waitingQueryLake) Query(ctx context.Context, _, _ string, _ map[string]
 	<-ctx.Done()
 	close(l.cancelled)
 	<-l.release
-	return lakeapi.AnalyticsResult{}, ctx.Err()
+	return lakeapi.AnalyticsResult{}, lakeapi.DuckLakeQueryError(ctx, ctx.Err())
 }
 
 func (l *waitingQueryLake) Close() error { return nil }
 
 func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 	t.Parallel()
+	t.Run("request cancellation", func(t *testing.T) {
+		t.Parallel()
+		verifyQueryReturnsAfterCancellation(t, false, "cancelled")
+	})
+	t.Run("execution timeout", func(t *testing.T) {
+		t.Parallel()
+		verifyQueryReturnsAfterCancellation(t, true, "timeout")
+	})
+}
+
+func verifyQueryReturnsAfterCancellation(t *testing.T, timeout bool, outcome string) {
+	t.Helper()
 	s := operationalService(t)
 	backend := &waitingQueryLake{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
 	s.lake = backend
 	projectID, _ := project(t, s)
+	timeoutMS := 5000
+	if timeout {
+		timeoutMS = 100
+	}
+	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1,hot_query_timeout_ms=$1 WHERE id=$2`, timeoutMS, defaultTenantID); err != nil {
+		t.Fatal(err)
+	}
 	_, reader := key(t, s, []string{"events:read"}, []string{projectID})
 	post := func(ctx context.Context) int {
 		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/projects/"+projectID+"/query", strings.NewReader(`{"sql":"SELECT event FROM events"}`))
@@ -157,9 +176,10 @@ func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
+	var response int
 	go func() {
 		defer close(done)
-		post(ctx)
+		response = post(ctx)
 	}()
 	defer func() {
 		cancel()
@@ -175,17 +195,13 @@ func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 		}
 	}
 	wait(backend.started)
-	for range cap(s.querySlots) - 1 {
-		s.querySlots <- struct{}{}
+	if !timeout {
+		cancel()
 	}
+	wait(backend.cancelled)
 	if status := post(t.Context()); status != http.StatusTooManyRequests {
 		t.Errorf("saturated query slots returned %d", status)
 	}
-	for range cap(s.querySlots) - 1 {
-		<-s.querySlots
-	}
-	cancel()
-	wait(backend.cancelled)
 	metrics := scrape(t, s)
 	requireMetric(t, metrics, `porcupine_query_active{profile="standalone",operation="sql"} 1`)
 	requireMetric(t, metrics, `porcupine_query_slots_used{profile="standalone"} 1`)
@@ -195,13 +211,21 @@ func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 		t.Error("in-flight cancelled query recorded a backend return")
 	}
 	select {
+	case <-done:
+		t.Fatal("request finished before the backend returned")
+	default:
+	}
+	select {
 	case backend.release <- struct{}{}:
 	case <-time.After(3 * time.Second):
 		t.Fatal("query did not wait for backend release")
 	}
 	wait(done)
+	if response != http.StatusTooManyRequests {
+		t.Errorf("interrupted query returned %d", response)
+	}
 	metrics = scrape(t, s)
 	requireMetric(t, metrics, `porcupine_query_active{profile="standalone",operation="sql"} 0`)
 	requireMetric(t, metrics, `porcupine_query_slots_used{profile="standalone"} 0`)
-	requireMetric(t, metrics, `porcupine_query_backend_duration_seconds_count{profile="standalone",operation="sql",outcome="cancelled"} 1`)
+	requireMetric(t, metrics, `porcupine_query_backend_duration_seconds_count{profile="standalone",operation="sql",outcome="`+outcome+`"} 1`)
 }

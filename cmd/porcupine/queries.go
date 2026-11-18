@@ -1,9 +1,9 @@
 package main
 
-import "github.com/olup/porcupine/internal/porcupine"
+import "github.com/olup/porcupine/internal/query"
 
-func (s settings) interactiveQueryConfiguration() (*porcupine.InteractiveQueryConfig, error) {
-	c := &porcupine.InteractiveQueryConfig{}
+func (s settings) interactiveQueryConfiguration() (*query.InteractiveQueryConfig, error) {
+	c := &query.InteractiveQueryConfig{}
 	for _, field := range []struct {
 		name     string
 		target   *int

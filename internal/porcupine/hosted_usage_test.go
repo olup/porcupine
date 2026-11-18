@@ -12,8 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/olup/porcupine/internal/acceptance"
-
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -200,16 +200,16 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 
 	// A worker that crashed after admitting a query: its record was last
 	// observed long ago and no process holds it any more.
-	crashed := usage.NewRecorder(control, hostedQueryUsageSource, a.service.clock)
+	crashed := usage.NewRecorder(control, query.HostedUsageSource, a.service.clock)
 	if _, err := crashed.StartExecution(ctx, defaultTenantID, project, "sql"); err != nil {
 		t.Fatal(err)
 	}
 	// A live worker's query that started long ago keeps being observed.
-	live, err := a.service.hostedQueries.recorder.StartExecution(ctx, defaultTenantID, project, "sql")
+	_, _, returnLive, err := a.service.holdQuery(ctx, project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	live.Begin()
+	defer returnLive()
 	if _, err = control.ExecContext(ctx, `UPDATE usage_executions SET last_observed_at=$1 WHERE closed=0`, usage.Stamp(time.Now().Add(-time.Hour))); err != nil {
 		t.Fatal(err)
 	}
@@ -251,8 +251,8 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 		return id
 	}()
 
-	if n, err := b.service.recoverHostedQueryUsage(ctx); err != nil || n != 1 {
-		t.Fatalf("recovery on another worker marked %d executions: %v", n, err)
+	if caughtUp, err := b.service.queries.RecoverHostedUsage(ctx); err != nil || !caughtUp {
+		t.Fatal("recover usage", caughtUp, err)
 	}
 	for id, r := range records() {
 		want := record{closed: 0, lost: 1}
@@ -263,8 +263,8 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 			t.Fatalf("execution %s = %+v, want %+v", id, r, want)
 		}
 	}
-	if n, err := a.service.recoverHostedQueryUsage(ctx); err != nil || n != 0 {
-		t.Fatalf("repeated recovery marked %d executions: %v", n, err)
+	if caughtUp, err := a.service.queries.RecoverHostedUsage(ctx); err != nil || !caughtUp {
+		t.Fatal("recover usage", caughtUp, err)
 	}
 
 	// A live worker can miss observations during a partition. The lost marker
@@ -272,8 +272,8 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 	if _, err = control.ExecContext(ctx, `UPDATE usage_executions SET last_observed_at=$1 WHERE id=$2`, usage.Stamp(time.Now().Add(-time.Hour)), liveID); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := b.service.recoverHostedQueryUsage(ctx); err != nil || n != 1 {
-		t.Fatalf("recovery after an observation gap marked %d executions: %v", n, err)
+	if caughtUp, err := b.service.queries.RecoverHostedUsage(ctx); err != nil || !caughtUp {
+		t.Fatal("recover usage", caughtUp, err)
 	}
 	if r := records()[liveID]; r != (record{lost: 1}) {
 		t.Fatalf("recovery fabricated a finish after an observation gap: %+v", r)
@@ -285,7 +285,7 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 		t.Fatalf("resumed observation left the execution marked lost: %+v", r)
 	}
 
-	live.Finish()
+	returnLive()
 	if err = a.service.synchronizeUsage(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestSharedHostedQueryUsageRecoversOnlyAbandonedExecutions(t *testing.T) {
 	}
 	// Recovery invents no finish: the abandoned admission stays a lower bound.
 	var admitted, unresolved int64
-	if err = control.QueryRowContext(ctx, `SELECT query_count,unresolved_queries FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, hostedQueryUsageSource, project).Scan(&admitted, &unresolved); err != nil || admitted != 2 || unresolved != 1 {
+	if err = control.QueryRowContext(ctx, `SELECT query_count,unresolved_queries FROM usage_rollups WHERE source_id=$1 AND project_id=$2`, query.HostedUsageSource, project).Scan(&admitted, &unresolved); err != nil || admitted != 2 || unresolved != 1 {
 		t.Fatalf("query rollup = %d admitted, %d unresolved: %v", admitted, unresolved, err)
 	}
 	if row := hostedUsageRows(t, b, defaultTenantID)[project]; row["query_duration"].(map[string]any)["quality"] != "lower_bound" {

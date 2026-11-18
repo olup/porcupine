@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestExternalTenantDeletionPreservesOtherTenant(t *testing.T) {
@@ -127,7 +129,7 @@ func TestExternalNativeRevocationSkipsBuiltinConsentTrigger(t *testing.T) {
 func TestSharedExternalNativeRevocationSkipsBuiltinConsentTrigger(t *testing.T) {
 	t.Parallel()
 	db, _ := sharedControlFixture(t)
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(t.Context(), db, "", queries, true); err != nil {
 		t.Fatal(err)
 	}

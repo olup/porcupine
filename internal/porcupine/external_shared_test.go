@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 func (f *externalAuthFixture) withHostedAuth(config Config) Config {
@@ -58,7 +60,7 @@ func TestSharedExternalAuthorityExpiresWhileWaitingForWriteLock(t *testing.T) {
 	dsn := sharedPostgresDSN(t)
 	f := newExternalAuthFixture(t)
 	ctx := t.Context()
-	queries, err := normalizeInteractiveQueries(nil)
+	queries, err := query.Normalize(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

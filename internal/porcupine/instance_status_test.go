@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
-	"github.com/olup/porcupine/internal/exportstore"
-	"github.com/olup/porcupine/internal/output"
-
 	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
@@ -65,7 +65,7 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	queries, err := normalizeInteractiveQueries(nil)
+	queries, err := query.Normalize(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func validateLocalDatabasePaths(journal, control string) error {
@@ -81,7 +82,7 @@ func openLocalSQLite(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, queries InteractiveQueryConfig, external bool) error {
+func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, queries query.InteractiveQueryConfig, external bool) error {
 	if err := migrateSQLite(ctx, db, localControlSchema); err != nil {
 		return err
 	}

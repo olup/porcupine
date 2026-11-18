@@ -25,6 +25,7 @@ import (
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
 	_ "modernc.org/sqlite"
 )
@@ -49,7 +50,7 @@ type Config struct {
 	OAuth               *OAuthConfig
 	Auth                *AuthConfig
 	NativeBackup        *lakeapi.NativeBackupConfig
-	InteractiveQueries  *InteractiveQueryConfig
+	InteractiveQueries  *query.InteractiveQueryConfig
 	Shared              *SharedConfig
 	Usage               *usage.Config
 	HostedRecoveryFloor HostedRecoveryFloor
@@ -87,11 +88,8 @@ type Service struct {
 	deliveryDone          chan struct{}
 	deliveryMaxEvents     int
 	deliveryMaxBytes      int
-	querySlots            chan struct{}
-	interactiveConfig     InteractiveQueryConfig
-	tenantQueries         tenantQueryAdmission
-	sharedQueries         sharedQueryExecutions
-	hostedQueries         *hostedQueryRuntime
+	queries               *query.Runtime
+	hostedReader          query.HostedReader
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
 	tokenSlots            chan struct{}
@@ -100,7 +98,6 @@ type Service struct {
 	hostedMutations       *hostedLiveFlusher
 	pipelines             *output.PipelineJobs
 	pipelineClient        *http.Client
-	batchSlot             chan struct{}
 	exports               *output.ExportJobs
 	oauth                 *oauthRuntime
 	resources             *resourceRuntime
@@ -108,7 +105,7 @@ type Service struct {
 	usage                 *usageRuntime
 }
 
-func newServiceRuntime(c Config, interactiveConfig InteractiveQueryConfig) (*Service, error) {
+func newServiceRuntime(c Config, interactiveConfig query.InteractiveQueryConfig) (*Service, error) {
 	var err error
 	var oauth *oauthRuntime
 	var resources *resourceRuntime
@@ -137,14 +134,17 @@ func newServiceRuntime(c Config, interactiveConfig InteractiveQueryConfig) (*Ser
 		return nil, err
 	}
 	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		batchSlot: make(chan struct{}, 1), oauth: oauth, resources: resources, interactiveConfig: interactiveConfig, querySlots: make(chan struct{}, interactiveConfig.MaxConcurrent)}
+		oauth: oauth, resources: resources}
+	var registry *observability.Registry
 	if c.MetricsEnabled {
 		profile := c.Profile
 		if profile == "" {
 			profile = ProfileStandalone
 		}
-		s.metrics = &operationalMetrics{Registry: observability.NewRegistry(string(profile))}
+		registry = observability.NewRegistry(string(profile))
+		s.metrics = &operationalMetrics{Registry: registry}
 	}
+	s.queries = query.New(interactiveConfig, func() time.Time { return s.clock() }, registry)
 	s.captureSlots = make(chan struct{}, 32)
 	s.deliveryMaxEvents = 100
 	s.deliveryMaxBytes = 4 << 20
@@ -192,7 +192,7 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	if c.Profile == ProfileHosted {
 		return openHostedProfile(c, buffer)
 	}
-	interactiveConfig, err := normalizeInteractiveQueries(c.InteractiveQueries)
+	interactiveConfig, err := query.Normalize(c.InteractiveQueries)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +260,7 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 		return nil, err
 	}
 	s.db, s.control, s.backups = db, control, backups
+	s.queries.Bind(control, "", 0)
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
 	durable := &durableAcceptance{db: db, rules: s.eventRules}
 	s.acceptance = durable
@@ -550,7 +551,7 @@ func (s *Service) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	m.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if s.shared != nil && s.sharedQueries.status().unavailable() {
+		if s.shared != nil && s.queries.Status().Unavailable() {
 			problem(w, 503, "analytics execution unavailable")
 			return
 		}

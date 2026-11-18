@@ -9,6 +9,7 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -39,7 +40,7 @@ func ValidateConfig(c Config) error {
 	if _, err := usage.Normalize(c.Usage); err != nil {
 		return err
 	}
-	if _, err := normalizeInteractiveQueries(c.InteractiveQueries); err != nil {
+	if _, err := query.Normalize(c.InteractiveQueries); err != nil {
 		return err
 	}
 	if c.QueueMaxBytes < 0 {

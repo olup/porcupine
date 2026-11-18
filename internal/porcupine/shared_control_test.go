@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 func sharedControlFixture(t *testing.T) (*sql.DB, string) {
@@ -29,7 +31,7 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 	db, dsn := sharedControlFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	config, _ := normalizeInteractiveQueries(nil)
+	config, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, "short", config, false); err == nil {
 		t.Fatal("first shared initialization accepted an unusable bootstrap")
 	}
@@ -88,7 +90,7 @@ func TestSharedControlSchemaMatchesMetadataAndExcludesPayloads(t *testing.T) {
 	t.Parallel()
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
-	config, _ := normalizeInteractiveQueries(nil)
+	config, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, config, false); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +240,7 @@ func TestSharedControlRevokesDependentCredentials(t *testing.T) {
 	t.Parallel()
 	db, _ := sharedControlFixture(t)
 	ctx := context.Background()
-	config, _ := normalizeInteractiveQueries(nil)
+	config, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, config, false); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +291,7 @@ func TestSharedHostedControlRejectsLegacyOwnerRoutedDatabaseWithoutMigrating(t *
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err == nil || !strings.Contains(err.Error(), "requires a fresh PostgreSQL control database") {
 		t.Fatal("previous deployment was not rejected", err)
 	}

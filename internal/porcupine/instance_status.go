@@ -5,6 +5,7 @@ import (
 	"time"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 const instanceProbeTimeout = time.Second
@@ -44,7 +45,7 @@ type HostedIngestionStatus struct {
 
 type InstanceStatus struct {
 	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters. Visible only to instance administrators."`
-	QueryExecution  *QueryExecutionStatus          `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
+	QueryExecution  *query.QueryExecutionStatus    `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
 	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
 	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
@@ -85,9 +86,9 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		}
 	}
 	if s.shared != nil {
-		health := s.sharedQueries.status()
+		health := s.queries.Status()
 		result.Checks.QueryExecution = dependencyOK
-		if health.unavailable() {
+		if health.Unavailable() {
 			result.Checks.QueryExecution = dependencyUnavailable
 			result.Status = "degraded"
 		}
