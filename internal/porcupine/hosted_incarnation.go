@@ -162,7 +162,6 @@ func (i *hostedIncarnation) fence() bool {
 	}
 	// A returned call no longer counts, even with an unacknowledged ticket.
 	// Anything still running could otherwise write after reclamation.
-	slog.Error("hosted worker lease expired with project activity outstanding; stopping", "incarnation_id", id, "activities", outstanding)
 	i.failStop()
 	return false
 }
