@@ -291,7 +291,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	var loseCommit atomic.Bool
-	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit)
+	var reservationReads atomic.Int64
+	wrapped, er := installLostHostedCommit(a.controlDSN, fa.publisher, &loseCommit, &reservationReads)
 	if er != nil {
 		t.Fatal(er)
 	}
@@ -309,6 +310,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	rejectEffects.Store(false)
 
+	readsBefore := reservationReads.Load()
 	blockEffects.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
@@ -317,13 +319,24 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	case <-t.Context().Done():
 		t.Fatal("admitted upload did not enter")
 	}
+	var reserved, published bool
+	boundaryErr := a.service.control.QueryRowContext(t.Context(), `
+		SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE project_id=$1 AND batch_id=$2),
+		       EXISTS(SELECT 1 FROM pipeline_effect_jobs WHERE project_id=$1 AND batch_id=$2)
+	`, project, body.id).Scan(&reserved, &published)
 	_, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=0 WHERE id=$1`, defaultTenantID)
 	close(resumeEffects)
+	if boundaryErr != nil || !reserved || published {
+		t.Fatal("first S3 PUT must see committed reservation and no published output", reserved, published, boundaryErr)
+	}
 	if er != nil {
 		t.Fatal(er)
 	}
 	if err = <-completed; err != nil {
 		t.Fatal("accepted native work failed after budget reduction", err)
+	}
+	if reads := reservationReads.Load() - readsBefore; reads != 1 {
+		t.Fatalf("flush read the reservation %d times, want one recovery read", reads)
 	}
 	if _, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=NULL WHERE id=$1`, defaultTenantID); er != nil {
 		t.Fatal(er)

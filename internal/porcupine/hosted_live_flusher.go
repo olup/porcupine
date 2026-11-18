@@ -117,9 +117,13 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		case lakeapi.DuplicateLiveBatch:
 			return nil
 		case lakeapi.CommittedLiveBatch:
-			binding, e := f.publisher.reservation(ctx, scope)
-			if e != nil {
-				return e
+			binding := stager.binding
+			if binding == (output.PipelineBinding{}) {
+				// The native transaction can return an existing proof without staging.
+				binding, e = f.publisher.reservation(ctx, scope)
+				if e != nil {
+					return e
+				}
 			}
 			if e = f.publisher.publish(ctx, binding, v.Evidence); e != nil {
 				return e

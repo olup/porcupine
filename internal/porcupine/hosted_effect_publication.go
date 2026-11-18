@@ -118,6 +118,7 @@ type reservingHostedStager struct {
 	routing   frozenLiveOutputPlan
 	admission *hostedIngestionPolicy
 	admitted  bool
+	binding   output.PipelineBinding
 }
 
 func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
@@ -222,7 +223,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	}
 
 	// Recheck the saved creator, lifecycle and every revision in the transaction
-	// which acquires capacity. No external I/O happens while these locks are held.
+	// which acquires capacity. Commit the reservation before any S3 PUT so a
+	// successor can account for abandoned objects and settle a retained native
+	// proof after a crash. Publication waits for that proof.
 	err = p.transaction(ctx, func(tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
@@ -266,6 +269,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		}
 	}
 
+	s.binding = binding
 	return staged, nil
 }
 

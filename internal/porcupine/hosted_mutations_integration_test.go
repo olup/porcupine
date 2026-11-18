@@ -176,7 +176,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	// A cold worker publishes the original after native response loss. Lose the
 	// returned PostgreSQL COMMIT response after the receipt and cursor commit.
 	var losePublication atomic.Bool
-	lostDB, err := installLostHostedCommit(b.controlDSN, fb.publisher, &losePublication)
+	lostDB, err := installLostHostedCommit(b.controlDSN, fb.publisher, &losePublication, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
