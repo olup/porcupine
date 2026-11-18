@@ -6,11 +6,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/syncx"
 )
 
 func TestContextMutexZeroValueAndCanceledWaiter(t *testing.T) {
 	t.Parallel()
-	var gate contextMutex
+	var gate syncx.ContextMutex
 	if err := gate.Lock(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +45,7 @@ func TestContextMutexZeroValueAndCanceledWaiter(t *testing.T) {
 
 func TestContextMutexSerializesConcurrentCallers(t *testing.T) {
 	t.Parallel()
-	var gate contextMutex
+	var gate syncx.ContextMutex
 	var workers sync.WaitGroup
 	counter := 0
 	for range 16 {

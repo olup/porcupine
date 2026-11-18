@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -15,7 +16,7 @@ type usageRuntime struct {
 	config   usage.Config
 	cancel   context.CancelFunc
 	done     chan struct{}
-	flush    contextMutex
+	flush    syncx.ContextMutex
 	clock    func() time.Time
 	sampler  parquetUsageSampler
 }

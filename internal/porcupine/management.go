@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -149,7 +150,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	config.Formats = map[string]huma.Format{"application/json": {
 		Marshal: func(w io.Writer, v any) error {
 			if err, ok := v.(huma.StatusError); ok {
-				var managed *managementError
+				var managed *apierr.Error
 				if errors.As(err, &managed) {
 					return json.NewEncoder(w).Encode(managed)
 				}
@@ -325,21 +326,21 @@ func (s *Service) managementListProjects(ctx context.Context, input *ProjectList
 	a := principal(ctx)
 	rows, err := s.control.QueryContext(ctx, `SELECT id,tenant_id,name,created_at,ingestion_mode FROM projects WHERE ($1='' OR tenant_id=$2) AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=projects.id) ORDER BY created_at,id`, input.TenantID, input.TenantID)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer rows.Close()
 	items := []Project{}
 	for rows.Next() {
 		var p Project
 		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode); err != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if auth.Authorize(a, "management:read", p.ID) {
 			items = append(items, p)
 		}
 	}
 	if rows.Err() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return &ProjectListOutput{Body: ProjectList{Projects: items}}, nil
 }
@@ -347,7 +348,7 @@ func (s *Service) managementListProjects(ctx context.Context, input *ProjectList
 func projectName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" || len(name) > 200 {
-		return "", apiError(400, "name must contain 1 to 200 UTF-8 bytes")
+		return "", apierr.New(400, "name must contain 1 to 200 UTF-8 bytes")
 	}
 	return name, nil
 }
@@ -361,10 +362,10 @@ func (s *Service) managementRenameProject(ctx context.Context, input *ProjectRen
 	p := &out.Body.Project
 	err = s.control.QueryRowContext(ctx, `UPDATE projects SET name=$1 WHERE id=$2 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=projects.id) AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=projects.tenant_id) RETURNING id,tenant_id,name,created_at,ingestion_mode`, name, input.ID).Scan(&p.ID, &p.TenantID, &p.Name, &p.CreatedAt, &p.IngestionMode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "project not found")
+		return nil, apierr.New(404, "project not found")
 	}
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return out, nil
 }
@@ -373,14 +374,14 @@ func (s *Service) managementDeleteProject(ctx context.Context, input *ProjectIDI
 	if !principal(ctx).Admin() {
 		tenant, err := s.projectAdministrationTenant(ctx, input.ID)
 		if err != nil {
-			return nil, apiError(404, "project not found")
+			return nil, apierr.New(404, "project not found")
 		}
 		tx, err := s.beginTenantAdministration(ctx, tenant)
 		if err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
-			return nil, apiError(503, "tenant administration unavailable")
+			return nil, apierr.New(503, "tenant administration unavailable")
 		}
 	}
 	return nil, s.deleteProject(ctx, input.ID)
@@ -392,7 +393,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		tenantID = defaultTenantID
 	}
 	if !principal(ctx).CanAdminTenant(tenantID) {
-		return nil, apiError(403, "tenant administrator required to create projects")
+		return nil, apierr.New(403, "tenant administrator required to create projects")
 	}
 	if _, err := s.loadTenant(ctx, tenantID); err != nil {
 		return nil, err
@@ -406,10 +407,10 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		mode = ingestionMixed
 	}
 	if mode != ingestionMixed && mode != ingestionServerOnly {
-		return nil, apiError(400, "ingestion_mode must be mixed or server_only")
+		return nil, apierr.New(400, "ingestion_mode must be mixed or server_only")
 	}
 	if mode == ingestionServerOnly && s.resources == nil {
-		return nil, apiError(503, "server_only ingestion requires configured OAuth")
+		return nil, apierr.New(503, "server_only ingestion requires configured OAuth")
 	}
 	p := Project{ID: eventapi.NewID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
 	raw := ""
@@ -431,11 +432,11 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		}
 	}
 	if err != nil || tx.Commit() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if s.hosted != nil {
 		if err := s.initializeHostedProject(ctx, p.ID); err != nil {
-			return nil, apiError(503, "hosted project initialization unavailable")
+			return nil, apierr.New(503, "hosted project initialization unavailable")
 		}
 		return &ProjectCreateOutput{Body: ProjectCreated{Project: p, IngestToken: raw}}, nil
 	}
@@ -450,7 +451,7 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
 		coalesce(b.client_id,''),coalesce(b.audience,''),coalesce(t.tenant_id,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id LEFT JOIN tenant_credentials t ON t.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer rows.Close()
 	items := []AccessKey{}
@@ -458,10 +459,10 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 		var key AccessKey
 		var permissions, projects string
 		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience, &key.TenantID); err != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if len(a.TenantAdmins) > 0 && !a.Admin() && !a.CanAdminTenant(key.TenantID) {
 			continue
@@ -471,13 +472,13 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 		}
 	}
 	if rows.Err() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	rows.Close()
 	for i := range items {
 		items[i].Projects, err = activeProjects(ctx, s.control, items[i].Projects)
 		if err != nil {
-			return nil, apiError(503, "project authority unavailable")
+			return nil, apierr.New(503, "project authority unavailable")
 		}
 	}
 	return &AccessKeyListOutput{Body: AccessKeyList{AccessKeys: items}}, nil
@@ -485,32 +486,32 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 
 func (s *Service) validateCredentialGrant(ctx context.Context, a auth.Principal, name string, permissions, projects []string) error {
 	if strings.TrimSpace(name) == "" || len(name) > 200 || len(permissions) == 0 || len(projects) == 0 {
-		return apiError(400, "name, permissions and projects are required")
+		return apierr.New(400, "name, permissions and projects are required")
 	}
 	for _, permission := range permissions {
 		if !slices.Contains(auth.Permissions(), permission) {
-			return apiError(400, "unknown permission")
+			return apierr.New(400, "unknown permission")
 		}
 		if !auth.Authorize(a, permission, "") {
-			return apiError(403, "cannot grant permissions you do not hold")
+			return apierr.New(403, "cannot grant permissions you do not hold")
 		}
 	}
 	if !a.ContainsProjects(projects) {
-		return apiError(403, "cannot grant projects outside your scope")
+		return apierr.New(403, "cannot grant projects outside your scope")
 	}
 	for _, project := range projects {
 		for _, permission := range permissions {
 			if !auth.Authorize(a, permission, project) {
-				return apiError(403, "permission exceeds the grant on this project")
+				return apierr.New(403, "permission exceeds the grant on this project")
 			}
 		}
 		if project != "*" {
 			var n int
 			if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1`, project).Scan(&n); err != nil {
-				return apiError(500, "storage error")
+				return apierr.New(500, "storage error")
 			}
 			if n == 0 {
-				return apiError(400, "unknown project")
+				return apierr.New(400, "unknown project")
 			}
 			if err := s.requireProjectActive(ctx, project); err != nil {
 				return err
@@ -518,7 +519,7 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a auth.Principal,
 		}
 	}
 	if slices.Contains(permissions, "instance:admin") && !slices.Contains(projects, "*") {
-		return apiError(400, "instance:admin requires wildcard project scope")
+		return apierr.New(400, "instance:admin requires wildcard project scope")
 	}
 	return nil
 }
@@ -526,16 +527,16 @@ func (s *Service) validateCredentialGrant(ctx context.Context, a auth.Principal,
 func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreateInput) (*AccessKeyCreateOutput, error) {
 	a, body := principal(ctx), input.Body
 	if slices.Contains(body.Permissions, tenantAdminScope) {
-		return nil, apiError(400, "tenant administration requires interactive human consent")
+		return nil, apierr.New(400, "tenant administration requires interactive human consent")
 	}
 	if len(a.TenantIDs) > 0 && len(a.TenantAdmins) == 0 && !a.Admin() {
-		return nil, apiError(403, "team service accounts cannot provision independent raw credentials")
+		return nil, apierr.New(403, "team service accounts cannot provision independent raw credentials")
 	}
 	if len(a.TenantAdmins) > 0 && !a.Admin() && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
-		return nil, apiError(403, "use tenant service accounts for private team access")
+		return nil, apierr.New(403, "use tenant service accounts for private team access")
 	}
 	if !a.CanProvisionCredentials() {
-		return nil, apiError(403, "instance administrator required to provision independent credentials")
+		return nil, apierr.New(403, "instance administrator required to provision independent credentials")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
@@ -546,7 +547,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	}
 	body.SourceID = sourceID
 	if s.resources != nil && (s.oauth == nil || !s.oauth.config.AllowLegacyKeys) && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
-		return nil, apiError(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
+		return nil, apierr.New(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
 	id, raw := eventapi.NewID(), token()
 	permissions, _ := json.Marshal(body.Permissions)
@@ -554,11 +555,11 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	tenantID := ""
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(503, "credential storage unavailable")
+		return nil, apierr.New(503, "credential storage unavailable")
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(503, "credential storage unavailable")
+		return nil, apierr.New(503, "credential storage unavailable")
 	}
 	if err := s.requireExternalCurrent(ctx, tx); err != nil {
 		return nil, err
@@ -568,7 +569,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	}
 	if len(body.Permissions) == 1 && body.Permissions[0] == "events:write" && len(body.Projects) == 1 && body.Projects[0] != "*" {
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, body.Projects[0]).Scan(&tenantID); err != nil {
-			return nil, apiError(404, "project not found")
+			return nil, apierr.New(404, "project not found")
 		}
 		if len(a.TenantAdmins) > 0 && !a.Admin() {
 			if err := s.requireTenantAdminCurrent(ctx, tx, a, tenantID); err != nil {
@@ -578,14 +579,14 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	}
 	owner, err := credentialTenantOwner(ctx, tx, body.Permissions, body.Projects)
 	if err != nil {
-		return nil, apiError(503, "credential ownership unavailable")
+		return nil, apierr.New(503, "credential ownership unavailable")
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id,owner_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, body.Name, hash(raw), string(permissions), string(projects), now(), body.SourceID, owner)
 	if err == nil && tenantID != "" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, tenantID)
 	}
 	if err != nil || tx.Commit() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return &AccessKeyCreateOutput{Body: AccessKeyCreated{TenantID: tenantID, ID: id, Name: body.Name, SourceID: body.SourceID, Permissions: body.Permissions, Projects: body.Projects, Token: raw}}, nil
 }
@@ -593,12 +594,12 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDeleteInput) (*struct{}, error) {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer tx.Rollback()
 	// Serialize administrator counts and revocation, including concurrent requests.
 	if _, err = tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if err := s.requireExternalCurrent(ctx, tx); err != nil {
 		return nil, err
@@ -607,9 +608,9 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 		var tenant string
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_credentials WHERE principal_id=$1`, input.ID).Scan(&tenant); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return nil, apiError(403, "key is not owned by an administered tenant")
+				return nil, apierr.New(403, "key is not owned by an administered tenant")
 			}
-			return nil, apiError(503, "credential ownership unavailable")
+			return nil, apierr.New(503, "credential ownership unavailable")
 		}
 		if err := s.requireTenantAdminCurrent(ctx, tx, principal(ctx), tenant); err != nil {
 			return nil, err
@@ -618,17 +619,17 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	var permissions string
 	err = tx.QueryRowContext(ctx, `SELECT permissions FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, input.ID).Scan(&permissions)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "active key not found")
+		return nil, apierr.New(404, "active key not found")
 	}
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	var granted []string
 	if json.Unmarshal([]byte(permissions), &granted) != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if !principal(ctx).Admin() && (slices.Contains(granted, "instance:admin") || slices.Contains(granted, tenantAdminScope)) {
-		return nil, apiError(403, "human administration credentials require instance administration")
+		return nil, apierr.New(403, "human administration credentials require instance administration")
 	}
 	if slices.Contains(granted, "instance:admin") && !s.externalAuthEnabled() {
 		// Human grants, interactive-only client registrations, and service keys are
@@ -637,17 +638,17 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 		replacement, replacementErr := independentAdminAvailable(ctx, tx, input.ID, s.oauth != nil, static)
 		err = replacementErr
 		if err != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if !replacement {
-			return nil, apiError(409, "cannot revoke the last independent administrator")
+			return nil, apierr.New(409, "cannot revoke the last independent administrator")
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=$1 WHERE id=$2`, now(), input.ID); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return nil, nil
 }
@@ -696,7 +697,7 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,delivered,ingestion_metadata,is_imported FROM events WHERE project_id=$1 AND identity_snapshot='' ORDER BY id DESC LIMIT $2`, input.ID, input.Limit)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer rows.Close()
 	events := []eventapi.Event{}
@@ -704,22 +705,22 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		var e eventapi.Event
 		var props, ingestion string
 		if err = rows.Scan(&e.ID, &e.ProjectID, &e.UUID, &e.Event, &e.DistinctID, &props, &e.Timestamp, &e.ReceivedAt, &e.Delivered, &ingestion, &e.Imported); err != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if err := decodeIngestionMetadata(&e, ingestion); err != nil {
-			return nil, apiError(503, "event storage unavailable")
+			return nil, apierr.New(503, "event storage unavailable")
 		}
 		e.Properties = json.RawMessage(props)
 		events = append(events, e)
 	}
 	if rows.Err() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return &EventListOutput{Body: EventList{Events: events}}, nil
 }
 
 func writeManagementProblem(w http.ResponseWriter, err error) {
-	var managed *managementError
+	var managed *apierr.Error
 	if errors.As(err, &managed) {
 		write(w, managed.GetStatus(), managed)
 		return

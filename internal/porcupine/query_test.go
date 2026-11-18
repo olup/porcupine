@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -15,7 +16,7 @@ func queryInput(projectID, sql string) *AnalyticsQueryInput {
 	return input
 }
 func queryStatus(err error) int {
-	if failure, ok := err.(*managementError); ok {
+	if failure, ok := err.(*apierr.Error); ok {
 		return failure.GetStatus()
 	}
 	return 0

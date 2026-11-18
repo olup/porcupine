@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 type EventProfileOptions struct {
@@ -40,7 +42,7 @@ func profileTime(raw *string) (*string, error) {
 	}
 	ms, err := strconv.ParseInt(*raw, 10, 64)
 	if err != nil {
-		return nil, apiError(503, "invalid event profile storage response")
+		return nil, apierr.New(503, "invalid event profile storage response")
 	}
 	value := time.UnixMilli(ms).UTC().Format(time.RFC3339Nano)
 	return &value, nil
@@ -142,7 +144,7 @@ func NormalizeEventProfileInput(input EventProfileInput) (EventProfileOptions, e
 	}
 	examples := input.ExampleLimit
 	if strings.TrimSpace(input.Event) == "" || len(input.Event) > 500 || input.SampleLimit < 1 || input.SampleLimit > 1000 || examples < 0 || examples > 5 || input.PropertyLimit < 1 || input.PropertyLimit > 100 || len(input.PropertyPrefix) > 200 || (input.PropertyKind != "all" && input.PropertyKind != "custom" && input.PropertyKind != "reserved") {
-		return EventProfileOptions{}, apiError(400, "invalid event profile parameters")
+		return EventProfileOptions{}, apierr.New(400, "invalid event profile parameters")
 	}
 	return EventProfileOptions{event: input.Event, sampleLimit: input.SampleLimit, exampleLimit: examples, propertyLimit: input.PropertyLimit, propertyPrefix: input.PropertyPrefix, propertyKind: input.PropertyKind, includeValues: input.IncludeValues}, nil
 }
@@ -167,11 +169,11 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 		RequestedLimit: options.sampleLimit, SampledEvents: len(read.Rows), Order: "timestamp_ms_desc,id_desc", MaxPropertyBytes: EventProfileFieldBytes, MaxSampleBytes: EventProfileSampleBytes, MaxPropertyNameBytes: 200,
 	}}
 	if len(read.Rows) > options.sampleLimit {
-		return EventProfile{}, apiError(503, "invalid event profile storage response")
+		return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 	}
 	total, err := strconv.ParseUint(read.activity.Total, 10, 64)
 	if err != nil {
-		return EventProfile{}, apiError(503, "invalid event profile storage response")
+		return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 	}
 	result.Sampling.SampleTruncated = uint64(len(read.Rows)) != min(total, uint64(options.sampleLimit))
 	objects := make([]map[string]json.RawMessage, 0, len(read.Rows))
@@ -180,20 +182,20 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 	bytesRetained := 0
 	for index, row := range read.Rows {
 		if !ValidStoredEventUUID(row.UUID) || len(row.Timestamp) > 64 || len(row.ReceivedAt) > 64 || len(row.Properties) > EventProfileFieldBytes || len(row.Context) > EventProfileFieldBytes || row.PropertyBytes < 0 || row.ContextBytes < 0 {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		occurred, err := time.Parse(time.RFC3339Nano, row.Timestamp)
 		if err != nil || occurred.UnixMilli() != row.TimestampMS {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		if _, err := time.Parse(time.RFC3339Nano, row.ReceivedAt); err != nil {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		if id, err := strconv.ParseUint(row.ID, 10, 64); err != nil || id == 0 {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		if row.Properties != "" && len(row.Properties) != row.PropertyBytes || row.Context != "" && len(row.Context) != row.ContextBytes {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		if index == 0 {
 			at := row.Timestamp
@@ -203,7 +205,7 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 		result.Sampling.FirstOccurredAt = &at
 		bytesRetained += len(row.Properties) + len(row.Context)
 		if bytesRetained > EventProfileSampleBytes {
-			return EventProfile{}, apiError(503, "invalid event profile storage response")
+			return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 		}
 		if index < options.exampleLimit {
 			example := EventProfileExample{EventID: row.ID, UUID: row.UUID, Timestamp: row.Timestamp, ReceivedAt: row.ReceivedAt, TruncatedFields: []string{}}
@@ -215,7 +217,7 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 			if row.Context == "" {
 				example.TruncatedFields = append(example.TruncatedFields, "context")
 			} else if !json.Valid([]byte(row.Context)) {
-				return EventProfile{}, apiError(503, "invalid event profile storage response")
+				return EventProfile{}, apierr.New(503, "invalid event profile storage response")
 			} else {
 				example.Context = json.RawMessage(row.Context)
 			}
@@ -231,7 +233,7 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 		}
 		var object map[string]json.RawMessage
 		if json.Unmarshal([]byte(row.Properties), &object) != nil || object == nil {
-			return EventProfile{}, apiError(503, "invalid event profile property sample")
+			return EventProfile{}, apierr.New(503, "invalid event profile property sample")
 		}
 		objects = append(objects, object)
 		objectRows = append(objectRows, row)
@@ -278,7 +280,7 @@ func SummarizeEventProfile(read EventProfileRead, options EventProfileOptions, a
 			}
 			canonical, err := canonicalProfileValue(raw)
 			if err != nil {
-				return EventProfile{}, apiError(503, "invalid event profile property sample")
+				return EventProfile{}, apierr.New(503, "invalid event profile property sample")
 			}
 			digest := sha256.Sum256(canonical)
 			value := stats.values[digest]

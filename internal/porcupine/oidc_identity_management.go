@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -48,24 +49,24 @@ func (s *Service) registerOIDCIdentityManagement(api huma.API, op func(string, s
 
 func (s *Service) managementListHumanIdentities(ctx context.Context, input *HumanIdentityListInput) (*HumanIdentityListOutput, error) {
 	if !principal(ctx).Admin() {
-		return nil, apiError(403, "deployment operator required")
+		return nil, apierr.New(403, "deployment operator required")
 	}
 	limit := input.Limit
 	if limit == 0 {
 		limit = 100
 	}
 	if limit < 1 || limit > 200 || len(input.Cursor) > 128 {
-		return nil, apiError(400, "invalid identity pagination")
+		return nil, apierr.New(400, "invalid identity pagination")
 	}
 	var human string
 	if err := s.control.QueryRowContext(ctx, `SELECT principal_id FROM email_humans WHERE principal_id=$1`, input.ID).Scan(&human); errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "human not found")
+		return nil, apierr.New(404, "human not found")
 	} else if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	rows, err := s.control.QueryContext(ctx, `SELECT id,issuer,subject,linked_email,created_at FROM oidc_identities WHERE principal_id=$1 AND id>$2 ORDER BY id LIMIT $3`, input.ID, input.Cursor, limit+1)
 	if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	defer rows.Close()
 	out := &HumanIdentityListOutput{}
@@ -73,7 +74,7 @@ func (s *Service) managementListHumanIdentities(ctx context.Context, input *Huma
 	for rows.Next() {
 		var identity HumanIdentity
 		if err := rows.Scan(&identity.ID, &identity.Issuer, &identity.Subject, &identity.LinkedEmail, &identity.CreatedAt); err != nil {
-			return nil, apiError(503, "identity storage unavailable")
+			return nil, apierr.New(503, "identity storage unavailable")
 		}
 		if len(out.Body.Identities) == limit {
 			out.Body.NextCursor = out.Body.Identities[limit-1].ID
@@ -82,51 +83,51 @@ func (s *Service) managementListHumanIdentities(ctx context.Context, input *Huma
 		out.Body.Identities = append(out.Body.Identities, identity)
 	}
 	if rows.Err() != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	return out, nil
 }
 
 func (s *Service) managementUnlinkHumanIdentity(ctx context.Context, input *HumanIdentityDeleteInput) (*struct{}, error) {
 	if !principal(ctx).Admin() {
-		return nil, apiError(403, "deployment operator required")
+		return nil, apierr.New(403, "deployment operator required")
 	}
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	current, err := s.loadCredentialActorFrom(ctx, tx, principal(ctx).ID)
 	if err != nil || !current.Admin() {
-		return nil, apiError(403, "current deployment operator required")
+		return nil, apierr.New(403, "current deployment operator required")
 	}
 	var human string
 	if err := tx.QueryRowContext(ctx, `SELECT principal_id FROM email_humans WHERE principal_id=$1`, input.ID).Scan(&human); errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "human not found")
+		return nil, apierr.New(404, "human not found")
 	} else if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM oidc_identities WHERE id=$1 AND principal_id=$2`, input.IdentityID, input.ID)
 	if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	if count > 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,$2) WHERE id IN (SELECT principal_id FROM oauth_interactive_grants WHERE human_id=$1)`, input.ID, now()); err != nil {
-			return nil, apiError(503, "identity storage unavailable")
+			return nil, apierr.New(503, "identity storage unavailable")
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE email_humans SET login_version=login_version+1 WHERE principal_id=$1`, input.ID); err != nil {
-			return nil, apiError(503, "identity storage unavailable")
+			return nil, apierr.New(503, "identity storage unavailable")
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, apiError(503, "identity storage unavailable")
+		return nil, apierr.New(503, "identity storage unavailable")
 	}
 	return nil, nil
 }

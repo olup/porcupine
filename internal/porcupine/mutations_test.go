@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -19,7 +20,7 @@ func mutationContext(id string) context.Context {
 
 func mutationErrorStatus(t *testing.T, err error, status int) {
 	t.Helper()
-	var api *managementError
+	var api *apierr.Error
 	if !errors.As(err, &api) || api.GetStatus() != status {
 		t.Fatalf("got error %v, want status %d", err, status)
 	}

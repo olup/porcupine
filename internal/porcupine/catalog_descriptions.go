@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -39,11 +40,11 @@ func (s *Service) setCatalogDescription(ctx context.Context, input *CatalogDescr
 	}
 	description := strings.TrimSpace(body.Description)
 	if !key.valid() || len(description) > 2000 || strings.ContainsRune(description, 0) {
-		return nil, apiError(400, "invalid catalog description or target")
+		return nil, apierr.New(400, "invalid catalog description or target")
 	}
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(503, "catalog descriptions unavailable")
+		return nil, apierr.New(503, "catalog descriptions unavailable")
 	}
 	defer tx.Rollback()
 
@@ -55,10 +56,10 @@ func (s *Service) setCatalogDescription(ctx context.Context, input *CatalogDescr
 	var project string
 	err = tx.QueryRowContext(ctx, `SELECT p.id FROM projects p JOIN tenants t ON t.id=p.tenant_id WHERE p.id=$1`+lock, input.ID).Scan(&project)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "project not found")
+		return nil, apierr.New(404, "project not found")
 	}
 	if err != nil {
-		return nil, apiError(503, "catalog descriptions unavailable")
+		return nil, apierr.New(503, "catalog descriptions unavailable")
 	}
 	if err := requireActiveProjectSet(ctx, tx, []string{project}); err != nil {
 		return nil, err
@@ -77,7 +78,7 @@ WHERE catalog_descriptions.description <> excluded.description OR catalog_descri
 			project, key.event, key.kind, key.property, description, principal(ctx).ID, s.clock().UTC().Format(time.RFC3339Nano))
 	}
 	if err != nil || tx.Commit() != nil {
-		return nil, apiError(503, "catalog descriptions unavailable")
+		return nil, apierr.New(503, "catalog descriptions unavailable")
 	}
 	return nil, nil
 }

@@ -3,14 +3,13 @@ package output
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -90,8 +89,7 @@ func (s *PipelineJobs) hostedPipelinePage(ctx context.Context, project string, l
 }
 
 func hostedRuleRef(id, revision string, raw []byte) PipelineRef {
-	sum := sha256.Sum256(raw)
-	return PipelineRef{Key: "control-rule/" + id + "/" + revision, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(raw))}
+	return PipelineRef{Key: "control-rule/" + id + "/" + revision, SHA256: sha256Hex(raw), Bytes: int64(len(raw))}
 }
 
 // HostedPipelineRule loads the definition rule frozen by the caller's project
@@ -130,34 +128,34 @@ func (s *PipelineJobs) HostedWebhookDestinationTx(ctx context.Context, tx *sql.T
 func pipelineHostedError(err error) error {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return apiError(404, "pipeline not found")
+		return apierr.New(404, "pipeline not found")
 	case errors.Is(err, ErrPipelineAuthority):
-		return apiError(403, "pipeline creator is not authorized")
+		return apierr.New(403, "pipeline creator is not authorized")
 	case errors.Is(err, ErrPipelineCapacity):
-		return apiError(409, "pipeline limit reached")
+		return apierr.New(409, "pipeline limit reached")
 	case errors.Is(err, ErrPipelineConflict):
-		return apiError(409, "pipeline changed; retry the request")
+		return apierr.New(409, "pipeline changed; retry the request")
 	default:
 		var status interface{ GetStatus() int }
 		if errors.As(err, &status) {
 			return err
 		}
-		return apiError(503, "pipeline storage unavailable")
+		return apierr.New(503, "pipeline storage unavailable")
 	}
 }
 
 func (s *PipelineJobs) defineHostedPipeline(ctx context.Context, project string, request PipelineRequest, caller auth.Principal) (*Pipeline, error) {
 	if !s.Enabled() {
-		return nil, apiError(503, "pipelines are not configured")
+		return nil, apierr.New(503, "pipelines are not configured")
 	}
 	if request.Kind == "s3" && !s.pg.scheduled.ready() {
-		return nil, apiError(503, "hosted query pipelines are unavailable")
+		return nil, apierr.New(503, "hosted query pipelines are unavailable")
 	}
 	if caller.External != nil {
 		return nil, pipelineHostedError(ErrPipelineAuthority)
 	}
 	if strings.TrimSpace(request.Name) == "" || len(request.Name) > 200 {
-		return nil, apiError(400, "invalid pipeline name")
+		return nil, apierr.New(400, "invalid pipeline name")
 	}
 	p := Pipeline{ID: eventapi.NewID(), ProjectID: project, Kind: request.Kind, Name: request.Name, State: "active", CreatedAtMS: s.clock().UnixMilli()}
 	t := PipelineTarget{ID: p.ID, Incarnation: eventapi.NewID(), RuleRevision: eventapi.NewID(), DestinationRevision: eventapi.NewID(), CreatorID: caller.ID}
@@ -207,7 +205,7 @@ func (s *PipelineJobs) defineHostedPipeline(ctx context.Context, project string,
 
 func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, state string, replacement *PipelineChange) (*Pipeline, error) {
 	if (state == "active" || replacement != nil) && !s.Enabled() {
-		return nil, apiError(503, "pipelines are not configured")
+		return nil, apierr.New(503, "pipelines are not configured")
 	}
 	if state == "retired" {
 		p, err := s.hostedPipeline(ctx, project, id)
@@ -264,9 +262,9 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 			}
 			if !bytes.Equal(p.Config, newConfig) {
 				if p.Kind == "s3" {
-					return apiError(409, "S3 specification cannot change during credential rotation")
+					return apierr.New(409, "S3 specification cannot change during credential rotation")
 				}
-				return apiError(409, "event filters cannot change during credential rotation")
+				return apierr.New(409, "event filters cannot change during credential rotation")
 			}
 			if bytes.Equal(private, newPrivate) {
 				return nil

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -78,7 +79,7 @@ func (s *Service) registerTenants(api huma.API, op func(string, string, string, 
 
 func tenantOperator(ctx context.Context) error {
 	if !principal(ctx).Admin() {
-		return apiError(403, "deployment operator required for tenant management")
+		return apierr.New(403, "deployment operator required for tenant management")
 	}
 	return nil
 }
@@ -89,14 +90,14 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 		limit = 100
 	}
 	if limit < 1 || limit > 200 || len(input.Cursor) > 128 {
-		return nil, apiError(400, "invalid tenant pagination")
+		return nil, apierr.New(400, "invalid tenant pagination")
 	}
 	args := []any{input.Cursor}
 	filter := ""
 	if !principal(ctx).Admin() {
 		admins := principal(ctx).TenantAdmins
 		if len(admins) == 0 {
-			return nil, apiError(403, "tenant administrator required")
+			return nil, apierr.New(403, "tenant administrator required")
 		}
 		markers := []string{}
 		for _, id := range admins {
@@ -108,7 +109,7 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 	args = append(args, limit+1)
 	rows, err := s.control.QueryContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id>$1 AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=tenants.id)`+filter+` ORDER BY id LIMIT `+fmt.Sprintf("$%d", len(args)), args...)
 	if err != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	defer rows.Close()
 	out := &TenantListOutput{}
@@ -116,7 +117,7 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 	for rows.Next() {
 		t, err := scanTenant(rows)
 		if err != nil {
-			return nil, apiError(503, "tenant storage unavailable")
+			return nil, apierr.New(503, "tenant storage unavailable")
 		}
 		if len(out.Body.Tenants) == limit {
 			out.Body.NextCursor = out.Body.Tenants[limit-1].ID
@@ -125,7 +126,7 @@ func (s *Service) managementListTenants(ctx context.Context, input *TenantListIn
 		out.Body.Tenants = append(out.Body.Tenants, t)
 	}
 	if rows.Err() != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	return out, nil
 }
@@ -149,7 +150,7 @@ func (s *Service) managementCreateTenant(ctx context.Context, input *TenantCreat
 
 func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput) (*TenantOutput, error) {
 	if !principal(ctx).CanAdminTenant(input.TenantID) {
-		return nil, apiError(403, "tenant administrator required")
+		return nil, apierr.New(403, "tenant administrator required")
 	}
 	t, err := s.loadTenant(ctx, input.TenantID)
 	if err != nil {
@@ -162,10 +163,10 @@ func (s *Service) managementGetTenant(ctx context.Context, input *TenantIDInput)
 
 func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdateInput) (*TenantOutput, error) {
 	if !principal(ctx).CanAdminTenant(input.TenantID) {
-		return nil, apiError(403, "tenant administrator required")
+		return nil, apierr.New(403, "tenant administrator required")
 	}
 	if input.Body.IngestionAllowed != nil && !principal(ctx).Admin() {
-		return nil, apiError(403, "only instance operators may change ingestion admission")
+		return nil, apierr.New(403, "only instance operators may change ingestion admission")
 	}
 	if s.shared == nil {
 		if err := s.localAdmission.Lock(ctx); err != nil {
@@ -174,7 +175,7 @@ func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdat
 		defer s.localAdmission.Unlock()
 	}
 	if input.Body.Name == nil && input.Body.IngestionAllowed == nil {
-		return nil, apiError(400, "name or ingestion_allowed is required")
+		return nil, apierr.New(400, "name or ingestion_allowed is required")
 	}
 	var name any
 	if input.Body.Name != nil {
@@ -195,13 +196,13 @@ func (s *Service) managementUpdateTenant(ctx context.Context, input *TenantUpdat
 	defer tx.Rollback()
 	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET name=coalesce($1,name),ingestion_allowed=coalesce($2,ingestion_allowed) WHERE id=$3 RETURNING `+tenantColumns, name, allowed, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "tenant not found")
+		return nil, apierr.New(404, "tenant not found")
 	}
 	if err != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	out := &TenantOutput{}
 	out.Body.Tenant = t
@@ -229,13 +230,13 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 	defer tx.Rollback()
 	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5 WHERE id=$6 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "tenant not found")
+		return nil, apierr.New(404, "tenant not found")
 	}
 	if err != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, apiError(503, "tenant storage unavailable")
+		return nil, apierr.New(503, "tenant storage unavailable")
 	}
 	out := &TenantOutput{}
 	out.Body.Tenant = t
@@ -244,10 +245,10 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 
 func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageInput) (*TenantUsageOutput, error) {
 	if !principal(ctx).CanAdminTenant(input.TenantID) {
-		return nil, apiError(403, "tenant administrator required")
+		return nil, apierr.New(403, "tenant administrator required")
 	}
 	if err := s.publishLocalUsage(ctx); err != nil {
-		return nil, apiError(503, "tenant usage publication unavailable")
+		return nil, apierr.New(503, "tenant usage publication unavailable")
 	}
 	start, _ := tenantMonth(s.clock())
 	if input.Period != "" {
@@ -264,10 +265,10 @@ func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageI
 	var used int64
 	err := s.control.QueryRowContext(ctx, `SELECT t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE t.id=$2`, start.Format(time.RFC3339), input.TenantID).Scan(&allowed, &limit, &used)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "tenant not found")
+		return nil, apierr.New(404, "tenant not found")
 	}
 	if err != nil {
-		return nil, apiError(503, "tenant usage unavailable")
+		return nil, apierr.New(503, "tenant usage unavailable")
 	}
 	usage := TenantUsage{TenantID: input.TenantID, PeriodStart: start.Format(time.RFC3339), PeriodEnd: start.AddDate(0, 1, 0).Format(time.RFC3339), AcceptedEvents: strconv.FormatInt(used, 10), IngestionAllowed: allowed}
 	if limit.Valid {

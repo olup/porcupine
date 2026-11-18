@@ -5,9 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	"github.com/olup/porcupine/internal/usage"
@@ -83,7 +82,7 @@ func newPipelineRuntime(input *PipelineConfig) (*PipelineJobs, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256(c.Key)
+	fingerprint := sha256Hex(c.Key)
 	c.Key = nil
 	c.ExportLimits, err = NormalizeExportConfig(c.ExportLimits)
 	if err != nil {
@@ -118,7 +117,7 @@ func newPipelineRuntime(input *PipelineConfig) (*PipelineJobs, error) {
 		}
 		origins[origin] = true
 	}
-	return &PipelineJobs{admissions: make(map[*pipelineAdmission]struct{}), config: c, aead: aead, fingerprint: hex.EncodeToString(digest[:]), s3Origins: origins, webhookWake: make(chan struct{}, 1), s3Wake: make(chan struct{}, 1)}, nil
+	return &PipelineJobs{admissions: make(map[*pipelineAdmission]struct{}), config: c, aead: aead, fingerprint: fingerprint, s3Origins: origins, webhookWake: make(chan struct{}, 1), s3Wake: make(chan struct{}, 1)}, nil
 }
 
 func pipelineS3Origin(raw string) (string, error) {
@@ -335,7 +334,7 @@ func (s *PipelineJobs) WindowHasAdmissions(projectID string, startMS, endMS int6
 // its worker while deletion is checking the remote commit marker.
 func (s *PipelineJobs) lockS3Lifecycle(id string) (func(), error) {
 	if _, busy := s.s3Lifecycle.LoadOrStore(id, struct{}{}); busy {
-		return nil, apiError(409, "pipeline lifecycle change in progress")
+		return nil, apierr.New(409, "pipeline lifecycle change in progress")
 	}
 	return func() { s.s3Lifecycle.Delete(id) }, nil
 }

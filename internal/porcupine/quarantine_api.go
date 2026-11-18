@@ -5,6 +5,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"strconv"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -54,7 +55,7 @@ func (s *Service) listQuarantinedEvents(ctx context.Context, input *QuarantinedE
 		return nil, err
 	}
 	if input.Limit < 1 || input.Limit > 1000 {
-		return nil, apiError(400, "limit must be between 1 and 1000")
+		return nil, apierr.New(400, "limit must be between 1 and 1000")
 	}
 	cursor := input.AfterEventID
 	if cursor == "" {
@@ -62,11 +63,11 @@ func (s *Service) listQuarantinedEvents(ctx context.Context, input *QuarantinedE
 	}
 	after, err := strconv.ParseInt(cursor, 10, 64)
 	if err != nil || after < 0 {
-		return nil, apiError(400, "invalid event ID cursor")
+		return nil, apierr.New(400, "invalid event ID cursor")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.uuid,q.error_code,q.quarantined_at,e.received_at FROM events e JOIN delivery_quarantine q ON q.event_id=e.id WHERE e.project_id=$1 AND e.id>$2 ORDER BY e.id LIMIT $3`, input.ID, after, input.Limit+1)
 	if err != nil {
-		return nil, apiError(503, "quarantined event metadata unavailable")
+		return nil, apierr.New(503, "quarantined event metadata unavailable")
 	}
 	defer rows.Close()
 	result := QuarantinedEvents{Events: []QuarantinedEvent{}, Limit: input.Limit, AfterEventID: strconv.FormatInt(after, 10)}
@@ -74,13 +75,13 @@ func (s *Service) listQuarantinedEvents(ctx context.Context, input *QuarantinedE
 		var item QuarantinedEvent
 		var id int64
 		if rows.Scan(&id, &item.UUID, &item.ErrorCode, &item.QuarantinedAt, &item.ReceivedAt) != nil {
-			return nil, apiError(503, "quarantined event metadata unavailable")
+			return nil, apierr.New(503, "quarantined event metadata unavailable")
 		}
 		item.EventID = strconv.FormatInt(id, 10)
 		result.Events = append(result.Events, item)
 	}
 	if rows.Err() != nil {
-		return nil, apiError(503, "quarantined event metadata unavailable")
+		return nil, apierr.New(503, "quarantined event metadata unavailable")
 	}
 	if len(result.Events) > input.Limit {
 		result.Events = result.Events[:input.Limit]
@@ -96,18 +97,18 @@ func (s *Service) retryQuarantinedEvent(ctx context.Context, input *QuarantinedE
 	}
 	id, err := strconv.ParseInt(input.EventID, 10, 64)
 	if err != nil || id < 1 {
-		return nil, apiError(400, "invalid event ID")
+		return nil, apierr.New(400, "invalid event ID")
 	}
 	var exists int
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE id=$1 AND project_id=$2)`, id, input.ID).Scan(&exists); err != nil {
-		return nil, apiError(503, "quarantined event storage unavailable")
+		return nil, apierr.New(503, "quarantined event storage unavailable")
 	}
 	if exists == 0 {
-		return nil, apiError(404, "retained event not found")
+		return nil, apierr.New(404, "retained event not found")
 	}
 	changed, err := s.retryQuarantinedDelivery(ctx, input.ID, id)
 	if err != nil {
-		return nil, apiError(503, "cannot retry quarantined event")
+		return nil, apierr.New(503, "cannot retry quarantined event")
 	}
 	return &QuarantinedEventRetryOutput{Body: QuarantinedEventRetry{EventID: strconv.FormatInt(id, 10), Requeued: changed}}, nil
 }

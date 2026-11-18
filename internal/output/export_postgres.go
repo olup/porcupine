@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -237,14 +238,14 @@ SELECT count(*) FILTER (WHERE state IN ('queued','running')),
  count(*) FILTER (WHERE owns_artifacts AND project_id=$2)
 FROM jobs`, tenant, project).Scan(&pending, &total, &tenantJobs, &projectJobs, &owned, &tenantOwned, &projectOwned)
 	if err != nil {
-		return apiError(503, "export storage unavailable")
+		return apierr.New(503, "export storage unavailable")
 	}
 	if pending >= exportQueueLimit(s.config) {
-		return apiError(503, "export queue is full")
+		return apierr.New(503, "export queue is full")
 	}
 	if total >= maxHostedExportJobs || tenantJobs >= maxHostedTenantExportJobs || projectJobs >= maxHostedProjectExportJobs ||
 		owned >= maxHostedOwnedExports || tenantOwned >= maxHostedTenantOwnedExports || projectOwned >= maxHostedProjectOwnedExports {
-		return apiError(503, "retained export capacity is full")
+		return apierr.New(503, "retained export capacity is full")
 	}
 	return nil
 }

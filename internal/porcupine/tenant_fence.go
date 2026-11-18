@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -17,10 +18,10 @@ func (s *Service) requireProjectActive(ctx context.Context, project string) erro
 WHERE p.id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id)
 AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=t.id))`, project).Scan(&active)
 	if err != nil {
-		return apiError(503, "project authority unavailable")
+		return apierr.New(503, "project authority unavailable")
 	}
 	if !active {
-		return apiError(404, "project not found")
+		return apierr.New(404, "project not found")
 	}
 	return nil
 }
@@ -30,10 +31,10 @@ func requireTenantActive(ctx context.Context, query oauthQueryer, tenant string)
 	err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants t WHERE t.id=$1
 AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=t.id))`, tenant).Scan(&active)
 	if err != nil {
-		return apiError(503, "tenant authority unavailable")
+		return apierr.New(503, "tenant authority unavailable")
 	}
 	if !active {
-		return apiError(404, "tenant not found")
+		return apierr.New(404, "tenant not found")
 	}
 	return nil
 }
@@ -112,10 +113,10 @@ func tenantDeletionExists(ctx context.Context, query oauthQueryer, tenant string
 func requireActiveProjectSet(ctx context.Context, query oauthQueryer, projects []string) error {
 	active, err := activeProjects(ctx, query, projects)
 	if err != nil {
-		return apiError(503, "project authority unavailable")
+		return apierr.New(503, "project authority unavailable")
 	}
 	if len(active) != len(projects) {
-		return apiError(404, "project not found")
+		return apierr.New(404, "project not found")
 	}
 	return nil
 }

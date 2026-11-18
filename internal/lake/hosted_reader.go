@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/event"
 )
 
@@ -83,7 +84,7 @@ source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC
 		}
 		size += len(encoded) + 1
 		if size > maxBytes {
-			return nil, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Retry with a smaller limit.", "")
+			return nil, apierr.Detailed(429, "result_byte_limit", "analytics result byte limit reached", "Retry with a smaller limit.", "")
 		}
 		events = append(events, e)
 	}

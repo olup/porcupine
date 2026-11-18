@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 const nativeContractVersion = "1"
@@ -42,15 +43,15 @@ func nativeContractSchema(name string) (map[string]any, error) {
 func (s *Service) getEventInputContract(_ context.Context, _ *ProjectIDInput) (*NativeInputContractOutput, error) {
 	live, err := s.nativeInputSchema()
 	if err != nil {
-		return nil, apiError(500, "native input contract unavailable")
+		return nil, apierr.New(500, "native input contract unavailable")
 	}
 	history, err := nativeContractSchema("native-history-message-v1.schema.json")
 	if err != nil {
-		return nil, apiError(500, "native history contract unavailable")
+		return nil, apierr.New(500, "native history contract unavailable")
 	}
 	response, err := nativeContractSchema("native-response-v1.schema.json")
 	if err != nil {
-		return nil, apiError(500, "native response contract unavailable")
+		return nil, apierr.New(500, "native response contract unavailable")
 	}
 	return &NativeInputContractOutput{Body: NativeInputContract{
 		Acknowledgment: s.nativeAcknowledgment(), ResponseSchema: response,
