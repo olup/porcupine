@@ -59,7 +59,7 @@ func TestDuckLakeS3SharedPostgresHostedImportUploads(t *testing.T) {
 	f := a.service.imports.hosted
 	limits := output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}
 	if err := f.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}, {"project", other}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}, {"project", other}} {
 			if err := f.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); err != nil {
 				return err
 			}

@@ -105,6 +105,7 @@ var hostedImportSchema string
 // 16: scheduled S3 pipeline state and attempts.
 // 17: retire owner routing and journal usage publication.
 // 18: carry forward hosted usage still present in the retained daily rollups.
+// 19: isolate hosted pipeline capacity by tenant and project.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -129,6 +130,7 @@ FROM usage_rollups u JOIN tenants t ON t.id=u.tenant_id
 WHERE u.live_events>0 OR u.import_events>0
 GROUP BY u.tenant_id,left(u.day_start,7)
 ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`,
+	output.PipelineTenantCapacitySchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

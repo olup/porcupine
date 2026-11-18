@@ -47,7 +47,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 	}
 	err = flusher.publisher.transaction(ctx, func(tx *sql.Tx) error {
 		limits := output.PipelineDemand{References: 100, QueuedBytes: 1 << 20, MetadataRows: 1000, ArtifactBytes: 128 << 20, ProofSlots: 4}
-		for _, pair := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, pair := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if err := flusher.publisher.effects.ConfigureCapacityTx(ctx, tx, pair[0], pair[1], limits); err != nil {
 				return err
 			}
