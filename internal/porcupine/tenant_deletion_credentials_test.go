@@ -39,10 +39,11 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	}
 	read := []string{"events:read", "management:read"}
 	keyA, rawA := namedKey("A multi key", read, []string{pa1, pa2})
-	_, rawB := namedKey("B multi key", read, []string{pb1, pb2})
+	keyB, rawB := namedKey("B multi key", read, []string{pb1, pb2})
 	crossID, rawCross := namedKey("Cross tenant key", read, []string{pa1, pb1})
-	_, rawInstance := namedKey("Instance reader", read, []string{"*"})
+	instanceID, rawInstance := namedKey("Instance reader", read, []string{"*"})
 	clientA, clientB := operatorClient("A machine client", []string{pa1, pa2}), operatorClient("B machine client", []string{pb1, pb2})
+	crossClient := operatorClient("Cross tenant machine client", []string{pa1, pb1})
 	previousProject, _ := tenantJourneyProject(t, s, a)
 	prunedID, _ := namedKey("A key for previously deleted project", read, []string{previousProject})
 	const legacyID = "a-pruned-legacy"
@@ -78,18 +79,28 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 		}
 	}
 
-	for _, credential := range []string{rawB, rawCross, rawInstance, clientB.token, clientB.key} {
+	for _, credential := range []string{rawB, rawCross, rawInstance, clientB.token, clientB.key, crossClient.token, crossClient.key} {
 		request(t, s, "GET", "/api/v1/projects/"+pb1+"/schema", credential, "", 200)
 	}
 	oauthProtocolRequest(t, s, clientB.id, clientB.secret, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 200)
+	newCrossToken := oauthProtocolRequest(t, s, crossClient.id, crossClient.secret, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 200)["access_token"].(string)
+	request(t, s, "GET", "/api/v1/projects/"+pb1+"/schema", newCrossToken, "", 200)
 	var crossProjects string
 	var crossRevoked sql.NullString
 	if err := s.control.QueryRow(`SELECT projects,revoked_at FROM access_keys WHERE id=$1`, crossID).Scan(&crossProjects, &crossRevoked); err != nil || crossProjects != tenantTestBody(t, []string{pb1}) || crossRevoked.Valid {
 		t.Fatal("cross-tenant key was not pruned to the surviving tenant", crossProjects, crossRevoked, err)
 	}
-	var owned int
-	if err := s.control.QueryRow(`SELECT count(*) FROM tenant_credentials WHERE principal_id IN ($1,$2)`, crossID, clientB.id).Scan(&owned); err != nil || owned != 0 {
-		t.Fatal("deletion recorded ownership outside the deleted tenant", owned, err)
+	for _, check := range []struct{ id, owner string }{
+		{keyB, b}, {clientB.id, b}, {clientB.keyID, b}, {crossID, ""}, {crossClient.id, ""}, {crossClient.keyID, ""}, {instanceID, ""},
+	} {
+		var owner string
+		if err := s.control.QueryRow(`SELECT owner_tenant_id FROM access_keys WHERE id=$1`, check.id).Scan(&owner); err != nil || owner != check.owner {
+			t.Fatalf("credential %s owner = %q, want %q: %v", check.id, owner, check.owner, err)
+		}
+	}
+	var machineActors int
+	if err := s.control.QueryRow(`SELECT count(*) FROM tenant_credentials WHERE principal_id IN ($1,$2,$3)`, keyB, clientB.id, clientB.keyID).Scan(&machineActors); err != nil || machineActors != 0 {
+		t.Fatal("cleanup ownership granted tenant machine privileges", machineActors, err)
 	}
 }
 
