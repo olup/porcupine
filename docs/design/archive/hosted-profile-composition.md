@@ -72,6 +72,9 @@ retention, owner routing settings and local native backups.
 - The hosted profile connects PostgreSQL-backed import uploads, mutation intents,
   queries, output jobs and usage with the shared native coordinator.
   The worker schedules guarded compaction and runs scheduled S3 pipelines.
+  It also schedules guarded [history cleanup](../reference/ducklake-cleanup.md#hosted-profile).
+  That cleanup deletes obsolete files only when the configured grace and the
+  recovery floor permit it.
   Project and tenant deletion fence access and can reclaim inventoried objects
   after the configured grace and recovery floor permit it. An unresolved
   scheduled S3 attempt keeps physical deletion pending until its destination

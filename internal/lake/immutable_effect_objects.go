@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -61,7 +62,17 @@ func (s *DuckLakeObjectStore) putHostedStreamObject(ctx context.Context, scope H
 	if err != nil {
 		return ImmutableObjectRef{}, err
 	}
-	out, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(ref.Key), Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"), IfNoneMatch: aws.String("*")})
+	// Have S3 check the bytes against the digest that identifies this object.
+	digest, _ := hex.DecodeString(ref.SHA256) // Produced by describeHostedStreamObject.
+	out, putErr := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:         aws.String(s.Config.Bucket),
+		Key:            aws.String(ref.Key),
+		Body:           bytes.NewReader(body),
+		ContentLength:  aws.Int64(int64(len(body))),
+		ContentType:    aws.String("application/json"),
+		IfNoneMatch:    aws.String("*"),
+		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(digest)),
+	})
 	if putErr == nil {
 		ref.VersionID = aws.ToString(out.VersionId)
 		if len(ref.VersionID) > 1024 {
