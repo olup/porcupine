@@ -127,11 +127,9 @@ func (s *Service) startUsage() {
 				work, stop = context.WithTimeout(ctx, hostedStorageSampleTimeout)
 				next, err := s.sampleHostedUsageStorage(work, hostedCursor)
 				stop()
-				if err == nil {
-					hostedCursor = next
-					if next == "" {
-						nextHostedSample = u.clock().Add(hostedStorageSampleIdle)
-					}
+				hostedCursor = next
+				if err == nil && next == "" {
+					nextHostedSample = u.clock().Add(hostedStorageSampleIdle)
 				}
 			}
 			select {
@@ -303,6 +301,12 @@ WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMI
 		return after, err
 	}
 	for _, p := range batch {
+		if err := ctx.Err(); err != nil {
+			return after, err
+		}
+		// Resume after attempted projects even if one spends the whole
+		// page budget. Missing samples become eligible on the next sweep.
+		after = p.id
 		observed := s.usage.clock()
 		bytes, err := s.hosted.native.HostedCurrentParquetBytes(ctx, p.id)
 		if err == nil {
@@ -314,9 +318,6 @@ WHERE p.id>$1 AND (u.observed_at IS NULL OR u.observed_at<$3) ORDER BY p.id LIMI
 		if ctx.Err() != nil {
 			return after, ctx.Err()
 		}
-		// A project without a ready catalog, or a failed read, stays
-		// unmeasured until a later pass: never a zero.
-		after = p.id
 	}
 	if len(batch) < hostedStorageSampleBatch {
 		return "", nil
