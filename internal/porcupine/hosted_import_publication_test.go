@@ -353,7 +353,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		if err != nil {
 			return err
 		}
-		stager := reservingHostedStager{publisher: fb.publisher, session: pendingSession, fence: fence, plan: plan, routing: routing, admission: &fb.policy}
+		stager := reservingHostedStager{publisher: fb.publisher, session: pendingSession, fence: fence, plan: plan, routing: routing}
 		if _, err = stager.StageLiveEffects(ctx, lakeapi.SelectedLiveEffects{Scope: scope, TenantID: defaultTenantID, BatchID: "pending-live", Sequence: seq + 1}); err != nil {
 			return err
 		}

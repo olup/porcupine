@@ -117,7 +117,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		<-n.service.usage.done
 	}
 
-	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted flush")
+	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted flush")
 	sa := a.service.lake.(*lakeapi.DuckLakeStore)
 	sb := b.service.lake.(*lakeapi.DuckLakeStore)
 	key := lakeapi.ProjectWriteKey{SourceID: sa.Config.SharedSourceID, ProjectID: project}
@@ -361,7 +361,6 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	var getsBeforePublication int64
 	bridged, er := installHostedNativeBoundary(realNativeDB, &loseNative, &failACK, func() error {
 		if stageConflict.CompareAndSwap(true, false) {
-			fa.policy.refreshed = time.Time{}
 			return &duckdb.Error{Type: duckdb.ErrorTypeTransaction, Msg: "injected native conflict after effect staging"}
 		}
 		if trackEffectKeys.Load() {
@@ -712,7 +711,6 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=0 WHERE id=$1`, defaultTenantID); err != nil {
 		t.Fatal(err)
 	}
-	fa.policy.refreshed = time.Time{}
 	if err = fa.FlushLive(t.Context(), body); err != nil {
 		t.Fatal("same-batch replay needed new budget", err)
 	}
@@ -721,29 +719,35 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), duplicate); err != nil {
 		t.Fatal("duplicate-only batch needed new budget/capacity", err)
 	}
-	if err = fa.FlushLive(t.Context(), batch("no-new-budget")); err == nil {
-		t.Fatal("exhausted monthly policy admitted new data")
-	}
-
 	identityDuplicate := empty
 	identityDuplicate.id = "known-identity-new-batch"
 	identityDuplicate.events = empty.events[1:]
 	if err = fa.FlushLive(t.Context(), identityDuplicate); err != nil {
 		t.Fatal("known identity needed new budget", err)
 	}
+	for _, payload := range []string{
+		`{"type":"track","message_id":"new-track","actor_id":"person","name":"page"}`,
+		`{"type":"identify","message_id":"new-identity","user_id":"person","anonymous_id":"anon","set":{"plan":"team"}}`,
+	} {
+		result := sharedJourneyNative(t, a.host.URL, ingest, payload, http.StatusTooManyRequests)
+		if result["code"] != "ingestion_budget_exceeded" || result["receipts"] != nil {
+			t.Fatal("exhausted monthly policy accepted native input", result)
+		}
+	}
+	mixed := fmt.Sprintf(`{"api_key":%q,"batch":[{"uuid":%q,"event":"page","distinct_id":"person"},{"uuid":%q,"event":"$identify","distinct_id":"person","$set":{"plan":"team"}}]}`,
+		ingest, body.events[0].input.event.UUID, eventapi.NewID())
+	result := sharedJourneyHTTP(t, a.host.URL, "POST", "/batch/", "", []byte(mixed), nil, http.StatusOK)
+	if result["code"] != "ingestion_budget_exceeded" || result["accepted"] != float64(0) {
+		t.Fatal("exhausted monthly policy accepted mixed input", result)
+	}
+	if queued := a.service.hosted.buffer.snapshot().events; queued != 0 {
+		t.Fatalf("denied requests left %d buffered events", queued)
+	}
 	newIdentity := identityInput
 	newIdentity.event.UUID = eventapi.NewID()
-	identityOnly := bufferedFlushBatch{id: "new-identity-no-budget", projectID: project, events: []bufferedLiveEvent{{input: newIdentity, admittedAt: time.Now().UTC()}}}
-	var budget *tenantIngestionError
-	if err = fa.FlushLive(t.Context(), identityOnly); !errors.As(err, &budget) || budget.code != "ingestion_budget_exceeded" {
-		t.Fatal("new identity bypassed exhausted budget", err)
-	}
-	mixed := body
-	mixed.id = "mixed-known-new-identity"
-	mixed.events = append(append([]bufferedLiveEvent{}, body.events...), identityOnly.events...)
-	budget = nil
-	if err = fa.FlushLive(t.Context(), mixed); !errors.As(err, &budget) || budget.code != "ingestion_budget_exceeded" {
-		t.Fatal("mixed duplicate/new identity bypassed exhausted budget", err)
+	admittedIdentity := bufferedFlushBatch{id: "admitted-before-budget-exhausted", projectID: project, events: []bufferedLiveEvent{{input: newIdentity, admittedAt: time.Now().UTC()}}}
+	if err = a.service.hosted.flusher.FlushLive(t.Context(), admittedIdentity); err != nil {
+		t.Fatal("admitted identity could not flush after budget exhaustion", err)
 	}
 
 	// Lose the response from a successful REAL native transaction, then recover
@@ -754,7 +758,6 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=100 WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
 		t.Fatal(err)
 	}
-	fa.policy.refreshed = time.Time{}
 	setPipelineState("active")
 	finalProject, finalRelease, er := sa.LeaseProject(t.Context(), project)
 	if er != nil {
