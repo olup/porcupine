@@ -62,6 +62,11 @@ retention, owner routing settings and local native backups.
   batches. Shutdown reports an incomplete drain if the 30-second flush
   deadline expires. Work still in memory can then be lost. The HTTP shutdown
   has a separate 10-second deadline before the buffer drain.
+  Shutdown cancels analytical calls without waiting for them before the
+  drain. After the drain it waits up to 5 seconds for canceled analytical
+  calls and maintenance to return. A call that ignores cancellation is
+  reported as a shutdown error; the process then exits with its permit still
+  renewed, and the native engine is not closed underneath it.
 - The hosted profile connects PostgreSQL-backed import uploads, mutation intents,
   queries, output jobs and usage with the shared native coordinator.
   The worker schedules guarded compaction and runs scheduled S3 pipelines.

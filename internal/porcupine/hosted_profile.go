@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -24,6 +25,7 @@ type hostedRuntime struct {
 	recoveryDone  chan struct{}
 	scratch       string
 	recoveryFloor HostedRecoveryFloor
+	nativeGrace   time.Duration
 }
 
 // openHostedProfile binds the shared providers before starting background work.
@@ -38,7 +40,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &hostedRuntime{recoveryFloor: c.HostedRecoveryFloor}
+	h := &hostedRuntime{recoveryFloor: c.HostedRecoveryFloor, nativeGrace: hostedNativeReturnGrace}
 	s.hosted = h
 	s.shared = &sharedRuntime{workerID: eventapi.NewID()}
 	control, err := openSharedControl(ctx, *c.Shared)
@@ -207,28 +209,33 @@ func (s *Service) startHostedRecovery(interval time.Duration) {
 	}()
 }
 
+// Shutdown bounds. The drain deadline covers the flush of accepted batches.
+// The return grace then covers canceled analytical calls and maintenance.
+const (
+	hostedDrainTimeout      = 30 * time.Second
+	hostedNativeReturnGrace = 5 * time.Second
+	hostedNativeReturnPoll  = 20 * time.Millisecond
+)
+
 func (s *Service) closeHosted() error {
 	h := s.hosted
+	// Admission stops and analytical work is canceled without waiting for
+	// native calls to return, so a stuck call cannot delay the buffer drain.
 	s.BeginDrain()
-	if h.maintenance != nil {
-		<-h.maintenance.done
-	}
-	if s.sharedQueries.status().Active != 0 {
-		return errors.New("hosted analytics execution is still active; permit renewal continues until it returns")
-	}
 	var drainErr error
 	if h.buffer != nil {
-		ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, stop := context.WithTimeout(context.Background(), hostedDrainTimeout)
 		drainErr = h.buffer.Drain(ctx)
 		stop()
 	}
 	if h.stopBuffer != nil {
 		h.stopBuffer()
-		if h.buffer != nil && drainErr != nil {
-			// In-flight native flushes still own their connections. The server
-			// process exits after reporting an incomplete drain.
-			return drainErr
-		}
+	}
+	if err := errors.Join(drainErr, s.awaitHostedNativeReturn(h.nativeGrace)); err != nil {
+		// In-flight flushes, analytics or maintenance still own native
+		// connections, and the permit keeper still needs PostgreSQL. The server
+		// process exits after reporting the incomplete close.
+		return err
 	}
 	if h.stopRecovery != nil {
 		h.stopRecovery()
@@ -255,7 +262,47 @@ func (s *Service) closeHosted() error {
 	if h.scratch != "" {
 		cleanupErr = os.RemoveAll(h.scratch)
 	}
-	return errors.Join(drainErr, lakeErr, s.control.Close(), cleanupErr)
+	return errors.Join(lakeErr, s.control.Close(), cleanupErr)
+}
+
+// awaitHostedNativeReturn waits, up to grace, for canceled analytical calls and
+// maintenance to return. Calls that ignore cancellation are reported, not
+// waited for: their permits keep renewing until the process exits.
+func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
+	var maintenance <-chan struct{}
+	if s.hosted.maintenance != nil {
+		maintenance = s.hosted.maintenance.done
+	}
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	poll := time.NewTicker(hostedNativeReturnPoll)
+	defer poll.Stop()
+	for {
+		running := false
+		if maintenance != nil {
+			select {
+			case <-maintenance:
+			default:
+				running = true
+			}
+		}
+		active := s.sharedQueries.status().Active
+		if !running && active == 0 {
+			return nil
+		}
+		select {
+		case <-deadline.C:
+			var err error
+			if running {
+				err = errors.New("hosted maintenance is still running")
+			}
+			if active != 0 {
+				err = errors.Join(err, fmt.Errorf("hosted analytics execution is still active (%d calls); permit renewal continues until they return", active))
+			}
+			return err
+		case <-poll.C:
+		}
+	}
 }
 
 func (s *Service) initializeHostedUsage(ctx context.Context, c *usage.Config) error {
