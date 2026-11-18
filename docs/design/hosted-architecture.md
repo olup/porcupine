@@ -68,7 +68,7 @@ Interactive query starts persist before dispatch. Duration measures monotonic ti
 
 `delete-tenant` requires `instance:admin`. It commits tenant and project fences before returning HTTP 202. `get-tenant-deletion` reads the same durable status, even after the tenant row is gone. Recovery retries unfinished project cleanup. The fence applies to native credentials and external JWTs. Tenant-owned authority is revoked while access to unrelated tenants is preserved.
 
-Hosted project cleanup seals the native writer, waits for conflicting activity, settles retained proofs, and inventories managed objects and multipart uploads. It keeps published customer results and uses exact ownership evidence for unfinished output attempts. Missing destination authority or unresolved activity keeps cleanup pending. `deleting` means work remains. `logically_deleted` reports completed logical cleanup, with `physical_purge: pending_verification`. A tenant tombstone does not prove historical backups or noncurrent object versions are gone. Minimal numerical usage history and opaque deletion identifiers remain.
+Hosted project cleanup seals the native writer, waits for conflicting activity, settles retained proofs, and inventories managed objects and multipart uploads. It keeps published customer results and uses exact ownership evidence for unfinished output attempts. Missing destination authority or unresolved activity keeps cleanup pending. At v0.15.0, an activity ticket from a dead worker can block cleanup indefinitely. `deleting` means work remains. `logically_deleted` reports completed logical cleanup, with `physical_purge: pending_verification`. A tenant tombstone does not prove historical backups or noncurrent object versions are gone. Minimal numerical usage history and opaque deletion identifiers remain.
 
 ## Recovery and retention
 
@@ -83,6 +83,11 @@ Set `ducklake.restore_floor_file` to an absolute path containing one operator-ve
 - [#100](https://github.com/olup/porcupine/pull/100) starts the buffer drain before waiting for canceled analytical calls. After draining, it allows five seconds for analytics and maintenance to return, then reports an error if either remains active. Native resources stay open under running calls until process exit. Other background jobs and an in-flight flush can still delay shutdown.
 - [#101](https://github.com/olup/porcupine/pull/101) tolerates encryption-only keys in external JWKS, infers supported signing algorithms when `alg` is absent, and can serve cached signing keys for up to an hour after their refresh deadline when the refresh fails. [External authentication](../reference/external-auth.md)
 - [#105](https://github.com/olup/porcupine/pull/105) scopes hosted output reservations to tenant and project capacity. A full tenant backlog leaves another tenant's output budget available.
+- [#103](https://github.com/olup/porcupine/pull/103) lets deletion reclaim crashed workers' activity tickets after a 30-second incarnation lease and 45-second grace. Workers renew every five seconds. Lease loss refuses new tickets and exits with status 75 if write-capable work is still running. A read-only query alone never triggers that exit. The native epoch fences stale commits once the sealer advances it.
+
+Before upgrading across #103, drain older workers. Tickets from before migration 20 have no incarnation and do not expire. If one remains, block all pre-upgrade executors from restarting and verify provider-side uploads and deliveries have settled. A database operator can remove only the verified ticket by project and activity ID with `incarnation_id IS NULL`. No public endpoint clears tickets.
+
+S3 and webhook requests already accepted by a provider can outlive the local worker. Reclamation relies on their settling within the grace. An object written after reclamation may fall outside the cleanup inventory, but publication still requires a valid native proof or current output claim.
 
 ## Standalone journal inventory
 

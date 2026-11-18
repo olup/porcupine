@@ -39,7 +39,7 @@ The duration check covers DuckLake's obsolete-file grace. The legacy shared-nati
 
 Set `ducklake.restore_floor_file` or `PORCUPINE_DUCKLAKE_RESTORE_FLOOR_FILE` to an absolute path to an operator-controlled file. Write one RFC3339 timestamp for the earliest restore point the deployment still supports. Include secondary backups and manual recovery procedures in that assessment. Use the same evidence across workers and never restore below a floor that a worker has already used.
 
-Replace the file atomically when the verified floor advances. Each cleanup pass reads it again. A missing, unreadable, malformed, or stale floor leaves physical cleanup pending. The floor must reach the recorded inventory time and the PostgreSQL clock must show that `cleanup_grace` has elapsed since that inventory. The worker scopes deletion to inventory entries it can tie to the project. An unresolved activity ticket also leaves cleanup pending until its worker incarnation passes `reclaim_after`; see [hosted native recovery](hosted-native-recovery.md).
+Replace the file atomically when the verified floor advances. Each cleanup pass reads it again. A missing, unreadable, malformed, or stale floor leaves physical cleanup pending. The floor must reach the recorded inventory time and the PostgreSQL clock must show that `cleanup_grace` has elapsed since that inventory. The worker scopes deletion to inventory entries it can tie to the project. An unresolved activity ticket also leaves cleanup pending. Lease expiry alone gives no proof that an old executor returned from its call.
 
 Tenant completion reports `logically_deleted`. Verification of backups and artifacts without a recorded owner remains separate from deleting the managed inventory.
 
