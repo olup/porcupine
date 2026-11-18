@@ -1,0 +1,52 @@
+name: v0.15.1 AWS Emulator S3 smoke
+on:
+  push:
+    branches: [ci/aws-emulator-v0151-smoke]
+permissions:
+  contents: read
+jobs:
+  exercise:
+    name: ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: public hosted binary and healthy cold restart
+            pattern: '^TestDuckLakeS3SharedPostgresHostedProfileProcesses$'
+            expected: TestDuckLakeS3SharedPostgresHostedProfileProcesses
+          - scenario: S3 write outage and cold recovery
+            pattern: '^TestDuckLakeS3SharedPostgresHostedBufferedVisibility$/^default-2s$'
+            expected: TestDuckLakeS3SharedPostgresHostedBufferedVisibility/default-2s
+          - scenario: versioned S3 native flush and stable replay
+            pattern: '^TestDuckLakeS3SharedPostgresHostedFlusherVersioned$'
+            expected: TestDuckLakeS3SharedPostgresHostedFlusherVersioned
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify tested source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show -s --format='Smoke commit %H%nSource commit %P' HEAD
+          git diff --exit-code HEAD^ HEAD -- . ':(exclude).github/workflows/aws-emulator-v0151-smoke.yml'
+          cat VERSION
+      - name: Execute the S3 scenario and confirm it passed
+        shell: bash
+        env:
+          PORCUPINE_TEST_HOSTED_BUFFERED_VISIBILITY: "1"
+          PATTERN: ${{ matrix.pattern }}
+          EXPECTED: ${{ matrix.expected }}
+        run: |
+          set -euo pipefail
+          bash scripts/aws-emulator-test.sh "$PATTERN" 2>&1 | tee smoke.log
+          grep -F -- "--- PASS: $EXPECTED (" smoke.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: ${{ matrix.expected == 'TestDuckLakeS3SharedPostgresHostedBufferedVisibility/default-2s' && 'hosted-outage-recovery' || matrix.expected }}
+          path: smoke.log
