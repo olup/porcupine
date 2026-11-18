@@ -61,6 +61,34 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 	request(t, s, "GET", "/api/v1/status", reader, "", 401)
 }
 
+func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
+	t.Parallel()
+	s := service(t, 20)
+	a, _ := project(t, s)
+	_, reader := key(t, s, []string{"management:read"}, []string{a})
+	b := newTestBuffer(t, testBufferConfig(), liveFlusherFunc(func(context.Context, bufferedFlushBatch) error {
+		return errHostedLiveBatchTooLarge
+	}))
+	if _, err := b.Accept(t.Context(), testBufferBatch(t, a, 2), ingestionPeer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := b.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.hosted = &hostedRuntime{buffer: b}
+	t.Cleanup(func() { s.hosted = nil })
+	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
+	ingestion, ok := admin["hosted_ingestion"].(map[string]any)
+	if !ok || ingestion["dropped_requests"] != float64(1) || ingestion["dropped_events"] != float64(2) {
+		t.Fatal("missing or incorrect hosted ingestion counters", admin)
+	}
+	if status := request(t, s, "GET", "/api/v1/status", reader, "", 200); status["hosted_ingestion"] != nil {
+		t.Fatal("non-admin status disclosed hosted ingestion counters", status)
+	}
+}
+
 func instanceStatusReaderContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: "status-reader", Permissions: []string{"management:read"}, Projects: []string{"*"}})
 }
