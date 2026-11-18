@@ -106,3 +106,39 @@ func TestDuckLakeCurrentParquetUsageExcludesObsoleteAndUnknownProjects(t *testin
 		t.Fatal(e)
 	}
 }
+
+func TestDuckLakeS3SharedPostgresCurrentParquetUsage(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
+	ctx, writer, sampler, _ := sharedNativeStores(t)
+	const project = "metered-project"
+	if _, err := sampler.HostedCurrentParquetBytes(ctx, project); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("unknown project's Parquet usage: %v", err)
+	}
+	projection := lakeStorageProjection(t, project, "one", 1)
+	if err := writer.Apply(ctx, []EventProjection{projection}); err != nil {
+		t.Fatal(err)
+	}
+	projection.Revision++
+	projection.Event.Event = "corrected"
+	if err := writer.Apply(ctx, []EventProjection{projection}); err != nil {
+		t.Fatal(err)
+	}
+
+	p, release, err := writer.LeaseProject(ctx, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	current, err := p.currentParquetBytes(ctx)
+	if err != nil || current <= 0 {
+		t.Fatalf("DuckLake current-file inventory = %d bytes: %v", current, err)
+	}
+	got, err := sampler.HostedCurrentParquetBytes(ctx, project)
+	if err != nil || got != current {
+		t.Fatalf("metadata sampler = %d bytes, want DuckLake current-file total %d: %v", got, current, err)
+	}
+	if len(sampler.Projects) != 0 {
+		t.Fatal("metadata sampler opened an analytical engine")
+	}
+}

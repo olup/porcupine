@@ -37,7 +37,13 @@ type InstanceConfiguration struct {
 	SharedControl          bool `json:"shared_control" doc:"Shared PostgreSQL metadata and authentication storage is configured. No connection details are disclosed."`
 }
 
+type HostedIngestionStatus struct {
+	DroppedRequests uint64 `json:"dropped_requests" doc:"Accepted live requests discarded because their outputs could not fit in one commit, on this worker since startup."`
+	DroppedEvents   uint64 `json:"dropped_events" doc:"Events in discarded requests, on this worker since startup."`
+}
+
 type InstanceStatus struct {
+	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters. Visible only to instance administrators."`
 	QueryExecution  *QueryExecutionStatus          `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
 	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
@@ -88,6 +94,10 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		if principal(ctx).Admin() {
 			result.QueryExecution = &health
 		}
+	}
+	if s.hosted != nil && principal(ctx).Admin() {
+		ingestion := s.hosted.buffer.snapshot()
+		result.HostedIngestion = &HostedIngestionStatus{DroppedRequests: ingestion.droppedRequests, DroppedEvents: ingestion.droppedEvents}
 	}
 	if s.db == nil {
 		result.Checks.SQLite = dependencyNotConfigured
