@@ -48,7 +48,11 @@ type LiveEffectStager interface {
 	StageLiveEffects(context.Context, SelectedLiveEffects) (StagedLiveEffects, error)
 }
 type LiveCommitResult interface{ liveCommitResult() }
-type CommittedLiveBatch struct{ Evidence NativeCommitEvidence }
+type CommittedLiveBatch struct {
+	Evidence NativeCommitEvidence
+	// Fresh is true only when this call observed a successful native commit.
+	Fresh bool
+}
 
 func (CommittedLiveBatch) liveCommitResult() {}
 

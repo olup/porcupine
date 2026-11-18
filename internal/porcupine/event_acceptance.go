@@ -43,8 +43,8 @@ type ingestionPeer struct {
 }
 
 type acceptanceFailure struct {
-	message string
-	retry   bool
+	message         string
+	retry, pressure bool
 }
 
 func (e *acceptanceFailure) Error() string { return e.message }
@@ -224,7 +224,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 			continue
 		}
 		if pending+int64(accepted) >= int64(a.rules.queueMax) {
-			return nil, &acceptanceFailure{message: "queue is full", retry: true}
+			return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
 		}
 		if e.DistinctID == ingestfmt.CookielessSentinel && !isIdentityControl(e.Event) {
 			e.DistinctID = cookielessID
@@ -245,7 +245,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 		}
 		size := queueEventBytes(e)
 		if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-			return nil, &acceptanceFailure{message: "queue is full", retry: true}
+			return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
 		}
 		e.ID, err = insertAcceptedEvent(ctx, tx, e)
 		if err != nil {
@@ -263,7 +263,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch preparedLiveBatch,
 			}
 			size = queueEventBytes(e)
 			if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-				return nil, &acceptanceFailure{message: "queue is full", retry: true}
+				return nil, &acceptanceFailure{message: "queue is full", retry: true, pressure: true}
 			}
 		}
 		if !isIdentityControl(e.Event) {

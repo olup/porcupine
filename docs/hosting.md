@@ -106,6 +106,8 @@ The default Compose memory limit is 2 GiB, a test profile rather than a capacity
 
 `/readyz` checks the operational store. Before routing traffic, check the authenticated [instance report](reference/instance-status.md), capture a synthetic event, and verify SQL visibility. Monitor pending-event age, queue bytes, disk, memory, and delivery errors.
 
+For a development build with observability enabled, use the [operator dashboard and visibility probe](reference/observability.md).
+
 ## Configure access and backups
 
 Configure [email or Google/OIDC sign-in](reference/connect-your-team.md), then [invite people and create service credentials](access.md). Keep the bootstrap secret privately.

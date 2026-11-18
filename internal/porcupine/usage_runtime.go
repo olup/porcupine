@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -162,15 +163,25 @@ type usageQueryScope struct {
 	finish    func() error
 	once      sync.Once
 	cause     error
+	metrics   *operationalMetrics
+	kind      int
+	started   time.Time
 }
 
 func (q *usageQueryScope) Begin() {
+	if q.metrics != nil {
+		q.started = time.Now()
+		q.metrics.activeQueries[q.kind].Add(1)
+	}
 	if q.execution != nil {
 		q.execution.Begin()
 	}
 }
 func (q *usageQueryScope) Finish() error {
 	q.once.Do(func() {
+		if !q.started.IsZero() {
+			q.metrics.activeQueries[q.kind].Add(-1)
+		}
 		if q.execution != nil {
 			q.execution.Finish()
 		}
@@ -179,13 +190,48 @@ func (q *usageQueryScope) Finish() error {
 	return q.cause
 }
 
-func (s *Service) beginUsageQuery(ctx context.Context, project, operation string) (context.Context, InteractiveQueryConfig, *usageQueryScope, error) {
+func (q *usageQueryScope) Return(ctx context.Context, nativeErr error) error {
+	// Take the timestamp before releasing the shared permit over PostgreSQL.
+	elapsed, contextErr := time.Since(q.started), ctx.Err()
+	stopped := q.Finish()
+	result := interactiveQueryResultError(ctx, stopped, nativeErr)
+	if q.metrics != nil {
+		if errors.Is(stopped, errSharedQueryPermitUncertain) {
+			contextErr = nil
+		}
+		q.metrics.ObserveDuration("porcupine_query_backend_duration_seconds", elapsed,
+			observability.Label{Name: "operation", Value: observedQueryKinds[q.kind]},
+			observability.Label{Name: "outcome", Value: queryOutcome(contextErr, result)})
+	}
+	return result
+}
+
+func (s *Service) beginUsageQuery(ctx context.Context, project, operation string) (_ context.Context, _ InteractiveQueryConfig, _ *usageQueryScope, resultErr error) {
+	kind := -1
+	if m := s.metrics; m != nil {
+		for i, candidate := range observedQueryKinds {
+			if candidate == operation {
+				kind = i
+				break
+			}
+		}
+		if kind >= 0 {
+			started := time.Now()
+			defer func() {
+				m.observeQueryAdmission(ctx.Err(), resultErr, operation, time.Since(started))
+			}()
+		}
+	}
 	native, limits, finish, err := s.beginInteractiveQuery(ctx, project)
 	if err != nil {
 		return nil, InteractiveQueryConfig{}, nil, err
 	}
+	scope := &usageQueryScope{finish: finish, kind: kind}
+	if kind >= 0 {
+		scope.metrics = s.metrics
+	}
 	if s.usage == nil {
-		return native, limits, &usageQueryScope{finish: finish}, nil
+		return native, limits, scope, nil
 	}
 	// Resolve usage attribution from control storage before executing the query.
 	tenant, err := s.projectTenant(native, project)
@@ -206,7 +252,8 @@ func (s *Service) beginUsageQuery(ctx context.Context, project, operation string
 		}
 		return nil, InteractiveQueryConfig{}, nil, apiError(503, "usage admission unavailable; query was not executed")
 	}
-	return native, limits, &usageQueryScope{execution: execution, finish: finish}, nil
+	scope.execution = execution
+	return native, limits, scope, nil
 }
 
 type parquetUsageSampler interface {

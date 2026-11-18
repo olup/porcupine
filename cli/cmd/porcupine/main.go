@@ -30,6 +30,7 @@ func newApp() *cli.Command {
 		Commands: []*cli.Command{
 			restoreCommand(),
 			importCommand(),
+			visibilityProbeCommand(),
 			{Name: "login", Usage: "Authorize this CLI in your browser", Flags: []cli.Flag{
 				&cli.BoolFlag{Name: "admin", Usage: "Request instance administrator access"},
 				&cli.BoolFlag{Name: "tenant-admin", Usage: "Request administration of one tenant selected in your browser"},

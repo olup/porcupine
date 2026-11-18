@@ -151,7 +151,7 @@ func (s *Service) startNativeBackups() error {
 				return
 			}
 			if err != nil {
-				slog.Warn("native backup failed", "error", err)
+				slog.Warn("native backup failed")
 				timer.Reset(min(time.Minute, runtime.config.Interval))
 			} else {
 				timer.Reset(runtime.config.Interval)

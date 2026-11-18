@@ -48,6 +48,7 @@ type bufferConfig struct {
 	maxEvents, projectMaxEvents, maxProjects, maxFlushes int
 	flushInterval, retryMin, retryMax                    time.Duration
 	clock                                                func() time.Time
+	metrics                                              *operationalMetrics
 }
 
 func defaultBufferConfig() bufferConfig {
@@ -102,6 +103,7 @@ type flushCompletion struct {
 	project string
 	id      string
 	err     error
+	elapsed time.Duration
 }
 
 // The byte budget charges owned payloads plus conservative allowances for structs,
@@ -139,7 +141,7 @@ func (b *bufferedAcceptance) Accept(ctx context.Context, batch preparedLiveBatch
 	unavailable := b.ctx.Err() != nil || b.draining || project != nil && project.failures > 0
 	b.mu.Unlock()
 	if unavailable {
-		return nil, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true}
+		return nil, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true, pressure: true}
 	}
 	admittedAt := b.config.clock().UTC()
 	// A fixed-size pseudonym lets capacity be checked before key-provider work.
@@ -167,7 +169,7 @@ func (b *bufferedAcceptance) Accept(ctx context.Context, batch preparedLiveBatch
 		}
 		charge := bufferedInputBytes(input)
 		if charge > b.config.maxBytes-size {
-			return nil, &acceptanceFailure{message: "buffer is full", retry: true}
+			return nil, &acceptanceFailure{message: "buffer is full", retry: true, pressure: true}
 		}
 		size += charge
 		inputs[i] = input
@@ -367,8 +369,9 @@ func (b *bufferedAcceptance) run() {
 			p.running = true
 			b.running++
 			go func() {
+				started := time.Now()
 				err := b.writer.FlushLive(b.ctx, batch)
-				b.completed <- flushCompletion{project: batch.projectID, id: batch.id, err: err}
+				b.completed <- flushCompletion{project: batch.projectID, id: batch.id, err: err, elapsed: time.Since(started)}
 			}()
 		}
 		drained := b.draining && b.events == 0 || stopping && b.running == 0
@@ -402,18 +405,30 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 	}
 	p.running = false
 	b.running--
+	observe := func(outcome string) {
+		if m := b.config.metrics; m != nil {
+			m.observeFlush(outcome, result.elapsed)
+		}
+	}
 	if errors.Is(result.err, errHostedProjectFenced) {
+		dropped := len(p.pending)
 		b.bytes -= p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
 		b.events -= len(p.pending)
 		for _, batch := range p.ready {
 			b.bytes -= batch.bytes
 			b.events -= len(batch.events)
+			dropped += len(batch.events)
+		}
+		observe("dropped")
+		if m := b.config.metrics; m != nil {
+			m.observeDropped("project_fenced", dropped)
 		}
 		delete(b.projects, result.project)
 		return
 	}
 	if errors.Is(result.err, errHostedLiveBatchTooLarge) {
 		if left, right, ok := splitBufferedLiveBatch(*p.ready[0]); ok {
+			observe("split")
 			p.ready[0] = right
 			p.ready = append([]*bufferedFlushBatch{left}, p.ready...)
 			p.retryAt = time.Time{}
@@ -422,9 +437,17 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 		count := len(p.ready[0].events)
 		b.droppedRequests++
 		b.droppedEvents += uint64(count)
-		slog.Warn("hosted ingestion dropped an oversized request", "project_id", result.project,
-			"batch_id", result.id, "events", count, "error", result.err)
+		observe("dropped")
+		if m := b.config.metrics; m != nil {
+			m.observeDropped("oversized", count)
+		}
+		slog.Warn("hosted ingestion dropped an oversized request", "project_id", result.project, "batch_id", result.id, "events", count)
 	} else if result.err != nil {
+		if b.ctx.Err() != nil {
+			observe("cancelled")
+		} else {
+			observe("retry")
+		}
 		p.failures++
 		delay := b.config.retryMin
 		for n := 1; n < p.failures && delay < b.config.retryMax; n++ {
@@ -432,6 +455,8 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 		}
 		p.retryAt = b.config.clock().Add(delay)
 		return
+	} else {
+		observe("ok")
 	}
 	b.bytes -= p.ready[0].bytes
 	b.events -= len(p.ready[0].events)
@@ -481,20 +506,20 @@ func splitBufferedLiveBatch(batch bufferedFlushBatch) (left, right *bufferedFlus
 
 func (b *bufferedAcceptance) checkCapacityLocked(projectID string, size int64, count int) (*bufferedProject, int64, error) {
 	if b.ctx.Err() != nil || b.draining {
-		return nil, 0, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true}
+		return nil, 0, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true, pressure: true}
 	}
 	p := b.projects[projectID]
 	newProject := p == nil
 	projectSize, projectEvents := int64(0), 0
 	if newProject {
 		if len(b.projects) >= b.config.maxProjects {
-			return nil, 0, &acceptanceFailure{message: "buffer is full", retry: true}
+			return nil, 0, &acceptanceFailure{message: "buffer is full", retry: true, pressure: true}
 		}
 	} else {
 		projectSize = p.pendingBytes
 		projectEvents = len(p.pending)
 		if p.failures > 0 {
-			return nil, 0, &acceptanceFailure{message: "project buffer is retrying a flush", retry: true}
+			return nil, 0, &acceptanceFailure{message: "project buffer is retrying a flush", retry: true, pressure: true}
 		}
 		for _, batch := range p.ready {
 			projectSize += batch.bytes
@@ -506,7 +531,7 @@ func (b *bufferedAcceptance) checkCapacityLocked(projectID string, size int64, c
 		overhead = bufferedProjectOverhead + int64(len(projectID))
 	}
 	if size > b.config.maxBytes-b.bytes-overhead || count > b.config.maxEvents-b.events || size > b.config.projectMaxBytes-projectSize || count > b.config.projectMaxEvents-projectEvents {
-		return nil, 0, &acceptanceFailure{message: "buffer is full", retry: true}
+		return nil, 0, &acceptanceFailure{message: "buffer is full", retry: true, pressure: true}
 	}
 	return p, overhead, nil
 }

@@ -79,7 +79,7 @@ WHERE d.completed=0 ORDER BY d.project_id`)
 		err := s.cleanHostedProject(work, project)
 		cancel()
 		if err != nil && ctx.Err() == nil && !errors.Is(err, errHostedRecoveryFloor) && !errors.Is(err, errHostedProjectBusy) {
-			slog.Warn("hosted project cleanup pending", "project_id", project, "error", err)
+			slog.Warn("hosted project cleanup pending", "project_id", project)
 		}
 	}
 }

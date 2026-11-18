@@ -187,7 +187,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	if errors.As(err, &known) {
 		return known
 	}
-	slog.Warn("project deletion incomplete", "project_id", id, "error", err)
+	slog.Warn("project deletion incomplete", "project_id", id)
 	return apiError(503, "project deletion incomplete; retry DELETE with the same project ID")
 }
 

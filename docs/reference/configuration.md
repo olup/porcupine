@@ -15,6 +15,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | Section | Common keys and purpose |
 | --- | --- |
 | Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
+| `metrics` | `enabled`, `listen`: private Prometheus listener. See [operator monitoring](observability.md). |
 | `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |

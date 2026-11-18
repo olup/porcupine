@@ -101,6 +101,11 @@ func run(args []string, input io.Reader, output io.Writer) error {
 	if err := validateServerConfig(addr, config); err != nil {
 		return err
 	}
+	metricsAddr, err := s.metricsListenAddress()
+	if err != nil {
+		return err
+	}
+	config.MetricsEnabled = metricsAddr != ""
 	if check {
 		values := s.redacted()
 		defaults := map[string]string{
@@ -108,6 +113,10 @@ func run(args []string, input io.Reader, output io.Writer) error {
 			"PORCUPINE_QUEUE_MAX_EVENTS": "100000", "PORCUPINE_QUEUE_MAX_BYTES": strconv.FormatInt(porcupine.DefaultQueueMaxBytes, 10),
 			"PORCUPINE_QUERY_MAX_CONCURRENT": "2", "PORCUPINE_QUERY_TIMEOUT_MS": "5000", "PORCUPINE_QUERY_MAX_ROWS": "1000", "PORCUPINE_QUERY_MAX_RESULT_BYTES": "1048576",
 			"PORCUPINE_DUCKLAKE_DIR": config.DuckLake.Directory,
+		}
+		defaults["PORCUPINE_METRICS_ENABLED"] = strconv.FormatBool(config.MetricsEnabled)
+		if config.MetricsEnabled {
+			defaults["PORCUPINE_METRICS_LISTEN"] = metricsAddr
 		}
 		if config.Profile == porcupine.ProfileHosted {
 			delete(defaults, "PORCUPINE_DB")
@@ -128,7 +137,7 @@ func run(args []string, input io.Reader, output io.Writer) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(values)
 	}
-	return serve(config, addr)
+	return serve(config, addr, metricsAddr)
 }
 
 func validateServerConfig(addr string, config porcupine.Config) error {
@@ -225,6 +234,9 @@ func installConfig(path string, input io.Reader) error {
 		return err
 	}
 	if err := validateServerConfig(addr, config); err != nil {
+		return err
+	}
+	if _, err := s.metricsListenAddress(); err != nil {
 		return err
 	}
 	directory := filepath.Dir(path)

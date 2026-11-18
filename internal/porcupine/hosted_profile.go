@@ -99,6 +99,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 		return nil, err
 	}
 	h.flusher.incarnation = inc
+	h.flusher.metrics = s.metrics
 	s.imports = newHostedImportManager(s.eventRules, h.flusher)
 	s.hostedMutations = h.flusher
 	s.sealHostedProject = h.flusher.sealProject
@@ -117,6 +118,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	}
 	buffer := defaultBufferConfig()
 	buffer.clock = s.clock
+	buffer.metrics = s.metrics
 	if c.QueueMaxEvents > 0 {
 		buffer.maxEvents = c.QueueMaxEvents
 		buffer.projectMaxEvents = min(buffer.projectMaxEvents, buffer.maxEvents)

@@ -19,6 +19,10 @@ type FileConfig struct {
 	Acceptance struct {
 		Mode string `json:"mode,omitempty" env:"PORCUPINE_ACCEPTANCE_MODE"`
 	} `json:"acceptance"`
+	Metrics struct {
+		Enabled *bool  `json:"enabled,omitempty" env:"PORCUPINE_METRICS_ENABLED"`
+		Listen  string `json:"listen,omitempty" env:"PORCUPINE_METRICS_LISTEN"`
+	} `json:"metrics"`
 	Listen         string   `json:"listen,omitempty" env:"PORCUPINE_ADDR"`
 	BootstrapToken string   `json:"bootstrap_token,omitempty" env:"PORCUPINE_BOOTSTRAP_TOKEN" secret:"true"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" env:"PORCUPINE_ALLOWED_ORIGINS"`
