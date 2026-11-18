@@ -23,9 +23,8 @@ func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence,
 	return s.commitLive(ctx, fence, batch, reservation, stager, func(_ context.Context, commit func() error) error { return commit() })
 }
 
-// CommitLiveGuarded lets control admission hold its project and tenant row
-// locks across the final native COMMIT. The guard must invoke commit
-// synchronously, at most once, after checking the latest control fence.
+// CommitLiveGuarded checks the control fence immediately before the native
+// COMMIT. The guard must invoke commit synchronously and at most once.
 func (s *DuckLakeStore) CommitLiveGuarded(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
 	if guard == nil {
 		return nil, errors.New("hosted live commit requires a control fence guard")
