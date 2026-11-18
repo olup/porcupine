@@ -24,6 +24,8 @@ jobs:
             expected: TestDuckLakeS3SharedPostgresHostedFlusherVersioned
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
@@ -32,8 +34,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git show -s --format='Smoke commit %H%nSource commit %P' HEAD
-          git diff --exit-code HEAD^ HEAD -- . ':(exclude).github/workflows/aws-emulator-v0151-smoke.yml'
+          source_commit=eabef779c159a502712468e0559d9197a985d110
+          echo "Smoke commit $(git rev-parse HEAD)"
+          echo "Source commit $source_commit"
+          git merge-base --is-ancestor "$source_commit" HEAD
+          git diff --exit-code "$source_commit" HEAD -- . ':(exclude).github/workflows/aws-emulator-v0151-smoke.yml'
           cat VERSION
       - name: Execute the S3 scenario and confirm it passed
         shell: bash
