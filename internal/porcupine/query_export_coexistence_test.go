@@ -48,8 +48,25 @@ func TestStandaloneQueryAndCaptureDuringExport(t *testing.T) {
 	created := request(t, s, "POST", base+"/exports", token, `{"idempotency_key":"coexistence","sql":"SELECT uuid FROM events"}`, 202)
 	job := base + "/exports/" + created["id"].(string)
 
+	query := &queryAdmissionHook{LakeStore: s.lake}
+	s.lake = query
+	assertQuery := func(before func(context.Context)) {
+		t.Helper()
+		entered := false
+		query.before = func(ctx context.Context) {
+			entered = true
+			before(ctx)
+		}
+		rows := duckLakeJourneyQuery(t, s, id, token, coexistenceQuerySQL, nil)
+		if !entered {
+			t.Fatal("interactive query bypassed the admission hook")
+		}
+		if len(rows) != 1 || rows[0].(map[string]any)["uuid"] != "before-export" {
+			t.Fatalf("unexpected interactive result: %v", rows)
+		}
+	}
 	// Run one worker cycle while the HTTP handler holds its interactive slot.
-	query := &queryAdmissionHook{LakeStore: s.lake, before: func(ctx context.Context) {
+	assertQuery(func(ctx context.Context) {
 		if worked, err := s.exports.RunOne(ctx); err != nil || worked {
 			t.Fatalf("worker did not defer to active interactive query: worked=%t, error=%v", worked, err)
 		}
@@ -57,16 +74,7 @@ func TestStandaloneQueryAndCaptureDuringExport(t *testing.T) {
 		if status["state"] != "queued" || status["attempts"] != float64(0) {
 			t.Fatalf("deferred export was claimed: %v", status)
 		}
-	}}
-	s.lake = query
-	assertQuery := func() {
-		t.Helper()
-		rows := duckLakeJourneyQuery(t, s, id, token, coexistenceQuerySQL, nil)
-		if len(rows) != 1 || rows[0].(map[string]any)["uuid"] != "before-export" {
-			t.Fatalf("unexpected interactive result: %v", rows)
-		}
-	}
-	assertQuery()
+	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	uploading, resumeUpload := make(chan struct{}), make(chan struct{})
@@ -103,10 +111,9 @@ func TestStandaloneQueryAndCaptureDuringExport(t *testing.T) {
 	}
 	request(t, s, "GET", job+"/files", token, "", 409)
 
-	query.before = func(context.Context) {
+	assertQuery(func(context.Context) {
 		request(t, s, "POST", base+"/query", token, `{"sql":"SELECT event FROM events"}`, 429)
-	}
-	assertQuery()
+	})
 	request(t, s, "POST", "/capture/", "", captureBody(ingest, "during-export"), 200)
 	if count := eventCount(t, s); count != 1 {
 		t.Fatalf("capture did not commit while export was running: %d queued events", count)
