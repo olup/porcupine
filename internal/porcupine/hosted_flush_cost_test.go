@@ -96,13 +96,13 @@ func hostedFlushCostInt(t *testing.T, raw string) int {
 }
 
 // TestDuckLakeS3SharedPostgresHostedFlushCost records the cost of one hosted
-// live flush; see docs/design/hosted-flush-cost.md. It is opt-in so CI cost
+// live flush; see docs/design/archive/hosted-flush-cost.md. It is opt-in so CI cost
 // does not change.
 func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	if os.Getenv("PORCUPINE_MEASURE_HOSTED_FLUSH") != "1" {
-		t.Skip("opt in with PORCUPINE_MEASURE_HOSTED_FLUSH=1; see docs/design/hosted-flush-cost.md")
+		t.Skip("opt in with PORCUPINE_MEASURE_HOSTED_FLUSH=1; see docs/design/archive/hosted-flush-cost.md")
 	}
 	flushes := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_N", "20"))
 	events := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS", "100"))
@@ -119,11 +119,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	control := sharedPostgresDSN(t)
 	config := hostedJourneyConfig(t, control, fixture)
 	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
-	config.Pipelines = &output.PipelineConfig{
-		Key:                           bytes.Repeat([]byte{1}, 32),
-		WebhookMaxQueuedEvents:        100_000,
-		WebhookProjectMaxQueuedEvents: 100_000,
-	}
+	config.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
 	service, host, _ := hostedCleanupWorker(t, config)
 	service.pipelines.Stop()
 	service.usage.cancel()
@@ -156,6 +152,13 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 		sharedJourneyHTTP(t, host.URL, "POST", pipelines+"/"+webhookID+"/"+action, creator, nil, nil, 200)
 	}
 	webhook("pause")
+
+	// Keep all measured jobs without a background sender consuming the queue.
+	// Pipeline creation initialized all capacity rows for this isolated database.
+	if _, err := direct.ExecContext(ctx, `UPDATE pipeline_capacity SET
+		limit_refs=1000000, limit_rows=4000000, limit_bytes=1099511627776, limit_artifacts=1099511627776`); err != nil {
+		t.Fatal(err)
+	}
 
 	schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(key.SourceID, project))
 	readSnapshot := func() int64 {
