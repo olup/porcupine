@@ -61,7 +61,7 @@ curl --fail-with-body "$PORCUPINE_URL/api/v1/projects/$PROJECT_ID/exports/$EXPOR
 
 Each item contains `index`, `name`, `rows`, compressed `bytes`, `decoded_bytes`, `sha256`, `url`, and `expires_at`. The checksum covers the compressed object. File links are available only after the whole attempt succeeds. Queued, running, failed, and canceled jobs return `409` for files. Expired jobs return `410`. Authorized readers can request fresh links, which last at most five minutes and expire by the job's retention deadline.
 
-A presigned URL grants access without a Porcupine credential. Revoking a key does not revoke an already issued URL. Do not put links in public logs or messages. Previously downloaded files and successful exports are independent copies; later source-event edits or deletions do not rewrite them.
+A presigned URL grants access without a Porcupine credential. Issued URLs stay valid after a cancellation request or a change to Porcupine authorization, subject to their expiry, object availability, and storage-side access controls. Do not put links in public logs or messages. Previously downloaded files and successful exports are independent copies; later source-event edits or deletions do not rewrite them.
 
 Cancel a queued or running job with no body:
 

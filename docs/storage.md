@@ -15,7 +15,7 @@ A hosted worker crash or incomplete drain can lose acknowledged events before th
 
 ## Local files or S3
 
-For standalone, use one server process per local data directory. Keep both SQLite databases and their auxiliary files, the DuckLake registry, and catalogs on persistent local storage. Keep local analytical files and private configuration with that state. Use local disks for the SQLite files and local catalogs.
+For standalone, use one server process per local data directory. Keep both SQLite databases and their auxiliary files, the DuckLake registry, and catalogs on persistent local storage. Keep local analytical files and private configuration with that state. Keep SQLite files and local catalogs off network filesystems such as NFS.
 
 A fresh standalone deployment can place analytical files on [S3](reference/ducklake-s3.md). Queries use the same project-scoped DuckDB SQL with local or remote files. Select S3 before archive initialization. Changing the setting cannot move an existing archive or move older data to S3 automatically.
 
