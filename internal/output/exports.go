@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
@@ -23,12 +24,12 @@ func exportQueueLimit(config ExportConfig) int {
 
 func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportRequest, caller auth.Principal) (ExportJob, error) {
 	if !s.Enabled() {
-		return ExportJob{}, apiError(503, "exports are not configured")
+		return ExportJob{}, apierr.New(503, "exports are not configured")
 	}
 	if s.retained != nil {
 		finish, err := s.beginExportAdmissionActivity(ctx, project)
 		if err != nil {
-			return ExportJob{}, apiError(503, "export admission unavailable")
+			return ExportJob{}, apierr.New(503, "export admission unavailable")
 		}
 		defer finish()
 	}
@@ -45,7 +46,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 		format = "jsonl"
 	}
 	if format != "jsonl" && format != "csv" {
-		return ExportJob{}, apiError(400, "export format must be jsonl or csv")
+		return ExportJob{}, apierr.New(400, "export format must be jsonl or csv")
 	}
 	parameters := request.Parameters
 	if parameters == nil {
@@ -57,10 +58,10 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 		Format     string            `json:"format"`
 	}{canonical, parameters, format})
 	if err != nil {
-		return ExportJob{}, apiError(400, "invalid export request")
+		return ExportJob{}, apierr.New(400, "invalid export request")
 	}
 	encodedParameters, _ := json.Marshal(parameters)
-	keyHash, requestHash := hash(request.IdempotencyKey), hash(string(payload))
+	keyHash, requestHash := sha256Hex([]byte(request.IdempotencyKey)), sha256Hex(payload)
 
 	admission := exportAdmissionRequest{
 		project: project, canonical: canonical, format: format, parameters: string(encodedParameters),
@@ -69,7 +70,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 	if s.retained == nil {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
-			return ExportJob{}, apiError(503, "export storage unavailable")
+			return ExportJob{}, apierr.New(503, "export storage unavailable")
 		}
 		defer tx.Rollback()
 		job, err := s.submitExportTx(ctx, tx, admission, lakeapi.ExportSnapshot{})
@@ -77,7 +78,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 			return ExportJob{}, err
 		}
 		if err = tx.Commit(); err != nil {
-			return ExportJob{}, apiError(503, "export storage unavailable")
+			return ExportJob{}, apierr.New(503, "export storage unavailable")
 		}
 		s.wakeWorker()
 		return job, nil
@@ -91,7 +92,7 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 	err = s.snapshotCut(ctx, project, func(cut context.Context, run ExportControlTx) error {
 		snapshot, err := s.retained.CaptureExportSnapshot(cut, project)
 		if err != nil || snapshot.CatalogID == "" || snapshot.Version < 0 {
-			return apiError(503, "export analytical snapshot unavailable")
+			return apierr.New(503, "export analytical snapshot unavailable")
 		}
 		return run(cut, func(ctx context.Context, tx *sql.Tx) error {
 			job, err = s.submitExportTx(ctx, tx, admission, snapshot)
@@ -99,12 +100,12 @@ func (s *ExportJobs) Submit(ctx context.Context, project string, request ExportR
 		})
 	})
 	if err == nil && job.ID == "" {
-		err = apiError(503, "export analytical snapshot unavailable")
+		err = apierr.New(503, "export analytical snapshot unavailable")
 	}
 	if err != nil {
 		var status interface{ GetStatus() int }
 		if !errors.As(err, &status) {
-			err = apiError(503, "export analytical snapshot unavailable")
+			err = apierr.New(503, "export analytical snapshot unavailable")
 		}
 		return ExportJob{}, err
 	}
@@ -128,21 +129,21 @@ func (s *ExportJobs) previousExport(ctx context.Context, db exportQueryer, admis
 		return ExportJob{}, false, nil
 	}
 	if err != nil {
-		return ExportJob{}, false, apiError(503, "export storage unavailable")
+		return ExportJob{}, false, apierr.New(503, "export storage unavailable")
 	}
 	if previousHash != admission.requestHash {
-		return ExportJob{}, true, apiError(409, "idempotency_key was used for a different export request")
+		return ExportJob{}, true, apierr.New(409, "idempotency_key was used for a different export request")
 	}
 	job, err := s.scanExport(db.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE id=$1`, previousID))
 	if err != nil {
-		return ExportJob{}, true, apiError(503, "export storage unavailable")
+		return ExportJob{}, true, apierr.New(503, "export storage unavailable")
 	}
 	return s.publicExportJob(job), true, nil
 }
 
 func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission exportAdmissionRequest, snapshot lakeapi.ExportSnapshot) (ExportJob, error) {
 	if err := s.lockExportQueue(ctx, tx); err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+		return ExportJob{}, apierr.New(503, "export storage unavailable")
 	}
 	if previous, found, err := s.previousExport(ctx, tx, admission); found || err != nil {
 		return previous, err
@@ -156,23 +157,23 @@ func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission e
 	if s.retained == nil {
 		var pending int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM export_jobs WHERE state IN ('queued','running')`).Scan(&pending); err != nil {
-			return ExportJob{}, apiError(503, "export storage unavailable")
+			return ExportJob{}, apierr.New(503, "export storage unavailable")
 		}
 		if pending >= exportQueueLimit(s.config) {
-			return ExportJob{}, apiError(503, "export queue is full")
+			return ExportJob{}, apierr.New(503, "export queue is full")
 		}
 		var events, mutations int64
 		if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='events'),0),coalesce((SELECT max(seq) FROM mutation_audit),0)`).Scan(&events, &mutations); err != nil {
-			return ExportJob{}, apiError(503, "export delivery barrier unavailable")
+			return ExportJob{}, apierr.New(503, "export delivery barrier unavailable")
 		}
 		first, second = events, mutations
 	} else {
 		tenant, err = lockActiveExportProject(ctx, tx, admission.project)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ExportJob{}, apiError(404, "project not found")
+			return ExportJob{}, apierr.New(404, "project not found")
 		}
 		if err != nil {
-			return ExportJob{}, apiError(503, "export project unavailable")
+			return ExportJob{}, apierr.New(503, "export project unavailable")
 		}
 
 		if err := s.checkHostedExportCapacity(ctx, tx, tenant, admission.project); err != nil {
@@ -181,10 +182,10 @@ func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission e
 		if admission.caller.External == nil {
 			actor, authorityErr := s.exportJobActorTx(ctx, tx, storedExport{ExportJob: job, ActorID: admission.caller.ID})
 			if authenticationUnavailable(authorityErr) {
-				return ExportJob{}, apiError(503, "export authorization unavailable")
+				return ExportJob{}, apierr.New(503, "export authorization unavailable")
 			}
 			if authorityErr != nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
-				return ExportJob{}, apiError(403, "export authorization has changed")
+				return ExportJob{}, apierr.New(403, "export authorization has changed")
 			}
 		}
 		windowColumns, first, second = "snapshot_catalog_id,snapshot_version", snapshot.CatalogID, snapshot.Version
@@ -200,10 +201,10 @@ func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission e
 			actor, authorityErr = s.currentActorTx(ctx, tx, admission.caller)
 		}
 		if authenticationUnavailable(authorityErr) {
-			return ExportJob{}, apiError(503, "export authorization unavailable")
+			return ExportJob{}, apierr.New(503, "export authorization unavailable")
 		}
 		if authorityErr != nil || actor.External == nil || !auth.Authorize(actor, "events:read", job.ProjectID) {
-			return ExportJob{}, apiError(403, "external export authorization expired or changed")
+			return ExportJob{}, apierr.New(403, "external export authorization expired or changed")
 		}
 		if s.retained == nil {
 			err = s.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, job.ProjectID).Scan(&tenant)
@@ -213,7 +214,7 @@ func (s *ExportJobs) submitExportTx(ctx context.Context, tx *sql.Tx, admission e
 		}
 	}
 	if err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+		return ExportJob{}, apierr.New(503, "export storage unavailable")
 	}
 	return job, nil
 }
@@ -236,7 +237,7 @@ func (s *ExportJobs) publicExportJob(job storedExport) ExportJob {
 
 func validateExportPage(limit, offset int) error {
 	if limit < 1 || limit > 100 || offset < 0 {
-		return apiError(400, "export pagination requires limit 1 to 100 and a nonnegative offset")
+		return apierr.New(400, "export pagination requires limit 1 to 100 and a nonnegative offset")
 	}
 	return nil
 }
@@ -247,7 +248,7 @@ func (s *ExportJobs) List(ctx context.Context, project string, limit, offset int
 	}
 	jobs, err := s.storedExportPage(ctx, project, limit+1, offset)
 	if err != nil {
-		return ExportPage{}, apiError(503, "export storage unavailable")
+		return ExportPage{}, apierr.New(503, "export storage unavailable")
 	}
 	result := ExportPage{Jobs: []ExportJob{}}
 	if len(jobs) > limit {
@@ -273,12 +274,12 @@ func (s *ExportJobs) Get(ctx context.Context, project, id string) (ExportJob, er
 func (s *ExportJobs) Cancel(ctx context.Context, project, id string, caller auth.Principal) (ExportJob, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+		return ExportJob{}, apierr.New(503, "export storage unavailable")
 	}
 	defer tx.Rollback()
 	if s.retained == nil {
 		if err := s.lockExportQueue(ctx, tx); err != nil {
-			return ExportJob{}, apiError(503, "export storage unavailable")
+			return ExportJob{}, apierr.New(503, "export storage unavailable")
 		}
 	}
 	job, err := s.scanExport(tx.QueryRowContext(ctx, `SELECT `+s.exportColumns()+` FROM export_jobs WHERE project_id=$1 AND id=$2`+s.lockExportJob(), project, id))
@@ -286,10 +287,10 @@ func (s *ExportJobs) Cancel(ctx context.Context, project, id string, caller auth
 		return ExportJob{}, exportLookupError(err)
 	}
 	if caller.ID != job.ActorID && !caller.Admin() {
-		return ExportJob{}, apiError(403, "only the export creator or an administrator can cancel it")
+		return ExportJob{}, apierr.New(403, "only the export creator or an administrator can cancel it")
 	}
 	if job.State != ExportQueued && job.State != ExportRunning {
-		return ExportJob{}, apiError(409, "export is already terminal")
+		return ExportJob{}, apierr.New(409, "export is already terminal")
 	}
 	if job.State == ExportQueued {
 		job.State = ExportCanceled
@@ -299,7 +300,7 @@ func (s *ExportJobs) Cancel(ctx context.Context, project, id string, caller auth
 		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET cancel_requested=1,cleanup_pending=1 WHERE id=$1`, job.ID)
 	}
 	if err != nil || tx.Commit() != nil {
-		return ExportJob{}, apiError(503, "export storage unavailable")
+		return ExportJob{}, apierr.New(503, "export storage unavailable")
 	}
 	if s.Enabled() {
 		s.activeMu.Lock()
@@ -326,20 +327,20 @@ func (s *ExportJobs) Files(ctx context.Context, project, id string, limit, offse
 	}
 	now := s.clock().UTC()
 	if job.State == ExportExpired || job.State == ExportSucceeded && job.ExpiresAtMS > 0 && job.ExpiresAtMS <= now.UnixMilli() {
-		return ExportFilePage{}, apiError(410, "export has expired")
+		return ExportFilePage{}, apierr.New(410, "export has expired")
 	}
 	if job.State != ExportSucceeded {
-		return ExportFilePage{}, apiError(409, "export files are available only after success")
+		return ExportFilePage{}, apierr.New(409, "export files are available only after success")
 	}
 	if job.ExpiresAtMS <= 0 {
-		return ExportFilePage{}, apiError(503, "export retention metadata unavailable")
+		return ExportFilePage{}, apierr.New(503, "export retention metadata unavailable")
 	}
 	if !s.Enabled() || s.store == nil {
-		return ExportFilePage{}, apiError(503, "export storage is not configured")
+		return ExportFilePage{}, apierr.New(503, "export storage is not configured")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT file_index,object_key,rows,bytes,decoded_bytes,sha256,storage_id FROM export_files WHERE job_id=$1 AND attempt_id=$2 AND complete=1 ORDER BY file_index LIMIT $3 OFFSET $4`, job.ID, job.AttemptID, limit+1, offset)
 	if err != nil {
-		return ExportFilePage{}, apiError(503, "export file metadata unavailable")
+		return ExportFilePage{}, apierr.New(503, "export file metadata unavailable")
 	}
 	artifacts := []exportArtifact{}
 	for rows.Next() {
@@ -347,18 +348,18 @@ func (s *ExportJobs) Files(ctx context.Context, project, id string, limit, offse
 		var storage string
 		if err := rows.Scan(&artifact.Index, &artifact.Key, &artifact.Rows, &artifact.Bytes, &artifact.DecodedBytes, &artifact.SHA256, &storage); err != nil {
 			rows.Close()
-			return ExportFilePage{}, apiError(503, "export file metadata unavailable")
+			return ExportFilePage{}, apierr.New(503, "export file metadata unavailable")
 		}
 		if s.retained != nil && storage != s.store.OwnershipID() {
 			rows.Close()
-			return ExportFilePage{}, apiError(503, "export storage namespace unavailable")
+			return ExportFilePage{}, apierr.New(503, "export storage namespace unavailable")
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	readErr := rows.Err()
 	rows.Close()
 	if readErr != nil {
-		return ExportFilePage{}, apiError(503, "export file metadata unavailable")
+		return ExportFilePage{}, apierr.New(503, "export file metadata unavailable")
 	}
 	result := ExportFilePage{Files: []ExportFile{}, Limit: limit, Offset: offset}
 	if len(artifacts) > limit {
@@ -373,14 +374,14 @@ func (s *ExportJobs) Files(ctx context.Context, project, id string, limit, offse
 		}
 		ttl := min(exportLinkTTL, deadline.Sub(s.clock()))
 		if ttl < time.Second {
-			return ExportFilePage{}, apiError(410, "export download authorization has expired")
+			return ExportFilePage{}, apierr.New(410, "export download authorization has expired")
 		}
 		url, expires, err := s.store.PresignUntil(ctx, artifact.Key, deadline, ttl)
 		if errors.Is(err, exportstore.ErrExpired) {
-			return ExportFilePage{}, apiError(410, "export download authorization has expired")
+			return ExportFilePage{}, apierr.New(410, "export download authorization has expired")
 		}
 		if err != nil {
-			return ExportFilePage{}, apiError(503, "export download link unavailable")
+			return ExportFilePage{}, apierr.New(503, "export download link unavailable")
 		}
 		result.Files = append(result.Files, ExportFile{Index: artifact.Index, Name: fmt.Sprintf("part-%06d.%s.gz", artifact.Index, job.Format), Rows: artifact.Rows, Bytes: artifact.Bytes, DecodedBytes: artifact.DecodedBytes, SHA256: artifact.SHA256, URL: url, ExpiresAt: expires.Format(time.RFC3339Nano)})
 	}

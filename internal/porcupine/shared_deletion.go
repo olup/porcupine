@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -26,7 +27,7 @@ func (s *Service) beginControlProjectDeletion(ctx context.Context, id string) er
 		var completed bool
 		if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, id).Scan(&completed); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return apiError(404, "project not found")
+				return apierr.New(404, "project not found")
 			}
 			return err
 		}
@@ -44,7 +45,7 @@ ON CONFLICT(project_id) DO UPDATE SET tenant_id=excluded.tenant_id WHERE project
 		return err
 	}
 	if recordedTenant != tenant {
-		return apiError(409, "project deletion tenant ownership is inconsistent")
+		return apierr.New(409, "project deletion tenant ownership is inconsistent")
 	}
 	if err := s.purgeProjectGrants(ctx, tx, id); err != nil {
 		return err
@@ -72,7 +73,7 @@ func (s *Service) completeControlProjectDeletion(ctx context.Context, id string)
 	var completed bool
 	if err := tx.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`+lock, id).Scan(&completed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return apiError(409, "project deletion has not started")
+			return apierr.New(409, "project deletion has not started")
 		}
 		return err
 	}

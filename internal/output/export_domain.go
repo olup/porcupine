@@ -3,14 +3,11 @@ package output
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"sync"
 	"time"
 
-	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -114,8 +111,6 @@ type ExportFilePage struct {
 	NextOffset    *int
 }
 
-func apiError(status int, message string) error { return apierr.New(status, message) }
-func hash(v string) string                      { b := sha256.Sum256([]byte(v)); return hex.EncodeToString(b[:]) }
 func authenticationUnavailable(err error) bool {
 	var status interface{ GetStatus() int }
 	return errors.Is(err, auth.ErrUnavailable) || errors.Is(err, auth.ErrExternalKeysUnavailable) || errors.As(err, &status) && status.GetStatus() == 503

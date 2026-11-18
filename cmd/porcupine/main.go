@@ -57,13 +57,9 @@ func serverFailureReason(err error) string {
 		return "disk_full"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
-	}
-	switch err.Error() {
-	case "PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization",
-		"PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization":
+	case errors.Is(err, porcupine.ErrBootstrapTokenRequired):
 		return "bootstrap_token_required"
-	case "SQLite has an operator restore in progress", "operator restore is incomplete",
-		"operator restore is incomplete; finish or discard the isolated restore before starting":
+	case errors.Is(err, porcupine.ErrRestoreInProgress), errors.Is(err, porcupine.ErrRestoreIncomplete):
 		return "restore_incomplete"
 	}
 	return "unclassified"

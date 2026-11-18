@@ -4,11 +4,12 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
 func authenticationUnavailable(err error) bool {
-	var managed *managementError
+	var managed *apierr.Error
 	return errors.Is(err, auth.ErrUnavailable) || errors.Is(err, auth.ErrExternalKeysUnavailable) || errors.As(err, &managed) && managed.GetStatus() == 503
 }
 

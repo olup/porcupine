@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/usage"
@@ -72,7 +73,7 @@ func (l *usageFailingLake) before() error {
 		l.t.Fatalf("query was dispatched before durable start: %d %v", count, e)
 	}
 	l.calls++
-	return apiError(400, "expected backend error")
+	return apierr.New(400, "expected backend error")
 }
 func (l *usageFailingLake) Query(context.Context, string, string, map[string]string, lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	return lakeapi.AnalyticsResult{}, l.before()

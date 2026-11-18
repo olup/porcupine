@@ -12,7 +12,9 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/syncx"
 )
 
 type DuckLakeStore struct {
@@ -23,13 +25,13 @@ type DuckLakeStore struct {
 	registry         nativeRegistry
 	registryInfo     os.FileInfo
 	owner            *os.File
-	Mu               contextMutex
-	cleanup          contextMutex
+	Mu               syncx.ContextMutex
+	cleanup          syncx.ContextMutex
 	Projects         map[string]*ProjectLake
 	closed           bool
 	Remote           *DuckLakeObjectStore
 	opening          map[string]*projectOpening
-	deletion         contextMutex
+	deletion         syncx.ContextMutex
 	deletionActive   bool
 	checkpointActive int
 	backupPins       map[string]int
@@ -38,8 +40,8 @@ type DuckLakeStore struct {
 
 type ProjectLake struct {
 	DB          *sql.DB
-	write       contextMutex
-	maintenance contextMutex
+	write       syncx.ContextMutex
+	maintenance syncx.ContextMutex
 	directory   string
 	catalogInfo os.FileInfo
 	leases      map[*projectLease]struct{}
@@ -93,7 +95,7 @@ func NewDuckLake(config DuckLakeConfig) (LakeStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !projectionLockSupported() {
+	if !syncx.FileLockSupported() {
 		return nil, errors.New("DuckLake requires supported local file locking")
 	}
 	owner, err := os.OpenFile(filepath.Join(root, ".writer.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -182,6 +184,20 @@ CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_a
 		}
 	}
 	return s, nil
+}
+
+// lockWriter takes the exclusive writer lock. A process that is forking may
+// briefly share the previous owner's lock description, so a busy lock is
+// retried for a short time before another writer is assumed.
+func lockWriter(owner *os.File) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		err := syncx.FileLock(owner, true)
+		if err == nil || !syncx.FileLockBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (s *DuckLakeStore) SourceID(ctx context.Context) (string, error) {
@@ -292,7 +308,7 @@ func (s *DuckLakeStore) leaseProjectModeLocked(ctx context.Context, project stri
 			}
 		}
 		if oldest == "" {
-			return nil, nil, analyticsError(429, "active_project_limit", "DuckLake active project limit reached", "Retry after active project work finishes. The deployment operator can adjust the resident-project limit if memory allows.", "")
+			return nil, nil, apierr.Detailed(429, "active_project_limit", "DuckLake active project limit reached", "Retry after active project work finishes. The deployment operator can adjust the resident-project limit if memory allows.", "")
 		}
 		err := s.Projects[oldest].DB.Close()
 		delete(s.Projects, oldest)
@@ -580,7 +596,7 @@ func (s *DuckLakeStore) DeleteProject(ctx context.Context, project string) error
 	pinned := s.backupPins[project] != 0
 	s.Mu.Unlock()
 	if pinned {
-		return analyticsError(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
+		return apierr.Detailed(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
 	}
 	if err := s.deletion.Lock(ctx); err != nil {
 		return err
@@ -595,7 +611,7 @@ func (s *DuckLakeStore) DeleteProject(ctx context.Context, project string) error
 	}
 	if s.backupPins[project] != 0 {
 		s.Mu.Unlock()
-		return analyticsError(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
+		return apierr.Detailed(503, "backup_in_progress", "DuckLake project is pinned by a native backup", "Retry after the native backup finishes.", "")
 	}
 	if s.opening[project] != nil {
 		s.Mu.Unlock()

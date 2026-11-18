@@ -63,8 +63,12 @@ func (r PipelineRef) valid() bool {
 }
 func pipelineDigest(v any) string {
 	b, _ := json.Marshal(v)
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
+	return sha256Hex(b)
+}
+
+func sha256Hex(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 type PipelineTarget struct {

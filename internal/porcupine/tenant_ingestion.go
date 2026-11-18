@@ -7,6 +7,8 @@ import (
 	"math"
 	"net/http"
 	"time"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 type tenantIngestionError struct {
@@ -68,7 +70,7 @@ func tenantIngestionProblem(err error) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	return analyticsError(http.StatusTooManyRequests, failure.code, failure.message,
+	return apierr.Detailed(http.StatusTooManyRequests, failure.code, failure.message,
 		"The upload checkpoint is unchanged. "+failure.retryHint(), "")
 }
 

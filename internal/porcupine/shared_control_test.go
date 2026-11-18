@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -32,8 +33,8 @@ func TestSharedControlBootstrapIsAtomicAndConcurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	config, _ := query.Normalize(nil)
-	if err := initializeSharedControl(ctx, db, "short", config, false); err == nil {
-		t.Fatal("first shared initialization accepted an unusable bootstrap")
+	if err := initializeSharedControl(ctx, db, "short", config, false); !errors.Is(err, ErrBootstrapTokenRequired) || err.Error() != "PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization" {
+		t.Fatalf("invalid startup error: %v", err)
 	}
 	var tables int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema()`).Scan(&tables); err != nil || tables != 0 {

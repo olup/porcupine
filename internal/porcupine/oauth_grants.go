@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -49,13 +50,13 @@ func (s *Service) registerInteractiveOAuthManagement(api huma.API, op func(strin
 }
 func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGrantsInput) (*OAuthGrantsOutput, error) {
 	if input.Limit < 1 || input.Limit > 100 || input.Offset < 0 {
-		return nil, apiError(400, "invalid OAuth grant pagination")
+		return nil, apierr.New(400, "invalid OAuth grant pagination")
 	}
 	rows, err := s.control.QueryContext(ctx, `SELECT g.id,g.human_id,g.client_id,g.resource,'email',coalesce(e.email,g.human_id),g.created_at_ms,g.expires_at_ms,k.revoked_at,k.permissions,k.projects,coalesce(t.tenant_id,'')
  FROM oauth_interactive_grants g JOIN access_keys k ON k.id=g.principal_id LEFT JOIN email_humans e ON e.principal_id=g.human_id LEFT JOIN oauth_grant_tenants t ON t.grant_id=g.id
  ORDER BY g.created_at_ms DESC,g.id LIMIT $1 OFFSET $2`, input.Limit+1, input.Offset)
 	if err != nil {
-		return nil, apiError(503, "OAuth grant storage unavailable")
+		return nil, apierr.New(503, "OAuth grant storage unavailable")
 	}
 	defer rows.Close()
 	result := OAuthGrants{Grants: []OAuthGrant{}, Limit: input.Limit, Offset: input.Offset}
@@ -63,15 +64,15 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 		var grant OAuthGrant
 		var permissions, projects string
 		if rows.Scan(&grant.ID, &grant.HumanID, &grant.ClientID, &grant.Resource, &grant.Issuer, &grant.Subject, &grant.CreatedAtMS, &grant.ExpiresAtMS, &grant.RevokedAt, &permissions, &projects, &grant.TenantID) != nil {
-			return nil, apiError(503, "OAuth grant storage unavailable")
+			return nil, apierr.New(503, "OAuth grant storage unavailable")
 		}
 		if json.Unmarshal([]byte(permissions), &grant.Permissions) != nil || json.Unmarshal([]byte(projects), &grant.Projects) != nil {
-			return nil, apiError(503, "OAuth grant storage unavailable")
+			return nil, apierr.New(503, "OAuth grant storage unavailable")
 		}
 		result.Grants = append(result.Grants, grant)
 	}
 	if rows.Err() != nil {
-		return nil, apiError(503, "OAuth grant storage unavailable")
+		return nil, apierr.New(503, "OAuth grant storage unavailable")
 	}
 	if len(result.Grants) > input.Limit {
 		next := input.Offset + input.Limit
@@ -82,7 +83,7 @@ func (s *Service) managementListOAuthGrants(ctx context.Context, input *OAuthGra
 	for i := range result.Grants {
 		result.Grants[i].Projects, err = activeProjects(ctx, s.control, result.Grants[i].Projects)
 		if err != nil {
-			return nil, apiError(503, "project authority unavailable")
+			return nil, apierr.New(503, "project authority unavailable")
 		}
 	}
 	return &OAuthGrantsOutput{Body: result}, nil
@@ -91,10 +92,10 @@ func (s *Service) managementRevokeOAuthGrant(ctx context.Context, input *OAuthGr
 	var id string
 	err := s.control.QueryRowContext(ctx, `SELECT principal_id FROM oauth_interactive_grants WHERE id=$1`, input.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "OAuth grant not found")
+		return nil, apierr.New(404, "OAuth grant not found")
 	}
 	if err != nil {
-		return nil, apiError(503, "OAuth grant storage unavailable")
+		return nil, apierr.New(503, "OAuth grant storage unavailable")
 	}
 	return s.managementRevokeKey(ctx, &AccessKeyDeleteInput{ID: id})
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -54,13 +55,13 @@ func (s *Service) tenantDeletionStatus(ctx context.Context, tenant string) (Tena
 	var status TenantDeletion
 	err := s.control.QueryRowContext(ctx, `SELECT tenant_id,state,started_at,updated_at,error_code FROM tenant_deletions WHERE tenant_id=$1`, tenant).Scan(&status.TenantID, &status.State, &status.StartedAt, &status.UpdatedAt, &status.ErrorCode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return status, apiError(404, "tenant deletion not found")
+		return status, apierr.New(404, "tenant deletion not found")
 	}
 	if err != nil {
-		return status, apiError(503, "tenant deletion status unavailable")
+		return status, apierr.New(503, "tenant deletion status unavailable")
 	}
 	if err := s.control.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(CASE WHEN completed=0 THEN 1 ELSE 0 END),0) FROM project_deletions WHERE tenant_id=$1`, tenant).Scan(&status.ProjectsTotal, &status.ProjectsRemaining); err != nil {
-		return status, apiError(503, "tenant deletion status unavailable")
+		return status, apierr.New(503, "tenant deletion status unavailable")
 	}
 	status.PhysicalPurge = "pending_verification"
 	if status.State == "purged" {
@@ -85,11 +86,11 @@ func (s *Service) managementDeleteTenant(ctx context.Context, input *TenantIDInp
 		return nil, err
 	}
 	if err := s.beginTenantDeletion(ctx, input.TenantID); err != nil {
-		var managed *managementError
+		var managed *apierr.Error
 		if errors.As(err, &managed) {
 			return nil, managed
 		}
-		return nil, apiError(503, "tenant deletion unavailable; retry the same tenant ID")
+		return nil, apierr.New(503, "tenant deletion unavailable; retry the same tenant ID")
 	}
 	select {
 	case s.deletionWake <- struct{}{}:
@@ -107,7 +108,7 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 	}
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return apiError(503, "tenant deletion unavailable")
+		return apierr.New(503, "tenant deletion unavailable")
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
@@ -130,7 +131,7 @@ func (s *Service) beginTenantDeletion(ctx context.Context, tenant string) error 
 	var id string
 	err = tx.QueryRowContext(ctx, `SELECT id FROM tenants WHERE id=$1`+lock, tenant).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return apiError(404, "tenant not found")
+		return apierr.New(404, "tenant not found")
 	}
 	if err != nil {
 		return err

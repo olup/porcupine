@@ -8,6 +8,7 @@ import (
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/syncx"
 )
 
 func localReceipt(ctx context.Context, q oauthQueryer, project, uuid string) (bool, error) {
@@ -37,7 +38,7 @@ func (s *Service) recordReceipt(ctx context.Context, tx *sql.Tx, project, uuid s
 // short instance-wide policy/commit lock. A blocked object store never holds
 // that global lock. Idle gates are removed; the map holds only current callers.
 type receiptProjectGate struct {
-	mutex contextMutex
+	mutex syncx.ContextMutex
 	users int
 }
 

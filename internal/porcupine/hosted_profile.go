@@ -97,7 +97,30 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	if err != nil {
 		return nil, err
 	}
-	h.flusher, err = newHostedLiveFlusher(control, h.native, coordinator, s.usage.store)
+	effects, err := output.NewPGPipelineEffects(hostedPipelineAuthority{service: s})
+	if err != nil {
+		return nil, err
+	}
+	// Scheduled work resolves the flusher at call time, as exportSnapshotCut does.
+	endActivity := func(ctx context.Context, project, ticket string) error {
+		return h.flusher.finishProjectActivity(ctx, project, ticket)
+	}
+	execution := hostedPipelineExecution{
+		snapshotCut:    h.exportSnapshotCut,
+		deleteGate:     hostedOutputBlocked,
+		beginAttemptTx: inc.registerTx,
+		endAttempt:     endActivity,
+	}
+	p, err := s.newHostedPipelines(c.Pipelines, effects, coordinator, h.native.Config.SharedSourceID, execution)
+	if err != nil {
+		return nil, err
+	}
+	h.flusher, err = newHostedLiveFlusher(control, h.native, coordinator, s.usage.store, effects, hostedPublisherHooks{
+		ensureCapacity:        p.EnsureHostedPipelineCapacityTx,
+		loadRule:              p.HostedPipelineRule,
+		cancelMutationWebhook: effects.CancelHostedWebhookEventTx,
+		checkpointImport:      checkpointHostedImport,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -106,13 +129,10 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	s.imports = newHostedImportManager(s.eventRules, h.flusher)
 	s.hostedMutations = h.flusher
 	s.sealHostedProject = h.flusher.sealProject
-	endActivity := h.flusher.finishProjectActivity
-	if err := s.configureHostedPipelines(c.Pipelines, h.flusher, hostedPipelineExecution{
-		snapshotCut: h.exportSnapshotCut, deleteGate: hostedOutputBlocked, beginAttemptTx: inc.registerTx, endAttempt: endActivity,
-	}); err != nil {
+	if err := s.attachHostedWebhookWorker(p, h.flusher, execution); err != nil {
 		return nil, err
 	}
-	h.flusher.publisher.cancelMutationWebhook = h.flusher.publisher.effects.CancelHostedWebhookEventTx
+	s.pipelines = p
 	if err := s.pipelines.Initialize(ctx); err != nil {
 		return nil, err
 	}

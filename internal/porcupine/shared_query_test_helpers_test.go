@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/query"
 )
@@ -23,14 +24,14 @@ func (s *Service) waitSharedProjectQueries(ctx context.Context, project string) 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return apiError(503, "shared query state unavailable")
+			return apierr.New(503, "shared query state unavailable")
 		}
 		var active int
 		if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM shared_query_permits WHERE project_id=$1`, project).Scan(&active); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return apiError(503, "shared query state unavailable")
+			return apierr.New(503, "shared query state unavailable")
 		}
 		if active == 0 {
 			return nil

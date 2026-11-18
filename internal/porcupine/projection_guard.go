@@ -4,10 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/olup/porcupine/internal/syncx"
 )
+
+// ErrRestoreInProgress indicates startup could not acquire the writer lock used by offline restores.
+var ErrRestoreInProgress = errors.New("SQLite has an operator restore in progress")
+
+// ErrRestoreIncomplete indicates a marker from an unfinished operator restore.
+var ErrRestoreIncomplete = errors.New("operator restore is incomplete")
 
 // Lifetime service locks exclude an offline restore. Shared projection locks
 // cover native analytical writes and their SQLite acknowledgment as one checkpoint
@@ -20,7 +29,7 @@ type projectionGuard struct {
 type projectionGuardContextKey struct{}
 
 func openProjectionGuard(dbPath string) (*projectionGuard, error) {
-	if dbPath == ":memory:" || !projectionLockSupported() {
+	if dbPath == ":memory:" || !syncx.FileLockSupported() {
 		return nil, nil
 	}
 	path, err := filepath.Abs(dbPath)
@@ -40,13 +49,13 @@ func openProjectionGuard(dbPath string) (*projectionGuard, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = projectionFileLock(writer, false); err != nil {
+	if err = syncx.FileLock(writer, false); err != nil {
 		writer.Close()
-		return nil, errors.New("SQLite has an operator restore in progress")
+		return nil, ErrRestoreInProgress
 	}
 	if _, err = os.Stat(path + ".restore-incomplete"); err == nil {
 		writer.Close()
-		return nil, errors.New("operator restore is incomplete")
+		return nil, ErrRestoreIncomplete
 	} else if !errors.Is(err, os.ErrNotExist) {
 		writer.Close()
 		return nil, err
@@ -89,11 +98,11 @@ func lockProjectionFile(ctx context.Context, path string, exclusive bool) (func(
 			file.Close()
 			return nil, err
 		}
-		err = projectionFileLock(file, exclusive)
+		err = syncx.FileLock(file, exclusive)
 		if err == nil {
 			return func() { file.Close() }, nil
 		}
-		if !projectionLockBusy(err) {
+		if !syncx.FileLockBusy(err) {
 			file.Close()
 			return nil, err
 		}
@@ -114,7 +123,7 @@ func (s *Service) initializeBackupGuard(ctx context.Context) error {
 	var incomplete string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='online_restore_incomplete'`).Scan(&incomplete)
 	if err == nil {
-		return errors.New("operator restore is incomplete; finish or discard the isolated restore before starting")
+		return fmt.Errorf("%w; finish or discard the isolated restore before starting", ErrRestoreIncomplete)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err

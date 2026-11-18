@@ -25,16 +25,37 @@ type hostedLiveFlusher struct {
 	returnedActivities sync.Map
 }
 
-func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store) (*hostedLiveFlusher, error) {
+type hostedPublisherHooks struct {
+	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
+	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
+	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
+	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+}
+
+func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store, effects *output.PGPipelineEffects, hooks hostedPublisherHooks) (*hostedLiveFlusher, error) {
 	if control == nil || native == nil || native.SharedCatalog == nil || native.Remote == nil || coordinator == nil || meter == nil || meter.DB != control || !meter.Postgres {
 		return nil, errors.New("hosted flusher requires real shared providers")
 	}
-	effects, err := output.NewPGPipelineEffects(hostedPipelineNativeAuthority{})
-	if err != nil {
-		return nil, err
+	if effects == nil {
+		return nil, errors.New("hosted flusher requires pipeline effects")
 	}
-	return &hostedLiveFlusher{native: native, coordinator: coordinator, publisher: &hostedEffectPublisher{control: control, effects: effects, usage: meter, objects: native.Remote}, policy: hostedIngestionPolicy{db: control}}, nil
+	return &hostedLiveFlusher{
+		native:      native,
+		coordinator: coordinator,
+		publisher: &hostedEffectPublisher{
+			control:               control,
+			effects:               effects,
+			usage:                 meter,
+			objects:               native.Remote,
+			ensureCapacity:        hooks.ensureCapacity,
+			loadRule:              hooks.loadRule,
+			cancelMutationWebhook: hooks.cancelMutationWebhook,
+			checkpointImport:      hooks.checkpointImport,
+		},
+		policy: hostedIngestionPolicy{db: control},
+	}, nil
 }
+
 func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project string) (func(), error) {
 	tx, err := f.publisher.control.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {

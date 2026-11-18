@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -41,28 +42,28 @@ func importCheckAuthority(ctx context.Context, query oauthQueryer, actor auth.Pr
 			return err
 		}
 		if !auth.Authorize(current, "imports:write", project) || !auth.Authorize(current, "events:write", project) {
-			return apiError(403, "import credential is no longer authorized")
+			return apierr.New(403, "import credential is no longer authorized")
 		}
 		return nil
 	}
 	var permissions, projects string
 	err := query.QueryRowContext(ctx, `SELECT permissions,projects FROM access_keys WHERE id=$1 AND revoked_at IS NULL`, actor.ID).Scan(&permissions, &projects)
 	if err != nil {
-		return apiError(403, "import credential is no longer authorized")
+		return apierr.New(403, "import credential is no longer authorized")
 	}
 	var a auth.Principal
 	if json.Unmarshal([]byte(permissions), &a.Permissions) != nil || json.Unmarshal([]byte(projects), &a.Projects) != nil {
-		return apiError(503, "import authorization unavailable")
+		return apierr.New(503, "import authorization unavailable")
 	}
 	if !auth.Authorize(a, "imports:write", project) || !auth.Authorize(a, "events:write", project) {
-		return apiError(403, "import credential is no longer authorized")
+		return apierr.New(403, "import credential is no longer authorized")
 	}
 	return nil
 }
 
 func importWriteLock(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return apiError(503, "import storage unavailable")
+		return apierr.New(503, "import storage unavailable")
 	}
 	return nil
 }
@@ -91,13 +92,13 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	}
 	rows, err := m.db.QueryContext(ctx, `SELECT `+m.importFileColumns()+` FROM import_upload_files WHERE job_id=$1 ORDER BY ordinal`, id)
 	if err != nil {
-		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 	}
 	for rows.Next() {
 		file, scanErr := scanImportFile(rows)
 		if scanErr != nil {
 			rows.Close()
-			return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+			return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 		}
 		job.Files = append(job.Files, file.ImportUploadFile)
 		addImportCounts(&job.Counts, file.Counts)
@@ -105,22 +106,22 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 	}
 	samples, err := m.db.QueryContext(ctx, `SELECT file_id,row_number,reason FROM import_upload_samples WHERE job_id=$1 ORDER BY file_id,row_number LIMIT $2`, id, importer.MaxSamples)
 	if err != nil {
-		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 	}
 	defer samples.Close()
 	for samples.Next() {
 		var sample importer.ImportRowSample
 		if err := samples.Scan(&sample.FileID, &sample.RowNumber, &sample.Reason); err != nil {
-			return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+			return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 		}
 		job.Samples = append(job.Samples, sample)
 	}
 	if samples.Err() != nil {
-		return importer.ImportUploadJob{}, apiError(503, "import storage unavailable")
+		return importer.ImportUploadJob{}, apierr.New(503, "import storage unavailable")
 	}
 	job.Delivery = &importer.ImportDelivery{}
 	job.Delivery.Enabled = m.deliveryEnabled
@@ -129,7 +130,7 @@ func (m *importManager) loadImportJob(ctx context.Context, project, id string) (
 		return job.ImportUploadJob, nil
 	}
 	if err := m.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(EXISTS(SELECT 1 FROM delivery_quarantine q WHERE q.event_id=e.id)),0) FROM events e WHERE project_id=$1 AND id<=$2 AND delivered=0`, project, job.DeliveryCursor).Scan(&job.Delivery.Pending, &job.Delivery.Quarantined); err != nil {
-		return importer.ImportUploadJob{}, apiError(503, "import delivery status unavailable")
+		return importer.ImportUploadJob{}, apierr.New(503, "import delivery status unavailable")
 	}
 	job.Delivery.Ready = job.State == "completed" && job.Delivery.Enabled && job.Delivery.Pending == 0
 	return job.ImportUploadJob, nil
@@ -146,9 +147,9 @@ func addImportCounts(target *importer.ImportCounts, delta importer.ImportCounts)
 
 func importLookupError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
-		return apiError(404, "import not found")
+		return apierr.New(404, "import not found")
 	}
-	return apiError(503, "import storage unavailable")
+	return apierr.New(503, "import storage unavailable")
 }
 
 func (m *importManager) importTime() string { return m.rules.clock().UTC().Format(time.RFC3339Nano) }

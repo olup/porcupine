@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/output"
 )
@@ -91,10 +92,10 @@ func (s *Service) createEventExport(ctx context.Context, input *ExportCreateInpu
 		return nil, err
 	}
 	if !s.exports.Enabled() {
-		return nil, apiError(503, "exports are not configured")
+		return nil, apierr.New(503, "exports are not configured")
 	}
 	if strings.TrimSpace(input.Body.IdempotencyKey) == "" || len(input.Body.IdempotencyKey) > 200 {
-		return nil, apiError(400, "idempotency_key must contain 1 to 200 characters")
+		return nil, apierr.New(400, "idempotency_key must contain 1 to 200 characters")
 	}
 	if err := validateQueryParameters(input.Body.Parameters); err != nil {
 		return nil, err

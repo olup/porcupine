@@ -28,7 +28,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 	if err != nil {
 		t.Fatal(err)
 	}
-	flusher, err := newHostedLiveFlusher(s.control, store, coordinator, s.usage.store)
+	flusher, err := newHostedLiveFlusherFixture(s.control, store, coordinator, s.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -18,7 +19,7 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 		return nil, err
 	}
 	if s.lake == nil {
-		return nil, apiError(503, "analytics storage is not configured")
+		return nil, apierr.New(503, "analytics storage is not configured")
 	}
 	result, bounds, err := s.queries.Profile(ctx, s.interactiveReader(), input.ID, options)
 	if err != nil {
@@ -28,11 +29,11 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	defer cancel()
 	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
-		return nil, apiError(503, "delivery status unavailable")
+		return nil, apierr.New(503, "delivery status unavailable")
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > bounds.MaxBytes {
-		return nil, apiError(429, "event profile result byte limit reached")
+		return nil, apierr.New(429, "event profile result byte limit reached")
 	}
 	return &EventProfileOutput{Body: result}, nil
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/testfixtures"
 )
 
@@ -180,7 +181,7 @@ func (c *pausedS3HTTPClient) Do(request *http.Request) (*http.Response, error) {
 }
 
 func queryStatus(err error) int {
-	if failure, ok := err.(*managementError); ok {
+	if failure, ok := err.(*apierr.Error); ok {
 		return failure.GetStatus()
 	}
 	return 0

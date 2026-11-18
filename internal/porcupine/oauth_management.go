@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -132,17 +133,17 @@ func (s *Service) registerOAuthClients(api huma.API, op func(string, string, str
 
 func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthClientCreateInput) (*OAuthClientCreateOutput, error) {
 	if s.externalAuthEnabled() && (len(input.Body.GrantTypes) > 0 && !slices.Equal(input.Body.GrantTypes, []string{"client_credentials"}) || len(input.Body.RedirectURIs) > 0) {
-		return nil, apiError(400, "external mode supports native machine accounts only; register interactive applications at the external issuer")
+		return nil, apierr.New(400, "external mode supports native machine accounts only; register interactive applications at the external issuer")
 	}
 	if s.resources == nil {
-		return nil, apiError(503, "OAuth client credentials are not configured")
+		return nil, apierr.New(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
 	if !a.Admin() && len(a.TenantIDs) > 0 {
-		return nil, apiError(403, "use tenant service-account operations for team credentials")
+		return nil, apierr.New(403, "use tenant service-account operations for team credentials")
 	}
 	if !a.CanProvisionCredentials() {
-		return nil, apiError(403, "this credential cannot create independent clients")
+		return nil, apierr.New(403, "this credential cannot create independent clients")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
@@ -154,28 +155,28 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	body.SourceID = sourceID
 	grants, redirects, authMethod, err := auth.NormalizeOAuthClientRegistration(body.GrantTypes, body.RedirectURIs, body.TokenEndpointAuthMethod)
 	if err != nil {
-		return nil, apiError(400, "invalid OAuth client registration")
+		return nil, apierr.New(400, "invalid OAuth client registration")
 	}
 	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth == nil || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
-		return nil, apiError(400, "tenant administration requires a dedicated interactive email client")
+		return nil, apierr.New(400, "tenant administration requires a dedicated interactive email client")
 	}
 	if slices.Contains(grants, "authorization_code") {
 		if sourceID != "" {
-			return nil, apiError(400, "interactive clients cannot have a producer source")
+			return nil, apierr.New(400, "interactive clients cannot have a producer source")
 		}
 		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || !a.Admin() || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
-			return nil, apiError(400, "administrator login requires a dedicated interactive email client with only instance:admin across all projects")
+			return nil, apierr.New(400, "administrator login requires a dedicated interactive email client with only instance:admin across all projects")
 		}
 	}
 	if slices.Contains(grants, "authorization_code") && !s.interactiveOAuthEnabled() {
-		return nil, apiError(503, "interactive OAuth is not configured")
+		return nil, apierr.New(503, "interactive OAuth is not configured")
 	}
 	var clientSecret, unknownBearer [32]byte
 	if _, err := rand.Read(clientSecret[:]); err != nil {
-		return nil, apiError(500, "cannot create OAuth client")
+		return nil, apierr.New(500, "cannot create OAuth client")
 	}
 	if _, err := rand.Read(unknownBearer[:]); err != nil {
-		return nil, apiError(500, "cannot create OAuth client")
+		return nil, apierr.New(500, "cannot create OAuth client")
 	}
 	secret := base64.RawURLEncoding.EncodeToString(clientSecret[:])
 	if authMethod == "none" {
@@ -186,11 +187,11 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	projects, _ := json.Marshal(body.Projects)
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(503, "credential storage unavailable")
+		return nil, apierr.New(503, "credential storage unavailable")
 	}
 	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
 		return nil, err
@@ -200,18 +201,18 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	}
 	owner, err := credentialTenantOwner(ctx, tx, body.Permissions, body.Projects)
 	if err != nil {
-		return nil, apiError(503, "credential ownership unavailable")
+		return nil, apierr.New(503, "credential ownership unavailable")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id,owner_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, body.Name, hash(base64.RawURLEncoding.EncodeToString(unknownBearer[:])), string(permissions), string(projects), created, body.SourceID, owner); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	grantJSON, _ := json.Marshal(grants)
 	redirectJSON, _ := json.Marshal(redirects)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO oauth_clients(client_id,secret_hash,grant_types,redirect_uris,token_endpoint_auth_method) VALUES($1,$2,$3,$4,$5)`, id, hash(secret), string(grantJSON), string(redirectJSON), authMethod); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	if s.externalAuthEnabled() {
 		secret = ""
@@ -222,12 +223,12 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 func (s *Service) managementListOAuthClients(ctx context.Context, _ *struct{}) (*OAuthClientListOutput, error) {
 	a := principal(ctx)
 	if !a.Admin() && len(a.TenantIDs) > 0 {
-		return nil, apiError(403, "use tenant service-account operations for team credentials")
+		return nil, apierr.New(403, "use tenant service-account operations for team credentials")
 	}
 	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,c.grant_types,c.redirect_uris,c.token_endpoint_auth_method,coalesce(t.tenant_id,'')
 FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id LEFT JOIN tenant_credentials t ON t.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	defer rows.Close()
 	items := []OAuthClient{}
@@ -235,26 +236,26 @@ FROM oauth_clients c JOIN access_keys k ON k.id=c.client_id LEFT JOIN tenant_cre
 		var item OAuthClient
 		var permissions, projects, grants, redirects string
 		if err := rows.Scan(&item.ClientID, &item.Name, &permissions, &projects, &item.CreatedAt, &item.RevokedAt, &item.SourceID, &grants, &redirects, &item.TokenEndpointAuthMethod, &item.TenantID); err != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &item.Permissions) != nil || json.Unmarshal([]byte(projects), &item.Projects) != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if json.Unmarshal([]byte(grants), &item.GrantTypes) != nil || json.Unmarshal([]byte(redirects), &item.RedirectURIs) != nil {
-			return nil, apiError(500, "storage error")
+			return nil, apierr.New(500, "storage error")
 		}
 		if a.ContainsProjects(item.Projects) {
 			items = append(items, item)
 		}
 	}
 	if rows.Err() != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	rows.Close()
 	for i := range items {
 		items[i].Projects, err = activeProjects(ctx, s.control, items[i].Projects)
 		if err != nil {
-			return nil, apiError(503, "project authority unavailable")
+			return nil, apierr.New(503, "project authority unavailable")
 		}
 	}
 	return &OAuthClientListOutput{Body: OAuthClientList{Enabled: s.oauth != nil, OAuthClients: items}}, nil
@@ -264,10 +265,10 @@ func (s *Service) managementRevokeOAuthClient(ctx context.Context, input *OAuthC
 	var id string
 	err := s.control.QueryRowContext(ctx, `SELECT client_id FROM oauth_clients WHERE client_id=$1`, input.ID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(404, "OAuth client not found")
+		return nil, apierr.New(404, "OAuth client not found")
 	}
 	if err != nil {
-		return nil, apiError(500, "storage error")
+		return nil, apierr.New(500, "storage error")
 	}
 	return s.managementRevokeKey(ctx, &AccessKeyDeleteInput{ID: id})
 }

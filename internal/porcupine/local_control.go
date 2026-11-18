@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/query"
 )
+
+// ErrBootstrapTokenRequired indicates first initialization needs a valid bootstrap token.
+var ErrBootstrapTokenRequired = errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters")
 
 func validateLocalDatabasePaths(journal, control string) error {
 	if journal == ":memory:" || control == ":memory:" {
@@ -101,7 +105,7 @@ func initializeLocalControl(ctx context.Context, db *sql.DB, bootstrap string, q
 			}
 		} else {
 			if len(bootstrap) < 16 {
-				return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization")
+				return fmt.Errorf("%w on first control initialization", ErrBootstrapTokenRequired)
 			}
 			id := eventapi.NewID()
 			if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrap), now()); err != nil {

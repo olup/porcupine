@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"regexp"
 
+	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/nativequery"
 	"github.com/olup/porcupine/internal/query"
@@ -76,10 +77,10 @@ type AnalyticsQueryOutput struct{ Body AnalyticsQuery }
 func (s *Service) analyticsProject(ctx context.Context, id string) error {
 	var exists int
 	if err := s.control.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&exists); err != nil {
-		return apiError(503, "project storage unavailable")
+		return apierr.New(503, "project storage unavailable")
 	}
 	if exists == 0 {
-		return apiError(404, "project not found")
+		return apierr.New(404, "project not found")
 	}
 	return nil
 }
@@ -91,7 +92,7 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	}
 	delivery, err := s.deliveryStatus(ctx, project)
 	if err != nil {
-		return nil, apiError(503, "delivery status unavailable")
+		return nil, apierr.New(503, "delivery status unavailable")
 	}
 	columns := []AnalyticsColumn{
 		{"id", "BIGINT", "Durable event ID, returned as a decimal string."},
@@ -152,7 +153,7 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 		return nil, err
 	}
 	if s.lake == nil {
-		return nil, apiError(503, "analytics storage is not configured")
+		return nil, apierr.New(503, "analytics storage is not configured")
 	}
 	result, bounds, err := s.queries.SQL(ctx, s.interactiveReader(), input.ID, input.Body.SQL, input.Body.Parameters)
 	if err != nil {
@@ -162,12 +163,12 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	defer cancel()
 	delivery, err := s.deliveryStatus(ctx, input.ID)
 	if err != nil {
-		return nil, apiError(503, "delivery status unavailable")
+		return nil, apierr.New(503, "delivery status unavailable")
 	}
 	output := AnalyticsQuery{Result: result, Delivery: delivery}
 	encoded, err := json.Marshal(output)
 	if err != nil || len(encoded) > bounds.MaxBytes {
-		return nil, analyticsError(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
+		return nil, apierr.Detailed(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 	}
 	return &AnalyticsQueryOutput{Body: output}, nil
 }
@@ -176,11 +177,11 @@ var analyticsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
 func validateQueryParameters(parameters map[string]string) error {
 	if len(parameters) > 32 {
-		return analyticsError(400, "invalid_parameter", "too many analytics query parameters", "Supply at most 32 bound scalar parameters.", "")
+		return apierr.Detailed(400, "invalid_parameter", "too many analytics query parameters", "Supply at most 32 bound scalar parameters.", "")
 	}
 	for name, value := range parameters {
 		if !analyticsParameterName.MatchString(name) || len(value) > 4096 {
-			return analyticsError(400, "invalid_parameter", "invalid analytics query parameter", "Use identifier keys of at most 64 ASCII characters and string values of at most 4096 bytes.", "")
+			return apierr.Detailed(400, "invalid_parameter", "invalid analytics query parameter", "Use identifier keys of at most 64 ASCII characters and string values of at most 4096 bytes.", "")
 		}
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 func TestDuckLakeMaintenanceLeavesIdleProjectsEvictable(t *testing.T) {
@@ -116,7 +117,7 @@ func TestDuckLakeProjectAdmissionIsResourceLimit(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := operation()
-			var detail *managementError
+			var detail *apierr.Error
 			if queryStatus(err) != 429 || !errors.As(err, &detail) || detail.Code != "active_project_limit" || detail.Hint == "" {
 				t.Fatalf("busy project budget reported storage failure: status=%d error=%v", queryStatus(err), err)
 			}

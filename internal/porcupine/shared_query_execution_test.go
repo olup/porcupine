@@ -38,6 +38,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
+	stopHostedUsageLoops(a)
 	tenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"Hung query tenant"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
 	if _, err := a.service.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1,hot_query_timeout_ms=1000 WHERE id=$1`, tenant); err != nil {
 		t.Fatal(err)
@@ -65,16 +66,25 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("query did not enter the simulated native call")
 	}
-	started := time.Now()
 	cancel()
-	// Keep the real production TTL: a fixed unreplenished permit would expire.
-	deadline := started.Add(31 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case <-done:
-			t.Fatal("canceled HTTP context freed a still-running native scope")
-		case <-time.After(100 * time.Millisecond):
-		}
+	// Keep the native call blocked past the production permit TTL.
+	select {
+	case <-done:
+		t.Fatal("canceled HTTP context freed a still-running native scope")
+	case <-time.After(31 * time.Second):
+	}
+	// The quarantine timer callback runs asynchronously.
+	wait, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	if err := waitQueryStatus(wait, a.service.queries, func(status query.QueryExecutionStatus) bool {
+		return len(status.UnhealthyProjects) > 0
+	}); err != nil {
+		t.Fatalf("hung query was not quarantined: %+v (%v)", a.service.queries.Status(), err)
+	}
+	select {
+	case <-done:
+		t.Fatal("HTTP request returned while the native call was blocked")
+	default:
 	}
 	status := a.service.queries.Status()
 	if status.Active != 1 || status.UncertainPermits != 0 || len(status.UnhealthyProjects) != 1 || status.UnhealthyProjects[0].ProjectID != project {

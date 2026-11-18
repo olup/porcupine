@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
@@ -107,7 +108,7 @@ func TestLiveAcceptanceHTTPPreservesAuthorityFailureStatus(t *testing.T) {
 			// Scope validation succeeds first. Model a fence change or control
 			// outage at the existing admission boundary, before journal writes.
 			s.eventRules.prepareAcceptance = func(context.Context, string) error {
-				return apiError(status, "project authority refused")
+				return apierr.New(status, "project authority refused")
 			}
 			before := journalAdmissionSnapshot(t, s)
 			w := httptest.NewRecorder()

@@ -63,11 +63,11 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fa, err := newHostedLiveFlusher(a.service.control, sa, ca, a.service.usage.store)
+	fa, err := newHostedLiveFlusherFixture(a.service.control, sa, ca, a.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb, err := newHostedLiveFlusher(b.service.control, sb, cb, b.service.usage.store)
+	fb, err := newHostedLiveFlusherFixture(b.service.control, sb, cb, b.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,8 +429,7 @@ VALUES($1,$2,'test',$3,$4,'deletion-replay',$5,'uploading','test','test')`,
 VALUES($1,$2,0,'empty','events',0,$3)`, outcome.Key.FileID, outcome.Key.JobID, next.InputSHA256); err != nil {
 		t.Fatal(err)
 	}
-	newHostedImportManager(b.service.eventRules, fb)
-	if err = fb.sealDeletedProject(t.Context(), key); err != nil {
+	if err = b.service.hosted.flusher.sealDeletedProject(t.Context(), key); err != nil {
 		t.Fatal("sealed import recovery", err)
 	}
 	seq, proof, err = fb.publisher.checkpoint(t.Context(), scope, defaultTenantID)

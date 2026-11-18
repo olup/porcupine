@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -185,7 +186,7 @@ func (s *Service) deleteHostedProject(ctx context.Context, project string) error
 	}
 	var completed bool
 	if err := s.control.QueryRowContext(ctx, `SELECT completed FROM project_deletions WHERE project_id=$1`, project).Scan(&completed); err != nil {
-		return apiError(503, "project deletion status unavailable")
+		return apierr.New(503, "project deletion status unavailable")
 	}
 	if completed {
 		return nil
@@ -195,7 +196,7 @@ func (s *Service) deleteHostedProject(ctx context.Context, project string) error
 	default:
 	}
 	// The existing project endpoint returns 204 only after cleanup completes.
-	return apiError(503, "project access is fenced; hosted cleanup is pending")
+	return apierr.New(503, "project access is fenced; hosted cleanup is pending")
 }
 
 func (s *Service) resumeHostedProjectSeals(ctx context.Context) {

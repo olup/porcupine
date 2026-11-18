@@ -48,9 +48,9 @@ func (s *Service) managementUsage(ctx context.Context, input *UsageListInput) (*
 		case errors.Is(err, usage.ErrCapacity):
 			return nil, apierr.Detailed(503, "usage_snapshot_capacity", err.Error(), "Retry after the current construction or retained snapshots expire.", "")
 		case errors.Is(err, usage.ErrQuery):
-			return nil, apiError(400, err.Error())
+			return nil, apierr.New(400, err.Error())
 		default:
-			return nil, apiError(503, "usage storage unavailable; retry the read")
+			return nil, apierr.New(503, "usage storage unavailable; retry the read")
 		}
 	}
 	return &UsageListOutput{Body: page}, nil

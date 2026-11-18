@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 // cleanupDue processes one registered catalog per pass. Registration and the
@@ -61,7 +63,7 @@ func (s *DuckLakeStore) CleanupDue(ctx context.Context, now time.Time) error {
 	p, release, err := s.leaseProjectLocked(ctx, id)
 	if err != nil {
 		state := "failed"
-		var limit *managementError
+		var limit *apierr.Error
 		if errors.As(err, &limit) && limit.Code == "active_project_limit" {
 			state = "waiting"
 		}

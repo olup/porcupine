@@ -28,11 +28,20 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/usage"
 )
+
+func newHostedLiveFlusherFixture(control *sql.DB, native *lakeapi.DuckLakeStore, coordinator *lakeapi.PostgresProjectCoordinator, meter *usage.Store) (*hostedLiveFlusher, error) {
+	effects, err := output.NewPGPipelineEffects(hostedPipelineNativeAuthority{})
+	if err != nil {
+		return nil, err
+	}
+	return newHostedLiveFlusher(control, native, coordinator, meter, effects, hostedPublisherHooks{})
+}
 
 func TestHostedFlusherRequiresRealProviders(t *testing.T) {
 	t.Parallel()
-	if _, err := newHostedLiveFlusher(nil, nil, nil, nil); err == nil {
+	if _, err := newHostedLiveFlusherFixture(nil, nil, nil, nil); err == nil {
 		t.Fatal("missing providers accepted")
 	}
 	if err := validateAcceptanceMode(AcceptanceModeBuffered); err == nil {
@@ -114,6 +123,13 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 
 	a, b := sharedNativeJourneyPair(t, fixture, func(c *Config) { c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true} })
 	for _, n := range []*sharedJourneyNode{a, b} {
+		if n.service.pipelines == nil || n.service.pipelines.Enabled() {
+			t.Fatal("expected hosted pipeline jobs with pipelines disabled")
+		}
+		publisher := n.service.hosted.flusher.publisher
+		if publisher.effects == nil || publisher.ensureCapacity == nil || publisher.loadRule == nil || publisher.cancelMutationWebhook == nil {
+			t.Fatal("hosted publisher is missing pipeline effects or hooks")
+		}
 		n.service.usage.cancel()
 		<-n.service.usage.done
 	}
@@ -134,11 +150,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fa, err := newHostedLiveFlusher(a.service.control, sa, ca, a.service.usage.store)
+	fa, err := newHostedLiveFlusherFixture(a.service.control, sa, ca, a.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb, err := newHostedLiveFlusher(b.service.control, sb, cb, b.service.usage.store)
+	fb, err := newHostedLiveFlusherFixture(b.service.control, sb, cb, b.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}

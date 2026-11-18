@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -36,13 +37,13 @@ func validSourceID(value string) bool { return value == "" || sourceIDPattern.Ma
 
 func validateCredentialSource(sourceID string, permissions, projects []string) error {
 	if sourceID == "posthog" {
-		return apiError(400, "source_id posthog is reserved for legacy ingestion")
+		return apierr.New(400, "source_id posthog is reserved for legacy ingestion")
 	}
 	if !validSourceID(sourceID) {
-		return apiError(400, "invalid source_id")
+		return apierr.New(400, "invalid source_id")
 	}
 	if sourceID != "" && (len(projects) != 1 || projects[0] == "*" || !slices.Contains(permissions, "events:write")) {
-		return apiError(400, "source_id requires events:write and exactly one project")
+		return apierr.New(400, "source_id requires events:write and exactly one project")
 	}
 	return nil
 }
@@ -50,7 +51,7 @@ func validateCredentialSource(sourceID string, permissions, projects []string) e
 func delegatedSourceID(a auth.Principal, sourceID string, permissions, projects []string) (string, error) {
 	if a.SourceID != "" {
 		if sourceID != "" && sourceID != a.SourceID {
-			return "", apiError(403, "cannot delegate a different source_id")
+			return "", apierr.New(403, "cannot delegate a different source_id")
 		}
 		if slices.Contains(permissions, "events:write") {
 			sourceID = a.SourceID

@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/syncx"
 )
 
 func TestProjectionGuardCancellationAndNestedCalls(t *testing.T) {
 	t.Parallel()
-	if !projectionLockSupported() {
+	if !syncx.FileLockSupported() {
 		t.Skip("online checkpoint locks are unavailable on this platform")
 	}
 	guard, err := openProjectionGuard(filepath.Join(t.TempDir(), "state.db"))
@@ -23,7 +25,7 @@ func TestProjectionGuardCancellationAndNestedCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = projectionFileLock(external, true); err != nil {
+	if err = syncx.FileLock(external, true); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
@@ -46,18 +48,18 @@ func TestProjectionGuardCancellationAndNestedCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer external.Close()
-	if err = projectionFileLock(external, true); !projectionLockBusy(err) {
+	if err = syncx.FileLock(external, true); !syncx.FileLockBusy(err) {
 		t.Fatal("nested release unlocked its caller's projection", err)
 	}
 	release()
-	if err = projectionFileLock(external, true); err != nil {
+	if err = syncx.FileLock(external, true); err != nil {
 		t.Fatal("released projection retained its checkpoint lock", err)
 	}
 }
 
 func TestProjectionGuardLifetimeAllowsServicesAndExcludesRestore(t *testing.T) {
 	t.Parallel()
-	if !projectionLockSupported() {
+	if !syncx.FileLockSupported() {
 		t.Skip("online checkpoint locks are unavailable on this platform")
 	}
 	path := filepath.Join(t.TempDir(), "state.db")
@@ -75,22 +77,22 @@ func TestProjectionGuardLifetimeAllowsServicesAndExcludesRestore(t *testing.T) {
 	}
 	defer external.Close()
 	for _, closeGuard := range []func() error{first.close, second.close} {
-		if err = projectionFileLock(external, true); !projectionLockBusy(err) {
+		if err = syncx.FileLock(external, true); !syncx.FileLockBusy(err) {
 			t.Fatal("offline restore could bypass a live service", err)
 		}
 		closeGuard()
 	}
-	if err = projectionFileLock(external, true); err != nil {
+	if err = syncx.FileLock(external, true); err != nil {
 		t.Fatal("stopped services left a stale restore lease", err)
 	}
-	if _, err = openProjectionGuard(path); err == nil {
-		t.Fatal("application startup bypassed an offline restore")
+	if _, err = openProjectionGuard(path); !errors.Is(err, ErrRestoreInProgress) || err.Error() != "SQLite has an operator restore in progress" {
+		t.Fatalf("unexpected startup error with an active restore: %v", err)
 	}
 	external.Close()
 	if err = os.WriteFile(path+".restore-incomplete", []byte("incomplete"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = openProjectionGuard(path); err == nil {
-		t.Fatal("application startup ignored the interrupted restore marker")
+	if _, err = openProjectionGuard(path); !errors.Is(err, ErrRestoreIncomplete) || err.Error() != "operator restore is incomplete" {
+		t.Fatalf("unexpected startup error with a restore marker: %v", err)
 	}
 }

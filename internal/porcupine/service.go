@@ -20,12 +20,14 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/query"
+	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 	_ "modernc.org/sqlite"
 )
@@ -61,7 +63,7 @@ type Service struct {
 	metrics                     *operationalMetrics
 	hosted                      *hostedRuntime
 	control                     *sql.DB
-	localAdmission              contextMutex
+	localAdmission              syncx.ContextMutex
 	shared                      *sharedRuntime
 	lakeS3Storage               bool
 	lakeS3RequestTimeoutSeconds int
@@ -69,7 +71,7 @@ type Service struct {
 	backups                     *nativeBackupRuntime
 	activity                    projectActivity
 	catalogMu                   sync.RWMutex
-	deletionMu                  contextMutex
+	deletionMu                  syncx.ContextMutex
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
 	deletionWake                chan struct{}
@@ -794,7 +796,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		if writeTenantIngestionError(w, r, err, nativeResponse) {
 			return
 		}
-		var managed *managementError
+		var managed *apierr.Error
 		if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
 			write(w, managed.GetStatus(), managed)
 			return

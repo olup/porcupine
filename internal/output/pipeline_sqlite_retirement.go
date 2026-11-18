@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
@@ -20,7 +21,7 @@ func (s *PipelineJobs) retireS3Tx(ctx context.Context, tx *sql.Tx, p storedPipel
 		return err
 	}
 	if running {
-		return apiError(409, "pipeline attempt is stopping; retry credential replacement")
+		return apierr.New(409, "pipeline attempt is stopping; retry credential replacement")
 	}
 	var total, project, added int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER(WHERE project_id=$1) FROM (SELECT project_id FROM pipeline_retired_destinations UNION ALL SELECT project_id FROM pipelines)`, p.ProjectID).Scan(&total, &project); err != nil {
@@ -30,7 +31,7 @@ func (s *PipelineJobs) retireS3Tx(ctx context.Context, tx *sql.Tx, p storedPipel
 		return err
 	}
 	if total+added > 512 || project+added > 64 {
-		return apiError(409, "retired destination cleanup limit reached")
+		return apierr.New(409, "retired destination cleanup limit reached")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO pipeline_retired_destinations(id,pipeline_id,project_id,config,secret,window_start_ms,manifest,attempt_id,created_at_ms) SELECT r.id,p.id,p.project_id,p.config,p.secret,r.window_start_ms,r.manifest,r.attempt_id,$1 FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.id=$2 AND r.state IN('queued','failed') AND (r.attempt_id<>'' OR r.manifest<>'' OR EXISTS(SELECT 1 FROM pipeline_s3_files f WHERE f.run_id=r.id))`, s.clock().UnixMilli(), p.ID); err != nil {
 		return err
