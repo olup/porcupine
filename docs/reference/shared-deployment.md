@@ -12,7 +12,7 @@ The analytical catalog can contain column statistics derived from event values. 
 
 ## Hosted budgets {#shared-budgets}
 
-Hosted live admission reads a short-lived snapshot of policy and usage. Admission can get ahead of that snapshot while workers buffer events. Durable allowance accounting uses `tenant_usage` and checks retained rows during flush. Interactive query reservations use shared PostgreSQL and local worker capacity independently. [Tenant limits](tenants.md#interactive-query-limits)
+Hosted live admission reads a short-lived snapshot of policy and usage. Admission can get ahead of that snapshot while workers buffer events. Live acceptance checks the budget before buffering. After the native commit, effect publication posts retained rows to the shared `tenant_usage` ledger. Interactive query reservations use shared PostgreSQL and local worker capacity independently. [Tenant limits](tenants.md#interactive-query-limits)
 
 ## Native timeouts and worker supervision
 
