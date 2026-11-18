@@ -45,7 +45,7 @@ func TestDuckLakeS3SharedPostgresHostedWebhookSendGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := newHostedLiveFlusher(a.service.control, native, coordinator, a.service.usage.store)
+	f, err := newHostedLiveFlusherFixture(a.service.control, native, coordinator, a.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}

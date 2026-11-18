@@ -63,11 +63,11 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fa, err := newHostedLiveFlusher(a.service.control, sa, ca, a.service.usage.store)
+	fa, err := newHostedLiveFlusherFixture(a.service.control, sa, ca, a.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fb, err := newHostedLiveFlusher(b.service.control, sb, cb, b.service.usage.store)
+	fb, err := newHostedLiveFlusherFixture(b.service.control, sb, cb, b.service.usage.store)
 	if err != nil {
 		t.Fatal(err)
 	}

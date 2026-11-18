@@ -33,7 +33,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f, err := newHostedLiveFlusher(n.service.control, store, coordinator, n.service.usage.store)
+		f, err := newHostedLiveFlusherFixture(n.service.control, store, coordinator, n.service.usage.store)
 		if err != nil {
 			t.Fatal(err)
 		}
