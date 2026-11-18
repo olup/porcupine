@@ -45,6 +45,7 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 	return func() { _ = tx.Rollback() }, nil
 }
 
+// FlushLive processes batches admitted by the buffered ingestion path.
 func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch) error {
 	if b.id == "" || b.projectID == "" || len(b.events) == 0 {
 		return output.ErrPipelineConflict
@@ -98,7 +99,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		if e != nil {
 			return e
 		}
-		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: b.admitted}
+		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing}
 		result, e := f.native.CommitLiveGuarded(ctx, fence, batch, ids, stager, func(ctx context.Context, commit func() error) error {
 			return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
 				currentTenant, err := lockActiveHostedProject(ctx, tx, key.ProjectID)
