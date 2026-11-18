@@ -687,15 +687,9 @@ FROM access_keys k LEFT JOIN oauth_clients c ON c.client_id=k.id WHERE k.id<>$1 
 }
 
 func (s *Service) managementListEvents(ctx context.Context, input *EventListInput) (*EventListOutput, error) {
-	if s.hostedQueries != nil {
-		native, limits, scope, err := s.beginUsageQuery(ctx, input.ID, "catalog")
+	if s.hostedReader != nil {
+		events, err := s.queries.ListEvents(ctx, s.hostedReader, input.ID, input.Limit)
 		if err != nil {
-			return nil, err
-		}
-		defer scope.Finish()
-		scope.Begin()
-		events, err := s.hostedQueries.reader.ListEvents(native, input.ID, min(input.Limit, limits.MaxRows), limits.MaxResultBytes)
-		if err := scope.Return(native, err); err != nil {
 			return nil, err
 		}
 		return &EventListOutput{Body: EventList{Events: events}}, nil

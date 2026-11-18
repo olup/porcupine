@@ -7,16 +7,21 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 func sharedDeletionFixture(t *testing.T) *Service {
 	t.Helper()
 	db, _ := sharedControlFixture(t)
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(t.Context(), db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}, interactiveConfig: queries}
+	runtime := query.New(queries, time.Now, nil)
+	runtime.Bind(db, "deletion-test", 0)
+	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}, queries: runtime}
 	if _, err := db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('removed','default','Removed','now','mixed'),('kept','default','Kept','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}
@@ -190,30 +195,30 @@ func TestSharedProjectDeletionFencesAdmissionAndRequiresStaging(t *testing.T) {
 	if err := s.beginControlProjectDeletion(ctx, "missing"); err == nil {
 		t.Fatal("unknown project deletion succeeded")
 	}
-	_, release, err := s.acquireSharedQueryPermit(ctx, "removed", defaultTenantID)
+	_, release, err := s.holdSharedQuery(ctx, "removed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.beginControlProjectDeletion(ctx, "removed"); err != nil {
-		release.release()
+		release()
 		t.Fatal(err)
 	}
-	if _, unexpectedRelease, err := s.acquireSharedQueryPermit(ctx, "removed", defaultTenantID); err == nil {
-		unexpectedRelease.release()
-		release.release()
+	if _, unexpectedRelease, err := s.holdSharedQuery(ctx, "removed"); err == nil {
+		unexpectedRelease()
+		release()
 		t.Fatal("new query crossed durable deletion fence")
 	}
-	release.release()
+	release()
 	if err := s.waitSharedProjectQueries(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.completeControlProjectDeletion(ctx, "removed"); err != nil {
 		t.Fatal(err)
 	}
-	if _, release, err := s.acquireSharedQueryPermit(ctx, "kept", defaultTenantID); err != nil {
+	if _, release, err := s.holdSharedQuery(ctx, "kept"); err != nil {
 		t.Fatal("deletion blocked unrelated project", err)
 	} else {
-		release.release()
+		release()
 	}
 }
 

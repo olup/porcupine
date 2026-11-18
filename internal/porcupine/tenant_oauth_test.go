@@ -15,6 +15,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func tenantOAuthJSON(t *testing.T, value any) string {
@@ -226,7 +227,7 @@ func TestSharedTenantAdminOAuthCrossWorkerRevocation(t *testing.T) {
 	t.Parallel()
 	control, dsn := sharedControlFixture(t)
 	ctx := context.Background()
-	queries, err := normalizeInteractiveQueries(nil)
+	queries, err := query.Normalize(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

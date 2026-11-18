@@ -10,13 +10,14 @@ import (
 	"github.com/olup/porcupine/internal/auth"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestSharedHostedPipelineAuthorityExpiresAndRevalidates(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	db, _ := sharedControlFixture(t)
-	queries, _ := normalizeInteractiveQueries(nil)
+	queries, _ := query.Normalize(nil)
 	if err := initializeSharedControl(ctx, db, adminToken, queries, false); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +25,7 @@ func TestSharedHostedPipelineAuthorityExpiresAndRevalidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{control: db, eventRules: &eventRules{clock: time.Now}, oauth: oauth, resources: newResourceRuntime(oauth.issuer)}
+	s := &Service{control: db, queries: query.New(queries, time.Now, nil), eventRules: &eventRules{clock: time.Now}, oauth: oauth, resources: newResourceRuntime(oauth.issuer)}
 	scopes := []string{"pipelines:write", "events:read"}
 	now := time.Now()
 	tx, err := db.BeginTx(ctx, nil)

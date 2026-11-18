@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/query"
 )
 
 func sharedStatusRead(t *testing.T, s *Service) InstanceStatus {
@@ -46,7 +48,10 @@ func sharedStatusControlFixture(t *testing.T) (*Service, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { control.Close() })
-	return &Service{control: control, shared: &sharedRuntime{workerID: "status-worker"}, statusSlots: make(chan struct{}, 1)}, dsn
+	limits, _ := query.Normalize(nil)
+	runtime := query.New(limits, time.Now, nil)
+	runtime.Bind(control, "status-worker", 0)
+	return &Service{control: control, shared: &sharedRuntime{workerID: "status-worker"}, queries: runtime, statusSlots: make(chan struct{}, 1)}, dsn
 }
 
 func TestSharedInstanceStatusControlPrivacy(t *testing.T) {
