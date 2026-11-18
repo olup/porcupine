@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"strings"
 )
 
 // CurrentParquetBytes measures only current referenced data/delete files. It
@@ -122,20 +123,30 @@ func (s *DuckLakeStore) HostedCurrentParquetBytes(ctx context.Context, project s
 	if !exists {
 		return 0, sql.ErrNoRows
 	}
-	schema = `"` + schema + `"`
 	var total, smallest, paths, files, sizes int64
-	err = registry.db.QueryRowContext(ctx, `WITH tables AS (
-	SELECT t.table_id FROM `+schema+`.ducklake_table t JOIN `+schema+`.ducklake_schema s ON s.schema_id=t.schema_id
+	query := strings.ReplaceAll(`WITH tables AS (
+	SELECT t.table_id,t.path AS table_path,t.path_is_relative AS table_relative,s.path AS schema_path,s.path_is_relative AS schema_relative
+	FROM meta.ducklake_table t JOIN meta.ducklake_schema s ON s.schema_id=t.schema_id
 	WHERE t.end_snapshot IS NULL AND s.end_snapshot IS NULL AND s.schema_name='main'
 ), data AS (
-	SELECT d.data_file_id,d.path,d.file_size_bytes FROM `+schema+`.ducklake_data_file d JOIN tables USING(table_id)
-	WHERE d.end_snapshot IS NULL
-), current AS (
-	SELECT path,file_size_bytes FROM data
-	UNION SELECT f.path,f.file_size_bytes FROM `+schema+`.ducklake_delete_file f JOIN data USING(data_file_id)
+	SELECT d.table_id,d.data_file_id,d.path,d.path_is_relative,d.file_size_bytes
+	FROM meta.ducklake_data_file d JOIN tables USING(table_id) WHERE d.end_snapshot IS NULL
+), files AS (
+	SELECT table_id,path,path_is_relative,file_size_bytes FROM data
+	UNION ALL SELECT d.table_id,f.path,f.path_is_relative,f.file_size_bytes
+	FROM meta.ducklake_delete_file f JOIN data d USING(data_file_id)
 	WHERE f.end_snapshot IS NULL
+), current AS (
+	SELECT DISTINCT CASE
+		WHEN NOT f.path_is_relative THEN f.path
+		WHEN NOT t.table_relative THEN t.table_path || f.path
+		WHEN NOT t.schema_relative THEN t.schema_path || t.table_path || f.path
+		ELSE $1 || t.schema_path || t.table_path || f.path
+	END AS path,f.file_size_bytes
+	FROM files f JOIN tables t USING(table_id)
 )
-SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),count(file_size_bytes),coalesce(min(file_size_bytes),0) FROM current`).Scan(&total, &paths, &files, &sizes, &smallest)
+SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),count(file_size_bytes),coalesce(min(file_size_bytes),0) FROM current`, "meta.", `"`+schema+`".`)
+	err = registry.db.QueryRowContext(ctx, query, s.Remote.projectPath(project)).Scan(&total, &paths, &files, &sizes, &smallest)
 	if err != nil {
 		return 0, err
 	}
