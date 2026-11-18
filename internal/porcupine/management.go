@@ -686,6 +686,9 @@ func (s *Service) managementListEvents(ctx context.Context, input *EventListInpu
 		defer scope.Finish()
 		scope.Begin()
 		events, err := s.hostedQueries.reader.ListEvents(native, input.ID, min(input.Limit, limits.MaxRows), limits.MaxResultBytes)
+		if err != nil {
+			fmt.Printf("operator read diagnosis err=%v type=%T context=%v\n", err, err, native.Err())
+		}
 		if err := interactiveQueryResultError(native, scope.Finish(), err); err != nil {
 			return nil, err
 		}
