@@ -1,6 +1,6 @@
 # Import historical events
 
-Available in v0.14.0 and later. Install matching released server and CLI versions before importing.
+Install matching server and CLI releases before importing.
 
 ## Import a file or directory
 

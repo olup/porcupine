@@ -25,7 +25,14 @@ Once connected, ask your agent:
 
 > List the projects I can access. For the project I choose, discover the event names and properties, then count events by name.
 
-The agent uses `porcupine_docs` to discover operations and `porcupine_call` to execute them. [Query your events](query-events.md) explains the workflow. The [MCP reference](reference/mcp.md) describes tool arguments and responses.
+Porcupine exposes four MCP tools:
+
+- `porcupine_schema` discovers the project's SQL schema, observed events, and sampled properties.
+- `porcupine_query` runs read-only SQL.
+- `porcupine_docs` lists operations available to the connection and describes their inputs.
+- `porcupine_call` runs a discovered operation, such as listing projects, exporting results, or managing access. Write operations require the corresponding permissions.
+
+Follow [Query your events](query-events.md) for an example or see the [MCP reference](reference/mcp.md) for tool arguments and responses.
 
 ## Connect the CLI
 
@@ -37,15 +44,13 @@ porcupine login
 porcupine list-projects
 ```
 
-Login opens the browser for email verification and consent. The ordinary login requests read access to events and project information. An instance administrator can use `porcupine login --admin` for administrative work.
+The CLI opens a browser to sign in by email or Google/OIDC and approve a connection. Ordinary login requests read access to events and project information. Copy an accessible project ID and run [your first query](query-events.md).
 
-You should see only projects allowed by your account and the connection you approved. Copy a project ID and continue with [your first query](query-events.md).
-
-CLI browser login uses the configured email or Google/OIDC sign-in. A tenant administrator uses `porcupine login --tenant-admin` and selects one tenant; `--admin` remains deployment administration. Ordinary CLI login requests read access. A member can request permitted project writes explicitly with `porcupine login --scopes 'events:read events:write management:read'`. The browser shows those scopes and project choices. `--scopes` accepts project permissions only and cannot be combined with either administrative login flag. See [authentication options](reference/connect-your-team.md).
+For team administration, run `porcupine login --tenant-admin` and choose a tenant. For deployment administration, use `porcupine login --admin`. To request permitted project writes, use `porcupine login --scopes 'events:read events:write management:read'`. The browser shows the scopes and project choices. Use `--scopes` by itself to request project permissions. See [authentication options](reference/connect-your-team.md).
 
 ## Connect a backend or shared agent
 
-Ask an administrator for a [service key](reference/service-keys.md) with the projects and permissions that integration needs. In tenant-enabled builds, team service accounts belong to a tenant and work independently of the person who created them.
+Ask an administrator for a [service key](reference/service-keys.md) with the projects and permissions that integration needs. Team service accounts belong to a tenant and work independently of the person who created them.
 
 For HTTP or the CLI, use an API-audience key. Load it into `PORCUPINE_API_KEY` through your secret manager. For MCP clients that accept a bearer header, use an MCP-audience key on `/mcp`. A key for one audience cannot be used for the other.
 

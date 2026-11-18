@@ -44,7 +44,7 @@ Run `docker compose -f compose.yaml -f compose.release.yaml down` to stop the se
 
 ## Use and run Porcupine
 
-Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/storage.md#deployment-profiles), [team setup](docs/reference/tenant-access.md), and [upgrades](docs/hosting.md#upgrade-from-v0151).
+Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/storage.md#deployment-profiles), [team setup](docs/reference/tenant-access.md), and [upgrades](docs/hosting.md#upgrade).
 
 Hosted ingestion can lose acknowledged events if a worker crashes before committing them to DuckLake.
 

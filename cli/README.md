@@ -4,7 +4,7 @@ Use `porcupine` to query an instance, manage projects and upload import chunks f
 
 ## Install
 
-Choose the `porcupine-cli-<tag>-<os>-<arch>` archive from [GitHub Releases](https://github.com/olup/porcupine/releases). Use the release that matches your server. Project rename and deletion require v0.9.0 or later on both sides. Choose `darwin` for macOS, `linux` for Linux, or `windows` for Windows. Apple Silicon and other ARM64 systems use `arm64`. Intel and AMD 64-bit systems use `amd64`. Verify the archive against the release's `SHA256SUMS`, extract it and place `porcupine` or `porcupine.exe` on your PATH.
+Choose the `porcupine-cli-<tag>-<os>-<arch>` archive from [GitHub Releases](https://github.com/olup/porcupine/releases). Use the release that matches your server. Choose `darwin` for macOS, `linux` for Linux, or `windows` for Windows. Apple Silicon and other ARM64 systems use `arm64`. Intel and AMD 64-bit systems use `amd64`. Verify the archive against the release's `SHA256SUMS`, extract it and place `porcupine` or `porcupine.exe` on your PATH.
 
 To build from the repository, run `make cli`. The executable is written to `bin/cli/porcupine`.
 
@@ -20,7 +20,7 @@ porcupine list-projects
 porcupine query-events --id PROJECT_ID --body '{"sql":"SELECT count() FROM events"}'
 ```
 
-The CLI also provides `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. This command requires v0.10.0 or later on both client and server. See [instance status](../docs/reference/instance-status.md). The existing `status` command remains the public readiness check.
+Use `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. The `status` command checks public readiness. See [instance status](../docs/reference/instance-status.md).
 
 Use `porcupine visibility-probe` to send a synthetic event and measure how long it takes to become queryable after capture acknowledgment. [Visibility probe setup](../docs/reference/observability.md#measure-live-query-visibility)
 
@@ -62,7 +62,7 @@ Run `porcupine --help` for the catalog or `porcupine query-events --help` for pa
 
 Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to read from stdin. The binary upload operation streams bytes from a file or stdin. See [resumable imports](../docs/reference/posthog-import.md) for manifests, checksums and chunk offsets.
 
-Since v0.13.0, run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/reference/event-discovery.md) for sampling and payload limits.
+Run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/reference/event-discovery.md) for sampling and payload limits.
 
 `porcupine restore` is an offline operation that runs the matching native server image through Docker. It restores into a fresh volume and resets old access and delivery jobs. Builtin mode reads its recovery secret from a private file. External mode uses `--auth-mode external` without `--bootstrap-token-file`, then recovers administration through an external operator JWT. Archive and destination modes must match. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
 
