@@ -112,16 +112,19 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	if err != nil {
 		return err
 	}
-	stager := liveEffectStageFunc(func(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
-		plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
-		if err != nil {
-			return lakeapi.StagedLiveEffects{}, err
+	var stager *reservingHostedStager
+	stage := liveEffectStageFunc(func(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+		if stager == nil {
+			plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
+			if err != nil {
+				return lakeapi.StagedLiveEffects{}, err
+			}
+			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
 		}
-		stager := &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, admission: &f.policy, admitted: admitted}
 		return stager.StageLiveEffects(ctx, selected)
 	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
-	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stager, checkpoint, func(ctx context.Context, commit func() error) error {
+	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
 		return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
 			currentTenant, err := lockActiveHostedProject(ctx, tx, batch.Scope.Key.ProjectID)
 			if err != nil {
