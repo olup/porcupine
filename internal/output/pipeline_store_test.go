@@ -16,7 +16,7 @@ func pipelineFixture(t *testing.T) (*sql.DB, *PGPipelineEffects) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { db.Close() })
-	_, e = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE access_keys(id TEXT PRIMARY KEY,permissions TEXT,projects TEXT,revoked_at TEXT);CREATE TABLE tenant_credentials(principal_id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE project_deletions(project_id TEXT);CREATE TABLE tenant_deletions(tenant_id TEXT);CREATE TABLE service_api_keys(principal_id TEXT);CREATE TABLE email_humans(principal_id TEXT);CREATE TABLE oauth_interactive_grants(principal_id TEXT);` + PipelineSchemaV1 + PipelineDeliverySchemaV1)
+	_, e = db.Exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE access_keys(id TEXT PRIMARY KEY,permissions TEXT,projects TEXT,revoked_at TEXT);CREATE TABLE tenant_credentials(principal_id TEXT PRIMARY KEY,tenant_id TEXT);CREATE TABLE project_deletions(project_id TEXT);CREATE TABLE tenant_deletions(tenant_id TEXT);CREATE TABLE service_api_keys(principal_id TEXT);CREATE TABLE email_humans(principal_id TEXT);CREATE TABLE oauth_interactive_grants(principal_id TEXT);` + PipelineSchemaV1 + PipelineDeliverySchemaV1 + PipelineTenantCapacitySchema)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -29,7 +29,7 @@ func pipelineFixture(t *testing.T) (*sql.DB, *PGPipelineEffects) {
 		t.Fatal(e)
 	}
 	pipelineTx(t, db, func(tx *sql.Tx) error {
-		for _, s := range [][2]string{{"instance", ""}, {"tenant", "tenant"}, {"project", "project"}, {"tenant", "other"}, {"project", "other"}} {
+		for _, s := range [][2]string{{"tenant", "tenant"}, {"project", "project"}, {"tenant", "other"}, {"project", "other"}} {
 			if e := p.ConfigureCapacityTx(context.Background(), tx, s[0], s[1], PipelineDemand{100, 1 << 20, 1000, 1 << 20, 10}); e != nil {
 				return e
 			}
@@ -461,5 +461,73 @@ func TestPipelinePreparationContentDigestRetainsVersionPins(t *testing.T) {
 	original[0].Body.Bytes++
 	if PipelinePreparedSHA256(original) == digest {
 		t.Fatal("content changed without changing preparation")
+	}
+}
+
+func TestSharedPipelineTenantCapacityIsolation(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	db, effects := pipelineFixture(t)
+	binding, plan, publication := pipelinePrepare(t, db, effects)
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		limits := binding.Demand
+		return effects.ConfigureCapacityTx(ctx, tx, "tenant", binding.TenantID, limits)
+	})
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		return effects.ReserveEffectsTx(ctx, tx, binding, plan, publication.Outputs)
+	})
+
+	// A new stream of the same tenant cannot borrow capacity from its neighbors.
+	next := binding
+	next.Scope.StreamID = "next-stream"
+	nextPlan := plan
+	nextPlan.Scope = next.Scope
+	nextPlan.ID = pipelinePlanID(nextPlan)
+	next.PlanID = nextPlan.ID
+	tryReserve := func(b PipelineBinding, outputs []PipelineOutput) error {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		if err := effects.ReserveCurrentEffectsTx(ctx, tx, b, outputs); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err := tryReserve(next, publication.Outputs); !errors.Is(err, ErrPipelineCapacity) || errors.Is(err, ErrPipelineDemandTooLarge) {
+		t.Fatalf("full tenant should report occupied capacity, got %v", err)
+	}
+	next.Demand.ArtifactBytes++
+	if err := tryReserve(next, publication.Outputs); !errors.Is(err, ErrPipelineDemandTooLarge) || !errors.Is(err, ErrPipelineCapacity) {
+		t.Fatalf("demand that cannot fit should report its own size, got %v", err)
+	}
+
+	// A second tenant can reserve the same demand while the first still owns it.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO access_keys VALUES('other-creator','["pipelines:write","events:read"]','["other"]',NULL);
+		INSERT INTO tenant_credentials VALUES('other-creator','other');
+		INSERT INTO pipeline_effect_definitions
+		SELECT 'other','other',id,incarnation,rule_revision,destination_revision,'other-creator',state,rule_key,rule_version,rule_sha,rule_bytes
+		FROM pipeline_effect_definitions WHERE project_id='project';
+	`); err != nil {
+		t.Fatal(err)
+	}
+	other := binding
+	other.TenantID = "other"
+	other.Scope.ProjectID = "other"
+	otherPlan := plan
+	otherPlan.TenantID = other.TenantID
+	otherPlan.Scope = other.Scope
+	otherPlan.Targets = append([]PipelineTarget(nil), plan.Targets...)
+	otherPlan.Targets[0].CreatorID = "other-creator"
+	otherPlan.ID = pipelinePlanID(otherPlan)
+	other.PlanID = otherPlan.ID
+	if err := tryReserve(other, publication.Outputs); err != nil {
+		t.Fatalf("full tenant blocked another tenant: %v", err)
+	}
+	if got := pipelineCount(t, db, `SELECT count(*) FROM pipeline_capacity WHERE scope_kind='tenant' AND used_refs=1 AND used_proofs=1`); got != 2 {
+		t.Fatalf("charged %d tenant counters, want 2", got)
 	}
 }

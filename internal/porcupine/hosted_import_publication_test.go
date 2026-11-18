@@ -72,7 +72,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	}
 	limits := output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
 			if e := fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, v[0], v[1], limits); e != nil {
 				return e
 			}
@@ -132,7 +132,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		})
 		return result, e
 	}
-	// A different real project's durable cursor fills instance metadata capacity.
+	// A different real project's durable cursor fills tenant metadata capacity.
 	// A first import must fail before committing native data when no row fits.
 	otherProject, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "metadata owner")
 	otherKey := lakeapi.ProjectWriteKey{SourceID: key.SourceID, ProjectID: otherProject}
@@ -146,7 +146,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		}
 		one := limits
 		one.MetadataRows = 1
-		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "instance", "", one)
+		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "tenant", defaultTenantID, one)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal("metadata rejection left invisible native outcome", before, err)
 	}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
-		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "instance", "", limits)
+		return fa.publisher.effects.ConfigureCapacityTx(t.Context(), tx, "tenant", defaultTenantID, limits)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal(bootstrapProof)
 	}
 	var refs, queued, artifacts, proofs, metadata int64
-	if err = a.service.control.QueryRowContext(t.Context(), `SELECT used_refs,used_bytes,used_artifacts,used_proofs,used_rows FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&refs, &queued, &artifacts, &proofs, &metadata); err != nil || refs != 0 || queued != 0 || artifacts != 0 || proofs != 0 || metadata != 2 {
+	if err = a.service.control.QueryRowContext(t.Context(), `SELECT used_refs,used_bytes,used_artifacts,used_proofs,used_rows FROM pipeline_capacity WHERE scope_kind='tenant' AND scope_id='default'`).Scan(&refs, &queued, &artifacts, &proofs, &metadata); err != nil || refs != 0 || queued != 0 || artifacts != 0 || proofs != 0 || metadata != 2 {
 		t.Fatal("import charged output capacity", refs, queued, artifacts, proofs, metadata, err)
 	}
 	firstID := eventapi.NewID()
@@ -418,17 +418,17 @@ func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher
 	ctx := t.Context()
 	var before, after output.PipelineDemand
 	var originalLimit int64
-	if err := node.service.control.QueryRowContext(ctx, `SELECT limit_refs,used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&originalLimit, &before.References, &before.QueuedBytes, &before.MetadataRows, &before.ArtifactBytes, &before.ProofSlots); err != nil {
+	if err := node.service.control.QueryRowContext(ctx, `SELECT limit_refs,used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='tenant' AND scope_id='default'`).Scan(&originalLimit, &before.References, &before.QueuedBytes, &before.MetadataRows, &before.ArtifactBytes, &before.ProofSlots); err != nil {
 		t.Fatal(err)
 	}
 	if before.References < 2 {
 		t.Fatal("fixture has no real backlog to exceed reduced limit", before)
 	}
-	if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=used_refs-1 WHERE scope_kind='instance' AND scope_id=''`); err != nil {
+	if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=used_refs-1 WHERE scope_kind='tenant' AND scope_id='default'`); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=$1 WHERE scope_kind='instance' AND scope_id=''`, originalLimit); err != nil {
+		if _, err := node.service.control.ExecContext(ctx, `UPDATE pipeline_capacity SET limit_refs=$1 WHERE scope_kind='tenant' AND scope_id='default'`, originalLimit); err != nil {
 			t.Error(err)
 		}
 	}()
@@ -456,7 +456,7 @@ func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher
 	if proof.Sequence != 1 || proof.AcceptedImport != 0 {
 		t.Fatal(proof)
 	}
-	if err = node.service.control.QueryRowContext(ctx, `SELECT used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='instance' AND scope_id=''`).Scan(&after.References, &after.QueuedBytes, &after.MetadataRows, &after.ArtifactBytes, &after.ProofSlots); err != nil {
+	if err = node.service.control.QueryRowContext(ctx, `SELECT used_refs,used_bytes,used_rows,used_artifacts,used_proofs FROM pipeline_capacity WHERE scope_kind='tenant' AND scope_id='default'`).Scan(&after.References, &after.QueuedBytes, &after.MetadataRows, &after.ArtifactBytes, &after.ProofSlots); err != nil {
 		t.Fatal(err)
 	}
 	expected := before
