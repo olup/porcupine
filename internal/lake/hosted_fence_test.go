@@ -90,7 +90,7 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 	t.Parallel()
 	ctx, a, b, config := sharedNativeStores(t)
 	control, coordinator := nativeFenceControl(t)
-	for _, point := range []string{"before advance", "before begin", "after guard"} {
+	for _, point := range []string{"before advance", "before begin", "after guard", "after guard and seal"} {
 		t.Run(point, func(t *testing.T) {
 			key := ProjectWriteKey{SourceID: config.SharedSourceID, ProjectID: "fence-" + point}
 			scope, err := a.InitializeHostedProject(ctx, key)
@@ -128,7 +128,7 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 					finished <- a.AdvanceWriteFence(nativeCtx, oldFence)
 				case "before begin":
 					finished <- fenceWitnessTx(nativeCtx, pa, oldFence, "old", release, nil, enter)
-				case "after guard":
+				case "after guard", "after guard and seal":
 					finished <- fenceWitnessTx(nativeCtx, pa, oldFence, "old", nil, release, enter)
 				}
 			}()
@@ -146,6 +146,13 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 			if err := b.AdvanceWriteFence(ctx, newFence); err != nil {
 				t.Fatal("successor did not fence old writer", err)
 			}
+			var seal HostedProjectSeal
+			if point == "after guard and seal" {
+				seal, err = b.SealHostedProject(ctx, newFence)
+				if err != nil || seal.Scope != scope {
+					t.Fatalf("successor could not seal with a native transaction stalled: %+v, %v", seal, err)
+				}
+			}
 			if fenceWitnessCount(t, pb, "old") != 0 {
 				t.Fatal("uncommitted stale witness became visible")
 			}
@@ -157,7 +164,7 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 			release <- struct{}{}
 			select {
 			case err := <-finished:
-				if point == "after guard" {
+				if point == "after guard" || point == "after guard and seal" {
 					if !isNativeTransactionConflict(err) {
 						t.Fatal("stale native commit was not a typed conflict", err)
 					}
@@ -169,6 +176,16 @@ func TestDuckLakeS3SharedPostgresEpochFence(t *testing.T) {
 			}
 			if fenceWitnessCount(t, pb, "old") != 0 {
 				t.Fatal("stale native writer committed after successor fence")
+			}
+			if point == "after guard and seal" {
+				recorded, err := b.SealHostedProject(ctx, newFence)
+				if err != nil || recorded != seal {
+					t.Fatalf("late writer changed the completed seal: %+v, %v", recorded, err)
+				}
+				if err := fenceWitnessTx(ctx, pb, newFence, "after-seal", nil, nil, nil); !errors.Is(err, ErrProjectWriteFenceStale) {
+					t.Fatalf("sealed project accepted a write: %v", err)
+				}
+				return
 			}
 			if err := fenceWitnessTx(ctx, pb, newFence, "new", nil, nil, nil); err != nil {
 				t.Fatal("new owner could not commit witness", err)

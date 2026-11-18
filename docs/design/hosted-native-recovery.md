@@ -132,12 +132,20 @@ the worker exit at its deadline, and that requests already accepted by an
 external service settle within the grace. A client timeout bounds its
 wait, while a provider can continue processing an accepted request. A
 worker suspended past the grace or a provider that completes a write after
-it can leave an object outside the cleanup inventory.
+it can leave an object outside the cleanup inventory. An object alone
+cannot publish an event or a result. Hosted publication still requires
+the corresponding fenced native proof or the current durable output
+claim. A webhook already accepted by its recipient cannot be recalled.
 
 A returned call whose acknowledgement failed is retried with the original
-ticket while the process lives. Tickets without an incarnation, from builds
-before this lease, never expire. Offline recovery must prove that their
-executors have stopped. There is no public operation to force a ticket clear.
+ticket while the process lives. Schema step 20 leaves existing tickets
+with a NULL incarnation. Their age does not establish that the operation
+stopped. Drain workers before the upgrade. If a legacy ticket survives,
+stop all pre-upgrade executors and block their restart. Verify any
+outstanding uploads and external deliveries have settled at their providers.
+An operator with database access can then remove only the verified legacy
+ticket by its project and activity ID, with `incarnation_id IS NULL`.
+No public endpoint clears activity tickets.
 
 Once all actual-return tickets clear, the deletion worker can acquire a new
 native write fence, verify the seal cut, publish the final committed
