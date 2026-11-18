@@ -98,7 +98,7 @@ func (s *PipelineJobs) claimHostedScheduled(ctx context.Context, c hostedSchedul
 	w.pipeline.ID, w.pipeline.ProjectID = c.pipeline, c.project
 	w.start, w.id = c.start, c.run
 	w.claimID = eventapi.NewID()
-	didClaim := false
+	didClaim, registered := false, false
 	mutate := func(ctx context.Context, tx *sql.Tx) error {
 		var config string
 		err := tx.QueryRowContext(ctx, `
@@ -160,6 +160,7 @@ FROM hosted_s3_pipeline_runs WHERE id=$1 AND project_id=$2 AND pipeline_id=$3 AN
 		if err = s.pg.scheduled.BeginAttemptTx(ctx, tx, c.project, w.claimID); err != nil {
 			return err
 		}
+		registered = true
 		_, err = tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_runs SET state='running',attempts=attempts+1,claim_id=$2,lease_until=`+exportLeaseExtension+`,error_code='' WHERE id=$1`, w.id, w.claimID)
 		if err != nil {
 			return err
@@ -188,7 +189,7 @@ FROM hosted_s3_pipeline_runs WHERE id=$1 AND project_id=$2 AND pipeline_id=$3 AN
 		})
 	}
 	if err != nil {
-		if didClaim {
+		if registered {
 			_ = s.pg.scheduled.EndAttempt(ctx, c.project, w.claimID)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
