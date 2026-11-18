@@ -87,9 +87,14 @@ event_name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('event','property'))
 property_key TEXT NOT NULL, description TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL,
 PRIMARY KEY(project_id,event_name,kind,property_key));`
 
+// Keep cleanup ownership separate from tenant machine authorization.
+const credentialOwnerSchema = `ALTER TABLE access_keys ADD COLUMN owner_tenant_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX access_keys_owner_tenant ON access_keys(owner_tenant_id) WHERE owner_tenant_id<>'';`
+
 // 6: operator usage rollups, samples and bounded replayable snapshots.
 // 7: project catalog descriptions.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 8: tenant ownership of operator credentials.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -107,6 +112,7 @@ var hostedImportSchema string
 // 18: carry forward hosted usage still present in the retained daily rollups.
 // 19: isolate hosted pipeline capacity by tenant and project.
 // 20: worker incarnation leases for hosted project activity tickets.
+// 21: tenant ownership of operator credentials.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -133,6 +139,7 @@ GROUP BY u.tenant_id,left(u.day_start,7)
 ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.accepted_events+excluded.accepted_events`,
 	output.PipelineTenantCapacitySchema,
 	hostedIncarnationSchemaV1,
+	credentialOwnerSchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
