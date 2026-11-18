@@ -106,8 +106,8 @@ func TestSharedPipelineHostedProjectOutputSettlement(t *testing.T) {
 			+ (SELECT count(*) FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project')`); got != 0 {
 		t.Fatalf("selected project still has %d output records", got)
 	}
-	if got := pipelineCount(t, db, `SELECT used_rows FROM pipeline_capacity WHERE scope_kind='instance'`); got != 1 {
-		t.Fatalf("other project's charged stream has %d rows in instance capacity", got)
+	if got := pipelineCount(t, db, `SELECT used_rows FROM pipeline_capacity WHERE scope_kind='tenant' AND scope_id='other'`); got != 1 {
+		t.Fatalf("other project's charged stream has %d rows in tenant capacity", got)
 	}
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		_, err := HostedPipelineDeletionInventory(ctx, tx, "wrong-tenant", lakeapi.HostedProjectScope{
