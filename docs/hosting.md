@@ -1,116 +1,63 @@
 # Host Porcupine 0.15.1
 
-For the [v0.15.1 release](https://github.com/olup/porcupine/releases/tag/v0.15.1), start with the [quickstart](../README.md#quickstart). It starts the matching image, sends a test event, and waits for SQL visibility. The [release hosting reference](reference/hosting-options.md) covers HTTPS, offline images, and resource settings for that tagged checkout.
+Start a local instance with the [v0.15.1 quickstart](../README.md#quickstart). Keep the server and CLI versions matched. To reuse an existing deployment, follow the steps to [upgrade from v0.15.0](#upgrade-from-v0150) or [move from v0.14.0](#move-from-v0140).
 
-Use a fresh data directory for a new installation. Keep the server and CLI versions matched. For an existing instance, [upgrade from v0.15.0](#upgrade-from-v0150) or [move from v0.14.0](#move-from-v0140).
+<a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
+<a id="choose-a-storage-mode"></a>
 
 ## Pick a deployment
 
-| Goal | Recommended starting point |
-| --- | --- |
-| Try it on a laptop | One process, local SQLite and DuckLake, loopback HTTP |
-| Run on one VM | The same local storage, an HTTPS proxy, and independent backups |
-| Keep analytical files on S3 | The VM setup with an existing private bucket and a dedicated prefix |
-| Run replaceable workers behind an ingress | [Hosted profile](design/hosted-architecture.md#configuration) with PostgreSQL, S3, and buffered live acknowledgment |
+- For a laptop, start with the [local quickstart](../README.md#local-setup).
+- For a standalone VM, configure [HTTPS and persistent storage](#one-vm). To store analytical files in S3, start with the [S3 profile](#one-vm-with-analytical-s3).
+- For replaceable workers behind an ingress, follow the [hosted setup and recovery runbook](design/hosted-architecture.md#configuration).
 
-Start with one server and local files. PostgreSQL is not required for tenants, people, budgets, the API, CLI, or MCP. [Storage](storage.md) describes the state owned by SQLite, DuckLake, PostgreSQL, and S3.
+See [storage and acknowledgment by profile](storage.md#deployment-profiles) and [offline image loading](reference/hosting-options.md#load-an-image-without-registry-access).
 
 <a id="configure-the-development-build"></a>
 
 ## Configure the server
 
-Build and initialize the server executable. These setup commands are separate from the standalone API client:
+For a native setup, build the matching version and initialize its private configuration.
 
 ```sh
 make build
 ./bin/porcupine init --config porcupine.json
 ```
 
-`init` generates the private bootstrap and pipeline secrets. Keep them. Choose one of the examples below, then merge it into the generated file with `jq`:
+Copy the [configuration example](#laptop) for your deployment to `profile.json` and set its hostname and bucket where applicable. Merge that file into the generated configuration to preserve its secrets and storage paths.
 
 ```sh
-jq -s '.[0] * .[1]' porcupine.json docs/examples/configuration/laptop.json |
+jq -s '.[0] * .[1]' porcupine.json profile.json |
 	./bin/porcupine config install --config porcupine.json
-```
-
-Replace `laptop.json` with `vm.json` or `vm-s3.json` for the other profiles. The examples contain no secrets. Merging preserves the generated storage paths and credentials. Change the example hostname and bucket values in your private `porcupine.json` before starting a public deployment.
-
-Validate the edited file, then start the server:
-
-```sh
 ./bin/porcupine config check --config porcupine.json
 ./bin/porcupine --config porcupine.json
 ```
 
-`config check` validates local settings without opening databases or contacting providers. Its output masks secrets. It does not test provider reachability. The [configuration reference](reference/configuration.md) has the loading rules, settings index, and container setup and replacement commands.
+See [server configuration](reference/configuration.md) for validation and container setup.
 
 ### Laptop
 
-[laptop.json](examples/configuration/laptop.json) sets the OAuth issuer to `http://localhost:8080`.
-
-The generated native configuration keeps the HTTP listener on `127.0.0.1:8080` and data under `./data`. No PostgreSQL, S3, or email provider is needed for a local test using the bootstrap credential. To connect people through OAuth, configure [team sign-in](reference/connect-your-team.md).
+[laptop.json](examples/configuration/laptop.json) sets the OAuth issuer to `http://localhost:8080`. The native defaults listen on `127.0.0.1:8080` and store data under `./data`. Use the generated bootstrap credential for a local test.
 
 ### One VM
 
-[vm.json](examples/configuration/vm.json) sets the public issuer to `https://analytics.example.com` and trusts a proxy on the same host.
-
-Keep the native listener on loopback. Point an HTTPS proxy at `127.0.0.1:8080`. For example, a host-installed Caddy can use:
-
-```caddyfile
-analytics.example.com {
-	reverse_proxy 127.0.0.1:8080 {
-		header_up Host 127.0.0.1:8080
-	}
-}
-```
-
-Use your hostname in both the issuer and proxy configuration. Allow public ports 80 and 443 to the proxy and keep 8080 private. The fixed upstream Host preserves MCP's loopback-host check. If the proxy runs in another container or behind a CDN, configure its actual trusted address instead of copying this loopback example. The [VM reference](reference/hosting-options.md#single-linux-vm-with-https) includes the Docker proxy variant.
-
-Run the server under a supervisor and preserve its data directory and private configuration. Configure [backups](backup-and-restore.md) before storing important history.
+[vm.json](examples/configuration/vm.json) sets a public HTTPS issuer and trusts a proxy on the same host. Follow the [VM deployment steps](reference/hosting-options.md#single-linux-vm-with-https).
 
 ### One VM with analytical S3
 
-[vm-s3.json](examples/configuration/vm-s3.json) adds an analytical bucket, prefix, and region to the VM profile.
-
-Use an existing private bucket and its actual region. Supply the server's credentials through the AWS credential chain, or configure the explicit access-key pair privately. Select S3 before starting a fresh archive; editing these fields does not move an existing local archive. SQLite and DuckLake catalogs remain on persistent local storage.
-
-Analytical S3 is separate from export results, pipeline destinations, and backups. Use an independent [S3 backup destination](reference/native-backup-recovery.md) to recover the complete instance. [Analytical S3 settings and permissions](reference/ducklake-s3.md)
-
-<a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
-
-## Choose a storage mode
-
-Standalone keeps the journal and control databases on the local volume. Live acknowledgment follows the SQLite commit. Analytical files can live on local disk or in S3.
-
-The opt-in hosted profile uses PostgreSQL and S3 with disposable worker storage. Live acknowledgment covers admission to bounded worker memory. A crash or incomplete drain can lose acknowledged events that have yet to commit, and the flush interval does not bound loss during an outage. Start with a fresh PostgreSQL database and dedicated analytical S3 prefix. Configure and exercise PostgreSQL and S3 recovery before admitting traffic. [Hosted setup and recovery requirements](design/hosted-architecture.md#configuration)
-
-A fresh installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
-
-## Provision a tenant from a private service
-
-For one team, keep the built-in `default` tenant and use [team setup](reference/tenant-access.md). If you manage several teams from your own application, the matching server exposes the same operator API used by the standalone CLI. Configure the OAuth issuer or [external authentication](reference/external-auth.md) first.
-
-1. As the instance operator, use `create-oauth-client` to create a machine account with `permissions: ["instance:admin"]` and `projects: ["*"]`. Issue its key with `create-service-api-key`, the same grant, and `audience: "api"`. Store the returned one-time token in the private service's secret store. Send it as an API bearer credential. [Machine credentials](reference/service-keys.md)
-2. From the service, call `POST /api/v1/tenants` with the team's name. Save the returned `tenant.id` in your application's customer record. If the team needs limits, send the complete policy to `PUT /api/v1/tenants/{tenant_id}/budgets`. [Tenant budgets](reference/tenants.md)
-3. Call `POST /api/v1/projects` with the project name and `tenant_id`. Give producers the project's ingestion credential, or issue a scoped team service key for a private producer. Give dashboards a separate project-scoped reader key. [Project ingestion modes](reference/projects.md)
-4. Read the month's allowance through `GET /api/v1/tenants/{tenant_id}/usage`. Use `GET /api/v1/usage` for the operator's paginated numerical report. Keep customer records and billing in your application. [Numerical usage and its limits](reference/usage.md)
-5. To remove access, revoke the relevant key through its management API. Rotate a provisioner key by deploying a replacement before revoking the old key with `revoke-access-key`. [Credential rotation](reference/service-keys.md)
-
-Inspect the running instance's `/openapi.json` for request and response schemas. Exercise provisioning, tenant isolation, ingestion, and query visibility in the target environment before routing production traffic.
-
-## Keep data and resources safe
-
-Run one server process per local data directory. Preserve both SQLite databases and their auxiliary files with DuckLake and private configuration. Do not share local catalogs or SQLite files between writers or use a network filesystem for them. The container runs as user 65532; a bind mount must let that user read private configuration and write data.
-
-The default Compose memory limit is 2 GiB, a test profile rather than a capacity guarantee. DuckDB's per-project memory setting does not cap process RSS. Size for resident engines, queries, ingestion, maintenance, and the operating system. [Resource settings](reference/hosting-options.md#persistent-storage-and-resources)
-
-`/readyz` checks the operational store. Before routing traffic, check the authenticated [instance report](reference/instance-status.md), capture a synthetic event, and verify SQL visibility. Monitor pending-event age, queue bytes, disk, memory, and delivery errors.
-
-For a development build with observability enabled, use the [operator dashboard and visibility probe](reference/observability.md).
+[vm-s3.json](examples/configuration/vm-s3.json) adds settings for an existing private bucket. Choose S3 before initializing a fresh archive. See [analytical S3 configuration](reference/ducklake-s3.md) and [backups to a separate destination](reference/native-backup-recovery.md).
 
 ## Configure access and backups
 
-Configure [email or Google/OIDC sign-in](reference/connect-your-team.md), then [invite people and create service credentials](access.md). Keep the bootstrap secret privately.
+[Set up the first tenant administrator](reference/tenant-access.md) with builtin sign-in, or configure [external authentication](reference/external-auth.md). Follow the [backup guide](backup-and-restore.md) before storing production data.
+
+## Provision a tenant from a private service
+
+Follow [tenant provisioning](reference/tenants.md#provision-a-tenant-from-a-private-service) if you manage teams from your own application.
+
+## Keep data and resources safe
+
+Review [persistent storage and memory settings](reference/hosting-options.md#persistent-storage-and-resources). Follow the [readiness and delivery checks](reference/instance-status.md#verify-delivery-before-routing-traffic) before routing traffic. For a source build with observability, see [Prometheus, Grafana, and the visibility probe](reference/observability.md).
 
 ## Upgrade from v0.15.0
 
@@ -129,5 +76,3 @@ The v0.15 series uses separate acceptance and control databases and tenant owner
 2. Initialize v0.15.1 in a separate volume or directory. Transfer required history with an explicit export and [historical import](imports.md), preserving original timestamps and stable producer IDs where available. Imports carry events. Recreate accounts, grants, credentials, and destination settings separately.
 3. Update clients to match the server. Remove the `use_cache` request field. Replace old Compose overlays with the [server configuration](reference/configuration.md) and review settings before enabling pipelines.
 4. Verify counts, event times, identity behavior, corrections and deletes, then switch producers and readers. Keep the old instance isolated with its recovery material until the new deployment is validated. Returning to the old instance requires reconciling writes accepted after cutover.
-
-When setting up the hosted profile, provision fresh PostgreSQL metadata and a dedicated S3 prefix. Use the [hosted profile runbook](design/hosted-architecture.md#configuration) to set retention and verify recovery.

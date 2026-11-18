@@ -185,21 +185,7 @@ Analytical storage, its S3 endpoint, and engine budgets are operator deployment 
 
 ## SQL result exports
 
-[Exports](../exports.md) use `events:read` for the selected project. Discover
-`create-event-export`, `list-event-exports`, `get-event-export`,
-`cancel-event-export`, and `list-event-export-files`, then use `porcupine_call`
-with their generated contracts. Creation requires SQL, an idempotency key,
-optional typed parameters, and optional `jsonl` or `csv` format. Cancellation
-requires no body and is restricted to the creator credential or an administrator.
-
-The tool returns job metadata or bounded file pages, never a large result body.
-Files become available only after the entire query succeeds. Their presigned
-URLs last at most five minutes. Revoking a credential does not expire an issued URL. Project deletion removes the underlying managed export object. Bucket, prefix, endpoint, credentials, and budgets are operator-only
-configuration. Export SQL remains read-only and uses the same project isolation
-as interactive analytics. The delivery barrier is not a point-in-time snapshot.
-
-The [export reference](export-api.md#mcp-examples) includes create, poll, and cancel
-arguments. Run the native S3 integration target to test object-storage and recovery boundaries against isolated storage. Native export tests cover download and publication behavior.
+Use `porcupine_docs` to discover the export operations, then call them through `porcupine_call`. Responses contain job metadata or file links. See [export MCP examples](export-api.md#mcp-examples) and the [consistency contract](export-api.md#consistency-retries-and-revocation).
 
 ## Delivery pipelines
 

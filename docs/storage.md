@@ -1,12 +1,23 @@
 # Storage
 
-Porcupine embeds DuckDB and DuckLake. By default, SQLite holds operational state and accepted work, and each project has its own local DuckLake catalog and managed analytical files. Run one application writer per SQLite database and DuckLake root.
+Porcupine embeds DuckDB and DuckLake. Each project has its own DuckLake catalog and managed analytical files.
+
+<a id="hosted-profile"></a>
+
+## Deployment profiles
+
+| Profile | Control and catalogs | Analytical files | Live acknowledgment |
+| --- | --- | --- | --- |
+| Standalone | Local SQLite control and journal, with local DuckLake catalogs | Local SSD by default, or a configured private S3 bucket and prefix | Durable after the SQLite journal commits |
+| Hosted | Shared PostgreSQL control and DuckLake catalogs, with disposable worker scratch space | Configured private S3 bucket and prefix | Best-effort admission to bounded worker memory |
+
+A hosted worker crash or incomplete drain can lose acknowledged events before the DuckLake commit. The flush interval does not bound loss during an outage. Hosted imports and explicit mutations use durable shared checkpoints and staged objects. See the [native acknowledgment contract](reference/native-event-contract.md#unreleased-acknowledgment-metadata) and [hosted setup](design/hosted-architecture.md#configuration).
 
 ## Local files or S3
 
-Local SSD is the default. Keep SQLite, the DuckLake registry, project catalogs, and Parquet files on persistent storage. No external database or S3 account is required.
+For standalone, use one server process per local data directory. Keep both SQLite databases and their auxiliary files, the DuckLake registry, and catalogs on persistent local storage. Keep local analytical files and private configuration with that state. Use local disks for the SQLite files and local catalogs.
 
-A fresh deployment can place analytical data files on [S3](reference/ducklake-s3.md). SQLite and catalogs remain local. Queries use the same project-scoped DuckDB SQL whether the files are local or remote. S3 is selected before archive initialization; changing configuration does not migrate an existing archive or enable age-based SSD-to-S3 tiering.
+A fresh standalone deployment can place analytical files on [S3](reference/ducklake-s3.md). Queries use the same project-scoped DuckDB SQL with local or remote files. Select S3 before archive initialization. Changing the setting cannot move an existing archive or move older data to S3 automatically.
 
 Analytical storage, [destination pipelines](pipelines.md), [one-time exports](exports.md), and [backup destinations](reference/native-backup-recovery.md) are separate. A scheduled query delivered to S3 is an external copy, not the analytical archive or an instance backup.
 
@@ -14,13 +25,9 @@ Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix c
 
 ## Separate control and journal {#unreleased-separate-control-and-journal}
 
-Standalone uses two SQLite databases. Control holds accounts, grants, tenants, projects, and policies. The journal holds accepted live events, retry receipts, identity state, imports, and jobs. The default control database path is the journal path plus `.control`.
+Standalone uses two SQLite databases. Control holds accounts, grants, tenants, projects, and policies. The journal holds accepted live events, retry receipts, identity state, imports, and jobs. See [server configuration](reference/configuration.md#configuration-sections) for the paths.
 
 Preserve both databases, their SQLite auxiliary files, and DuckLake together. Startup rejects missing or mismatched database identities. Native v2 backups contain `acceptance.sqlite` and `control.sqlite`. Moving from v0.14.0 requires a fresh data directory. [Upgrade steps](hosting.md#move-from-v0140)
-
-## Hosted profile
-
-The opt-in hosted profile keeps control metadata and DuckLake catalogs in PostgreSQL and analytical payloads in S3. Workers use disposable scratch space. Live ingress acknowledges admission to bounded memory. Until a flush commits, a worker crash or incomplete drain can lose an accepted event. Durable imports and event mutations use shared checkpoints and staged objects. [Profile setup and recovery](design/hosted-architecture.md#configuration)
 
 ## Schema versions {#unreleased-schema-versions}
 

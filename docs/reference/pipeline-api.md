@@ -6,7 +6,7 @@ Pipelines send project data to a webhook or an S3-compatible destination. They r
 
 - Use a [webhook](#webhook-event-and-batch-modes) to send matching original events as they arrive, individually or in time-based batches.
 - Use an [S3 query pipeline](#scheduled-s3-query-windows) to run SQL over scheduled time windows and publish files in a destination bucket.
-- For a single download, use a [one-off query export](../exports.md).
+- For a single download, use a [one-off query export](../query-events.md#export-a-result).
 
 The instance operator first [enables the runtime](#enable-the-runtime). Then use an agent with `pipelines:write` and `events:read` for the project, or run `porcupine create-pipeline --id PROJECT_ID --body @pipeline.json`. The webhook and S3 sections below contain request examples for `pipeline.json`.
 
@@ -16,7 +16,7 @@ After creation, inspect the pipeline and its runs. [Pause, change credentials, o
 
 | Capability | Purpose | Configuration | Query or delivery model |
 | --- | --- | --- | --- |
-| [One-off SQL export](../exports.md) | Download the result of a particular SQL query | Operator export storage; authorized client submits SQL | Asynchronous private gzip files and expiring download links |
+| [One-off SQL export](../query-events.md#export-a-result) | Download the result of a particular SQL query | Operator export storage; authorized client submits SQL | Asynchronous private gzip files and expiring download links |
 | Project pipeline | Deliver data repeatedly to a destination | Project-scoped pipeline writer; operator enables and bounds runtime | Webhook delivery or scheduled S3 runs with persisted progress |
 
 A pipeline is not a backup or a way to change the instance's analytical storage policy. Destination credentials are write-only API inputs. Reads return metadata and nonsecret rules without destination endpoint URLs,
@@ -255,7 +255,7 @@ overlap analytical data objects or one-off exports.
 
 ### Data files and committed manifests
 
-Data uses the same gzip JSONL or CSV encoding as [one-off exports](../exports.md).
+Data uses the same gzip JSONL or CSV encoding as [one-off export formats](export-api.md#formats-and-publication).
 Default chunk size is 256 MiB decoded with sequential 8 MiB multipart uploads.
 The runtime validates the complete query result before publishing a
 manifest. A partial collection of data objects is not a completed run.

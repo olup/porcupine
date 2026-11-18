@@ -1,6 +1,6 @@
 # Analytics API reference
 
-For a first query with your agent or CLI, follow [Query your events](../query-events.md). This reference describes the DuckDB SQL dialect. Always inspect the running instance's schema before generating SQL.
+For a first query with your agent or CLI, follow [Query or export events](../query-events.md). This reference describes the DuckDB SQL dialect. Always inspect the running instance's schema before generating SQL.
 
 Every request targets one project and requires `events:read`. HTTP and the CLI accept an API-audience service key or OAuth token. MCP requires an MCP-audience credential. There are no prebuilt metric endpoints, saved query catalogs, or HogQL compatibility.
 
@@ -57,9 +57,9 @@ Property filters, cursor pagination and structured DuckDB errors require v0.12.0
 
 Supplying `event` also returns sampled `properties`. Discovery examines at most the latest 1,000 matching events, 200 eligible top-level keys per event per request, and keys of at most 200 bytes. Filters and the cursor apply before the per-event key bound, so reserved SDK keys do not consume a custom-key page. Each page contains up to `property_limit` keys in lexical order, independently of event-name `limit` and `offset`.
 
-Follow `next_property_cursor` until it is absent. Keep the project, event, prefix and kind unchanged. The cursor is an opaque continuation, not an authorization token or pinned snapshot. Each request samples current delivered data; concurrent ingestion can change observed keys and counts between pages. A missing historical key is not proof that no event ever contained it.
+Follow `next_property_cursor` until it is absent. Keep the project, event, prefix and kind unchanged. The cursor is an opaque continuation, not an authorization token or pinned snapshot. Each request samples current delivered data; concurrent ingestion can change observed keys and counts between pages. Application-specific meaning comes from the descriptions project editors provide. A missing historical key is not proof that no event ever contained it.
 
-For example, request `event=page_viewed&property_kind=custom&property_prefix=thread&property_limit=10` to find matching business keys. If you need to inspect a pointer while discovery is incomplete, query `SELECT json_keys(properties) AS keys FROM events WHERE uuid=$uuid LIMIT 1`. One example still does not define a complete historical schema.
+For a CLI property page, run `porcupine get-event-catalog --id "$PROJECT_ID" --event page_viewed --property-kind custom --property-prefix thread --property-limit 10`. Use `--property-cursor` for the next property page or `--limit` and `--offset` for event names. If you need to inspect a pointer while discovery is incomplete, query `SELECT json_keys(properties) AS keys FROM events WHERE uuid=$uuid LIMIT 1`. One example still does not define a complete historical schema.
 
 Each property contains `key`, observed JSON `types`, decimal-string `sample_occurrences`, `latest_event_uuid`, and `last_received_at`. Raw property values are excluded. The UUID points to the latest sampled event containing that key and can be used in a project-scoped query.
 
@@ -82,7 +82,7 @@ A body contains `sql` and an optional `parameters` string map:
 }
 ```
 
-Rows appear under `result.data`, with column metadata under `result.meta`. The result preserves 64-bit integers as decimal strings to avoid client precision loss. `result.statistics.elapsed` reports query duration. Physical scan counts and bytes are not returned.
+Rows appear under `result.data`, with column metadata under `result.meta`. The result preserves 64-bit integers as decimal strings to avoid client precision loss. `result.statistics.elapsed` reports query duration. An empty `result.data` means no delivered rows matched the query. Physical scan counts and bytes are omitted.
 
 For example:
 
@@ -100,7 +100,7 @@ For example:
 
 ### Fresh queries
 
-Every query executes against delivered data; there is no result cache. Queries do not wait for queued originals or corrections. Inspect delivery status before checking a recent capture.
+Every query executes against delivered data without a result cache. See [delivery consistency](#delivery-consistency-and-errors) before checking a recent capture.
 
 ### Group a custom property by day
 
@@ -124,21 +124,19 @@ The [DuckDB recipes](duckdb-recipes.md) cover trends, sessions, custom dimension
 }
 ```
 
-Through MCP, pass this body to `porcupine_call` with `operation_id: "query-events"` and `path: {"id": "PROJECT_ID"}`.
+Send this body to `POST /api/v1/projects/PROJECT_ID/query` with an API-audience bearer credential. For MCP, pass it to `porcupine_call` with `operation_id: "query-events"` and `path: {"id": "PROJECT_ID"}`. See [MCP execution](mcp.md#execution-with-porcupine_call).
 
 ## Supported SQL and parameters
 
 One statement is allowed, with at most 16 KiB of SQL. Native validation supports `SELECT`, grouping, sequential CTEs, subqueries, joins, `UNION`, window functions, and scalar casts. Sources are `events` and local CTEs. Exact supported functions come from schema discovery.
 
-Writes, qualified tables, private columns, external sources, table functions, recursive CTEs, time travel, configuration changes, and unknown functions are rejected. The native DuckDB AST is checked before execution. An allowed outer function does not make an unsafe nested expression acceptable.
+Writes, qualified tables, private columns, external sources, table functions, recursive CTEs, time travel, configuration changes, and unknown functions are rejected. The server checks the native DuckDB AST before execution. An allowed outer function does not make an unsafe nested expression acceptable.
 
 DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 64 ASCII letters, digits, or underscores and starting with a letter or underscore. Each supplied value is a string of at most 4,096 bytes. Names must exactly match the query, with no missing or extra values. Use an explicit cast when SQL requires a numeric or temporal type. Values are bound separately from SQL.
 
 ## Large result exports
 
-[SQL result exports](../exports.md) use the project's validated dialect with background admission, operator budgets, durable job state, cancellation, and private gzip CSV or JSONL downloads. They do not raise interactive output limits or rewrite SQL into pages. All export operations require project-scoped `events:read`; cancellation also requires the creator credential or instance administration.
-
-A delivery barrier waits for accepted originals and mutations through the job's watermarks. It does not exclude later writes. URLs appear only after the whole attempt succeeds.
+Use a [one-off export](../query-events.md#export-a-result) for large files. The [export API](export-api.md) defines admission, output limits, and profile-specific consistency.
 
 ## Query limits
 
@@ -155,13 +153,13 @@ Default interactive limits are listed below.
 
 Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
 
-[Tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting-options.md#unreleased-interactive-query-ceilings) can lower the effective limits. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This exposes configured allowances, including the monthly ingestion budget, but no aggregate tenant consumption. SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls.
+[Tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting-options.md#unreleased-interactive-query-ceilings) can lower the effective limits. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This reports configured allowances, including the monthly ingestion budget. Aggregate consumption is available through [tenant usage](tenants.md#monthly-ingestion-allowance). SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls.
 
 ## Delivery consistency and errors
 
 Successful schema, catalog, and query responses include project-scoped delivery state. `pending` counts queued originals; `pending_mutations` counts corrections and deletions. `last_success` is optional. `oldest_pending_received_at` identifies the earliest pending original by acceptance order. A generic `error` appears only when the project has pending work.
 
-Results are eventually consistent. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](../events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
+Queries do not wait for queued originals or corrections. Read [hosted delivery status](shared-deployment.md#live-ingestion-and-delivery) before treating a zero pending count as a drained deployment. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](../events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 

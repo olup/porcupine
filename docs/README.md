@@ -7,7 +7,7 @@ This guide covers **v0.15.1**. Start with the [hosting guide](hosting.md) for de
 ## Get started
 
 - **New instance:** follow the [quickstart](../README.md#quickstart), then [host it on your server](hosting.md).
-- **Existing instance:** [connect your agent or CLI](connect-tools.md), then [query your events](query-events.md).
+- **Existing instance:** [connect your agent or CLI](connect-tools.md), then [query or export events](query-events.md).
 - **Let an agent guide you:** give it [llms.txt](https://olup.github.io/porcupine/llms.txt) and your goal. Keep credentials out of the prompt.
 
 Every guide has a **View Markdown** link. It opens the source text in the browser, including on nested reference pages.
@@ -19,9 +19,8 @@ Every guide has a **View Markdown** link. It opens the source text in the browse
 | Send events from my application | [Collect events](collect-events.md) |
 | Understand users and sessions | [Identity](data-and-identity.md) |
 | Bring historical data | [Import history](imports.md) |
-| Discover event names and run SQL | [Query events](query-events.md) |
+| Discover events, run SQL, or download a large result | [Query or export events](query-events.md) |
 | Fix or remove events | [Edit and delete](events.md) |
-| Download a large query result | [Exports](exports.md) |
 | Send data to another system | [Pipelines](pipelines.md) |
 
 ## Run an instance

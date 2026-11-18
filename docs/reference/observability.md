@@ -1,9 +1,10 @@
 # Monitor a Porcupine deployment
 
-Build the server and standalone CLI from the checkout containing this guide. Use
-Prometheus to scrape each server process and import the Porcupine operator
-dashboard into Grafana. Run the visibility probe with a dedicated synthetic
-project to measure how long a live event takes to become queryable.
+Run `make build cli` in this checkout. The metrics listener
+and visibility probe were added after v0.15.1. Prometheus scrapes each process,
+and Grafana displays the measurements. Run the visibility probe in a dedicated
+synthetic project to measure the time from capture acknowledgment to SQL
+visibility.
 
 ## Enable the private metrics listener
 
@@ -74,13 +75,10 @@ histograms](https://prometheus.io/docs/practices/histograms/)
 Queue depth, bytes, and oldest age are snapshots. Check the per-worker panels
 for uneven pressure. Standalone samples the SQLite queue every five seconds.
 A growing sample age means the dashboard may still show an old snapshot. The
-hosted snapshot includes work in flight. In standalone mode, live success
-confirms a durable SQLite queue commit. In hosted buffered mode, live success
-confirms best-effort admission to worker memory. A crash or incomplete drain
-can lose acknowledged events. A flush timer alone gives no upper bound on loss
-during an outage. The dashboard cannot count work lost before a worker reports it.
-Read durable consumption and storage measurements through the authenticated
-[usage report](usage.md).
+hosted snapshot includes work in flight. Interpret admission and commit
+counters using [storage and acknowledgment by profile](../storage.md#deployment-profiles).
+The dashboard cannot count work lost before a worker reports it. Read durable
+consumption and storage measurements in the authenticated [usage report](usage.md).
 
 | Symptom | What to check |
 | --- | --- |

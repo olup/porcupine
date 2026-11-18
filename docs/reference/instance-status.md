@@ -75,3 +75,7 @@ The existing public endpoints remain available:
 `porcupine status` continues to call `/readyz`. Use `porcupine get-instance-status` for the detailed report. Authentication depends on the control database. When it is unavailable the detailed report can fail before its probes run. Use `/readyz` for that condition.
 
 A hosted worker with one quarantined project becomes unready as a whole. An orchestrator may remove it from public routing, although direct requests for healthy projects still work while capacity remains. `/healthz` stays a process-liveness check.
+
+## Verify delivery before routing traffic
+
+Check readiness, read the authenticated instance report, then capture a synthetic event and verify that SQL can find it. Track pending-event age, queue bytes, pending mutations, delivery errors, free disk space, memory pressure, and maintenance. On source builds with observability, use the [operator dashboard and visibility probe](observability.md).

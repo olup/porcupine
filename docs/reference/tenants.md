@@ -71,6 +71,14 @@ With MCP, first request an operation's contract using `porcupine_docs`. Call it 
 
 These are technical limits, not a subscription or price. Replacing budgets does not change recorded consumption.
 
+## Provision a tenant from a private service
+
+Configure the [OAuth issuer](oauth.md#operator-configuration) or [external authentication](external-auth.md). As the instance operator, create a machine account with `create-oauth-client` using `permissions: ["instance:admin"]` and `projects: ["*"]`. Use the same grant and `audience: "api"` with `create-service-api-key`. Keep the one-time token in your service's secret store and send it as an API bearer credential. For rotation, deploy the replacement before calling `revoke-access-key`. [Service key setup](service-keys.md)
+
+Use the [tenant and project operations](#create-a-tenant-and-its-projects) and store the returned `tenant.id` in your customer record. Give producers [ingestion credentials](projects.md) or a scoped service key when they run privately. Give dashboards a separate project-scoped reader. Read per-tenant consumption or list [operator usage](usage.md). Keep billing and customer records in your application.
+
+Use the running server's `/openapi.json` for request and response schemas. Test provisioning, tenant isolation, ingestion, and query visibility before routing production traffic.
+
 ## Monthly ingestion allowance
 
 `ingestion_monthly_events` counts new unique canonical rows durably accepted across all projects in the tenant. A supported identity control or accepted historical person snapshot also consumes a row. Duplicate retries, ignored snapshots, invalid rows, and rolled-back work consume nothing. A later edit, event deletion, or project deletion does not refund usage.
