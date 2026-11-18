@@ -13,9 +13,23 @@ PORCUPINE_MEASURE_HOSTED_FLUSH=1 CGO_ENABLED=0 \
   -timeout=15m -run '^TestDuckLakeS3SharedPostgresHostedFlushCost$'
 ```
 
-The defaults are 20 measured flushes per phase and 100 unique events per flush. The test first measures with the webhook paused, then with a webhook that selects every event. It builds a history of 200 published flushes using single-event flushes, then repeats both phases. After one explicit compaction pass it measures another 20 flushes with the webhook paused. Set `PORCUPINE_MEASURE_HOSTED_FLUSH_N`, `PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS`, or `PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY` to change the workload. The history setting is a comma-separated list of minimum starting sequence numbers. Use phase order and the reported actual sequence when comparing runs.
+The defaults are 20 measured flushes per phase and 100 unique events per flush. The test first measures with the webhook paused, then with a webhook that selects every event. It builds a history of 200 published flushes using single-event flushes, then repeats both phases. After one explicit compaction pass it measures another 20 flushes with the webhook paused. The test raises queue limits in the disposable control database because the sender is stopped and the jobs remain available for counting. Set `PORCUPINE_MEASURE_HOSTED_FLUSH_N`, `PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS`, or `PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY` to change the workload. The history setting is a comma-separated list of minimum starting sequence numbers. Use phase order and the reported actual sequence when comparing runs.
 
 The timer covers the service-configured `FlushLive` call from project lock acquisition through publication and the native acknowledgement attempt. It excludes HTTP admission, validation, waiting in the buffer, and sending webhooks. The S3 proxy counts actual requests by method and response status. It records multipart operations separately. To compare PUTs, use `PUT/200` and check for other PUT statuses or multipart operations. The proxy also groups Parquet requests by table. The test reads the change in the highest DuckLake snapshot ID outside the timed interval. The loopback fixture measures protocol and local engine costs. It does not estimate managed storage or cross-zone latency.
+
+## v0.15.0 baseline
+
+Each row reports 20 flushes of 100 events. PUTs, GETs, and snapshots are per flush. [GitHub Actions run and full JSON records](https://github.com/olup/porcupine/actions/runs/44267301943).
+
+| Phase | Webhook | Starting sequence | p50 (ms) | p95 (ms) | S3 PUTs | S3 GETs | Guard Parquet PUTs | DuckLake snapshots |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before compaction | Paused | 0 | 193.8 | 221.9 | 7 | 5.90 | 3 | 3 |
+| Before compaction | On | 20 | 536.5 | 547.4 | 109 | 108.00 | 3 | 3 |
+| Before compaction | Paused | 200 | 334.9 | 345.3 | 7 | 5.95 | 3 | 3 |
+| Before compaction | On | 220 | 659.2 | 674.7 | 109 | 108.00 | 3 | 3 |
+| After compaction | Paused | 240 | 249.5 | 255.6 | 7 | 6.05 | 3 | 3 |
+
+The webhook phases added 102 PUTs and 102 whole-object GETs per flush for 100 bodies, a plan, and a manifest. Every flush wrote three `hosted_write_guard` Parquet files. The pauses at sequence 200 and after compaction differ in catalog layout as well as sequence, so those timings do not isolate the cost of scanning proof history.
 
 ## Source size
 
