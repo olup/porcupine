@@ -1,7 +1,7 @@
 package porcupine
 
 import (
-	"context"
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
@@ -120,7 +119,13 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	control := sharedPostgresDSN(t)
 	config := hostedJourneyConfig(t, control, fixture)
 	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+	config.Pipelines = &output.PipelineConfig{
+		Key:                           bytes.Repeat([]byte{1}, 32),
+		WebhookMaxQueuedEvents:        100_000,
+		WebhookProjectMaxQueuedEvents: 100_000,
+	}
 	service, host, _ := hostedCleanupWorker(t, config)
+	service.pipelines.Stop()
 	service.usage.cancel()
 	<-service.usage.done
 	direct, err := sql.Open("pgx", control)
@@ -129,58 +134,28 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	}
 	t.Cleanup(func() { direct.Close() })
 
-	store := service.lake.(*lakeapi.DuckLakeStore)
-	coordinator, err := lakeapi.NewPostgresProjectCoordinator(service.control, lakeapi.DefaultProjectCoordinatorConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	flusher, err := newHostedLiveFlusher(service.control, store, coordinator, service.usage.store)
-	if err != nil {
-		t.Fatal(err)
-	}
+	flusher := service.hosted.flusher
+	store := flusher.native
 	project, _ := sharedJourneyProject(t, host.URL, defaultTenantID, "flush cost")
 	key := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: project}
-	scope, err := store.InitializeHostedProject(ctx, key)
-	if err != nil {
+	if _, err := store.InitializeHostedProject(ctx, key); err != nil {
 		t.Fatal(err)
 	}
-	// Webhook deliveries are never drained here, so capacity must hold all of them.
-	ample := output.PipelineDemand{References: 1 << 40, QueuedBytes: 1 << 50, MetadataRows: 1 << 40, ArtifactBytes: 1 << 50, ProofSlots: 1 << 20}
-	if err := flusher.publisher.transaction(ctx, func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"project", project}} {
-			if err := flusher.publisher.effects.ConfigureCapacityTx(ctx, tx, v[0], v[1], ample); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "flush cost webhook", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
+	permissions := []string{"pipelines:write", "events:read"}
+	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "flush cost webhook", Projects: []string{project}, Permissions: permissions})
 	account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "flush cost webhook key", Audience: "api", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
-	creator := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["id"].(string)
-	rule, _ := json.Marshal(delivery.WebhookRule{DeliveryMode: "event"}) // every event
-	ruleRef, err := store.Remote.PutImmutableEffectObject(ctx, scope, eventapi.NewID(), rule)
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := output.PipelineTarget{ID: "all-events", Incarnation: "flush-cost", RuleRevision: "rule", DestinationRevision: "destination", CreatorID: creator, Rule: pipelineRef(ruleRef)}
-	var current *output.PipelineTarget
-	webhook := func(state string) {
+	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "flush cost webhook key", Audience: "api", Projects: []string{project}, Permissions: permissions})
+	creator := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["token"].(string)
+	body, _ := json.Marshal(PipelineCreateBody{Name: "all events", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{
+		Endpoint: "https://example.test/unused", DeliveryMode: "event",
+	}})
+	pipelines := "/api/v1/projects/" + project + "/pipelines"
+	webhookID := sharedJourneyHTTP(t, host.URL, "POST", pipelines, creator, body, nil, 201)["id"].(string)
+	webhook := func(action string) {
 		t.Helper()
-		session, err := coordinator.Acquire(ctx, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			return flusher.publisher.effects.CompareAndSwapDefinitionTx(ctx, tx, current, output.PipelineDefinition{TenantID: defaultTenantID, ProjectID: project, State: state, Target: target})
-		})
-		if err := errors.Join(err, session.Release()); err != nil {
-			t.Fatal(err)
-		}
-		current = &target
+		sharedJourneyHTTP(t, host.URL, "POST", pipelines+"/"+webhookID+"/"+action, creator, nil, nil, 200)
 	}
+	webhook("pause")
 
 	schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(key.SourceID, project))
 	readSnapshot := func() int64 {
@@ -234,12 +209,30 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 		sample.snapshots = readSnapshot() - before
 		return sample
 	}
+	jobs := func() int {
+		t.Helper()
+		var count int
+		if err := direct.QueryRowContext(ctx, `SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1 AND pipeline_id=$2`, project, webhookID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
 	report := func(phase string, hooked bool, count, n int) {
 		t.Helper()
-		start := history()
+		start, jobsBefore := history(), jobs()
 		samples := make([]hostedFlushSample, 0, n)
 		for range n {
 			samples = append(samples, flush(count))
+		}
+		if after := history(); after-start != int64(n) {
+			t.Fatalf("published %d batches, want %d", after-start, n)
+		}
+		wantJobs := 0
+		if hooked {
+			wantJobs = n * count
+		}
+		if got := jobs() - jobsBefore; got != wantJobs {
+			t.Fatalf("published %d webhook jobs, want %d", got, wantJobs)
 		}
 		raw, err := json.Marshal(summarizeHostedFlushes(phase, hooked, start, count, samples))
 		if err != nil {
@@ -254,11 +247,11 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 			report("history_fill", false, 1, int(min(fill, 500)))
 		}
 		report("flush", false, events, flushes)
-		webhook("active")
+		webhook("resume")
 		report("flush", true, events, flushes)
-		webhook("paused")
+		webhook("pause")
 	}
-	session, err := coordinator.Acquire(ctx, key)
+	session, err := flusher.coordinator.Acquire(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
