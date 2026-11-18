@@ -39,7 +39,7 @@
   "sdk-compatibility-tests.md": "design/sdk-compatibility-tests.md",
   "security-and-interfaces.md": "reference/security-and-interfaces.md",
   "service-keys.md": "reference/service-keys.md",
-  "shared-deployment-design.md": "design/shared-deployment-design.md",
+  "shared-deployment-design.md": "design/archive/shared-deployment-design.md",
   "shared-deployment.md": "reference/shared-deployment.md",
   "tenant-access.md": "reference/tenant-access.md",
   "tenant-budget-design.md": "design/tenant-budget-design.md",

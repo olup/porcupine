@@ -62,9 +62,6 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 			return e
 		}
 		fence := session.Fence(scope.StreamID)
-		if e = f.native.AdvanceRecoveryFence(ctx, fence); e != nil {
-			return e
-		}
 		var tenant string
 		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, b.projectID).Scan(&tenant); e != nil {
 			return e
@@ -73,65 +70,90 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b bufferedFlushBatch)
 		for _, input := range b.events {
 			batch.Inputs = append(batch.Inputs, lakeapi.LiveCommitInput{Event: input.input.event, Identity: input.input.identity, AdmittedAt: input.admittedAt})
 		}
-		prior, found, e := f.native.FindLiveCommitBatch(ctx, fence, batch)
+		recovery, e := f.needsLiveRecovery(ctx, scope, tenant)
 		if e != nil {
+			return e
+		}
+		if !recovery {
+			e = f.commitLiveBatch(ctx, session, fence, batch)
+			if !errors.Is(e, lakeapi.ErrNativeEffectsPending) {
+				return e
+			}
+		}
+		// Reservation cleanup and mutation settlement need a committed fence
+		// before reading native evidence. Ordinary flushes establish their
+		// fence only when the next outcome commits.
+		if e = f.native.AdvanceRecoveryFence(ctx, fence); e != nil {
 			return e
 		}
 		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
 			return e
 		}
-		if found {
-			// Reconciliation has confirmed publication; ACK failure cannot retain input.
-			seq, hash, e := f.publisher.checkpoint(ctx, scope, tenant)
-			if e != nil {
-				return e
+		return f.commitLiveBatch(ctx, session, fence, batch)
+	})
+}
+
+func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {
+	if _, err := f.publisher.reservation(ctx, scope); !errors.Is(err, sql.ErrNoRows) {
+		return err == nil, err
+	}
+	_, err := hostedMutationBy(ctx, f.publisher.control, scope, tenant, "state", "ready")
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch) error {
+	seq, hash, err := f.publisher.checkpoint(ctx, batch.Scope, batch.TenantID)
+	if err != nil {
+		return err
+	}
+	ids, err := session.ReserveEventIDs(ctx, batch.Scope.StreamID, batch.ID, len(batch.Inputs))
+	if err != nil {
+		return err
+	}
+	var stager *reservingHostedStager
+	stage := liveEffectStageFunc(func(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+		if stager == nil {
+			plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
+			if err != nil {
+				return lakeapi.StagedLiveEffects{}, err
 			}
-			if seq < prior.Sequence || (seq == prior.Sequence && hash != prior.ProofFingerprint) {
-				return output.ErrPipelineConflict
+			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing}
+		}
+		return stager.StageLiveEffects(ctx, selected)
+	})
+	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
+	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
+		return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
+			currentTenant, err := lockActiveHostedProject(ctx, tx, batch.Scope.Key.ProjectID)
+			if err != nil {
+				return err
 			}
-			return nil
-		}
-		plan, routing, e := f.publisher.plan(ctx, tenant, scope)
-		if e != nil {
-			return e
-		}
-		ids, e := session.ReserveEventIDs(ctx, scope.StreamID, b.id, len(batch.Inputs))
-		if e != nil {
-			return e
-		}
-		stager := &reservingHostedStager{publisher: f.publisher, fence: fence, plan: plan, routing: routing}
-		result, e := f.native.CommitLiveGuarded(ctx, fence, batch, ids, stager, func(ctx context.Context, commit func() error) error {
-			return f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-				currentTenant, err := lockActiveHostedProject(ctx, tx, key.ProjectID)
-				if err != nil {
-					return err
-				}
-				if currentTenant != tenant {
-					return errHostedProjectFenced
-				}
-				return commit()
-			})
+			if currentTenant != batch.TenantID {
+				return errHostedProjectFenced
+			}
+			return commit()
 		})
-		if e != nil {
-			return e
+	})
+	if err != nil {
+		return err
+	}
+	switch v := result.(type) {
+	case lakeapi.DuplicateLiveBatch:
+		return nil
+	case lakeapi.CommittedLiveBatch:
+		if v.Evidence.Sequence <= seq {
+			return nil
 		}
-		switch v := result.(type) {
-		case lakeapi.DuplicateLiveBatch:
-			return nil
-		case lakeapi.CommittedLiveBatch:
-			binding, e := f.publisher.reservation(ctx, scope)
-			if e != nil {
-				return e
-			}
-			if e = f.publisher.publishEvidence(ctx, binding, v.Evidence, nil, false, stager.uploadedManifest); e != nil {
-				return e
-			}
-			_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, v.Evidence.Sequence)
-			return nil
-		default:
+		if stager == nil || stager.binding == (output.PipelineBinding{}) {
 			return output.ErrPipelineConflict
 		}
-	})
+		return f.publisher.publishEvidence(ctx, stager.binding, v.Evidence, nil, false, stager.uploadedManifest)
+	default:
+		return output.ErrPipelineConflict
+	}
 }
 
 // CommitImport coordinates already validated historical input. Upload storage,
@@ -264,20 +286,29 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		return resErr
 	}
 	if len(page.Evidence) == 1 {
-		switch page.Evidence[0].Kind {
+		evidence := page.Evidence[0]
+		switch evidence.Kind {
 		case lakeapi.NativeCommitLive:
 			if resErr != nil {
 				return resErr
 			}
 		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
 			if resErr == nil {
-				return output.ErrPipelineConflict
+				// The previous writer can commit before the live successor's
+				// staged transaction wins the native fence. Its proof then
+				// occupies the only unpublished sequence. The separate recovery
+				// fence rules out any further outcome from the live reservation.
+				if binding.Epoch <= evidence.FenceEpoch {
+					return output.ErrPipelineConflict
+				}
+				if err := f.releaseAbsentLiveReservation(ctx, session, fence, binding); err != nil {
+					return err
+				}
 			}
 			binding = output.PipelineBinding{}
 		default:
 			return output.ErrPipelineConflict
 		}
-		evidence := page.Evidence[0]
 		if deleting {
 			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true, lakeapi.ImmutableObjectRef{})
 		} else if evidence.Kind == lakeapi.NativeCommitMutation {
@@ -290,16 +321,7 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		}
 		seq = page.Evidence[0].Sequence
 	} else if resErr == nil {
-		// Complete retained history after a committed successor fence proves the
-		// unresolved batch did not commit. Cleanup remains charged under the original acquisition. A retry
-		// owns a separately charged, disjoint acquisition namespace.
-		if binding.Epoch >= fence.Epoch {
-			return output.ErrPipelineConflict
-		}
-		err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			return f.publisher.effects.ReleaseAbsentReservationTx(ctx, tx, binding, output.PipelineSettlement{SuccessorEpoch: fence.Epoch, Outcome: output.PipelineReleaseReservation})
-		})
-		if err != nil {
+		if err := f.releaseAbsentLiveReservation(ctx, session, fence, binding); err != nil {
 			return err
 		}
 	}
@@ -307,6 +329,17 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, seq)
 	}
 	return nil
+}
+
+// Call only after a committed successor fence and a complete proof suffix
+// establish absence. Cleanup retains the charge under the original acquisition.
+func (f *hostedLiveFlusher) releaseAbsentLiveReservation(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, binding output.PipelineBinding) error {
+	if binding.Epoch >= fence.Epoch {
+		return output.ErrPipelineConflict
+	}
+	return session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return f.publisher.effects.ReleaseAbsentReservationTx(ctx, tx, binding, output.PipelineSettlement{SuccessorEpoch: fence.Epoch, Outcome: output.PipelineReleaseReservation})
+	})
 }
 
 type hostedPolicySnapshot struct {

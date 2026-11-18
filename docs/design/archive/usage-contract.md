@@ -1,8 +1,10 @@
 # Usage measurement contract
 
-Standalone and hosted deployments share this numerical usage contract. Standalone counts committed SQLite journal rows. Hosted counts retained rows after durable DuckLake commit evidence is published to PostgreSQL.
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
 
-The [operator reference](../reference/usage.md) defines every metric, unit, accounting date, API parameter, resource bound and recovery limitation. Prices, invoices, subscription rules and decisions about charging incomplete observations remain outside Porcupine. A self-hosted operator gets the same measurements and configuration as the commercial deployment.
+**Unreleased implementation.** Standalone and current owner-journal shared deployments use this contract. Hosted buffered acceptance remains a [separate target](hosted-architecture-decisions.md), requiring durable native-commit evidence before publishing consumption. These meters do not enable that mode.
+
+The [operator reference](../../reference/usage.md) defines every metric, unit, accounting date, API parameter, resource bound and recovery limitation. Prices, invoices, subscription rules and decisions about charging incomplete observations remain outside Porcupine. A self-hosted operator gets the same measurements and configuration as the commercial deployment.
 
 ## Causal accounting
 
@@ -26,7 +28,7 @@ Live accounting uses the existing batch acceptance timestamp. Import chunks free
 
 The source journal keeps one `usage_rollups` row per source/project/day, not an everlasting row per event or batch. A positive change advances the bucket revision. Duplicate-only acceptance does not create an extra metering write. Arithmetic guards reject overflow instead of wrapping a counter.
 
-The metering hook belongs to `durableAcceptance.Accept`, not to the `liveAcceptor` caller or response serializer. `acceptance_basis: durable_commit` identifies the accounting boundary. Hosted HTTP acknowledgment only confirms memory admission. Hosted usage requires native commit proof.
+The metering hook belongs to `durableAcceptance.Accept`, not to the `liveAcceptor` caller or response serializer. Future memory acknowledgments must not invoke it. `acceptance_basis: durable_commit` labels the meter's boundary, not the HTTP acknowledgment; the available runtime is journal-backed and future hosted counts require native commit proof. A private prototype test verifies that buffered memory admission leaves both journal events and accepted usage unchanged, without enabling buffered mode in deployment configuration.
 
 ## Durable query admission and actual return
 
@@ -38,7 +40,7 @@ After durable admission, a lightweight `Begin` starts monotonic time immediately
 
 `Finish` captures the duration in memory without waiting for SQLite observation I/O, then releases the execution permit through the existing lifecycle. A common ten-second maintenance loop persists cumulative observations and final completion; there is no ticker per query. Only the delta above the prior persisted elapsed value is added. Completing twice or replaying an observation adds nothing twice. All duration belongs to the query's start day, so a late return can increase an earlier bucket.
 
-An unreturned or crash-interrupted execution retains its last measured lower bound and unresolved marker. In-memory final completion can be lost on a crash, including all duration of a short execution. The pre-dispatch admitted count survives. Standalone restart marks unfinished records as lost. Hosted workers sweep open executions that have gone five minutes without an observation. A worker that resumes observing an execution clears the lost flag. Recovery preserves the admitted count, measured duration and unresolved marker. Numerical query records follow the same retention horizon as their buckets.
+An unreturned or crash-interrupted execution retains its last measured lower bound and unresolved marker. In-memory final completion can be lost on a crash, including all duration of a short execution. The pre-dispatch admitted count survives. Restart marks unfinished records as lost rather than inventing a finish time or silently measuring downtime. Numerical query records follow the same retention horizon as their buckets.
 
 Integer microseconds are the stored unit. The wire uses decimal seconds with six fractional digits. `Statistics.Elapsed` and HTTP latency are not substitutes. Billing treatment of unknown tails belongs to the external controller.
 
@@ -50,13 +52,13 @@ The source publisher sends at most 1,000 dirty buckets per pass. The control-sto
 
 This is two durable stores with reconciliation, **not** an atomic cross-database transaction. Only durably published totals appear in the report. `publication_status: unknown` deliberately supplies no global sealed-through-time guarantee across journals, paused sources or workers. A consumer upserts cumulative values and revisits recent periods; it must not add consecutive poll responses. The first page attempts a bounded local publication pass, without pretending it synchronizes every source.
 
-Hosted live and import commits persist usage evidence with the native DuckLake write. PostgreSQL publication applies each effect once, including its monthly ingestion-budget charge. Budget enforcement and `get-tenant-usage` read the same monthly counter. Hosted admission refreshes its policy cache periodically, so it can briefly lag a budget change or a newly published count.
+Future hosted ingestion must create its accounting time, accepted live/import counts and cumulative source revision inside the actual DuckLake transaction. PostgreSQL publication must reconcile that retained native evidence together with output scheduling. A callback after a native commit, a memory admission counter or a replay recomputation from mutable analytical events cannot provide this guarantee. Project deletion must reconcile or detach minimal unpublished numerical effects before deleting their native proof. The hosted phase owns that implementation and its crash tests.
 
 ## Current Parquet sampling
 
-The standalone sampler opens only an already registered ready project and uses DuckLake's current-file catalogue API inside one analytical read transaction. The hosted sampler reads current file metadata directly from PostgreSQL in a single statement, without opening an analytical engine. It deduplicates referenced data/delete paths and sums their recorded sizes. It does not list the S3 bucket or count obsolete files, orphan objects, metadata databases, backups, exports or destination objects. A sampling failure does not replace the last successful value with zero. Sampling is maintenance, not an interactive query attempt.
+The built-in sampler opens only an already registered ready project and uses DuckLake's public current-file catalogue API inside one analytical read transaction. It deduplicates referenced data/delete paths and sums their recorded sizes. It does not list the S3 bucket or count obsolete files, orphan objects, metadata databases, backups, exports or destination objects. A sampling failure does not replace the last successful value with zero. Sampling is maintenance, not an interactive query attempt.
 
-Sampling runs approximately hourly. Hosted workers page through projects with missing or old samples and share sample freshness through PostgreSQL. The control store retains the latest sample per project/UTC day; later samples replace that day's earlier sample. V1 provides no hourly sample history or byte-time integral. A row uses the latest available sample at or before the earlier of its bucket end and report creation. Age beyond two hours marks that measurement stale. Tenant sums report measured/expected projects and oldest/newest observation times; any missing project makes the total unknown rather than inventing zero coverage.
+Sampling runs approximately hourly on the existing project owner. The control store retains the latest sample per project/UTC day; later samples replace that day's earlier sample. V1 provides no hourly sample history or byte-time integral. A row uses the latest available sample at or before the earlier of its bucket end and report creation. Age beyond two hours marks that measurement stale. Tenant sums report measured/expected projects and oldest/newest observation times; any missing project makes the total unknown rather than inventing zero coverage.
 
 Current catalogue removal is the zero-footprint boundary. An ingestion fence or a tenant state change alone is not proof of zero files. Provider object versions and backup retention remain outside this current-reference gauge and its deletion claims.
 
@@ -92,7 +94,7 @@ Offline restore rotates both the control usage epoch and the journal source inca
 | Initial usage draft, query/storage/restore open decisions | Lifecycle, sampling and recovery sections above | Ten-second observations, hourly daily-latest gauge, two-hour staleness, 365-day numerical retention, no byte-time integral and explicit restore epochs. |
 | Journal schema inventory | `hosted-architecture.md` | Disposition of both new journal tables and future hosted durable-evidence requirements. |
 
-Existing published guides are retained. See the hosted architecture for the deployment profile and its recovery limits.
+Existing published guides are retained. The operator reference describes development builds, while the hosted record remains explicitly a target.
 
 ## Acceptance cost evidence
 

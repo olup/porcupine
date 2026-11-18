@@ -15,20 +15,24 @@ import (
 
 // The real PG transaction commits; only its response is lost to the publisher.
 // Other transactions, including reservation and checkpoint rereads, are ordinary.
-type hostedLostCommitDriver struct{ lose *atomic.Bool }
+type hostedLostCommitDriver struct {
+	lose             *atomic.Bool
+	reservationReads *atomic.Int64
+}
 
 func (d hostedLostCommitDriver) Open(dsn string) (driver.Conn, error) {
 	c, e := stdlib.GetDefaultDriver().Open(dsn)
 	if e != nil {
 		return nil, e
 	}
-	return &hostedLostCommitConn{Conn: c, lose: d.lose}, nil
+	return &hostedLostCommitConn{Conn: c, lose: d.lose, reservationReads: d.reservationReads}, nil
 }
 
 type hostedLostCommitConn struct {
 	driver.Conn
-	lose       *atomic.Bool
-	publishing bool
+	lose             *atomic.Bool
+	publishing       bool
+	reservationReads *atomic.Int64
 }
 
 func (c *hostedLostCommitConn) Begin() (driver.Tx, error) {
@@ -54,6 +58,9 @@ func (c *hostedLostCommitConn) ExecContext(ctx context.Context, q string, a []dr
 	return c.Conn.(driver.ExecerContext).ExecContext(ctx, q, a)
 }
 func (c *hostedLostCommitConn) QueryContext(ctx context.Context, q string, a []driver.NamedValue) (driver.Rows, error) {
+	if c.reservationReads != nil && strings.HasPrefix(q, "SELECT tenant_id,batch_id,artifact_prefix,") {
+		c.reservationReads.Add(1)
+	}
 	return c.Conn.(driver.QueryerContext).QueryContext(ctx, q, a)
 }
 
@@ -71,10 +78,10 @@ func (t hostedLostCommitTx) Commit() error {
 	}
 	return nil
 }
-func installLostHostedCommit(dbURL string, p *hostedEffectPublisher, lose *atomic.Bool) (*sql.DB, error) {
+func installLostHostedCommit(dbURL string, p *hostedEffectPublisher, lose *atomic.Bool, reservationReads *atomic.Int64) (*sql.DB, error) {
 	name := "hosted_lost_commit_" + eventapi.NewID()
 	// Every fixture gets a separate registry entry without storing its DSN there.
-	sql.Register(name, hostedLostCommitDriver{lose: lose})
+	sql.Register(name, hostedLostCommitDriver{lose: lose, reservationReads: reservationReads})
 	db, err := sql.Open(name, dbURL)
 	if err != nil {
 		return nil, err
@@ -91,6 +98,7 @@ func installLostHostedCommit(dbURL string, p *hostedEffectPublisher, lose *atomi
 type hostedNativeBoundaryDriver struct {
 	db                  *sql.DB
 	loseCommit, failACK *atomic.Bool
+	beforeProofCommit   func() error
 }
 
 func (d hostedNativeBoundaryDriver) Open(string) (driver.Conn, error) {
@@ -98,13 +106,14 @@ func (d hostedNativeBoundaryDriver) Open(string) (driver.Conn, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &hostedNativeBoundaryConn{conn: c, loseCommit: d.loseCommit, failACK: d.failACK}, nil
+	return &hostedNativeBoundaryConn{conn: c, loseCommit: d.loseCommit, failACK: d.failACK, beforeProofCommit: d.beforeProofCommit}, nil
 }
 
 type hostedNativeBoundaryConn struct {
 	conn                *sql.Conn
 	tx                  *sql.Tx
 	loseCommit, failACK *atomic.Bool
+	beforeProofCommit   func() error
 	proof               bool
 }
 
@@ -189,6 +198,11 @@ type hostedNativeBoundaryTx struct {
 }
 
 func (t hostedNativeBoundaryTx) Commit() error {
+	if t.c.proof && t.c.beforeProofCommit != nil {
+		if err := t.c.beforeProofCommit(); err != nil {
+			return errors.Join(err, t.Rollback())
+		}
+	}
 	e := t.Tx.Commit()
 	t.c.tx = nil
 	if e != nil {
@@ -200,8 +214,8 @@ func (t hostedNativeBoundaryTx) Commit() error {
 	return nil
 }
 func (t hostedNativeBoundaryTx) Rollback() error { e := t.Tx.Rollback(); t.c.tx = nil; return e }
-func installHostedNativeBoundary(db *sql.DB, lose, ack *atomic.Bool) (*sql.DB, error) {
+func installHostedNativeBoundary(db *sql.DB, lose, ack *atomic.Bool, beforeProofCommit func() error) (*sql.DB, error) {
 	name := "hosted_native_boundary_" + eventapi.NewID()
-	sql.Register(name, hostedNativeBoundaryDriver{db: db, loseCommit: lose, failACK: ack})
+	sql.Register(name, hostedNativeBoundaryDriver{db: db, loseCommit: lose, failACK: ack, beforeProofCommit: beforeProofCommit})
 	return sql.Open(name, "")
 }

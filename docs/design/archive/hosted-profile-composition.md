@@ -1,5 +1,7 @@
 # Hosted profile composition
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 The opt-in hosted profile uses PostgreSQL and S3 for durable state. Standalone uses durable SQLite acknowledgment.
 
 ## Configure workers
@@ -70,9 +72,6 @@ retention, owner routing settings and local native backups.
 - The hosted profile connects PostgreSQL-backed import uploads, mutation intents,
   queries, output jobs and usage with the shared native coordinator.
   The worker schedules guarded compaction and runs scheduled S3 pipelines.
-  It also schedules guarded [history cleanup](../reference/ducklake-cleanup.md#hosted-profile).
-  That cleanup deletes obsolete files only when the configured grace and the
-  recovery floor permit it.
   Project and tenant deletion fence access and can reclaim inventoried objects
   after the configured grace and recovery floor permit it. An unresolved
   scheduled S3 attempt keeps physical deletion pending until its destination
@@ -84,5 +83,5 @@ retention, owner routing settings and local native backups.
   records receipt-to-query time, worker kills, and S3 write interruption.
   Production capacity still needs separate measurements.
 
-See the [hosted architecture](hosted-architecture.md) for the storage and
+See the [hosted architecture](hosted-architecture-decisions.md) for the storage and
 recovery protocols.

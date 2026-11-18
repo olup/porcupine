@@ -1,8 +1,10 @@
 # Hosted historical uploads
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 The hosted profile uses the existing HTTP import operations and CGO-free CLI
 with PostgreSQL and S3. Standalone and owner-routed deployments keep their
-journal backend. See [hosted architecture](hosted-architecture.md).
+journal backend. See [hosted architecture](hosted-architecture-decisions.md).
 
 The same project-scoped credentials, format adapters, chunk checksums and
 limits apply to native, PostHog and Segment input. An administrator with current authority can resume a job under

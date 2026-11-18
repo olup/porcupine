@@ -1,5 +1,7 @@
 # Hosted native recovery and seal
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Unit A, unreleased. This component does not enable hosted buffered acceptance,
 production flush publication, pipeline jobs, or webhook sending. Standalone
 journal acceptance and the shared native v2 contract remain unchanged.
@@ -104,48 +106,16 @@ locks across the native commit. Independent PostgreSQL session failure can
 interrupt this protection. A higher native fence and the immutable seal cut
 still determine which native writes committed.
 
-Each ticket references the registering process's worker incarnation. At
-start, a hosted process inserts a random incarnation row with `expires_at`
-(lease, 30 seconds) and `reclaim_after` (lease plus a 45-second grace). It
-renews both every 5 seconds. Renewal cannot revive an expired row. The
-process measures its local deadline from before each successful grant or
-renewal statement, so the deadline never falls after the PostgreSQL expiry.
-Registration is counted locally before its transaction commits and requires
-a current lease, both locally and in PostgreSQL. When the local deadline
-passes, the process refuses new tickets. With write-capable activity still
-running, the keeper exits with status 75 so the supervisor replaces the
-worker. Otherwise, it rejoins under a new incarnation. A read-only query
-alone does not stop the worker. It can fail if it still needs data after
-cleanup starts.
-
-Seal and cleanup first delete incarnations past `reclaim_after`. The
-foreign key cascades to their tickets. If the worker loses its lease
-during a DuckLake write, the sealer acquires the project write session
-and advances the native epoch. An older native transaction can win before
-that advance and become part of the seal cut, or the new epoch can win
-and reject the stale commit. The control project tombstone continues to
-fence new work.
-
-Raw object writes and external deliveries have no provider-side fence.
-Automatic reclamation assumes the supervisor and operating system let
-the worker exit at its deadline, and that requests already accepted by an
-external service settle within the grace. A client timeout bounds its
-wait, while a provider can continue processing an accepted request. A
-worker suspended past the grace or a provider that completes a write after
-it can leave an object outside the cleanup inventory. An object alone
-cannot publish an event or a result. Hosted publication still requires
-the corresponding fenced native proof or the current durable output
-claim. A webhook already accepted by its recipient cannot be recalled.
-
-A returned call whose acknowledgement failed is retried with the original
-ticket while the process lives. Schema step 20 leaves existing tickets
-with a NULL incarnation. Their age does not establish that the operation
-stopped. Drain workers before the upgrade. If a legacy ticket survives,
-stop all pre-upgrade executors and block their restart. Verify any
-outstanding uploads and external deliveries have settled at their providers.
-An operator with database access can then remove only the verified legacy
-ticket by its project and activity ID, with `incarnation_id IS NULL`.
-No public endpoint clears activity tickets.
+An abandoned ticket has no automatic timeout. If the process returned but
+missed a control acknowledgement, retry removal with the original ticket.
+If the process cannot report a return, retain the ticket until offline
+recovery has proven quiescence. That proof requires identifying all executors
+for the deployment, blocking their restart and verifying they have
+terminated. Confirm through the storage provider and any relevant delivery
+destination that outstanding multipart operations and external requests
+have drained or been resolved. A PostgreSQL session disappearing, heartbeat
+stopping, or query permit expiring does not establish this evidence. There
+is no public operation to force a ticket clear.
 
 Once all actual-return tickets clear, the deletion worker can acquire a new
 native write fence, verify the seal cut, publish the final committed

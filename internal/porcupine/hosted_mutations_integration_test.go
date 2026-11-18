@@ -79,6 +79,11 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	edit := mutationEdit(project, uuid, "first", "0")
 	// Schema 5 uses the same tables but cannot interpret mutation evidence.
 	// Upgrade a catalog with live proofs and retain its original stream.
+	// Settle the last published proof so the background recovery pass cannot
+	// move the native acknowledgment cursor during the migration comparison.
+	if err := fa.RecoverProject(ctx, scope.Key); err != nil {
+		t.Fatal(err)
+	}
 	prior, err := fa.native.PendingNativeEffects(ctx, scope, 0, 10)
 	if err != nil || prior.NativeHighWater != 2 {
 		t.Fatal(prior, err)
@@ -176,7 +181,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	// A cold worker publishes the original after native response loss. Lose the
 	// returned PostgreSQL COMMIT response after the receipt and cursor commit.
 	var losePublication atomic.Bool
-	lostDB, err := installLostHostedCommit(b.controlDSN, fb.publisher, &losePublication)
+	lostDB, err := installLostHostedCommit(b.controlDSN, fb.publisher, &losePublication, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

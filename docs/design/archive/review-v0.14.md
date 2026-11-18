@@ -1,6 +1,8 @@
 # v0.14.0 review follow-up
 
-The review covered the published v0.14.0 tree. The implementation now combines the earlier merged work and the stabilization commits on a review branch. [Local validation](stabilization-validation.md) covers the combined branch. CI and release checks remain required. No newer release or deployment is implied.
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
+The review covered the published v0.14.0 tree. The implementation now combines the earlier merged work and the stabilization commits on a review branch. [Local validation](../stabilization-validation.md) covers the combined branch. CI and release checks remain required. No newer release or deployment is implied.
 
 The review found sound acceptance and SQL-isolation boundaries alongside an oversized operational and documentation footprint. Faster CI was the first response because every later refactor needs frequent feedback. It improves the cost of checking changes. It does not establish throughput, availability, or production maturity.
 
@@ -25,13 +27,13 @@ The review found sound acceptance and SQL-isolation boundaries alongside an over
 
 ## Verification required before release
 
-The combined branch adds receipt-pruning regression tests for historical imports and storage failures, as well as schema format and restart tests. The combined race, SDK, S3, restore, and documentation checks passed locally. The [validation record](stabilization-validation.md) lists the commands and measured limits; release CI must still validate the candidate.
+The combined branch adds receipt-pruning regression tests for historical imports and storage failures, as well as schema format and restart tests. The combined race, SDK, S3, restore, and documentation checks passed locally. The [validation record](../stabilization-validation.md) lists the commands and measured limits; release CI must still validate the candidate.
 
 Receipt pruning must never reaccept an old stable ID because its current event was edited or deleted. A failed historical lookup cannot mean "new event". Test retries with changed timestamps, crash recovery, imports, identity controls, and storage unavailability.
 
 Schema changes need recognized version checks, safe interruption/restart behavior, correct identity and mutation projections, and matching backup/restore behavior. Compare actual bytes and query results on representative payloads before generalizing a small fixture's savings.
 
-Run the full [team workflow](../roadmap.md#validate-the-complete-team-workflow) in standalone and shared modes. Keep full SDK, S3, restoration, race, and authorization tests even when the default local check is shorter. The [design records](README.md) preserve earlier failed load profiles; refactoring does not turn those measurements into passing capacity claims.
+Run the full [team workflow](../../roadmap.md#validate-the-complete-team-workflow) in standalone and shared modes. Keep full SDK, S3, restoration, race, and authorization tests even when the default local check is shorter. The [design records](../README.md) preserve earlier failed load profiles; refactoring does not turn those measurements into passing capacity claims.
 
 ## Scope kept out of this stabilization
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Hosted buffer drain starts before waiting on canceled analytics. Flush failures backpressure the affected project, and output capacity is scoped to tenants and projects.
+- Hosted maintenance expires snapshots and reclaims obsolete files under the recovery policy. Worker incarnation leases allow cleanup to recover abandoned activity, and tenant deletion removes operator credentials scoped to the deleted tenant.
+- Hosted usage samples current Parquet files and detects abandoned query observations. Fresh webhook publications skip immediate body read-back. External authentication accepts more provider JWKS formats and can use cached keys during a failed refresh.
+- See [changes after v0.15.0](docs/design/hosted-architecture.md#changes-after-v0150) for rollout behavior and limits.
+
 ## 0.15.0
 
 - Retry bounded native transaction conflicts between local projection and inline-data maintenance without serializing the default maintenance path. Cancellation, validation errors and allocation recovery keep their separate handling.

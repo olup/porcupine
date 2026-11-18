@@ -42,7 +42,7 @@ For a backend or shared team agent, issue a [service key](service-keys.md) scope
 
 ## Delete a project
 
-Deletion removes access to the project. Hosted physical reclamation waits for retention, the operator restore floor, and reconciliation of object ownership. [Hosted recovery requirements](../design/hosted-profile-composition.md) Check the project ID against `list-projects` before running this command. An instance administrator or the owning tenant’s administrator can delete it. Project-manager permissions alone do not grant whole-project deletion.
+Deletion removes access to the project. Hosted physical reclamation waits for retention, the operator restore floor, and reconciliation of object ownership. [Hosted recovery requirements](../design/hosted-architecture.md#recovery-and-retention) Check the project ID against `list-projects` before running this command. An instance administrator or the owning tenant’s administrator can delete it. Project-manager permissions alone do not grant whole-project deletion.
 
 ```sh
 porcupine delete-project --id PROJECT_ID

@@ -195,7 +195,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	}
 	realDB := p.DB
 	var loseNative, failACK atomic.Bool
-	bridge, err := installHostedNativeBoundary(realDB, &loseNative, &failACK)
+	bridge, err := installHostedNativeBoundary(realDB, &loseNative, &failACK, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	var losePG atomic.Bool
-	lostDB, err := installLostHostedCommit(a.controlDSN, fa.publisher, &losePG)
+	lostDB, err := installLostHostedCommit(a.controlDSN, fa.publisher, &losePG, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,58 +315,70 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 			t.Fatal("import created live output metadata", table, count, err)
 		}
 	}
-	// A real pending live reservation cannot be skipped by import publication.
+	// A stale importer can finish native work after its PG lock drops and
+	// the next live writer reserves capacity, but before the new guard commits.
 	next := makeInput("empty", lakeapi.ImportFileCheckpoint{}, "finalize")
-	nextProof, err := commit(next)
+	importOwner, err := ca.Acquire(t.Context(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pendingSession, err := ca.Acquire(t.Context(), key)
-	if err != nil {
+	defer importOwner.Release()
+	oldFence := importOwner.Fence(scope.StreamID)
+	if err := sa.AdvanceRecoveryFence(t.Context(), oldFence); err != nil {
 		t.Fatal(err)
 	}
-	var pendingBinding output.PipelineBinding
-	err = pendingSession.RunNative(t.Context(), func(ctx context.Context) error {
-		fence := pendingSession.Fence(scope.StreamID)
-		if err := sa.AdvanceRecoveryFence(ctx, fence); err != nil {
+	var oldPID int
+	if err := importOwner.RunControlTx(t.Context(), func(ctx context.Context, tx *sql.Tx) error {
+		if err := fa.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(scope), defaultTenantID); err != nil {
 			return err
 		}
-		plan, routing, err := fa.publisher.plan(ctx, defaultTenantID, scope)
+		return tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&oldPID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var terminated bool
+	if err := a.service.control.QueryRowContext(t.Context(), "SELECT pg_terminate_backend($1, 5000)", oldPID).Scan(&terminated); err != nil || !terminated {
+		t.Fatalf("terminate old import writer: %v, %v", terminated, err)
+	}
+
+	pendingSession, err := cb.Acquire(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pendingSession.Release()
+	var nextProof lakeapi.NativeCommitEvidence
+	err = pendingSession.RunNative(t.Context(), func(ctx context.Context) error {
+		fence := pendingSession.Fence(scope.StreamID)
+		plan, routing, err := fb.publisher.plan(ctx, defaultTenantID, scope)
 		if err != nil {
 			return err
 		}
-		stager := reservingHostedStager{publisher: fa.publisher, fence: fence, plan: plan, routing: routing}
-		if _, err = stager.StageLiveEffects(ctx, lakeapi.SelectedLiveEffects{Scope: scope, TenantID: defaultTenantID, BatchID: "pending-live", Sequence: nextProof.Sequence + 1}); err != nil {
+		stager := reservingHostedStager{publisher: fb.publisher, session: pendingSession, fence: fence, plan: plan, routing: routing}
+		if _, err = stager.StageLiveEffects(ctx, lakeapi.SelectedLiveEffects{Scope: scope, TenantID: defaultTenantID, BatchID: "pending-live", Sequence: seq + 1}); err != nil {
 			return err
 		}
-		pendingBinding, err = fa.publisher.reservation(ctx, scope)
+		// Simulate a native operation already dispatched by the lost session
+		// which returns after the coordinator declares it stale.
+		nextProof, err = sa.CommitImportChunk(t.Context(), oldFence, next, lakeapi.EventIDReservation{})
+		if err != nil {
+			return err
+		}
+		if nextProof.Sequence != seq+1 || nextProof.FenceEpoch != oldFence.Epoch {
+			t.Fatalf("old writer did not win the native commit: %+v", nextProof)
+		}
+		if err = fb.publisher.publish(ctx, output.PipelineBinding{}, nextProof); !errors.Is(err, output.ErrPipelineConflict) {
+			t.Fatalf("import publication bypassed the live reservation: %v", err)
+		}
+		if err = sb.AdvanceRecoveryFence(ctx, fence); err != nil {
+			return err
+		}
+		if err = fb.reconcile(ctx, pendingSession, scope, fence, defaultTenantID); !errors.Is(err, output.ErrPipelineConflict) {
+			t.Fatalf("recovery released its own reservation: %v", err)
+		}
+		_, err = sb.SealHostedProject(ctx, fence)
 		return err
 	})
 	pendingSession.Release()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = fa.publisher.publish(t.Context(), output.PipelineBinding{}, nextProof); !errors.Is(err, output.ErrPipelineConflict) {
-		t.Fatal("import skipped live reservation", err)
-	}
-	session, err := ca.Acquire(t.Context(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = session.RunNative(t.Context(), func(ctx context.Context) error {
-		fence := session.Fence(scope.StreamID)
-		if e := sa.AdvanceRecoveryFence(ctx, fence); e != nil {
-			return e
-		}
-		if e := fa.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			return fa.publisher.effects.ReleaseAbsentReservationTx(ctx, tx, pendingBinding, output.PipelineSettlement{SuccessorEpoch: fence.Epoch, Outcome: output.PipelineReleaseReservation})
-		}); e != nil {
-			return e
-		}
-		_, e := sa.SealHostedProject(ctx, fence)
-		return e
-	})
-	session.Release()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,8 +389,29 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err := a.service.beginControlProjectDeletion(t.Context(), key.ProjectID); err != nil {
 		t.Fatal(err)
 	}
+	binding, err := fb.publisher.reservation(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A reservation concurrent with or older than the import proof
+	// contradicts the write protocol and must stay owned for investigation.
+	if _, err := a.service.control.ExecContext(t.Context(), `UPDATE pipeline_effect_reservations SET epoch=$1 WHERE project_id=$2`, nextProof.FenceEpoch, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := fb.sealDeletedProject(t.Context(), key); !errors.Is(err, output.ErrPipelineConflict) {
+		t.Fatalf("contradictory evidence did not stop recovery: %v", err)
+	}
+	if retained, err := fb.publisher.reservation(t.Context(), scope); err != nil || retained.Epoch != nextProof.FenceEpoch {
+		t.Fatalf("conflicting reservation did not stay owned: %+v, %v", retained, err)
+	}
+	if _, err := a.service.control.ExecContext(t.Context(), `UPDATE pipeline_effect_reservations SET epoch=$1 WHERE project_id=$2`, binding.Epoch, project); err != nil {
+		t.Fatal(err)
+	}
 	if err := fb.sealDeletedProject(t.Context(), key); !errors.Is(err, output.ErrPipelineConflict) {
 		t.Fatal("deletion acknowledged an import without a checkpoint provider", err)
+	}
+	if _, err := fb.publisher.reservation(t.Context(), scope); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("newer recovery fence left absent live reservation in front of the import: %v", err)
 	}
 	if current, _, err := fb.publisher.checkpoint(t.Context(), scope, defaultTenantID); err != nil || current != seq {
 		t.Fatal("unconfirmed import advanced the shared cursor", current, err)
