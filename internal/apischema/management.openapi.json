@@ -593,11 +593,20 @@
             "format": "int64",
             "type": "integer"
           },
+          "files_deleted": {
+            "description": "Hosted profile: obsolete DuckLake files deleted by completed passes in registered catalogs.",
+            "format": "int64",
+            "type": "integer"
+          },
           "interval_seconds": {
             "format": "int64",
             "type": "integer"
           },
           "last_attempt": {
+            "type": "string"
+          },
+          "last_error": {
+            "description": "Hosted profile: stable code (restore_guard, failed or interrupted) of the most recent unsuccessful pass that no later pass of the same catalog has cleared. restore_guard means the restore policy or recovery floor did not permit deletion.",
             "type": "string"
           },
           "last_success": {
@@ -616,6 +625,11 @@
             "type": "integer"
           },
           "snapshot_retention_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "snapshots_expired": {
+            "description": "Hosted profile: snapshots expired by completed passes in registered catalogs.",
             "format": "int64",
             "type": "integer"
           }

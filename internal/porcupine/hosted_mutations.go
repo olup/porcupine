@@ -340,7 +340,7 @@ func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, sessi
 	if err != nil {
 		return err
 	}
-	if err := f.publisher.publishEvidence(ctx, output.PipelineBinding{}, e, session, deleting); err != nil {
+	if err := f.publisher.publishEvidence(ctx, output.PipelineBinding{}, e, session, deleting, lakeapi.ImmutableObjectRef{}); err != nil {
 		return err
 	}
 	_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, e.Sequence)
