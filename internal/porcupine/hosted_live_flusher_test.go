@@ -72,11 +72,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
 	var rejectEffects, blockEffects atomic.Bool
-	var effectPuts atomic.Int64
+	var effectPuts, effectGets atomic.Int64
 	effectEntered, resumeEffects := make(chan struct{}), make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
-			effectPuts.Add(1)
+		if strings.Contains(r.URL.Path, "/effects/") {
+			switch r.Method {
+			case http.MethodPut:
+				effectPuts.Add(1)
+			case http.MethodGet:
+				effectGets.Add(1)
+			}
 		}
 		if rejectEffects.Load() && r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/effects/") {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -309,6 +314,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	rejectEffects.Store(false)
 
+	getsBeforeFlush := effectGets.Load()
 	blockEffects.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
@@ -324,6 +330,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	if err = <-completed; err != nil {
 		t.Fatal("accepted native work failed after budget reduction", err)
+	}
+	if got := effectGets.Load() - getsBeforeFlush; got != 3 {
+		t.Fatalf("fresh flush made %d effect GETs, want 3 (rule, manifest, plan)", got)
 	}
 	if _, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=NULL WHERE id=$1`, defaultTenantID); er != nil {
 		t.Fatal(er)
@@ -448,7 +457,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	missing := original
 	missing.Effects.Manifest.Key += "missing"
-	if _, er = fb.publisher.verify(t.Context(), binding, missing); er == nil {
+	if _, er = fb.publisher.verify(t.Context(), binding, missing, lakeapi.ImmutableObjectRef{}); er == nil {
 		t.Fatal("missing manifest accepted")
 	}
 	get, er := fixture.client.GetObject(t.Context(), &s3.GetObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key)})
@@ -479,11 +488,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(m.PlanRef.Key), Body: bytes.NewReader([]byte("modified plan latest"))}); er != nil {
 			t.Fatal(er)
 		}
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er != nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er != nil {
 			t.Fatal("actual version pin did not survive overwrite", er)
 		}
 	} else {
-		if _, er = fb.publisher.verify(t.Context(), binding, original); er == nil {
+		if _, er = fb.publisher.verify(t.Context(), binding, original, lakeapi.ImmutableObjectRef{}); er == nil {
 			t.Fatal("tampered immutable manifest accepted")
 		}
 		if _, er = fixture.client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String(fixture.storage.Bucket), Key: aws.String(original.Effects.Manifest.Key), Body: bytes.NewReader(originalRaw)}); er != nil {
@@ -494,8 +503,12 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`DROP TRIGGER reject_hosted_usage ON usage_rollups; DROP FUNCTION reject_hosted_usage()`); err != nil {
 		t.Fatal(err)
 	}
+	getsBeforeRecovery := effectGets.Load()
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold publication", err)
+	}
+	if got := effectGets.Load() - getsBeforeRecovery; got != 4 {
+		t.Fatalf("cold publication made %d effect GETs, want 4 (manifest, plan, delivery, fragment)", got)
 	}
 	if err = fa.FlushLive(t.Context(), crash); err != nil {
 		t.Fatal("original native proof replay", err)
