@@ -78,4 +78,4 @@ A hosted worker with one quarantined project becomes unready as a whole. An orch
 
 ## Verify delivery before routing traffic
 
-Check readiness, read the authenticated instance report, then capture a synthetic event and verify that SQL can find it. Track pending-event age, queue bytes, pending mutations, delivery errors, free disk space, memory pressure, and maintenance. On source builds with observability, use the [operator dashboard and visibility probe](observability.md).
+Check readiness, read the authenticated instance report, then capture a synthetic event and verify that SQL can find it. Track pending-event age, queue bytes, pending mutations, delivery errors, free disk space, memory pressure, and maintenance. Use the [operator dashboard and visibility probe](observability.md) to check ingestion, queue pressure, and the time from capture acknowledgment to SQL visibility.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.0
+
+- Added a private, opt-in Prometheus listener for each server process and a Grafana operator dashboard. They report ingestion, queue pressure, flushes, HTTP and MCP activity, and interactive query timing. Server logs use JSON on stderr. (#118)
+- Added `porcupine visibility-probe` to measure the time from capture acknowledgment to the first SQL result containing a synthetic event. Run it once or scrape its metrics in periodic mode. (#118) [Monitoring guide](https://github.com/olup/porcupine/blob/v0.16.0/docs/reference/observability.md)
+- Moved hosted live buffering and interactive query execution into dedicated packages. Exports and scheduled queries share the worker capacity gate with interactive queries. Standalone still acknowledges after the SQLite commit. Hosted acknowledges bounded worker memory admission, so a crash or incomplete drain can lose acknowledged events before a flush commits. (#122, #123)
+- Added coverage for export jobs waiting on delivery and worker capacity, interactive queries and capture during an export, and reclamation of activity from expired hosted workers. (#119, #120, #124)
+- Hosted startup now shares one PostgreSQL pipeline effects handler between ingestion flushes and pipeline jobs. It configures webhook delivery and import checkpoints when workers start. (#129, #130)
+- Combined the query and export guide, clarified hosting and storage choices, and updated the architecture package map. (#121, #125)
+- Made interactive query reservation cleanup release resources once and preserve the first result across repeated calls. (#127)
+- Classified missing bootstrap tokens and incomplete restores by the underlying error in startup logs and metrics. (#131)
+
+v0.16.0 reuses v0.15.1 storage without a schema migration. Stop and back up the deployment before upgrading. The [hosting guide](https://github.com/olup/porcupine/blob/v0.16.0/docs/hosting.md#upgrade-from-v0151) also covers the v0.15.0 migrations and the fresh-storage move from v0.14.0.
+
 ## 0.15.1
 
 - Hosted shutdown starts draining accepted live events before waiting on canceled analytical calls. Flush failures apply backpressure to the affected project. Hosted output capacity is scoped to tenants and projects. (#100, #104, #105)

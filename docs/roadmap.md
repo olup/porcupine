@@ -1,6 +1,6 @@
 # Scope and roadmap
 
-The current release is **v0.15.1**. [CHANGELOG.md](../CHANGELOG.md) records released changes and the next version's work. This page tracks priorities and decisions rather than repeating release history.
+The current release is **v0.16.0**. [CHANGELOG.md](../CHANGELOG.md) records changes by release. This page tracks priorities and decisions rather than repeating release history.
 
 ## Stabilization
 
