@@ -125,7 +125,7 @@ New resource admission stops when the fence commits. Cleanup cancels and drains 
 
 Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
 
-After v0.15.0, [#111](https://github.com/olup/porcupine/pull/111) extends both profiles' cleanup to operator-issued credentials scoped to one tenant. It removes owned keys, OAuth clients, dependent service keys, and tokens. Instance-wide credentials survive. A credential spanning tenants keeps its surviving projects. Before this upgrade, an already-empty project scope may leave ownership unknown.
+In both profiles, tenant deletion removes operator-issued credentials owned by that tenant, including keys, OAuth clients, dependent service keys, and tokens. Instance-wide credentials survive. A credential spanning tenants keeps its surviving projects. If a legacy credential's scope was already empty before upgrading to v0.15.1, Porcupine cannot infer its owner. Review and revoke any such credentials you can attribute to the tenant.
 
 `state=deleting` means cleanup remains pending. Recovery retries it after restart and periodically. Hosted cleanup also waits for recovery retention and reconciliation of scheduled output and managed objects.
 

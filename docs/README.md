@@ -2,7 +2,7 @@
 
 Porcupine stores product events and lets you query them through SQL, MCP, or a standalone CLI. It has no analytics dashboard. Your agent can explore the data and turn query results into a report or chart.
 
-This guide covers **v0.15.0**. Start with the [hosting guide](hosting.md) for deployment and v0.14.0 upgrade steps. Use a matching server and CLI; the running instance's contracts tell you which operations it supports.
+This guide covers **v0.15.1**. Start with the [hosting guide](hosting.md) for deployment and upgrade steps. Use a matching server and CLI; the running instance's contracts tell you which operations it supports.
 
 ## Get started
 
