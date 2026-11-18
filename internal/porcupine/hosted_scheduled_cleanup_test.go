@@ -131,7 +131,7 @@ WHERE (scope_kind='tenant' AND scope_id=$1) OR (scope_kind='project' AND scope_i
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := beginHostedProjectActivity(ctx, s.control, project, "scheduled-worker"); err != nil {
+	if err := (*hostedIncarnation)(nil).beginActivity(ctx, s.control, project, "scheduled-worker"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.beginControlProjectDeletion(ctx, project); err != nil {
