@@ -10,9 +10,10 @@ Every request targets one project and requires `events:read`. HTTP and the CLI a
 | --- | --- | --- |
 | `get-event-schema` | `GET /api/v1/projects/{id}/schema` | SQL columns, functions, features, limits, and delivery status |
 | `get-event-catalog` | `GET /api/v1/projects/{id}/catalog` | Observed event names, sampled property types, UUID pointers, and delivery status |
+| `get-event-profile` | `GET /api/v1/projects/{id}/event-profile` | Activity, recent examples, and bounded property statistics for one event name |
 | `query-events` | `POST /api/v1/projects/{id}/query` | Typed result and delivery status |
 
-Schema discovery returns `enabled: false` when no analytical backend is configured. Catalog and SQL requests then return `503`. The separate pending-event endpoint inspects SQLite, not delivered history.
+Schema discovery returns `enabled: false` when no analytical backend is configured. Catalog and SQL requests then return `503`. The [recent-events endpoint](management-api.md#operations) is separate from SQL history.
 
 ## Event schema
 
@@ -51,8 +52,6 @@ Catalog parameters are:
 | `property_limit` | `20` | `1` through `100` properties per page |
 | `property_cursor` | Omitted | Returned `next_property_cursor`, reused with the same project, event, prefix and kind |
 
-Property filters, cursor pagination and structured DuckDB errors require v0.12.0 or later.
-
 `events` lists names by latest durable event ID. Each item contains `event`, decimal-string `count`, `first_received_at`, `last_received_at`, `latest_event_uuid`, and `latest_event_timestamp`. Counts cover delivered logical events. First and last receipt times come from the lowest and highest durable IDs. `next_offset` appears when another supported page exists.
 
 Supplying `event` also returns sampled `properties`. Discovery examines at most the latest 1,000 matching events, 200 eligible top-level keys per event per request, and keys of at most 200 bytes. Filters and the cursor apply before the per-event key bound, so reserved SDK keys do not consume a custom-key page. Each page contains up to `property_limit` keys in lexical order, independently of event-name `limit` and `offset`.
@@ -67,7 +66,7 @@ Each property contains `key`, observed JSON `types`, decimal-string `sample_occu
 
 ## Event profiles
 
-Since v0.13.0, `get-event-profile` adds activity, recent examples, and property statistics for one exact event name. It is not available in v0.12.0. Discover the running contract before calling it. See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples.
+See [Inspect an event](event-discovery.md) for HTTP, CLI, and MCP examples of `get-event-profile`.
 
 Profiles distinguish occurrence time from receipt time. Exact activity covers delivered logical events. Property statistics describe only a bounded recent sample. A failed storage read returns an error rather than zero activity. Edits and deletions change a profile after analytical projection, under the same delivery rules as SQL.
 
@@ -100,7 +99,7 @@ For example:
 
 ### Fresh queries
 
-Every query executes against delivered data without a result cache. See [delivery consistency](#delivery-consistency-and-errors) before checking a recent capture.
+Every query executes against delivered data without a result cache. Servers from v0.15.0 onward reject the former `use_cache` field. See [delivery consistency](#delivery-consistency-and-errors) before checking a recent capture.
 
 ### Group a custom property by day
 
@@ -147,13 +146,13 @@ Default interactive limits are listed below.
 | Execution time | 5 seconds |
 | Result rows | 1,000 |
 | Result bytes | 1 MiB |
-| Concurrent analytical requests | 2, instance-wide |
+| Concurrent analytical slots | 2 per server process |
 | Engine memory | Configured per project and shared by its work |
 | Physical scanned-row or read-byte quota | Not implemented |
 
-Catalog requests share the analytical concurrency pool. Overflow fails rather than silently truncating. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
+SQL, catalog reads, event profiles, exports, and scheduled S3 queries share worker-local capacity. One background job can start when the worker is idle and occupies one slot. Row or byte overflow returns an error. An explicit SQL `LIMIT` can bound a valid result. DuckDB's memory setting does not cap total process RSS; container limits remain necessary for containment.
 
-[Tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](hosting-options.md#unreleased-interactive-query-ceilings) can lower the effective limits. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This reports configured allowances, including the monthly ingestion budget. Aggregate consumption is available through [tenant usage](tenants.md#monthly-ingestion-allowance). SQL queries, catalog reads, and event profiles share tenant admission; `tenant_query_concurrency_limit` returns `429` when that tenant's places are full. Deployment capacity is enforced independently. Background exports and pipelines retain their existing execution budgets and global admission controls.
+[Tenant budgets](tenants.md#interactive-query-limits) and [deployment ceilings](configuration.md#interactive-query-ceilings) can lower the effective limits. For each project, effective concurrency, timeout, row count, and result bytes are the lower of its tenant budget and the deployment ceiling. `get-event-schema` returns configured `tenant_budgets` and `deployment_limits` alongside effective `limits`; `limits.max_execution_ms` expresses the precise deadline. This reports configured allowances, including the monthly ingestion budget. Aggregate consumption is available through [tenant usage](tenants.md#monthly-ingestion-allowance). SQL, catalog reads, and event profiles also share tenant admission. When all of a tenant's interactive slots are in use, the server returns `429` with `tenant_query_concurrency_limit`. Background jobs have separate execution and output budgets.
 
 ## Delivery consistency and errors
 
@@ -163,7 +162,7 @@ Queries do not wait for queued originals or corrections. Read [hosted delivery s
 
 Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 
-Porcupine returns `429` with `code: "active_project_limit"` when every resident project engine is in use and another project cannot open within the configured count limit. Retry after active work finishes. This applies to SQL, catalog reads, and export validation. The operator can adjust `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` within the deployment's memory budget. Version v0.12.1 reports this condition as `503`.
+Porcupine returns `429` with `code: "active_project_limit"` when every resident project engine is in use and another project cannot open within the configured count limit. Retry after active work finishes. This applies to SQL, catalog reads, and export validation. The operator can adjust `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` within the deployment's memory budget.
 
 DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MCP and CLI receive the same envelope. For example:
 

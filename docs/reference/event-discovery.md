@@ -1,8 +1,6 @@
 # Inspect an event
 
-The `get-event-profile` operation is available in v0.13.0 and later. Older versions provide schema and catalog discovery without profiles. Check the running instance's OpenAPI contract or MCP operation catalog before using this guide.
-
-Use a profile to inspect an event before writing SQL. You need `events:read` for the project. API requests and the CLI use an API-audience credential. MCP uses an MCP-audience credential with the same project permissions.
+Use `get-event-profile` to inspect an event before writing SQL. You need `events:read` for the project. API requests and the CLI use an API-audience credential. MCP uses an MCP-audience credential with the same project permissions.
 
 ## Choose an event
 

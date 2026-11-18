@@ -1,6 +1,6 @@
 # Event IDs and durable receipts
 
-Porcupine's SQLite-journal mode keeps a minimal local receipt for each delivered event. Receipt retention defaults to `0`, which keeps every receipt, as the published v0.14.0 release does. New events and retries on a fresh installation therefore do not require DuckLake to be available at acceptance. Queue capacity, ingestion permissions, and SQLite durability still apply.
+Porcupine's SQLite-journal mode keeps a minimal local receipt for each delivered event. Receipt retention defaults to `0`, which keeps every receipt. New events and retries on a fresh installation therefore do not require DuckLake to be available at acceptance. Queue capacity, ingestion permissions, and SQLite durability still apply.
 
 Journal deployments also support optional age-based pruning through `queue.receipt_retention` or `PORCUPINE_RECEIPT_RETENTION`. Leave it unset or use `"0"` for local-only receipt checks. A positive duration such as `"720h"` opts into pruning after 30 days and the analytical dependency described below. The duration must be at least `24h`. Queue payloads and receipts have separate storage lifecycles.
 

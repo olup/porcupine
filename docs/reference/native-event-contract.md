@@ -1,8 +1,6 @@
 # Native event contract
 
-The native producer format is independent of PostHog and Segment. Their live adapters translate messages into the same acceptance path, which assigns IDs, applies identity rules, and commits the durable queue.
-
-This reference describes version 1 of the native message format. The native capture endpoint is available in v0.13.0 and later. Version v0.14.0 adds schema discovery and native and Segment historical imports alongside PostHog.
+The native producer format is independent of PostHog and Segment. Their adapters normalize messages for the same [profile-specific acceptance path](#acknowledgment-metadata).
 
 ## Discovery
 
@@ -119,11 +117,11 @@ The first accepted message wins. A retry with changed properties does not edit t
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
-In SQLite-journal deployments, success confirms the acceptance transaction. Readers check delivery progress separately.
+<a id="unreleased-acknowledgment-metadata"></a>
 
-### Acknowledgment metadata {#unreleased-acknowledgment-metadata}
+### Acknowledgment metadata
 
-The SQLite-journal response includes `durability: "durable"` and retains the committed receipt fields.
+In standalone, `durability: "durable"` confirms that the SQLite acceptance transaction committed. Readers check analytical delivery separately.
 
 The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](../design/hosted-architecture.md#configuration). It uses the same route and HTTP 200 with the following response.
 
@@ -170,7 +168,7 @@ Current person traits are not a snapshot of what was true at the event's occurre
 | Explicit anonymous link | `anonymous_id` | `$anon_distinct_id` | `anonymousId` alongside `userId` |
 | Trait assignments | `set`, `set_once` | `$set`, `$set_once` | `traits` maps to `set`; no set-once equivalent |
 
-The adapters preserve business values, but their metadata layouts are not identical. PostHog browser, page, and session fields remain supported reserved properties. Native uses `context`. Segment keeps `context` and copies supported page properties into `context.page`. Porcupine does not yet flatten all three into a universal browser object. Agents inspect the stored schema before assuming where a property lives.
+The adapters preserve business values. PostHog browser, page, and session fields are reserved properties. Native uses `context`. Segment keeps `context` and copies supported page properties into `context.page`. Inspect the stored schema to find where each adapter puts a property.
 
 The equivalent live journey is available as [native JSON](../../examples/events/native.json), [Segment JSON](../../examples/events/segment.json), and [PostHog JSON](../../examples/events/posthog.json). Credentials are absent from these files. The test suite sends each journey through its real adapter, verifies the original times and identity link, then retries through all three with the same configured source.
 

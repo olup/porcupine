@@ -1,10 +1,13 @@
 # MCP reference
 
-To connect a client, follow [Connect your tools](../connect-tools.md). This reference describes the four MCP tools, their request shapes, and their responses.
+Porcupine exposes four MCP tools over stateless Streamable HTTP at `/mcp`. For client setup, see [Connect your tools](../connect-tools.md).
 
-Porcupine exposes stateless Streamable HTTP at `/mcp`. It provides `porcupine_docs`, `porcupine_call`, and the read-only tools `porcupine_schema` and `porcupine_query`. The
-implementation uses the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk)
-v1.8.0 in the existing Go process. It requires no additional service.
+| Tool | What it does |
+| --- | --- |
+| `porcupine_schema` | Reads a project's SQL schema and observed event names or sampled properties |
+| `porcupine_query` | Runs a read-only SQL query for one project with bound parameters |
+| `porcupine_docs` | Lists permitted operations or returns one operation's OpenAPI contract |
+| `porcupine_call` | Runs one API operation with the caller's permissions |
 
 The server and every tool advertise the small Porcupine logo through MCP `icons`
 metadata, with 96-pixel PNG variants for light and dark backgrounds. Images are
@@ -21,13 +24,15 @@ embedded images from `site/assets/favicon.svg`, install `rsvg-convert` and run
 | Transport | Streamable HTTP, stateless, JSON responses |
 | Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` for the MCP resource |
 | Permissions | Same project and operation permissions as the native API |
-| Supported client setup | Machine OAuth, audience-scoped service keys, or interactive OAuth for people |
+| Supported client setup | Audience-scoped service keys, builtin OAuth, or external issuer tokens |
 
 For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
-Humans can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human account alongside email OTP. The account's current memberships and the client's allowed scopes determine its access, including authorized administration. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
+With builtin sign-in, a person can connect through an [email account](email-accounts.md) and approve an OAuth grant for selected projects. [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate the same invited human account alongside email OTP. The account's current memberships and the client's allowed scopes determine its access, including authorized administration. A service can send a [static service key](service-keys.md) with the MCP audience or exchange its client ID and secret at `/oauth/token` for a token with `resource=ISSUER/mcp`. Use a separate API-audience credential for direct HTTPS calls to `/api/v1`.
 
 Access tokens expire after 15 minutes by default. Machine clients repeat the token exchange. Interactive clients rotate refresh tokens during the seven-day consent grant. When the grant expires, the person connects again. Each request checks expiry, resource, parent revocation and effective grants. Exports also check creator authority while running and before publication.
+
+In [external mode](external-auth.md#connect-tools), send a compatible access token from the configured issuer with the MCP audience. Native MCP service keys remain available.
 
 Unauthorized requests include the discovery URL `ISSUER/.well-known/oauth-protected-resource/mcp`. [OAuth configuration](oauth.md) controls the issuer and optional legacy-key migration. Public browser write keys authorize ingestion only.
 
@@ -35,9 +40,9 @@ The endpoint rejects cross-origin browser requests. When a reverse proxy forward
 
 ## Read-only analytics with `porcupine_schema` and `porcupine_query`
 
-Most analysis needs two calls. Both tools are annotated as read-only, idempotent and non-destructive, so a client can approve them without approving `porcupine_call`. They dispatch through the same routes as `get-event-schema`, `get-event-catalog` and `query-events`, and the same token, permission and project checks apply. A credential without `events:read` on the project receives status `403`.
+Most analysis needs two calls. Both tools require `events:read` on the target project. They use the same routes and authorization as `get-event-schema`, `get-event-catalog`, and `query-events`. A credential without project access receives status `403`. Clients can approve these read-only tools independently of `porcupine_call`.
 
-`project_id` is optional when the credential grants exactly one project. Credentials with several projects, or with every project, must name one; use `list-projects` through `porcupine_docs` and `porcupine_call` to find it.
+`project_id` is optional when the credential grants exactly one project. Credentials with several projects or wildcard scope must name one. `porcupine_docs` returns the credential's project grants. `list-projects` lists the accessible projects for credentials with `management:read`.
 
 `porcupine_schema` returns `schema` (the `get-event-schema` body: dialect, columns, functions, limits and delivery status) and `catalog` (the `get-event-catalog` body: observed event names with optional user-authored descriptions):
 
@@ -88,12 +93,11 @@ The detail result contains one operation and its `contract`, an OpenAPI document
 with only that operation and the component schemas it references. Contracts
 come from the same Huma registrations as `/openapi.json`.
 
-Discovery checks the token's effective permissions and instance-wide grants. A project
-manager without the instance-wide grants needed to create projects does not
-see that operation. The detailed event-read contract still describes a project
-parameter; the actual project ID is checked when the call runs.
+Discovery checks the credential's effective permissions and grants. For example,
+`create-project` is visible to instance operators and tenant administrators.
+Execution checks authority on the specific project or tenant in the request.
 
-Version v0.14.0 exposes `get-event-input-contract` with `events:read` on the selected project. It returns the native producer schema, server-managed fields, and the historical message schema. File imports use the standalone CLI or HTTP API rather than MCP calls. See the [native contract](native-event-contract.md).
+`get-event-input-contract` requires `events:read` on the selected project. It returns the native producer schema, server-managed fields, and the historical message schema. File imports use the standalone CLI or HTTP API rather than MCP calls. See the [native contract](native-event-contract.md).
 
 ## Execution with `porcupine_call`
 
@@ -157,18 +161,14 @@ read-only and idempotent. `porcupine_call` is annotated as potentially
 destructive and non-idempotent because it can create or revoke credentials. All four have `openWorldHint: false`. These hints inform
 clients; server-side token scopes and project grants enforce access independently.
 
-The available operations include project and key management, queue inspection,
-SQL schema discovery, observed event and property discovery, read-only
-SQL, current-event reads, corrections, deletions, and mutation status.
-Export creation, listing, polling, cancellation, and file downloads add five
-operations to the same discovery catalog; the tool count does not change. [Project pipelines](../pipelines.md) add scoped webhook and scheduled S3 delivery
-operations through the same tools. Identity links and profile traits are supplied at ingestion through [identify and set events](../data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
+The operation catalog covers project and key management, queue inspection,
+SQL and schema discovery, current-event reads, mutations,
+[SQL exports](#sql-result-exports), and [delivery pipelines](#delivery-pipelines). Identity links and profile traits are supplied at ingestion through [identify and set events](../data-and-identity.md). Historical native, PostHog, and Segment imports use the HTTP API or CLI for job creation, file uploads and status. The MCP catalog omits these operations.
 
-For analysis, request the contracts for `get-event-schema`, `get-event-catalog`,
-and `query-events`. Schema discovery lists supported functions and quotas. The
-event catalog returns observed names and sampled property types without raw
-property values. Its latest-event UUID pointers can be inspected through a
-parameterized SQL query. See [the analytics API examples](analytics.md).
+For analysis, use `porcupine_schema` to discover the allowed SQL functions,
+limits, and catalog. Sampled properties contain types and UUID pointers without
+raw values. Use `porcupine_query` to inspect a pointer with a bound parameter.
+See the [analytics API examples](analytics.md).
 
 Queries execute against delivered data and do not wait for delivery.
 See [fresh queries](analytics.md#fresh-queries).
@@ -205,8 +205,8 @@ origin allowlist, analytical storage configuration, or export resource budgets.
 
 `go test ./internal/porcupine -run TestMCP -count=1 -v` runs real Go SDK clients
 over HTTP against temporary SQLite databases. The tests cover protocol versions
-`2026-07-28` and `2025-11-25`, two-tool discovery, selected schemas, API execution,
-project isolation, delegation, revocation, last-admin protection, invalid inputs,
+`2026-07-28` and `2025-11-25`, discovery of all four tools, selected schemas, API
+execution, project isolation, delegation, revocation, last-admin protection, invalid inputs,
 cross-origin rejection, transport limits, and bounded responses.
 
 Native tests exercise real DuckLake SQL, catalog discovery, schemas, UUID pointers, project isolation, and query cancellation through real HTTP and MCP clients. `make check` includes native code; `make test-race` runs the complete Go race suite.

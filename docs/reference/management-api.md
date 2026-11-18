@@ -2,13 +2,7 @@
 
 This reference lists HTTP operations, required permissions, and response codes. For a task walkthrough, start with [projects](projects.md), [people](email-accounts.md), [queries](../query-events.md), or [pipelines](../pipelines.md).
 
-The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The project analytics schema has [its own endpoint](analytics.md#event-schema).
-
-Version v0.14.0 adds `get-event-input-contract` at `GET /api/v1/projects/{id}/input-contract` for `events:read` credentials. It describes native live and historical producer fields and server-managed values. [Native event contract](native-event-contract.md)
-
-[Tenant management and usage budgets](tenants.md), [team administration](tenant-access.md), and [identity recovery](identity-recovery.md) add tenant-scoped administration alongside the instance operator.
-
-Version 0.13.0 adds `get-event-profile` at `GET /api/v1/projects/{id}/event-profile`. It requires `events:read` on the selected project and returns activity, recent examples, and bounded property statistics. This operation is not in v0.12.0. [Event profile guide](event-discovery.md)
+The running server publishes its OpenAPI contract at `GET /openapi.json`. The CLI and MCP use the same operation IDs and authorization rules. The [analytics API](analytics.md) describes the project schema, discovery, and SQL queries.
 
 ## Authentication and scope
 
@@ -48,7 +42,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `DELETE /api/v1/projects/{id}` | Instance operator or administrator of the owning tenant | `204` |
 | `GET /api/v1/access-keys` | `management:read`; results restricted to keys whose entire project scope the caller holds | `200` |
 | `POST /api/v1/access-keys` | `management:write`; every requested permission and project must be held by the caller | `201` |
-| `DELETE /api/v1/access-keys/{id}` | `instance:admin` | `204` |
+| `DELETE /api/v1/access-keys/{id}` | Instance operator or administrator of the tenant that owns the key | `204` |
 | `POST /api/v1/oauth-clients` | `management:write`; requested grants cannot exceed the caller | `201` |
 | `GET /api/v1/oauth-clients` | `management:read`; complete project scope required for each returned client | `200` |
 | `DELETE /api/v1/oauth-clients/{id}` | `instance:admin`; last administrator protected | `204` |
@@ -64,17 +58,21 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `POST /api/v1/projects/{id}/quarantined-events/{event_id}/retry` | `events:edit` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/schema` | `events:read` and access to the project | `200` |
 | `GET /api/v1/projects/{id}/catalog` | `events:read` and access to the project | `200` |
+| `GET /api/v1/projects/{id}/event-profile` | `events:read` and access to the project | `200` with [activity and sampled properties](event-discovery.md) |
+| `GET /api/v1/projects/{id}/input-contract` | `events:read` and access to the project | `200` with the [native producer contract](native-event-contract.md) |
 | `POST /api/v1/projects/{id}/query` | `events:read` and access to the project | `200` |
 | `GET /api/v1/projects/{id}/events/{uuid}` | `events:read` and access to the project | `200` |
 | `PATCH /api/v1/projects/{id}/events/{uuid}` | `events:edit` and access to the project | `202` |
 | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
 
-For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
+For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads.
 
-### Tenant operations {#unreleased-tenant-operations}
+<a id="unreleased-tenant-operations"></a>
 
-Tenant administrators manage their own tenant through `tenant:admin` consent. Instance operators retain deployment-wide authority. HTTP, CLI, and MCP use the same operation registry and permission checks. Project readers can inspect configured `tenant_budgets`, `deployment_limits`, and effective `limits` through `get-event-schema`, including the configured ingestion allowance but no tenant-wide consumption.
+### Tenant operations
+
+[Tenant administrators](tenant-access.md) manage their own tenant with `tenant:admin`. Instance operators retain deployment-wide authority, including [recovery of upstream sign-in identities](identity-recovery.md). HTTP, CLI, and MCP use the same operation registry and permission checks. Project readers can inspect configured `tenant_budgets`, `deployment_limits`, and effective `limits` through `get-event-schema`, including the configured ingestion allowance but no tenant-wide consumption.
 
 | Operation ID | Route | Authority | Success |
 | --- | --- | --- | --- |

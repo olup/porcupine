@@ -122,7 +122,7 @@ Use `project_scope: "all"` when a member should also receive access to future pr
 {"email":"analyst@example.org","role":"member","project_scope":"all","project_role":"reader"}
 ```
 
-This membership scope belongs to one tenant. It makes future projects available for the person to select at a later tool consent. Existing analyst connections keep their approved project selection; reconnect to include a new project. The dedicated tenant-administrator connection instead retains its administrative role over future projects in the selected tenant. Do not use `*`, which denotes deployment-wide access. Inspect the installed presets with `porcupine get-tenant-project-roles --tenant-id TENANT_ID`, or read the [permission reference](security-and-interfaces.md#tenant-roles-and-project-permissions-unreleased).
+This membership scope belongs to one tenant. It makes future projects available for the person to select at a later tool consent. Existing analyst connections keep their approved project selection; reconnect to include a new project. The dedicated tenant-administrator connection instead retains its administrative role over future projects in the selected tenant. Do not use `*`, which denotes deployment-wide access. Inspect the installed presets with `porcupine get-tenant-project-roles --tenant-id TENANT_ID`, or read the [permission reference](security-and-interfaces.md#tenant-roles-and-project-permissions).
 
 ## Use the same operations through MCP or HTTP
 

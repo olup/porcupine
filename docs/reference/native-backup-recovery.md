@@ -1,6 +1,6 @@
 # Remote backups and offline recovery
 
-Native v0.15.0 backups use the two-database `porcupine-native-v2` format. Use the same image version and matching CLI to restore. Use v0.14.0 tools for the earlier single-database format. For local scheduling, see [local backups](native-backups.md).
+Native backups use the two-database `porcupine-native-v2` format introduced in v0.15.0. Restore single-database v0.14.0 bundles with the v0.14.0 CLI and image. For local scheduling, see [local backups](native-backups.md).
 
 ## Choose a backup destination
 
@@ -41,7 +41,7 @@ S3 backups are sequential full copies. Account for storage and transfer costs. L
 
 ## Restore a local bundle
 
-Use the same server image version that created the bundle. The examples use the v0.16.0 release image. The standalone CLI remains CGO-free; Docker runs the native engine for this offline operation.
+Use the standalone CLI version that matches `version` in the bundle manifest. The released CLI selects its matching server image. For a development build or an image pinned by digest, pass `--image` explicitly. Docker runs the native engine for this offline operation.
 
 For builtin authentication, create a private file containing a new random bootstrap secret of at least 32 characters. It must differ from every archived credential. Keep it outside the repository. External authentication uses the mode-specific procedure below instead.
 
@@ -50,8 +50,7 @@ porcupine restore \
   --bundle /srv/porcupine-backups/pc_backup_YOUR_ID \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
-  --reset-access \
-  --image ghcr.io/olup/porcupine:0.16.0
+  --reset-access
 ```
 
 The volume must be new. The CLI puts the secret in private stdin, rather than Docker arguments. The one-shot container installs the journal at `/data/porcupine.db`, the control database at `/data/porcupine.db.control`, and analytics under `/data/ducklake`, then gives installed files to the normal nonroot server user. It leaves the HTTP service stopped. Before starting it, install the private server configuration in the recovered volume. Preserve the pipeline encryption key and match the restored storage paths and authentication mode. In builtin mode, keep the bootstrap secret supplied to restore. Failed attempts retain the volume for inspection. The incomplete marker remains until both SQLite files and the reconstructed analytical state are published; normal startup refuses an incomplete installation.
@@ -66,8 +65,7 @@ porcupine restore \
   --source-id YOUR_ANALYTICAL_SOURCE_ID \
   --volume porcupine-recovered \
   --bootstrap-token-file /secure/porcupine-recovery-token \
-  --reset-access \
-  --image ghcr.io/olup/porcupine:0.16.0
+  --reset-access
 ```
 
 To recover into S3, also set `PORCUPINE_DUCKLAKE_S3_*` for a fresh analytical bucket or prefix. Original analytical storage and archive storage are forbidden targets, including empty namespaces. Without target S3 settings, recovery uses the new volume's SSD. The CLI mounts custom CA and AWS credential files read-only.
@@ -87,8 +85,7 @@ porcupine restore \
   --bundle /srv/porcupine-backups/pc_backup_YOUR_ID \
   --volume porcupine-recovered \
   --auth-mode external \
-  --reset-access \
-  --image ghcr.io/olup/porcupine:0.16.0
+  --reset-access
 ```
 
 The offline JSON request uses `auth_mode: "external"` and no `bootstrap_token`. A destination authentication configuration takes precedence; a conflicting request or archived mode is rejected before credential reset. An omitted mode defaults to builtin only when no destination mode is provided. Restore does not convert authentication modes.

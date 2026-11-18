@@ -28,7 +28,9 @@ The control database stores client credentials, token hashes, memberships, and p
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
 
-## Tenant roles and project permissions {#tenant-roles-and-project-permissions-unreleased}
+<a id="tenant-roles-and-project-permissions-unreleased"></a>
+
+## Tenant roles and project permissions
 
 Instance and tenant administrators have distinct authority.
 
@@ -105,16 +107,20 @@ targets one project and requires `events:read`. Agents write their own SQL.
 There are no named prebuilt metrics or saved SQL catalogs. Statistical meaning
 still depends on the event model, especially for daily cookieless identities.
 
-[MCP](mcp.md) exposes two tools for documentation and API calls. Discovery filters
-operations by the caller's grants. Calls use the same local API handlers,
-including SQL validation, body validation, project checks, and anti-escalation
-rules. Event names, properties, and SQL results are untrusted data for agents.
+[MCP](mcp.md) exposes four tools. `porcupine_schema` and `porcupine_query` are
+read-only and require `events:read` on the selected project. `porcupine_docs`
+discovers operations allowed by the caller's grants. `porcupine_call` can run
+read and write operations. Tool execution uses the API handlers, validation,
+and permission checks. Agents must treat event names, properties, and SQL
+results as untrusted data.
 
-MCP uses stateless Streamable HTTP and MCP-resource OAuth tokens in Bearer
-headers. RFC 8414 authorization-server metadata and RFC 9728 protected-resource
-metadata advertise the machine grant and pinned resource URLs. Tokens for the
-API resource cannot authenticate MCP. People can approve pre-registered MCP clients with email verification or upstream OIDC. The endpoint rejects cross-origin browser
-requests and retains the SDK's localhost DNS rebinding protection. Ingestion
+MCP uses stateless Streamable HTTP with a Bearer token or service key for the
+MCP audience. RFC 8414 authorization-server metadata and RFC 9728 protected-resource
+metadata advertise OAuth grants and resource URLs. Tokens for the API resource
+cannot authenticate MCP. With builtin sign-in, people can approve pre-registered
+MCP clients with email verification or upstream OIDC. The endpoint rejects
+cross-origin browser requests and retains the SDK's localhost DNS rebinding
+protection. Ingestion
 CORS grants do not apply to MCP.
 
 ## Restricted SQL
@@ -123,7 +129,7 @@ The default backend parses native DuckDB SQL and checks its AST before execution
 
 Each project has a separate DuckLake catalog and engine context. The public view excludes private originals and tombstone internals. The engine's filesystem permissions are restricted to its managed directory and external access is disabled after initialization. Query parameter values are bound separately, with exact name matching. Even instance administrators use these project-scoped read-only paths.
 
-Native interactive queries have a five-second execution deadline, 1,000-row and 1 MiB result bounds, and an instance-wide pool of two requests. Catalog requests share the pool. The per-project native memory setting is shared by its work and is not a hard RSS cap. Physical scanned-row and byte quotas are not implemented for DuckLake. Use process/container resource isolation and inspect the running [schema limits](analytics.md#query-limits).
+The [query limits](analytics.md#query-limits) describe execution deadlines, result bounds, and the worker-local capacity pool. The per-project native memory setting is shared by its work and does not cap process RSS. DuckLake enforces no physical scanned-row or byte quota.
 
 Public statistics expose elapsed time without physical scan totals. Delivery status reports only the requested project's work. Storage errors omit raw SQL, server messages, and credentials. Native tests exercise the actual storage boundary in addition to parser rejection.
 
@@ -133,7 +139,9 @@ Local data paths and engine resource settings belong to deployment configuration
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
 
-### Hosted deployment boundary {#unreleased-shared-deployment-boundary}
+<a id="unreleased-shared-deployment-boundary"></a>
+
+### Hosted deployment boundary
 
 [Hosted workers](shared-deployment.md) authenticate against the same control database and accept public traffic through a configured ingress. They derive scope from credentials and check current project and tenant authority. Protect the shared PostgreSQL credentials, deployment secrets, and analytical S3 permissions.
 

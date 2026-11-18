@@ -1,6 +1,6 @@
 # Monitor a Porcupine deployment
 
-Porcupine v0.16.0 includes an opt-in Prometheus listener, a Grafana dashboard,
+Porcupine provides an opt-in Prometheus listener, a Grafana dashboard,
 and the `visibility-probe` command. Prometheus scrapes each server process,
 and Grafana displays the measurements. Run the probe in a dedicated synthetic
 project to measure the time from capture acknowledgment to SQL visibility.

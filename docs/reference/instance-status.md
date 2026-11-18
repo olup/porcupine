@@ -1,7 +1,5 @@
 # Check instance status
 
-Available in v0.10.0 and later on both the server and standalone CLI.
-
 Use `get-instance-status` to inspect the running server's version, dependency checks, and optional service configuration. Your credential needs `management:read`. A project-scoped management reader can use it without instance administration. The response contains no destination URLs or credentials. Project IDs in execution health are visible only to instance administrators.
 
 ## From an agent, CLI, or HTTP
@@ -46,13 +44,15 @@ An example response is:
 
 ## Interpret the response
 
-`checks.sqlite` tests the local database connection. `checks.ducklake` verifies the native archive registry identity. Each probe has a one-second deadline. An unconfigured analytical store reports `not_configured`. These dependency checks do not verify every project catalog or a drained delivery queue. For instance administrators, the separate `ducklake_cleanup` field reports the [native cleanup policy and progress](ducklake-cleanup.md). It is omitted for project-scoped callers.
+`checks.sqlite` tests the local journal and control database connections in standalone and reports `not_configured` in hosted. `checks.ducklake` verifies the native archive registry identity. Each probe has a one-second deadline. An unconfigured analytical store reports `not_configured`. These dependency checks do not verify every project catalog or a drained delivery queue. For instance administrators, the separate `ducklake_cleanup` field reports the [native cleanup policy and progress](ducklake-cleanup.md). It is omitted for project-scoped callers.
 
 The overall `status` is `degraded` when a live check fails. An administrator also sees `degraded` when a DuckLake cleanup attempt has failed or was interrupted, until that catalog succeeds or is deleted. When native backups are configured, administrators also receive `native_backup` with schedule, checkpoint time and progress. A failed or interrupted backup degrades their status. See [native backups](native-backups.md). The report still returns HTTP `200`, so clients must inspect the JSON status. Optional services that are not configured do not degrade the instance. Checks run afresh, and responses use `Cache-Control: no-store`. Only one report can run at a time; a concurrent request returns `429`.
 
-Version v0.14.0 adds `native_backup.source_id`, the analytical source identity needed with `latest_bundle` for [remote recovery](native-backup-recovery.md). It remains administrator-only.
+Administrators use `native_backup.source_id` and `native_backup.latest_bundle` to identify an [S3 backup for recovery](native-backup-recovery.md#restore-an-s3-bundle).
 
 In hosted deployments, `checks.shared_control` checks PostgreSQL. `checks.query_execution` is `unavailable` when this worker is draining, has an uncertain query reservation, or has quarantined a project's interactive engine. This degrades the report for all callers. Instance administrators also receive `query_execution` with `active`, `uncertain_permits`, `draining`, and `unhealthy_projects`. Reasons are `native_query_unresponsive` or `query_permit_uncertain`. Active counts include canceled calls that have not returned. An expired reservation can already have been reassigned even while the old call remains alive. The check reads execution state without starting native work. See [hosted query lifecycle](shared-deployment.md#native-timeouts-and-worker-supervision).
+
+Administrators also receive worker-local `hosted_ingestion.dropped_requests` and `hosted_ingestion.dropped_events`. These count accepted live requests and their events discarded when the output cannot fit in a single commit, since this worker started.
 
 `configuration.analytics` reports that the native analytical store is configured; it is not a health check. `configuration.native_s3_storage` reports the native analytical S3 option. It does not test bucket connectivity or disclose its prefix or credentials.
 
@@ -64,15 +64,13 @@ Read query syntax and execution limits through the project's [schema operation](
 
 ## Health and readiness endpoints
 
-The existing public endpoints remain available:
-
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /healthz` | Process liveness. |
 | `GET /readyz` | Local SQLite or hosted PostgreSQL readiness. Also returns `503` for hosted query draining, uncertain reservations, or project quarantine. |
 | `GET /api/v1/status` | Authenticated dependency and configuration report. |
 
-`porcupine status` continues to call `/readyz`. Use `porcupine get-instance-status` for the detailed report. Authentication depends on the control database. When it is unavailable the detailed report can fail before its probes run. Use `/readyz` for that condition.
+`porcupine status` calls `/readyz`. Use `porcupine get-instance-status` for the detailed report. Authentication depends on the control database. When it is unavailable the detailed report can fail before its probes run. Use `/readyz` for that condition.
 
 A hosted worker with one quarantined project becomes unready as a whole. An orchestrator may remove it from public routing, although direct requests for healthy projects still work while capacity remains. `/healthz` stays a process-liveness check.
 
