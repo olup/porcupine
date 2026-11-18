@@ -289,20 +289,29 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		return resErr
 	}
 	if len(page.Evidence) == 1 {
-		switch page.Evidence[0].Kind {
+		evidence := page.Evidence[0]
+		switch evidence.Kind {
 		case lakeapi.NativeCommitLive:
 			if resErr != nil {
 				return resErr
 			}
 		case lakeapi.NativeCommitImport, lakeapi.NativeCommitMutation:
 			if resErr == nil {
-				return output.ErrPipelineConflict
+				// The previous writer can commit before the live successor's
+				// staged transaction wins the native fence. Its proof then
+				// occupies the only unpublished sequence. The separate recovery
+				// fence rules out any further outcome from the live reservation.
+				if binding.Epoch <= evidence.FenceEpoch {
+					return output.ErrPipelineConflict
+				}
+				if err := f.releaseAbsentLiveReservation(ctx, session, fence, binding); err != nil {
+					return err
+				}
 			}
 			binding = output.PipelineBinding{}
 		default:
 			return output.ErrPipelineConflict
 		}
-		evidence := page.Evidence[0]
 		if deleting {
 			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true, lakeapi.ImmutableObjectRef{})
 		} else if evidence.Kind == lakeapi.NativeCommitMutation {
@@ -315,16 +324,7 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		}
 		seq = page.Evidence[0].Sequence
 	} else if resErr == nil {
-		// Complete retained history after a committed successor fence proves the
-		// unresolved batch did not commit. Cleanup remains charged under the original acquisition. A retry
-		// owns a separately charged, disjoint acquisition namespace.
-		if binding.Epoch >= fence.Epoch {
-			return output.ErrPipelineConflict
-		}
-		err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-			return f.publisher.effects.ReleaseAbsentReservationTx(ctx, tx, binding, output.PipelineSettlement{SuccessorEpoch: fence.Epoch, Outcome: output.PipelineReleaseReservation})
-		})
-		if err != nil {
+		if err := f.releaseAbsentLiveReservation(ctx, session, fence, binding); err != nil {
 			return err
 		}
 	}
@@ -332,6 +332,17 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, seq)
 	}
 	return nil
+}
+
+// Call only after a committed successor fence and a complete proof suffix
+// establish absence. Cleanup retains the charge under the original acquisition.
+func (f *hostedLiveFlusher) releaseAbsentLiveReservation(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, binding output.PipelineBinding) error {
+	if binding.Epoch >= fence.Epoch {
+		return output.ErrPipelineConflict
+	}
+	return session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return f.publisher.effects.ReleaseAbsentReservationTx(ctx, tx, binding, output.PipelineSettlement{SuccessorEpoch: fence.Epoch, Outcome: output.PipelineReleaseReservation})
+	})
 }
 
 type hostedPolicySnapshot struct {
