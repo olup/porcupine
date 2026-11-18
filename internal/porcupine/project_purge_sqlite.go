@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/olup/porcupine/internal/output"
 )
@@ -49,8 +50,10 @@ func (s *Service) purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID 
 }
 
 func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string, builtin bool) error {
+	var tenant string
 	var deletingTenant bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_id WHERE p.id=$1)`, projectID).Scan(&deletingTenant); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT tenant_id FROM projects WHERE id=$1),''),
+EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_id WHERE p.id=$1)`, projectID).Scan(&tenant, &deletingTenant); err != nil {
 		return err
 	}
 	if builtin && !deletingTenant {
@@ -136,14 +139,23 @@ func purgeProjectGrants(ctx context.Context, tx *sql.Tx, projectID string, built
 			permissions = string(encoded)
 		}
 		var revoked any
+		owner := ""
 		if len(retained) == 0 && !p.humanGrants.Valid {
 			revoked = now()
+			// Preserve the tenant of legacy credentials before the last scope
+			// is removed. Ownership does not authorize tenant operations.
+			var rights []string
+			if !deletingTenant && !strings.HasPrefix(p.id, "external:") && json.Unmarshal([]byte(p.permissions), &rights) == nil && projectCredentialScope(rights, projects) {
+				owner = tenant
+			}
 		}
 		encoded, err := json.Marshal(retained)
 		if err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE access_keys SET projects=$1,permissions=$2,revoked_at=coalesce(revoked_at,$3) WHERE id=$4 AND projects=$5 AND permissions=$6`, string(encoded), permissions, revoked, p.id, p.projects, p.permissions)
+		result, err := tx.ExecContext(ctx, `UPDATE access_keys SET projects=$1,permissions=$2,revoked_at=coalesce(revoked_at,$3),
+owner_tenant_id=coalesce(nullif(owner_tenant_id,''),$7)
+WHERE id=$4 AND projects=$5 AND permissions=$6`, string(encoded), permissions, revoked, p.id, p.projects, p.permissions, owner)
 		if err != nil {
 			return err
 		}

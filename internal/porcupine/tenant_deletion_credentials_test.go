@@ -45,6 +45,10 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	clientA, clientB := operatorClient("A machine client", []string{pa1, pa2}), operatorClient("B machine client", []string{pb1, pb2})
 	previousProject, _ := tenantJourneyProject(t, s, a)
 	prunedID, _ := namedKey("A key for previously deleted project", read, []string{previousProject})
+	legacyID, _ := namedKey("Legacy key for previously deleted project", read, []string{previousProject})
+	if _, err := s.control.Exec(`UPDATE access_keys SET owner_tenant_id='' WHERE id=$1`, legacyID); err != nil {
+		t.Fatal(err)
+	}
 	request(t, s, "DELETE", "/api/v1/projects/"+previousProject, adminToken, "", 204)
 	for _, credential := range []string{rawA, rawInstance, clientA.token, clientA.key} {
 		request(t, s, "GET", "/api/v1/projects/"+pa2+"/schema", credential, "", 200)
@@ -59,7 +63,7 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	oauthProtocolRequest(t, s, clientA.id, clientA.secret, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 401)
 	for _, db := range []*sql.DB{s.db, s.control} {
 		var count int
-		if err := db.QueryRow(`SELECT count(*) FROM access_keys WHERE id IN ($1,$2,$3,$4) OR token_hash=$5 OR token_hash=$6 OR name IN ('A multi key','A machine client','A machine client static')`, keyA, clientA.id, clientA.keyID, prunedID, hash(rawA), hash(clientA.key)).Scan(&count); err != nil || count != 0 {
+		if err := db.QueryRow(`SELECT count(*) FROM access_keys WHERE id IN ($1,$2,$3,$4,$5) OR token_hash=$6 OR token_hash=$7 OR name IN ('A multi key','A machine client','A machine client static')`, keyA, clientA.id, clientA.keyID, prunedID, legacyID, hash(rawA), hash(clientA.key)).Scan(&count); err != nil || count != 0 {
 			t.Fatal("tenant-scoped operator credential survived", count, err)
 		}
 	}
@@ -97,14 +101,14 @@ func TestSharedTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing
 	s.eventRules = &eventRules{clock: time.Now}
 	ctx := t.Context()
 	if _, err := s.control.Exec(`INSERT INTO tenants SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default';
-INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('b1','B','B1','now','mixed'),('b2','B','B2','now','mixed')`); err != nil {
+INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('b1','B','B1','now','mixed'),('b2','B','B2','now','mixed'),('old-project','default','Old','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, spec := range []struct {
 		id       string
 		projects []string
 	}{
-		{"a-multi", []string{"removed", "kept"}}, {"a-client", []string{"removed", "kept"}}, {"a-static", []string{"kept"}},
+		{"a-pruned-legacy", []string{"old-project"}}, {"a-multi", []string{"removed", "kept"}}, {"a-client", []string{"removed", "kept"}}, {"a-static", []string{"kept"}},
 		{"b-multi", []string{"b1", "b2"}}, {"b-client", []string{"b1", "b2"}}, {"cross", []string{"removed", "b1"}}, {"instance", []string{"*"}},
 	} {
 		sharedDeletionPrincipal(t, s.control, spec.id, spec.projects)
@@ -112,6 +116,12 @@ INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('b1','B
 	if _, err := s.control.Exec(`INSERT INTO oauth_clients(client_id,secret_hash,grant_types) VALUES('a-client','a-client-secret','["client_credentials"]'),('b-client','b-client-secret','["client_credentials"]');
 INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES('a-static','a-client','api');
 INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issued_at_ms,expires_at_ms) VALUES('a-token','a-client','api','events:read','["removed","kept"]',0,1),('b-token','b-client','api','events:read','["b1","b2"]',0,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.beginControlProjectDeletion(ctx, "old-project"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.completeControlProjectDeletion(ctx, "old-project"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.beginTenantDeletion(ctx, defaultTenantID); err != nil {
@@ -135,7 +145,7 @@ INSERT INTO oauth_tokens(token_hash,client_id,resource,scope,projects_json,issue
 		t.Fatal(err)
 	}
 	for _, check := range []string{
-		`SELECT count(*) FROM access_keys WHERE id IN ('a-multi','a-client','a-static') OR token_hash IN ('a-multi','a-client','a-static')`,
+		`SELECT count(*) FROM access_keys WHERE id IN ('a-multi','a-client','a-static','a-pruned-legacy') OR token_hash IN ('a-multi','a-client','a-static','a-pruned-legacy')`,
 		`SELECT count(*) FROM oauth_clients WHERE client_id='a-client' OR secret_hash='a-client-secret'`,
 		`SELECT count(*) FROM oauth_tokens WHERE client_id='a-client'`,
 		`SELECT count(*) FROM service_api_keys WHERE client_id='a-client'`,
