@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"strings"
 )
 
 // CurrentParquetBytes measures only current referenced data/delete files. It
@@ -28,6 +29,10 @@ func (s *DuckLakeStore) CurrentParquetBytes(ctx context.Context, project string)
 		return 0, err
 	}
 	defer release()
+	return p.currentParquetBytes(ctx)
+}
+
+func (p *ProjectLake) currentParquetBytes(ctx context.Context) (int64, error) {
 	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -87,4 +92,69 @@ func (s *DuckLakeStore) CurrentParquetBytes(ctx context.Context, project string)
 		total += bytes
 	}
 	return total, tx.Commit()
+}
+
+// HostedCurrentParquetBytes measures the same current data/delete files from
+// a hosted project's DuckLake metadata in PostgreSQL. It reads one statement
+// snapshot, opens no analytical engine and does not list S3. A project without
+// a ready, undeleted catalog is not measured.
+func (s *DuckLakeStore) HostedCurrentParquetBytes(ctx context.Context, project string) (int64, error) {
+	registry, ok := s.registry.(*postgresNativeRegistry)
+	if !ok || s.SharedCatalog == nil {
+		return 0, ErrHostedProjectNotReady
+	}
+	p, err := registry.lookup(ctx, project)
+	if err != nil {
+		return 0, err
+	}
+	if !p.Ready || p.Deleted {
+		return 0, sql.ErrNoRows
+	}
+	ctx, cancel := registry.metadataContext(ctx)
+	defer cancel()
+	// SharedNativeSchema derives a fixed-format identifier from the checked
+	// catalog ID. Like ducklake_list_files, count current files of live main
+	// tables and the current delete files attached to them, once per path.
+	schema := SharedNativeSchema(p.CatalogID)
+	var exists bool
+	if err = registry.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, schema+".ducklake_data_file").Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, sql.ErrNoRows
+	}
+	var total, smallest, paths, files, sizes int64
+	query := strings.ReplaceAll(`WITH tables AS (
+	SELECT t.table_id,t.path AS table_path,t.path_is_relative AS table_relative,s.path AS schema_path,s.path_is_relative AS schema_relative
+	FROM meta.ducklake_table t JOIN meta.ducklake_schema s ON s.schema_id=t.schema_id
+	WHERE t.end_snapshot IS NULL AND s.end_snapshot IS NULL AND s.schema_name='main'
+), data AS (
+	SELECT d.table_id,d.data_file_id,d.path,d.path_is_relative,d.file_size_bytes
+	FROM meta.ducklake_data_file d JOIN tables USING(table_id) WHERE d.end_snapshot IS NULL
+), files AS (
+	SELECT table_id,path,path_is_relative,file_size_bytes FROM data
+	UNION ALL SELECT d.table_id,f.path,f.path_is_relative,f.file_size_bytes
+	FROM meta.ducklake_delete_file f JOIN data d USING(data_file_id)
+	WHERE f.end_snapshot IS NULL
+), current AS (
+	SELECT DISTINCT CASE
+		WHEN NOT f.path_is_relative THEN f.path
+		WHEN NOT t.table_relative THEN t.table_path || f.path
+		WHEN NOT t.schema_relative THEN t.schema_path || t.table_path || f.path
+		ELSE $1 || t.schema_path || t.table_path || f.path
+	END AS path,f.file_size_bytes
+	FROM files f JOIN tables t USING(table_id)
+)
+SELECT coalesce(sum(file_size_bytes),0)::bigint,count(DISTINCT path),count(*),count(file_size_bytes),coalesce(min(file_size_bytes),0) FROM current`, "meta.", `"`+schema+`".`)
+	err = registry.db.QueryRowContext(ctx, query, s.Remote.projectPath(project)).Scan(&total, &paths, &files, &sizes, &smallest)
+	if err != nil {
+		return 0, err
+	}
+	if paths != files {
+		return 0, errors.New("conflicting current Parquet size")
+	}
+	if sizes != files || smallest < 0 {
+		return 0, errors.New("invalid current Parquet size")
+	}
+	return total, nil
 }
