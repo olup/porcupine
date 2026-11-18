@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
@@ -148,7 +149,7 @@ func (r *Runtime) admit(ctx context.Context, project string) (context.Context, I
 	// Shared admission uses part of the execution budget.
 	deadline := started.Add(limits.timeout())
 	native, cancel := context.WithDeadline(ctx, deadline)
-	finish := func() error {
+	finish := sync.OnceValue(func() error {
 		defer releaseSlot()
 		if permit == nil {
 			stopped := native.Err()
@@ -159,7 +160,7 @@ func (r *Runtime) admit(ctx context.Context, project string) (context.Context, I
 		cancel()
 		r.releasePermit(permit)
 		return stopped
-	}
+	})
 	if err := native.Err(); err != nil {
 		finish()
 		return nil, InteractiveQueryConfig{}, reservation{}, lake.DuckLakeQueryError(native, err)
