@@ -18,14 +18,14 @@ import (
 var shortHostedIncarnation = hostedIncarnationTiming{lease: 600 * time.Millisecond, renew: 100 * time.Millisecond, grace: 400 * time.Millisecond}
 
 // hostedIncarnationWorker opens a separate control pool, as another process would.
-func hostedIncarnationWorker(t *testing.T, dsn string, failStop func()) (*sql.DB, *hostedIncarnation) {
+func hostedIncarnationWorker(t *testing.T, dsn string, timing hostedIncarnationTiming, failStop func()) (*sql.DB, *hostedIncarnation) {
 	t.Helper()
 	db, err := openSharedControl(t.Context(), SharedConfig{DatabaseURL: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	worker, err := startHostedIncarnation(t.Context(), db, shortHostedIncarnation, failStop)
+	worker, err := startHostedIncarnation(t.Context(), db, timing, failStop)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +53,10 @@ func TestSharedHostedIncarnationReclaimsOnlyDeadWorkerTickets(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stopped atomic.Int32
-	deadDB, dead := hostedIncarnationWorker(t, dsn, func() { stopped.Add(1) })
-	liveDB, live := hostedIncarnationWorker(t, dsn, func() { stopped.Add(1) })
+	timing := defaultHostedIncarnationTiming
+	timing.renew = shortHostedIncarnation.renew
+	deadDB, dead := hostedIncarnationWorker(t, dsn, timing, func() { stopped.Add(1) })
+	liveDB, live := hostedIncarnationWorker(t, dsn, timing, func() { stopped.Add(1) })
 	if err := dead.beginActivity(ctx, deadDB, "removed", "dead-query"); err != nil {
 		t.Fatal(err)
 	}
@@ -62,38 +64,58 @@ func TestSharedHostedIncarnationReclaimsOnlyDeadWorkerTickets(t *testing.T) {
 		t.Fatal(err)
 	}
 	dead.crash(deadDB)
-	s := &Service{control: db, shared: &sharedRuntime{workerID: "deletion-test"}, interactiveConfig: queries}
-	for _, project := range []string{"removed", "kept"} {
-		if err := s.beginControlProjectDeletion(ctx, project); err != nil {
-			t.Fatal(err)
-		}
+
+	const liveLease = `SELECT expires_at,reclaim_after FROM hosted_worker_incarnations
+JOIN hosted_project_activity USING(incarnation_id)
+WHERE activity_id='live-query' AND expires_at>clock_timestamp()`
+	var initialExpiry, initialReclaimAfter time.Time
+	if err := db.QueryRowContext(ctx, liveLease).Scan(&initialExpiry, &initialReclaimAfter); err != nil {
+		t.Fatalf("read initial live lease: %v", err)
 	}
-	f := &hostedLiveFlusher{publisher: &hostedEffectPublisher{control: db}}
-	removed := lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "removed"}
-	if err := f.sealDeletedProject(ctx, removed); !errors.Is(err, errHostedProjectBusy) {
-		t.Fatalf("seal passed a ticket whose lease is still current: %v", err)
+	awaitRenewal, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(timing.renew)
+	defer ticker.Stop()
+	for {
+		var expiry, reclaimAfter time.Time
+		if err := db.QueryRowContext(awaitRenewal, liveLease).Scan(&expiry, &reclaimAfter); err != nil {
+			t.Fatalf("read live lease while waiting for renewal: %v", err)
+		}
+		if expiry.After(initialExpiry) && reclaimAfter.After(initialReclaimAfter) {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-awaitRenewal.Done():
+			t.Fatal("live worker did not renew its lease")
+		}
 	}
 
-	// Several lease periods later, only the dead worker's ticket is reclaimed.
-	time.Sleep(3 * (shortHostedIncarnation.lease + shortHostedIncarnation.grace))
-	if err := f.sealDeletedProject(ctx, lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "kept"}); !errors.Is(err, errHostedProjectBusy) {
-		t.Fatalf("seal passed a renewed worker's unreturned ticket: %v", err)
-	}
-	var tickets []string
-	rows, err := db.QueryContext(ctx, `SELECT activity_id FROM hosted_project_activity ORDER BY activity_id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var ticket string
-		if err := rows.Scan(&ticket); err != nil {
+	reclaimAndCheckTickets := func(want string) {
+		t.Helper()
+		if err := reclaimExpiredHostedIncarnations(ctx, db); err != nil {
 			t.Fatal(err)
 		}
-		tickets = append(tickets, ticket)
+		var tickets string
+		err := db.QueryRowContext(ctx, `SELECT COALESCE(string_agg(activity_id, ',' ORDER BY activity_id), '') FROM hosted_project_activity`).Scan(&tickets)
+		if err != nil || tickets != want {
+			t.Fatalf("activity tickets = %q, want %q, error = %v", tickets, want, err)
+		}
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil || len(tickets) != 1 || tickets[0] != "live-query" {
-		t.Fatalf("tickets after reclamation = %v, %v", tickets, err)
+
+	// Reclamation keeps the stopped worker's ticket during grace.
+	if _, err := db.ExecContext(ctx, `UPDATE hosted_worker_incarnations
+SET expires_at=clock_timestamp()-interval '2 seconds' WHERE incarnation_id=$1`, dead.id); err != nil {
+		t.Fatal(err)
 	}
+	reclaimAndCheckTickets("dead-query,live-query")
+
+	// After grace, reclamation removes only the stopped worker's ticket.
+	if _, err := db.ExecContext(ctx, `UPDATE hosted_worker_incarnations
+SET reclaim_after=expires_at+interval '1 second' WHERE incarnation_id=$1`, dead.id); err != nil {
+		t.Fatal(err)
+	}
+	reclaimAndCheckTickets("live-query")
 	if stopped.Load() != 0 {
 		t.Fatal("a renewing worker stopped itself")
 	}
@@ -116,7 +138,7 @@ func TestSharedHostedIncarnationStopsBeforeItsTicketsAreReclaimable(t *testing.T
 	}
 	// The fail-stop observes PostgreSQL from another worker at that instant.
 	fenced := make(chan error, 1)
-	busyDB, busy := hostedIncarnationWorker(t, dsn, func() {
+	busyDB, busy := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, func() {
 		var reclaimable bool
 		err := db.QueryRow(`SELECT reclaim_after<=clock_timestamp() FROM hosted_worker_incarnations i
 JOIN hosted_project_activity a USING(incarnation_id) WHERE a.activity_id='running'`).Scan(&reclaimable)
@@ -125,7 +147,7 @@ JOIN hosted_project_activity a USING(incarnation_id) WHERE a.activity_id='runnin
 		}
 		fenced <- err
 	})
-	readerDB, reader := hostedIncarnationWorker(t, dsn, func() { fenced <- errors.New("read-only query stopped its worker") })
+	readerDB, reader := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, func() { fenced <- errors.New("read-only query stopped its worker") })
 	tx, err := readerDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +298,7 @@ func TestHostedIncarnationCrashChild(t *testing.T) {
 	if dsn == "" || project == "" {
 		t.Skip("run by the crash recovery integration test")
 	}
-	db, worker := hostedIncarnationWorker(t, dsn, exitOnHostedLeaseLoss)
+	db, worker := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, exitOnHostedLeaseLoss)
 	if err := worker.beginActivity(t.Context(), db, project, "crash-child-in-flight"); err != nil {
 		t.Fatal(err)
 	}
