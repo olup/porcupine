@@ -1,5 +1,7 @@
 # Hosted buffered receipt visibility
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Two independent hosted workers shared local PostgreSQL 17.11 and AWS
 Emulator 1.0.497 on a GitHub-hosted Linux runner. The test sent six
 small native track events to each worker's project. Requests alternated

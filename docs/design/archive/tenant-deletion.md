@@ -1,5 +1,7 @@
 # Tenant deletion
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Decision record, 17 November 2026. **Unreleased.** Based on main `6cf9f4a`. The implementation provides immediate fences and resumable standalone logical cleanup. Current owner-local shared cleanup remains explicitly pending. Physical purge verification is not implemented.
 
 Tenant deletion must stop access before cleanup starts. Cleanup can fail or need an unavailable journal owner without making the tenant accessible again. The operation must preserve other tenants, including a shared human's memberships and tool connections.
@@ -29,7 +31,7 @@ This implementation ends at `logically_deleted` with `physical_purge=pending_ver
 ## Start transaction and cleanup loop
 
 1. Serialize against tenant administration, project creation, and credential creation with the existing control metadata write lock. Lock the tenant row in PostgreSQL. Read project ownership from `projects`, never from a request body or a token's project labels.
-2. Insert the tenant tombstone, set `ingestion_allowed=0`, and insert a `project_deletions` fence for every tenant project in the same transaction. Operator-issued credentials with a project set confined to one tenant record their cleanup owner at issuance, independently of tenant machine privileges. Tenant deletion also identifies older credentials whose stored projects still identify a single tenant. Individual project deletion records a legacy credential's owner before pruning its final project. Revoke those credentials, tenant machine accounts and tenant-admin consent grants. Keep global human identities, credentials with instance-wide scope, and credentials that still reach another tenant. Project and token cleanup remove access to the deleted projects from shared credentials.
+2. Insert the tenant tombstone, set `ingestion_allowed=0`, and insert a `project_deletions` fence for every tenant project in the same transaction. Revoke `tenant_credentials` and tenant-admin consent grants. Keep global human accounts and globally shared OAuth clients active.
 3. Commit before returning 202. All new project operations consult the authoritative fences. Cached tenant budgets cannot authorize work after this transaction.
 4. Extend `startDeletionRecovery` rather than adding another background lifecycle. Each current journal owner processes its existing project fences through `deleteProject`. An unavailable owner leaves the tenant in `deleting`; another worker must not fabricate or replace that owner's journal.
 5. Cancel and drain project activity, clean unpublished pipeline artifacts through `deleteS3Pipeline`, stage export cleanup, purge local records, then invoke the existing native `DeleteProject`. Preserve cleanup inventory until each external operation is acknowledged.

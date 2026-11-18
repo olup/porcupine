@@ -11,7 +11,7 @@ Use a fresh data directory for a new installation. Keep the server and CLI versi
 | Try it on a laptop | One process, local SQLite and DuckLake, loopback HTTP |
 | Run on one VM | The same local storage, an HTTPS proxy, and independent backups |
 | Keep analytical files on S3 | The VM setup with an existing private bucket and a dedicated prefix |
-| Run replaceable workers behind an ingress | [Hosted profile](design/hosted-profile-composition.md) with PostgreSQL, S3, and buffered live acknowledgment |
+| Run replaceable workers behind an ingress | [Hosted profile](design/hosted-architecture.md#configuration) with PostgreSQL, S3, and buffered live acknowledgment |
 
 Start with one server and local files. PostgreSQL is not required for tenants, people, budgets, the API, CLI, or MCP. [Storage](storage.md) describes the state owned by SQLite, DuckLake, PostgreSQL, and S3.
 
@@ -82,7 +82,7 @@ Analytical S3 is separate from export results, pipeline destinations, and backup
 
 Standalone keeps the journal and control databases on the local volume. Live acknowledgment follows the SQLite commit. Analytical files can live on local disk or in S3.
 
-The opt-in hosted profile uses PostgreSQL and S3 with disposable worker storage. Live acknowledgment covers admission to bounded worker memory. A crash or incomplete drain can lose acknowledged events that have yet to commit, and the flush interval does not bound loss during an outage. Start with a fresh PostgreSQL database and dedicated analytical S3 prefix. Configure and exercise PostgreSQL and S3 recovery before admitting traffic. [Hosted setup and recovery requirements](design/hosted-profile-composition.md)
+The opt-in hosted profile uses PostgreSQL and S3 with disposable worker storage. Live acknowledgment covers admission to bounded worker memory. A crash or incomplete drain can lose acknowledged events that have yet to commit, and the flush interval does not bound loss during an outage. Start with a fresh PostgreSQL database and dedicated analytical S3 prefix. Configure and exercise PostgreSQL and S3 recovery before admitting traffic. [Hosted setup and recovery requirements](design/hosted-architecture.md#configuration)
 
 A fresh installation creates tenant `default`. Connect the instance operator and [invite its first administrator](access.md).
 
@@ -119,4 +119,4 @@ v0.15.0 introduces separate acceptance and control databases and tenant ownershi
 3. Update clients to match the server. Remove the `use_cache` request field. Replace old Compose overlays with the [server configuration](reference/configuration.md) and review settings before enabling pipelines.
 4. Verify counts, event times, identity behavior, corrections and deletes, then switch producers and readers. Keep the old instance isolated with its recovery material until the new deployment is validated. Returning to the old instance requires reconciling writes accepted after cutover.
 
-When setting up the hosted profile, provision fresh PostgreSQL metadata and a dedicated S3 prefix. Use the [hosted profile runbook](design/hosted-profile-composition.md) to set retention and verify recovery.
+When setting up the hosted profile, provision fresh PostgreSQL metadata and a dedicated S3 prefix. Use the [hosted profile runbook](design/hosted-architecture.md#configuration) to set retention and verify recovery.

@@ -32,7 +32,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 `PORCUPINE_PROFILE` and `PORCUPINE_ACCEPTANCE_MODE` override `profile` and
 `acceptance.mode`. Buffered acknowledgment requires both `profile: "hosted"`
-and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-profile-composition.md)
+and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-architecture.md#configuration)
 for PostgreSQL, object storage, and recovery-floor settings.
 
 In standalone the generated control path is the journal path plus `.control`. In hosted, omit both paths and configure PostgreSQL and S3.
@@ -59,7 +59,7 @@ docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm 
 docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
-The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](../design/hosted-profile-composition.md).
+The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](../design/hosted-architecture.md#configuration).
 
 For a source build, run `docker compose build porcupine` first and omit the release overlay. For an existing v0.14.0 volume, use the [fresh-storage cutover procedure](../hosting.md#move-from-v0140).
 

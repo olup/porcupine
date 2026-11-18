@@ -50,7 +50,7 @@ One Go service accepts events over HTTP. SQLite holds accepted work on disk unti
 
 [Tenants and usage budgets](docs/reference/tenants.md) group projects under operator-controlled monthly ingestion allowances and interactive query limits. A fresh instance creates a `default` tenant. Keep it for one team, or create a tenant before adding its projects. The instance operator invites the team's first tenant administrator, who can create projects, invite readers or other members, and manage scoped team service accounts. Follow the [tenant setup](docs/reference/tenant-access.md) after connecting the instance operator. Upgrading from v0.14.0 requires a fresh data directory. [Upgrade steps](docs/hosting.md#move-from-v0140).
 
-The optional [hosted profile](docs/design/hosted-profile-composition.md) uses PostgreSQL for metadata and S3 for analytical data. It acknowledges live admission to worker memory. A crash can lose acknowledged events that have yet to commit.
+The optional [hosted profile](docs/design/hosted-architecture.md#configuration) uses PostgreSQL for metadata and S3 for analytical data. It acknowledges live admission to worker memory. A crash can lose acknowledged events that have yet to commit.
 
 I can send JSON straight from a backend, keep a supported PostHog SDK in a web app, or use Segment. Browser capture can be cookieless. The standalone CLI imports native, PostHog, or Segment history from files or directories. [SDK compatibility](docs/reference/compatibility.md) · [Native and Segment inputs](docs/reference/native-and-segment-ingestion.md) · [Imports](docs/imports.md)
 

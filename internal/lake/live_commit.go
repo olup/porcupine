@@ -20,19 +20,31 @@ import (
 // CommitLive owns the native transaction. It never acknowledges volatile input
 // or publishes PG jobs; its proof makes those later effects recoverable.
 func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager) (LiveCommitResult, error) {
-	return s.commitLive(ctx, fence, batch, reservation, stager, func(_ context.Context, commit func() error) error { return commit() })
+	return s.commitLive(ctx, fence, batch, reservation, stager, nil, func(_ context.Context, commit func() error) error { return commit() })
 }
 
-// CommitLiveGuarded checks the control fence immediately before the native
-// COMMIT. The guard must invoke commit synchronously and at most once.
-func (s *DuckLakeStore) CommitLiveGuarded(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
+// NativeEffectCheckpoint is the last publication committed by the control store.
+type NativeEffectCheckpoint struct {
+	Sequence    int64
+	Fingerprint string
+}
+
+// ErrNativeEffectsPending means a successor must reconcile committed evidence
+// before attempting another live batch.
+var ErrNativeEffectsPending = errors.New("native effects await publication")
+
+// CommitLiveFromCheckpoint advances the write fence and acknowledges the
+// published predecessor in the same transaction as the next live outcome.
+// The guard checks the control fence and invokes COMMIT synchronously,
+// at most once.
+func (s *DuckLakeStore) CommitLiveFromCheckpoint(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint NativeEffectCheckpoint, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
 	if guard == nil {
 		return nil, errors.New("hosted live commit requires a control fence guard")
 	}
-	return s.commitLive(ctx, fence, batch, reservation, stager, guard)
+	return s.commitLive(ctx, fence, batch, reservation, stager, &checkpoint, guard)
 }
 
-func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
+func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint *NativeEffectCheckpoint, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
 	fingerprint, err := validateLiveCommitBatch(fence, batch, reservation)
 	if err != nil {
 		return nil, err
@@ -56,6 +68,11 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			return err
 		}
 		defer tx.Rollback()
+		if checkpoint != nil {
+			if err := verifyLivePredecessor(ctx, tx, batch.Scope, *checkpoint); err != nil {
+				return err
+			}
+		}
 		prior, found, err := readNativeCommitProof(ctx, tx, batch.Scope, batch.ID)
 		if err != nil {
 			return err
@@ -67,7 +84,12 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			result = CommittedLiveBatch{Evidence: prior}
 			return nil
 		}
-		sequence, err := p.beginHostedIngestionWrite(ctx, tx, fence, batch.TenantID)
+		var sequence int64
+		if checkpoint != nil {
+			sequence, err = beginCheckpointedLiveWrite(ctx, tx, fence, batch, *checkpoint)
+		} else {
+			sequence, err = p.beginHostedIngestionWrite(ctx, tx, fence, batch.TenantID)
+		}
 		if err != nil {
 			return err
 		}

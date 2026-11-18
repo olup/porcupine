@@ -111,8 +111,15 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 	return plan, routing, nil
 }
 
+type liveEffectStageFunc func(context.Context, lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error)
+
+func (f liveEffectStageFunc) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+	return f(ctx, selected)
+}
+
 type reservingHostedStager struct {
 	publisher        *hostedEffectPublisher
+	session          *lakeapi.ProjectWriteSession
 	fence            lakeapi.ProjectWriteFence
 	plan             output.PipelinePlan
 	routing          frozenLiveOutputPlan
@@ -228,7 +235,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 
 	// Recheck the saved creator, lifecycle and every revision in the transaction
 	// which acquires capacity. No external I/O happens while these locks are held.
-	err = p.transaction(ctx, func(tx *sql.Tx) error {
+	err = s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
 	if errors.Is(err, output.ErrPipelineDemandTooLarge) {

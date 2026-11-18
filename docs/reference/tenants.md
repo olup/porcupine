@@ -123,7 +123,9 @@ porcupine get-tenant-deletion --tenant-id TENANT_ID
 
 New resource admission stops when the fence commits. Cleanup cancels and drains already admitted project work before removing its managed state.
 
-Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. Owned credentials include operator-created access keys and OAuth clients whose projects all belong to the tenant, with their service keys and tokens. Credentials with `*` projects or instance administration survive. A credential that spans tenants keeps its other tenants' projects. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
+Standalone cleanup uses the existing project deletion paths for analytical data, Porcupine-managed exports, unpublished pipeline artifacts, imports, jobs, and local state. It removes tenant memberships and owned machine credentials while preserving global humans and their access to other tenants. A tool connection that spans A and B loses A and keeps B. Global identity records may retain inert opaque old project IDs; public grants, consent, and resource access exclude deleted projects.
+
+After v0.15.0, [#111](https://github.com/olup/porcupine/pull/111) extends both profiles' cleanup to operator-issued credentials scoped to one tenant. It removes owned keys, OAuth clients, dependent service keys, and tokens. Instance-wide credentials survive. A credential spanning tenants keeps its surviving projects. Before this upgrade, an already-empty project scope may leave ownership unknown.
 
 `state=deleting` means cleanup remains pending. Recovery retries it after restart and periodically. Hosted cleanup also waits for recovery retention and reconciliation of scheduled output and managed objects.
 

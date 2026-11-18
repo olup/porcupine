@@ -1,6 +1,6 @@
 # Hosted runtime
 
-Use the [hosted setup](../design/hosted-profile-composition.md) for worker configuration, startup, and the recovery floor. The same server serves HTTP, CLI, MCP, and supported ingestion SDKs. Workers share PostgreSQL for control and DuckLake metadata and S3 for analytical data.
+Use the [hosted setup](../design/hosted-architecture.md#configuration) for worker configuration, startup, and the recovery floor. The same server serves HTTP, CLI, MCP, and supported ingestion SDKs. Workers share PostgreSQL for control and DuckLake metadata and S3 for analytical data.
 
 ## Live ingestion and delivery
 
@@ -12,7 +12,7 @@ The analytical catalog can contain column statistics derived from event values. 
 
 ## Hosted budgets {#shared-budgets}
 
-Hosted live admission reads a short-lived snapshot of policy and published usage. Usage can lag admission while workers buffer data or publish durable effects. Concurrent workers can exceed the allowance during that interval. Interactive query reservations use shared PostgreSQL and local worker capacity independently. [Tenant limits](tenants.md#interactive-query-limits)
+Hosted live admission reads a short-lived snapshot of policy and usage. Admission can get ahead of that snapshot while workers buffer events. Live acceptance checks the budget before buffering. After the native commit, effect publication posts retained rows to the shared `tenant_usage` ledger. Interactive query reservations use shared PostgreSQL and local worker capacity independently. [Tenant limits](tenants.md#interactive-query-limits)
 
 ## Native timeouts and worker supervision
 
@@ -32,6 +32,6 @@ The default local deployment retains its ordinary native query cancellation and 
 
 ## Recovery and deletion
 
-The native standalone bundle and offline restore procedure apply to SQLite deployments. Recover hosted by coordinating PostgreSQL recovery points and versioned S3 objects. Restore in isolation and verify access, committed events, and durable jobs before reconnecting clients. [Hosted recovery drill](../design/hosted-restore-drill.md)
+The native standalone bundle and offline restore procedure apply to SQLite deployments. Recover hosted by coordinating PostgreSQL recovery points and versioned S3 objects. Restore in isolation and verify access, committed events, and durable jobs before reconnecting clients. [Hosted recovery requirements](../design/hosted-architecture.md#recovery-and-retention)
 
-Project and tenant deletion fence new work before physical reclamation. Reclamation waits for the configured grace, the verified operator restore floor, and reconciliation of outstanding work. Backups and noncurrent S3 versions have their own retention policies. [Hosted operator requirements](../design/hosted-profile-composition.md)
+Project and tenant deletion fence new work before physical reclamation. Reclamation waits for the configured grace, the verified operator restore floor, and reconciliation of outstanding work. Backups and noncurrent S3 versions have their own retention policies. [Hosted operator requirements](../design/hosted-architecture.md#recovery-and-retention)
