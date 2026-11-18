@@ -21,5 +21,5 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/c4-before.log"
-          rg -F 'query admission blocked by paused live commit:' "$RUNNER_TEMP/c4-before.log"
-          rg -F 'blocked acquisition did not hit coordinator timeout: context deadline exceeded' "$RUNNER_TEMP/c4-before.log"
+          grep -F 'query admission blocked by paused live commit:' "$RUNNER_TEMP/c4-before.log"
+          grep -F 'blocked acquisition did not hit coordinator timeout: context deadline exceeded' "$RUNNER_TEMP/c4-before.log"
