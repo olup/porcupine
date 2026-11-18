@@ -44,7 +44,8 @@ This map follows the source checkout. See [storage profiles](storage.md) for dep
 | `internal/delivery` | Webhook destination and DNS policy, HTTP delivery, and CSV/JSONL row encoding |
 | `internal/identity` | Parse and evaluate event identity controls against the current links and profiles |
 | `internal/output` | SQLite and PostgreSQL job stores, export and pipeline orchestration, webhook queues, and artifact cleanup |
-| `internal/usage` | Cumulative counters, execution observations, storage samples, and report snapshots |
+| `internal/usage` | Durable counters, execution observations, storage samples, and report snapshots |
+| `internal/observability` | Process-local Prometheus counters and histograms, text encoding, and shared flush metrics |
 | `internal/s3client` | Common S3 client construction, with separate credentials and transports for each destination |
 | `internal/apierr`, `internal/syncx` | Error representation and locking utilities |
 | `internal/exportstore` | Export object storage |
