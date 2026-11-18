@@ -49,3 +49,12 @@ CREATE TABLE pipeline_effect_cleanup (
  refs BIGINT NOT NULL,bytes BIGINT NOT NULL,rows BIGINT NOT NULL,artifacts BIGINT NOT NULL,
  PRIMARY KEY(source_id,project_id,catalog_id,stream_id,owner_id));
 `
+
+// PipelineTenantCapacitySchema removes the legacy aggregate counter. Tenant and
+// project rows already account for their existing reservations and backlog.
+const PipelineTenantCapacitySchema = `
+DELETE FROM pipeline_capacity WHERE scope_kind='instance';
+ALTER TABLE pipeline_capacity
+ DROP CONSTRAINT pipeline_capacity_scope_kind_check,
+ ADD CONSTRAINT pipeline_capacity_scope_kind_check CHECK(scope_kind IN ('tenant','project'));
+`

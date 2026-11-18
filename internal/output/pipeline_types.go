@@ -7,9 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 var ErrPipelineCapacity = errors.New("pipeline capacity exhausted")
+
+// ErrPipelineDemandTooLarge means this demand exceeds a scope limit even when empty.
+var ErrPipelineDemandTooLarge = fmt.Errorf("%w: demand exceeds configured limit", ErrPipelineCapacity)
+
 var ErrPipelineConflict = errors.New("pipeline binding or attempt conflict")
 var ErrPipelineAuthority = errors.New("pipeline execution authority unavailable")
 

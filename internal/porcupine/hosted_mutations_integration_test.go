@@ -55,7 +55,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	limits := output.PipelineDemand{References: 10, QueuedBytes: 1 << 20, MetadataRows: 100, ArtifactBytes: 1 << 20, ProofSlots: 2}
 	if err := fa.publisher.transaction(ctx, func(tx *sql.Tx) error {
-		for _, v := range [][2]string{{"instance", ""}, {"tenant", defaultTenantID}, {"tenant", otherTenant}, {"project", project}, {"project", other}} {
+		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"tenant", otherTenant}, {"project", project}, {"project", other}} {
 			if err := fa.publisher.effects.ConfigureCapacityTx(ctx, tx, v[0], v[1], limits); err != nil {
 				return err
 			}
