@@ -40,7 +40,7 @@ Backups and copies already delivered to external destinations have their own ret
 
 ## Status and recovery
 
-`/healthz` checks process liveness. `/readyz` checks SQLite readiness. Neither proves every project catalog is healthy or delivery is caught up. Inspect [instance status](instance-status.md), the project's pending original-event age, pending mutations, and generic delivery error. Use synthetic capture and SQL checks when validating a deployment.
+Use [instance status and the delivery checks](instance-status.md#verify-delivery-before-routing-traffic) when validating a deployment.
 
 Back up the complete SQLite and DuckLake state from one stopped writer. Both stores are authoritative for different parts of recovery; neither reconstructs the other. Keep the same internal paths, software version, configuration, and encryption keys. A live file copy or export of query results is not a consistent instance backup. [Stopped-volume procedure](restore.md)
 

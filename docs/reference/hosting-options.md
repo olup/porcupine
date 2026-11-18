@@ -1,12 +1,12 @@
 # Hosting options
 
-Use the [quickstart](../../README.md#quickstart) to start a new v0.15.1 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
+Use the [quickstart](../../README.md#local-setup) to start a new v0.15.1 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
 
 The release overlay selects the tagged image and removes the source build. Keep it after `compose.yaml`. Set `PORCUPINE_IMAGE` to an explicit digest when pinning a deployment.
 
 ## Load an image without registry access
 
-Choose the Docker server's architecture and verify the archive before loading it:
+Download the archive for the Docker server's architecture and verify its checksum.
 
 ```sh
 case "$(docker info --format '{{.Architecture}}')" in
@@ -25,19 +25,27 @@ test -n "$expected" && test "$actual" = "$expected" || {
     exit 1
 }
 docker load -i "$PORCUPINE_RELEASE_ARCHIVE"
-docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
-docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
 ```
 
-The server image includes its native extension. An offline host also needs any optional proxy image transferred separately.
+Transfer optional proxy images separately. Continue with the [local setup commands](../../README.md#local-setup) from the tagged checkout, starting at the first Compose command.
 
 ## Single Linux VM with HTTPS
 
-Follow the [VM deployment guide](../hosting.md#one-vm) for TLS, a trusted proxy, and a public OAuth issuer. Run the server under a supervisor. To deploy with Docker, use the [configuration file and container setup](configuration.md#container-setup). If the proxy runs in another container, put it on the same private Docker network as Porcupine. Point it at the server service, configure its address in `trusted_proxies`, and forward the fixed upstream Host shown in the VM guide. Publish ports 80 and 443 only on the proxy.
+Use your public hostname in the OAuth issuer and the proxy configuration. Run the native server under a supervisor with the API listener on loopback. This Caddy configuration forwards HTTPS traffic to the local API.
+
+```caddyfile
+analytics.example.com {
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host 127.0.0.1:8080
+	}
+}
+```
+
+Publish ports 80 and 443 on the proxy only. The fixed upstream Host preserves MCP's loopback-host check. Set `trusted_proxies` to the actual proxy address if it runs in another container or behind a CDN. If using Docker, put the proxy and server on the same private network. Use the server's service name as the upstream and keep the same forwarded Host. See [container setup](configuration.md#container-setup).
 
 ## Persistent storage and resources
 
-The image runs as UID/GID 65532. Named volumes initialize from its writable `/data` directory. A bind-mounted directory needs ownership and permissions that let this user write. Keep SQLite, the DuckLake registry, catalogs, and data files together. Do not share them between simultaneous writers or use a network filesystem as the local catalog directory.
+The image runs as UID/GID 65532. Named volumes initialize from its writable `/data` directory. For bind mounts, give this user read access to private configuration and write access to data. Follow the [standalone storage rules](../storage.md#local-files-or-s3).
 
 The default Compose server has a 2 GiB container memory limit. Two CPU cores and 2 GiB are the resource budget used for local architecture tests, not a hosted capacity guarantee. Leave additional memory for the operating system, Docker, and a proxy. A 4 GiB VM provides more headroom for a small deployment. Measure your event sizes, active projects, concurrent queries, and maintenance before choosing capacity.
 
@@ -58,9 +66,7 @@ Maintenance leaves a two-second gap after each pass by default. It flushes small
 
 Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
 
-Live events have no automatic age-based deletion. Historical snapshots default to seven days, followed by a two-day obsolete-file grace period; active readers can extend these windows. SQLite-journal deployments keep replay receipts permanently by default. They support [optional receipt pruning](receipts.md#bounded-receipts); review its acceptance tradeoff before enabling it. Monitor free disk, pending-event age, pending mutations, delivery errors, memory pressure, and maintenance.
-
-`/readyz` checks the operational store. Verify the analytical path separately. Use [instance status](instance-status.md), capture a synthetic event, and verify SQL visibility before routing traffic.
+See [retention and deletion](../storage.md#retention-and-deletion), [receipt pruning](receipts.md#bounded-receipts), and [readiness and delivery checks](instance-status.md#verify-delivery-before-routing-traffic).
 
 ### Interactive query ceilings {#unreleased-interactive-query-ceilings}
 

@@ -4,7 +4,7 @@ These settings belong to the server executable. The standalone API client has it
 
 `porcupine init` creates `porcupine.json` with mode 0600 and random bootstrap and pipeline secrets. It refuses to overwrite an existing file. The server reads that file by default. `--config FILE` takes precedence over `PORCUPINE_CONFIG`. A missing explicitly selected file is an error. Environment settings on the server process override matching JSON values. A host shell's environment is not automatically passed into a container.
 
-Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. Startup checks the configured database and analytical registry. Confirm analytical S3 access with an ingestion and query before routing traffic.
+Unknown JSON keys, trailing JSON input, and unknown `PORCUPINE_` server variables are errors. `config check` validates local configuration and prints a redacted environment-key view. It does not open databases or contact remote providers. Startup checks the configured database and analytical registry. Confirm analytical S3 access with an ingestion and query before routing traffic.
 
 A fresh builtin instance needs the generated bootstrap token. An already initialized builtin instance may omit it; a configured token must contain at least 16 characters. Changing the configured token does not replace an existing stored credential. [External authentication](external-auth.md) instead uses a trusted operator JWT and rejects bootstrap, SMTP, and builtin provider settings. Preserve generated secrets when applying the [recommended laptop and VM profiles](../hosting.md#configure-the-development-build).
 
@@ -15,7 +15,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | Section | Common keys and purpose |
 | --- | --- |
 | Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
-| `metrics` | `enabled`, `listen`: private Prometheus listener. See [operator monitoring](observability.md). |
+| `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
 | `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
@@ -36,11 +36,9 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-architecture.md#configuration)
 for PostgreSQL, object storage, and recovery-floor settings.
 
-In standalone the generated control path is the journal path plus `.control`. In hosted, omit both paths and configure PostgreSQL and S3.
+In standalone the generated control path is the journal path plus `.control`. See [storage by profile](../storage.md#deployment-profiles).
 
 `init` explicitly writes `queue.receipt_retention: "0"`. Optional pruning makes acceptance depend on DuckLake after a project's first prune. Changing back to zero stops pruning but does not restore missing receipts. See the [receipt contract](receipts.md#bounded-receipts).
-
-Initialize a hosted worker with `porcupine init --hosted`. Use fresh PostgreSQL metadata and a dedicated analytical S3 prefix.
 
 `ducklake.s3`, `backup.s3`, and `export.s3` have distinct destinations. Common fields are `bucket`, `prefix`, `region`, `endpoint`, `path_style`, `access_key_id`, `secret_access_key`, and `session_token`. Empty explicit credentials use the configured AWS credential chain. Analytical and backup S3 also support `ca_cert_file` and `request_timeout_seconds`. A query destination does not configure analytical storage or backups.
 
@@ -52,13 +50,7 @@ The initial `email.admin_email` gives that address instance administration throu
 
 ## Container setup
 
-Initialize a fresh data volume with the tagged image. Start in the matching Git checkout.
-
-```sh
-docker compose -f compose.yaml -f compose.release.yaml --profile setup run --rm init
-docker compose -f compose.yaml -f compose.release.yaml --profile tools run --rm config-check
-docker compose -f compose.yaml -f compose.release.yaml up -d porcupine
-```
+Follow the [tagged Compose quickstart](../../README.md#local-setup) to initialize the volume, validate the configuration, and start the server.
 
 The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](../design/hosted-architecture.md#configuration).
 

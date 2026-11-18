@@ -70,7 +70,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
 
-For managed SQL exports, see the [export job operations](../exports.md). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
+For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads. The running server publishes its enabled operations at `/openapi.json`.
 
 ### Tenant operations {#unreleased-tenant-operations}
 
