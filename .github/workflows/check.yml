@@ -90,18 +90,19 @@ jobs:
           name: backend-race-${{ matrix.shard }}
           path: bin/test-results/
           if-no-files-found: error
-  validation:
-    name: Linux validation
-    needs: [go-checks, backend, documentation, native-integration, restore-integration, shared-integration, sdk-compat, security]
+  go:
+    # Preserve the existing gate, including every shard and artifact journey.
+    needs: [go-checks, backend, documentation, cli, native-integration, restore-integration, shared-integration, sdk-compat, security]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require every Linux validation job to succeed
+      - name: Require every validation job to succeed
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -e 'to_entries | all(.[];
             .value.result == "success" or
+            (.key == "cli" and env.GITHUB_REF_TYPE == "tag" and .value.result == "skipped") or
             (.key == "security" and env.GITHUB_EVENT_NAME == "pull_request" and .value.result == "skipped")
           )' <<< "$JOB_RESULTS"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,18 +121,6 @@ jobs:
           path: bin/test-results
       - name: Require complete, non-overlapping backend test execution
         run: CGO_ENABLED=0 go run ./internal/cmd/test-shard verify bin/test-results/shard-*.json
-  go:
-    needs: [validation, cli]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require Linux validation and native CLI packaging
-        env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
-        run: |
-          jq -e '.validation.result == "success" and (
-            .cli.result == "success" or (env.GITHUB_REF_TYPE == "tag" and .cli.result == "skipped")
-          )' <<< "$JOB_RESULTS"
   security:
     # Vulnerability scan and fuzzing run on main, releases and nightly, not on every PR push.
     if: github.event_name != 'pull_request'

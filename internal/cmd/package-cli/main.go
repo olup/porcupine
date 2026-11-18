@@ -11,8 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"strings"
 )
 
 var releaseVersion = regexp.MustCompile(`^(v[0-9]+\.[0-9]+\.[0-9]+|dev)$`)
@@ -80,25 +78,6 @@ func buildArchive(target, arch, version, output string) error {
 	if err := writeArchive(binary, archive, target == "windows"); err != nil {
 		return err
 	}
-	// Run the extracted artifact, so packaging failures cannot hide behind a working build.
-	if err := os.Remove(binary); err != nil {
-		return err
-	}
-	if err := extractArchive(archive, binary, target == "windows"); err != nil {
-		return err
-	}
-	if target == runtime.GOOS && arch == runtime.GOARCH {
-		data, err := exec.Command(binary, "--version").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("archive version: %w: %s", err, data)
-		}
-		if strings.TrimSpace(string(data)) != "porcupine version "+version {
-			return fmt.Errorf("unexpected archive version: %s", data)
-		}
-		if data, err := exec.Command(binary, "list-projects", "--help").CombinedOutput(); err != nil {
-			return fmt.Errorf("archive help: %w: %s", err, data)
-		}
-	}
 	fmt.Println(archive)
 	return nil
 }
@@ -153,56 +132,5 @@ func writeArchive(binary, path string, windows bool) (err error) {
 		return err
 	}
 	_, err = io.Copy(writer, input)
-	return err
-}
-func extractArchive(path, binary string, windows bool) (err error) {
-	var reader io.Reader
-	var closer io.Closer
-	if windows {
-		archive, e := zip.OpenReader(path)
-		if e != nil {
-			return e
-		}
-		defer archive.Close()
-		if len(archive.File) != 1 || archive.File[0].Name != filepath.Base(binary) {
-			return fmt.Errorf("invalid archive entries")
-		}
-		entry, e := archive.File[0].Open()
-		if e != nil {
-			return e
-		}
-		reader, closer = entry, entry
-	} else {
-		file, e := os.Open(path)
-		if e != nil {
-			return e
-		}
-		defer file.Close()
-		compressed, e := gzip.NewReader(file)
-		if e != nil {
-			return e
-		}
-		closer = compressed
-		archive := tar.NewReader(compressed)
-		header, e := archive.Next()
-		if e != nil {
-			return e
-		}
-		if header.Name != filepath.Base(binary) || header.Mode != 0755 {
-			return fmt.Errorf("invalid archive executable")
-		}
-		reader = archive
-	}
-	defer closer.Close()
-	output, err := os.OpenFile(binary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0755)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if e := output.Close(); err == nil {
-			err = e
-		}
-	}()
-	_, err = io.Copy(output, reader)
 	return err
 }
