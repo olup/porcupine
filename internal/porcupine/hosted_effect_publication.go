@@ -111,8 +111,15 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 	return plan, routing, nil
 }
 
+type liveEffectStageFunc func(context.Context, lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error)
+
+func (f liveEffectStageFunc) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+	return f(ctx, selected)
+}
+
 type reservingHostedStager struct {
 	publisher        *hostedEffectPublisher
+	session          *lakeapi.ProjectWriteSession
 	fence            lakeapi.ProjectWriteFence
 	plan             output.PipelinePlan
 	routing          frozenLiveOutputPlan
@@ -125,6 +132,7 @@ type reservingHostedStager struct {
 func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
 	p := s.publisher
 	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
+	s.binding = output.PipelineBinding{}
 	if !s.admitted {
 		if err := s.admission.admit(ctx, selected.TenantID); err != nil {
 			return lakeapi.StagedLiveEffects{}, err
@@ -231,7 +239,7 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	// which acquires capacity. Commit the reservation before any S3 PUT so a
 	// successor can account for abandoned objects and settle a retained native
 	// proof after a crash. Publication waits for that proof.
-	err = p.transaction(ctx, func(tx *sql.Tx) error {
+	err = s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
 	if errors.Is(err, output.ErrPipelineDemandTooLarge) {

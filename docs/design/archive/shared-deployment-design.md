@@ -1,5 +1,7 @@
 # Shared metadata and owner-local event queues
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 > Historical record: this page documents a past design or validation and is not a guide to the current release.
 
 This pre-launch change supports two configurations of the same published server.
@@ -63,7 +65,7 @@ five seconds until the call returns. Renewal and release use its random token.
 Failed renewal or unresponsive native work quarantines the project's interactive
 engine without terminating the worker. Automatic expiry can reassign a place
 while a partitioned worker still runs native work. Local mode has no shared
-keeper. The [hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
+keeper. The [hosted runtime reference](../../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
 owns the current timing, shutdown, and failure semantics.
 
 Project deletion fences all workers before cleanup. Local work registers before

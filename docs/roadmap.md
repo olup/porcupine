@@ -4,7 +4,7 @@ The current release is **v0.15.0**. [CHANGELOG.md](../CHANGELOG.md) records rele
 
 ## Stabilization
 
-The v0.14.0 [review follow-up](design/review-v0.14.md) records the findings and fixes. See the [changelog](../CHANGELOG.md) for the v0.15.0 changes.
+The v0.14.0 [review follow-up](design/archive/review-v0.14.md) records the findings and fixes. See the [changelog](../CHANGELOG.md) for the v0.15.0 changes.
 
 ## Validate the complete team workflow
 
@@ -21,7 +21,7 @@ Audit management coverage at the same time. No step should require SSH or databa
 
 ## Next operational protections
 
-- [ ] Validate noisy-tenant behavior and bounded memory admission in the [hosted target](design/hosted-architecture.md). The SQLite project-counter experiment is stopped and unshipped; its measured admission overhead is not a hosted prerequisite.
+- [ ] Validate noisy-tenant behavior and bounded memory admission in the [hosted architecture](design/hosted-architecture.md). The SQLite project-counter experiment is stopped and unshipped; its measured admission overhead is not a hosted prerequisite.
 - [ ] Evaluate tenant-wide rate limiting across workers, separately from monthly allowances.
 - [ ] Measure sustained ingestion, freshness, memory, disk growth, maintenance, and recovery with many quiet tenants and one noisy tenant.
 - [x] Validate receipt pruning and retries after edits/deletes, storage failure, and restart, including person snapshots and two-project concurrency.

@@ -1,5 +1,7 @@
 # Hosted native registry
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 Phase 5 registry unit, unreleased. The complete stateless hosted path remains gated on the remaining operational stores and Phase 4 commit/effect protocol. This unit does not enable buffered production acceptance or remove `shared_local_cleanup_pending`.
 
 Standalone keeps its SQLite source/catalog/deletion/cleanup records, storage binding, inode checks and checkpoint behavior. Hosted native stores use `pc_native_sources` and `pc_native_projects` in the catalog PostgreSQL database, without opening `registry.sqlite`. Scratch directories and engine handles are disposable process state. A source ID and its original storage fingerprint must match authoritative PostgreSQL state. Changing worker directories cannot choose another identity or namespace.

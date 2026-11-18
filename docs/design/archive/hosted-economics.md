@@ -1,8 +1,10 @@
 # Hosted flush economics fixture
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 This experiment measures the object traffic of the hosted live flusher, query
 executor, and scoped compactor. It uses the proposed two-second batch window in
-the [hosted architecture](hosted-architecture.md#d2-bounded-memory-acceptance).
+the [hosted architecture](hosted-architecture-decisions.md#d2-bounded-memory-acceptance).
 The fixture starts PostgreSQL 17 and Silo locally, then uses the native
 DuckDB/DuckLake engine. A local Docker daemon runs Silo. No cloud account
 is required.

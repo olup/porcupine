@@ -1,6 +1,6 @@
 # Durability and recovery
 
-This guide covers SQLite-journal deployments. The opt-in [hosted profile](../design/hosted-profile-composition.md) acknowledges admission to bounded memory.
+This guide covers SQLite-journal deployments. The opt-in [hosted profile](../design/hosted-architecture.md#configuration) acknowledges admission to bounded memory.
 
 In a SQLite-journal deployment, the server durably accepts events into SQLite, then projects them into DuckLake transactions over local or configured S3 data files. The storage device must honor sync operations. A single local disk provides no replication or automatic host-loss recovery.
 

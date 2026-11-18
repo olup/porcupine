@@ -1,5 +1,7 @@
 # Buffered acceptance component
 
+> Historical record. For current behavior and release status, see [Hosted architecture](../hosted-architecture.md).
+
 > Historical Phase 3 component notes. For the released configuration and behavior, see [hosted setup](hosted-profile-composition.md).
 
 ## Shared input and distinct outcomes
@@ -8,7 +10,7 @@ Native, Segment, and PostHog live handlers share authorization, project/source b
 
 Pending identity inputs contain a parsed operation, target, anonymous ID, and trait updates. Their event fields contain no identity commands. SQLite still applies those inputs after UUID deduplication in the transaction that writes its canonical identity snapshot, consumes usage, and schedules webhooks. Invalid SDK controls remain accepted no-op markers; malformed outer batches still fail atomically.
 
-Standalone responses retain every current field and add `durability: "durable"`. Buffered native responses use HTTP 200 and contain `status`, `durability: "buffered"`, `received`, and ordered receipts with only `message_id` and `uuid`. `received` counts validated memory-admitted input rows, including retries. Committed unique counts, identity outcomes, original event IDs, and duplicate status remain unknown. The [native contract](../reference/native-event-contract.md#unreleased-acknowledgment-metadata) describes discovery and schemas.
+Standalone responses retain every current field and add `durability: "durable"`. Buffered native responses use HTTP 200 and contain `status`, `durability: "buffered"`, `received`, and ordered receipts with only `message_id` and `uuid`. `received` counts validated memory-admitted input rows, including retries. Committed unique counts, identity outcomes, original event IDs, and duplicate status remain unknown. The [native contract](../../reference/native-event-contract.md#unreleased-acknowledgment-metadata) describes discovery and schemas.
 
 Historical uploads retain their existing SQLite transaction and durable checkpoint path. They never enter live memory admission.
 

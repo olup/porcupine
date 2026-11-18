@@ -10,12 +10,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	duckdb "github.com/duckdb/duckdb-go/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,14 +74,21 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	upstream, _ := url.Parse(fixture.storage.Endpoint)
 	forward := httputil.NewSingleHostReverseProxy(upstream)
 	forward.Transport = fixture.client.Options().HTTPClient.(*http.Client).Transport
-	var rejectEffects, blockEffects atomic.Bool
+	var rejectEffects, blockEffects, trackEffectKeys atomic.Bool
 	var effectPuts, effectGets atomic.Int64
+	effectKeys := make(chan string, 16)
 	effectEntered, resumeEffects := make(chan struct{}), make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/effects/") {
 			switch r.Method {
 			case http.MethodPut:
 				effectPuts.Add(1)
+				if trackEffectKeys.Load() {
+					select {
+					case effectKeys <- r.URL.Path:
+					default:
+					}
+				}
 			case http.MethodGet:
 				effectGets.Add(1)
 			}
@@ -156,8 +166,25 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(er)
 	}
 	empty.events = append(empty.events, bufferedLiveEvent{input: identityInput, admittedAt: empty.events[0].admittedAt})
+	snapshot := func() int64 {
+		t.Helper()
+		p, release, err := sa.LeaseProject(t.Context(), project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		var id int64
+		if err := p.DB.QueryRowContext(t.Context(), `SELECT max(snapshot_id) FROM ducklake_snapshots('lake')`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	before := snapshot()
 	if err = fa.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal(err)
+	}
+	if got := snapshot() - before; got != 1 {
+		t.Fatalf("clean live flush advanced %d native snapshots, want 1", got)
 	}
 	if err = fb.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal("cold stable replay", err)
@@ -305,6 +332,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	loseCommit.Store(true)
 
 	body := batch("body")
+	retryIdentity := body.events[0].input.event
+	retryIdentity.UUID = eventapi.NewID()
+	retryIdentity.DistinctID = "native-conflict-person"
+	retryIdentity.Event = "$set"
+	retryIdentity.Properties = json.RawMessage(`{"$set":{"plan":"retry"}}`)
+	retryIdentityInput, err := validateLiveEvent(retryIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.events = append(body.events, bufferedLiveEvent{input: retryIdentityInput, admittedAt: body.events[0].admittedAt})
 	rejectEffects.Store(true)
 	if err = fa.FlushLive(t.Context(), body); err == nil {
 		t.Fatal("failed precommit upload acknowledged input")
@@ -315,8 +352,41 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	rejectEffects.Store(false)
 
-	readsBefore := reservationReads.Load()
-	getsBeforeFlush := effectGets.Load()
+	nativeProject, releaseNative, er := sa.LeaseProject(t.Context(), project)
+	if er != nil {
+		t.Fatal(er)
+	}
+	realNativeDB := nativeProject.DB
+	var loseNative, failACK, stageConflict atomic.Bool
+	var getsBeforePublication int64
+	bridged, er := installHostedNativeBoundary(realNativeDB, &loseNative, &failACK, func() error {
+		if stageConflict.CompareAndSwap(true, false) {
+			fa.policy.refreshed = time.Time{}
+			return &duckdb.Error{Type: duckdb.ErrorTypeTransaction, Msg: "injected native conflict after effect staging"}
+		}
+		if trackEffectKeys.Load() {
+			getsBeforePublication = effectGets.Load()
+		}
+		return nil
+	})
+	if er != nil {
+		t.Fatal(er)
+	}
+	nativeProject.DB = bridged
+	releaseNative()
+	restoreNative := sync.OnceFunc(func() {
+		nativeProject.DB = realNativeDB
+		bridged.Close()
+	})
+	defer restoreNative()
+	var ruleReads int
+	fa.publisher.loadRule = func(ctx context.Context, _, _ string, target output.PipelineTarget) ([]byte, error) {
+		ruleReads++
+		return sa.Remote.ReadImmutableEffectObject(ctx, scope, nativeRef(target.Rule))
+	}
+	stageConflict.Store(true)
+	trackEffectKeys.Store(true)
+
 	blockEffects.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
@@ -325,6 +395,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	case <-t.Context().Done():
 		t.Fatal("admitted upload did not enter")
 	}
+	readsBeforePublication := reservationReads.Load()
 	var reserved, published bool
 	boundaryErr := a.service.control.QueryRowContext(t.Context(), `
 		SELECT EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE project_id=$1 AND batch_id=$2),
@@ -339,14 +410,31 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(er)
 	}
 	if err = <-completed; err != nil {
-		t.Fatal("accepted native work failed after budget reduction", err)
+		t.Fatal("native retry lost its staged plan or admission after budget reduction", err)
 	}
-	if reads := reservationReads.Load() - readsBefore; reads != 1 {
-		t.Fatalf("flush read the reservation %d times, want one recovery read", reads)
+	if reads := reservationReads.Load() - readsBeforePublication; reads != 0 {
+		t.Fatalf("fresh publication reread the reservation %d times", reads)
 	}
-	if got := effectGets.Load() - getsBeforeFlush; got != 3 {
-		t.Fatalf("fresh flush made %d effect GETs, want 3 (rule, manifest, plan)", got)
+	fa.publisher.loadRule = nil
+	trackEffectKeys.Store(false)
+	if stageConflict.Load() || ruleReads != 1 {
+		t.Fatalf("expected one native conflict and one rule read, conflict pending=%v reads=%d", stageConflict.Load(), ruleReads)
 	}
+	assets := make([]string, 0, len(effectKeys))
+	for len(effectKeys) > 0 {
+		assets = append(assets, <-effectKeys)
+	}
+	if len(assets) != 6 || !slices.Equal(assets[:3], assets[3:]) {
+		t.Fatalf("native retry changed immutable output keys: %v", assets)
+	}
+	var traits string
+	if err := realNativeDB.QueryRowContext(t.Context(), `SELECT traits FROM lake.identity_profiles WHERE identified_id='native-conflict-person'`).Scan(&traits); err != nil || traits != `{"plan":"retry"}` {
+		t.Fatalf("identity projection after retry = %q, %v", traits, err)
+	}
+	if got := effectGets.Load() - getsBeforePublication; got != 2 {
+		t.Fatalf("fresh publication made %d effect GETs, want 2 (manifest and plan)", got)
+	}
+	restoreNative()
 	if _, er = a.service.control.Exec(`UPDATE tenants SET ingestion_monthly_events=NULL WHERE id=$1`, defaultTenantID); er != nil {
 		t.Fatal(er)
 	}
@@ -371,7 +459,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 3 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
 		t.Fatal("wrong atomic usage", n, err)
 	}
 	assertAccepted := func(want int64) {
@@ -382,7 +470,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 			t.Fatalf("monthly acceptance ledger = %d, want %d: %v", accepted, want, err)
 		}
 	}
-	assertAccepted(3)
+	assertAccepted(4)
 	// A restored cursor must match the original retained native proof even when
 	// the cursor already equals high-water and there are no pending effects.
 	_, originalHash, er := fa.publisher.checkpoint(t.Context(), scope, defaultTenantID)
@@ -433,10 +521,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err != nil || seq != 2 {
 		t.Fatal("cursor escaped rollback", seq, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 3 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
 		t.Fatal("usage escaped rollback", n, err)
 	}
-	assertAccepted(3)
+	assertAccepted(4)
 	binding, er := fa.publisher.reservation(t.Context(), scope)
 	if er != nil {
 		t.Fatal(er)
@@ -529,10 +617,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
 		t.Fatal("fragment/direct publication", n, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 5 {
 		t.Fatal("recovery double charged", n, err)
 	}
-	assertAccepted(4)
+	assertAccepted(5)
 
 	// Capacity failure rolls native sequence/data/usage back before any body PUT.
 	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project)
@@ -668,19 +756,19 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	fa.policy.refreshed = time.Time{}
 	setPipelineState("active")
-	nativeProject, release, er := sa.LeaseProject(t.Context(), project)
+	finalProject, finalRelease, er := sa.LeaseProject(t.Context(), project)
 	if er != nil {
 		t.Fatal(er)
 	}
-	realNativeDB := nativeProject.DB
-	var loseNative, failACK atomic.Bool
-	bridged, er := installHostedNativeBoundary(realNativeDB, &loseNative, &failACK)
+	finalDB := finalProject.DB
+	finalBridge, er := installHostedNativeBoundary(finalDB, &loseNative, &failACK, nil)
 	if er != nil {
+		finalRelease()
 		t.Fatal(er)
 	}
-	nativeProject.DB = bridged
-	release()
-	defer func() { nativeProject.DB = realNativeDB; bridged.Close() }()
+	finalProject.DB = finalBridge
+	finalRelease()
+	defer func() { finalProject.DB = finalDB; finalBridge.Close() }()
 	nativeLost := batch("lost-native-response")
 	loseNative.Store(true)
 	if err = fa.FlushLive(t.Context(), nativeLost); err == nil {
@@ -697,11 +785,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	ackLost := batch("failed-native-ack")
 	failACK.Store(true)
-	if err = fa.FlushLive(t.Context(), ackLost); err != nil {
-		t.Fatal("confirmed PG publication retained volatile input on ACK failure", err)
+	if err = fa.FlushLive(t.Context(), ackLost); err != nil || !failACK.Load() {
+		t.Fatalf("live flush attempted standalone native ACK: %v", err)
 	}
-	if failACK.Load() {
-		t.Fatal("native ACK failure boundary not exercised")
+	if err = fa.RecoverProject(t.Context(), key); err != nil || failACK.Load() {
+		t.Fatalf("best-effort ACK failure boundary not exercised: %v", err)
 	}
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold ACK retry", err)
