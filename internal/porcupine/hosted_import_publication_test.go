@@ -195,7 +195,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	}
 	realDB := p.DB
 	var loseNative, failACK atomic.Bool
-	bridge, err := installHostedNativeBoundary(realDB, &loseNative, &failACK)
+	bridge, err := installHostedNativeBoundary(realDB, &loseNative, &failACK, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
