@@ -1,8 +1,8 @@
-# Host Porcupine 0.15.0
+# Host Porcupine 0.15.1
 
-For the [v0.15.0 release](https://github.com/olup/porcupine/releases/tag/v0.15.0), start with the [quickstart](../README.md#quickstart). It starts the matching image, sends a test event, and waits for SQL visibility. The [release hosting reference](reference/hosting-options.md) covers HTTPS, offline images, and resource settings for that tagged checkout.
+For the [v0.15.1 release](https://github.com/olup/porcupine/releases/tag/v0.15.1), start with the [quickstart](../README.md#quickstart). It starts the matching image, sends a test event, and waits for SQL visibility. The [release hosting reference](reference/hosting-options.md) covers HTTPS, offline images, and resource settings for that tagged checkout.
 
-Use a fresh data directory for a new installation. Keep the server and CLI versions matched. For an existing instance, follow the [upgrade steps](#move-from-v0140).
+Use a fresh data directory for a new installation. Keep the server and CLI versions matched. For an existing instance, [upgrade from v0.15.0](#upgrade-from-v0150) or [move from v0.14.0](#move-from-v0140).
 
 ## Pick a deployment
 
@@ -110,12 +110,21 @@ The default Compose memory limit is 2 GiB, a test profile rather than a capacity
 
 Configure [email or Google/OIDC sign-in](reference/connect-your-team.md), then [invite people and create service credentials](access.md). Keep the bootstrap secret privately.
 
+## Upgrade from v0.15.0
+
+v0.15.1 applies numbered migrations to existing v0.15.0 storage at startup. Schedule downtime for the server or worker fleet.
+
+1. Pause producers and allow pending writes to become queryable. In hosted mode, drain all workers and wait for shutdown to complete. Investigate a drain error before proceeding because acknowledged live events can still be in memory.
+2. Stop the old instances. Take a complete recovery point with v0.15.0 tools and retain the matching image and private configuration. Use [native backups](backup-and-restore.md) for standalone or the [PostgreSQL and S3 recovery policy](design/hosted-architecture.md#recovery-and-retention) for hosted. Restore that pre-upgrade recovery point if you need to roll back.
+3. For hosted, prevent old workers from restarting against the upgraded databases. Review the [legacy activity ticket procedure](design/hosted-architecture.md#upgrade-worker-activity-tickets). Tickets from before the incarnation migration have a NULL incarnation and never expire automatically. Verify the [recovery floor and cleanup grace](reference/ducklake-cleanup.md#hosted-profile) before enabling hosted file reclamation.
+4. Start the v0.15.1 server or workers with the existing configuration and storage. Update the CLI, check readiness, and verify that a test event becomes queryable before resuming producers. Review [legacy credentials with empty project scopes](reference/tenants.md#delete-a-tenant) before relying on tenant deletion to erase those credentials.
+
 ## Move from v0.14.0
 
-v0.15.0 introduces separate acceptance and control databases and tenant ownership. Start it with fresh storage. Keep the v0.14.0 image digest, complete data and backup bundles, overlay files, and private configuration together for recovery. Restore v0.14.0 bundles with the matching v0.14.0 tools. An image swap on the old volume cannot migrate it.
+The v0.15 series uses separate acceptance and control databases and tenant ownership. Start v0.15.1 with fresh storage. Keep the v0.14.0 image digest, complete data and backup bundles, overlay files, and private configuration together for recovery. Restore v0.14.0 bundles with the matching v0.14.0 tools. An image swap on the old volume cannot migrate it.
 
 1. Pause producers at cutover and wait for pending writes to become queryable. Take a complete v0.14.0 checkpoint before changing credentials or routes.
-2. Initialize v0.15.0 in a separate volume or directory. Transfer required history with an explicit export and [historical import](imports.md), preserving original timestamps and stable producer IDs where available. Imports carry events. Recreate accounts, grants, credentials, and destination settings separately.
+2. Initialize v0.15.1 in a separate volume or directory. Transfer required history with an explicit export and [historical import](imports.md), preserving original timestamps and stable producer IDs where available. Imports carry events. Recreate accounts, grants, credentials, and destination settings separately.
 3. Update clients to match the server. Remove the `use_cache` request field. Replace old Compose overlays with the [server configuration](reference/configuration.md) and review settings before enabling pipelines.
 4. Verify counts, event times, identity behavior, corrections and deletes, then switch producers and readers. Keep the old instance isolated with its recovery material until the new deployment is validated. Returning to the old instance requires reconciling writes accepted after cutover.
 

@@ -1,6 +1,6 @@
 # Hosting options
 
-Use the [quickstart](../../README.md#quickstart) to start a new v0.15.0 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
+Use the [quickstart](../../README.md#quickstart) to start a new v0.15.1 instance. The release provides server images for Linux amd64 and arm64 and standalone CLI archives for macOS, Linux, and Windows. The server bundles its compatible DuckLake, HTTPFS, AWS, and PostgreSQL extensions.
 
 The release overlay selects the tagged image and removes the source build. Keep it after `compose.yaml`. Set `PORCUPINE_IMAGE` to an explicit digest when pinning a deployment.
 
@@ -14,8 +14,8 @@ case "$(docker info --format '{{.Architecture}}')" in
   arm64|aarch64) PORCUPINE_RELEASE_ARCH=arm64 ;;
   *) echo 'Unsupported release architecture' >&2; exit 1 ;;
 esac
-PORCUPINE_RELEASE_ARCHIVE="porcupine-0.15.0-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
-PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.15.0
+PORCUPINE_RELEASE_ARCHIVE="porcupine-0.15.1-linux-$PORCUPINE_RELEASE_ARCH.tar.gz"
+PORCUPINE_RELEASE_URL=https://github.com/olup/porcupine/releases/download/v0.15.1
 curl --fail --location --output "$PORCUPINE_RELEASE_ARCHIVE" "$PORCUPINE_RELEASE_URL/$PORCUPINE_RELEASE_ARCHIVE"
 curl --fail --location --output SHA256SUMS "$PORCUPINE_RELEASE_URL/SHA256SUMS"
 expected=$(awk -v name="$PORCUPINE_RELEASE_ARCHIVE" '$2 == name { print $1 }' SHA256SUMS)

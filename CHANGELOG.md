@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.15.1
 
-- Hosted buffer drain starts before waiting on canceled analytics. Flush failures backpressure the affected project, and output capacity is scoped to tenants and projects.
-- Hosted maintenance expires snapshots and reclaims obsolete files under the recovery policy. Worker incarnation leases allow cleanup to recover abandoned activity, and tenant deletion removes operator credentials scoped to the deleted tenant.
-- Hosted usage samples current Parquet files and detects abandoned query observations. Fresh webhook publications skip immediate body read-back. External authentication accepts more provider JWKS formats and can use cached keys during a failed refresh.
-- See [changes after v0.15.0](docs/design/hosted-architecture.md#changes-after-v0150) for rollout behavior and limits.
+- Hosted shutdown starts draining accepted live events before waiting on canceled analytical calls. Flush failures apply backpressure to the affected project. Hosted output capacity is scoped to tenants and projects. (#100, #104, #105)
+- Hosted maintenance reclaims obsolete DuckLake history under the write fence and recovery policy. Worker incarnation leases let deletion reclaim activity left by crashed workers. Both profiles delete operator-issued credentials owned by the deleted tenant. (#102, #103, #111)
+- Hosted usage samples current Parquet bytes and marks queries lost after five minutes without an observation. External authentication accepts more provider JWKS formats and can use cached keys during a failed refresh. (#101, #106)
+- A clean hosted live flush commits in one DuckLake snapshot. Fresh webhook payloads skip immediate S3 body read-back. Recovery still verifies stored bodies. (#107, #108)
+- Hosted output publication reuses the reservation recorded before upload. The final deletion check releases PostgreSQL tenant and project locks before the native commit, so query admission can proceed while the commit is in flight. The project coordinator defaults to a five-second acquisition deadline. (#112, #114)
+- Hosted live ingestion checks the monthly quota at admission. Already admitted batches can finish after the budget changes. (#113)
+- Added a repeatable hosted flush benchmark, consolidated the hosted architecture guide, and fixed the hosted status privacy test race. (#109, #110, #115)
+
+[Upgrade from v0.15.0](https://github.com/olup/porcupine/blob/v0.15.1/docs/hosting.md#upgrade-from-v0150) using the existing storage and a stopped, backed-up deployment. Moving from v0.14.0 [requires fresh storage](https://github.com/olup/porcupine/blob/v0.15.1/docs/hosting.md#move-from-v0140). Hosted live ingestion still acknowledges worker memory admission and can lose acknowledged events before a flush commits. Verify the recovery floor before enabling hosted file reclamation.
 
 ## 0.15.0
 

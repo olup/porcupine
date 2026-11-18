@@ -172,11 +172,8 @@ Pausing stops new enqueueing for that destination but does not free its retained
 failed payloads. Deliver, cancel through event deletion, or delete the pipeline
 to release retained capacity as appropriate.
 
-Hosted v0.15.0 shares the default 10,000-event and 64 MiB output budget across
-the instance. It also applies tenant and project limits. After v0.15.0,
-[#105](https://github.com/olup/porcupine/pull/105) removes the shared instance
-budget. The default is 10,000 events and 64 MiB per tenant, with 1,000 events
-and 16 MiB per project. A full tenant queue leaves capacity for other tenants.
+Hosted output capacity defaults to 10,000 events and 64 MiB per tenant, with
+a limit of 1,000 events and 16 MiB per project. A full tenant queue leaves capacity for other tenants.
 
 Pausing skips new webhook enqueueing and holds existing queued work. Resume
 releases pending work and collects future events; it does not backfill the
