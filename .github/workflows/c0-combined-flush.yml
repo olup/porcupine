@@ -1,0 +1,50 @@
+name: Hosted flush release comparison
+on:
+  push:
+    branches: [codex/c0-combined-flush-run]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PORCUPINE_MEASURE_HOSTED_FLUSH: "1"
+      PORCUPINE_MEASURE_HOSTED_FLUSH_N: "20"
+      PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS: "100"
+      PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY: "0,200"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Measure both revisions on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version
+          lscpu | grep -E 'Model name|^CPU\(s\):'
+          baseline=664f12cd1779789e6f7fb63aa734ae78db912fc7
+          candidate=eabef779c159a502712468e0559d9197a985d110
+          test_file=internal/porcupine/hosted_flush_cost_test.go
+          for revision in "$baseline" "$candidate"; do
+            target="$RUNNER_TEMP/measure-$revision"
+            git worktree add --detach "$target" "$revision"
+            if [[ "$revision" == "$baseline" ]]; then
+              git show 39f78c5:$test_file > "$target/$test_file"
+            fi
+            (
+              cd "$target"
+              echo "Measuring $revision"
+              sites=('internal/porcupine/hosted*.go' 'internal/lake/hosted*.go' 'internal/lake/native*.go' 'internal/output/*.go')
+              git ls-files "${sites[@]}" | grep -v '_test\.go$' | xargs wc -l | tail -1
+              git ls-files "${sites[@]}" 'internal/lake/live_commit*.go' 'internal/lake/project_coordinator.go' \
+                'internal/porcupine/buffered_acceptance.go' | grep -v '_test\.go$' | xargs wc -l | tail -1
+              CGO_ENABLED=0 go run ./internal/cmd/shared-postgres-integration -- \
+                go run ./internal/cmd/ducklake-s3-integration -suite shared -race=false -timeout=15m \
+                -run '^TestDuckLakeS3SharedPostgresHostedFlushCost$' | tee "$RUNNER_TEMP/flush-$revision.log"
+              test "$(grep -c 'hosted-flush-cost {' "$RUNNER_TEMP/flush-$revision.log")" -eq 6
+            )
+          done
