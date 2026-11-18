@@ -253,8 +253,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	oversized := batch("prepared-byte-cap")
 	oversized.events[0].input.event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
 	putsBefore := effectPuts.Load()
-	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) {
-		t.Fatal("oversized preparation accepted", err)
+	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("oversized preparation did not report a permanent pre-commit capacity error", err)
 	}
 	if effectPuts.Load() != putsBefore {
 		t.Fatal("preparation bound uploaded an object before refusal")
@@ -517,8 +517,17 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("retired fanout definitions were revived", n, err)
 	}
 	blocked := batch("blocked")
-	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) {
-		t.Fatal("full queue admitted", err)
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineCapacity) || errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("full queue did not report a retryable capacity error", err)
+	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=1 WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
+		t.Fatal(err)
+	}
+	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, errHostedLiveBatchTooLarge) {
+		t.Fatal("oversized reservation did not report a permanent pre-commit capacity error", err)
+	}
+	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
+		t.Fatal(err)
 	}
 	setPipelineState := func(state string) {
 		t.Helper()
