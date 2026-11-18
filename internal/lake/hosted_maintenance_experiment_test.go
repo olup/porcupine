@@ -155,7 +155,7 @@ func TestDuckLakeS3SharedPostgresHostedMaintenanceExperiment(t *testing.T) {
 				defer cancel()
 				if strings.HasPrefix(candidate.mode, "production-") {
 					var measured DuckLakeMaintenanceStats
-					return pb.hostedMaintenanceAttempt(bounded, fence, statement, &measured)
+					return pb.hostedMaintenanceAttempt(bounded, fence, statement, false, &measured)
 				}
 				if candidate.mode != "autocommit" {
 					return maintenanceSnapshotExperiment(t, bounded, pb, fence, statement, candidate.mode != "snapshot-default-retry")

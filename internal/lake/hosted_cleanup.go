@@ -59,7 +59,7 @@ func (s *DuckLakeStore) CleanupHostedProject(ctx context.Context, session *Proje
 	}
 	err = s.runHostedMaintenance(ctx, session, func(ctx context.Context, p *ProjectLake, fence ProjectWriteFence, scope HostedProjectScope) error {
 		var native DuckLakeMaintenanceStats
-		if err := p.hostedMaintenanceStatement(ctx, session, fence, "CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)", &native); err != nil {
+		if err := p.hostedMaintenanceStatement(ctx, session, fence, "CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)", false, &native); err != nil {
 			return err
 		}
 		schema := `"` + SharedNativeSchema(scope.CatalogID) + `"`
@@ -72,7 +72,7 @@ func (s *DuckLakeStore) CleanupHostedProject(ctx context.Context, session *Proje
 			for i, version := range versions {
 				ids[i] = strconv.FormatInt(version, 10)
 			}
-			if err := p.hostedMaintenanceStatement(ctx, session, fence, "CALL ducklake_expire_snapshots('lake',versions=>["+strings.Join(ids, ",")+"])", &native); err != nil {
+			if err := p.hostedMaintenanceStatement(ctx, session, fence, "CALL ducklake_expire_snapshots('lake',versions=>["+strings.Join(ids, ",")+"])", true, &native); err != nil {
 				return err
 			}
 			stats.SnapshotsExpired = int64(len(versions))
@@ -95,7 +95,7 @@ func (s *DuckLakeStore) CleanupHostedProject(ctx context.Context, session *Proje
 			}
 			if files != 0 && witness.signature.String == signature {
 				statement := "CALL ducklake_cleanup_old_files('lake',older_than=>TIMESTAMPTZ " + LakeLiteral(witness.cutoff.Time.UTC().Format(time.RFC3339Nano)) + ")"
-				if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, &native); err != nil {
+				if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, true, &native); err != nil {
 					return err
 				}
 				stats.FilesDeleted = files

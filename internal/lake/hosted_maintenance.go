@@ -20,7 +20,7 @@ func (s *DuckLakeStore) MaintainHostedProject(ctx context.Context, session *Proj
 			fmt.Sprintf("CALL ducklake_merge_adjacent_files('lake',max_compacted_files=>1,max_file_size=>%d)", hostedMergeFileSize),
 			"CALL ducklake_rewrite_data_files('lake',delete_threshold=>0,max_compacted_files=>1)",
 		} {
-			if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, &stats); err != nil {
+			if err := p.hostedMaintenanceStatement(ctx, session, fence, statement, false, &stats); err != nil {
 				return err
 			}
 		}
@@ -67,11 +67,11 @@ func (s *DuckLakeStore) runHostedMaintenance(ctx context.Context, session *Proje
 	})
 }
 
-func (p *ProjectLake) hostedMaintenanceStatement(ctx context.Context, session *ProjectWriteSession, fence ProjectWriteFence, statement string, stats *DuckLakeMaintenanceStats) error {
+func (p *ProjectLake) hostedMaintenanceStatement(ctx context.Context, session *ProjectWriteSession, fence ProjectWriteFence, statement string, writeGuard bool, stats *DuckLakeMaintenanceStats) error {
 	return retryNativeTransaction(ctx, func() error {
 		return session.RunNative(ctx, func(attemptCtx context.Context) error {
 			next := *stats
-			if err := p.hostedMaintenanceAttempt(attemptCtx, fence, statement, &next); err != nil {
+			if err := p.hostedMaintenanceAttempt(attemptCtx, fence, statement, writeGuard, &next); err != nil {
 				return err
 			}
 			*stats = next
@@ -83,7 +83,7 @@ func (p *ProjectLake) hostedMaintenanceStatement(ctx context.Context, session *P
 // No native retry may refresh the snapshot after this guard read. The first
 // commit attempts snapshot+1; a successor fence occupies that ID. External retry
 // must revalidate the held physical session and reread the fence in a new tx.
-func (p *ProjectLake) hostedMaintenanceAttempt(ctx context.Context, fence ProjectWriteFence, statement string, stats *DuckLakeMaintenanceStats) error {
+func (p *ProjectLake) hostedMaintenanceAttempt(ctx context.Context, fence ProjectWriteFence, statement string, writeGuard bool, stats *DuckLakeMaintenanceStats) error {
 	if !validProjectWriteFence(fence) || !p.shared || p.projectID != fence.Key.ProjectID || p.sharedStore.Config.SharedSourceID != fence.Key.SourceID {
 		return ErrProjectWriteFenceStale
 	}
@@ -111,7 +111,13 @@ func (p *ProjectLake) hostedMaintenanceAttempt(ctx context.Context, fence Projec
 		return err
 	}
 	defer tx.Rollback()
-	if err := readHostedMaintenanceFence(ctx, tx, fence); err != nil {
+	// Snapshot expiry and old-file cleanup mutate catalog metadata without
+	// allocating a snapshot on their own. Join those commits to the write fence.
+	if writeGuard {
+		if err := p.acquireHostedNativeWrite(ctx, tx, fence); err != nil {
+			return err
+		}
+	} else if err := readHostedMaintenanceFence(ctx, tx, fence); err != nil {
 		return err
 	}
 	var guardedSnapshot, afterSnapshot int64
