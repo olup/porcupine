@@ -1635,6 +1635,28 @@
         ],
         "type": "object"
       },
+      "HostedIngestionStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "dropped_events": {
+            "description": "Events in discarded requests, on this worker since startup.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dropped_requests": {
+            "description": "Accepted live requests discarded because their outputs could not fit in one commit, on this worker since startup.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dropped_requests",
+          "dropped_events"
+        ],
+        "type": "object"
+      },
       "HumanIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -2178,6 +2200,10 @@
           "ducklake_cleanup": {
             "$ref": "#/components/schemas/DuckLakeCleanupStatus",
             "description": "Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."
+          },
+          "hosted_ingestion": {
+            "$ref": "#/components/schemas/HostedIngestionStatus",
+            "description": "Worker-local hosted ingestion counters. Visible only to instance administrators."
           },
           "native_backup": {
             "$ref": "#/components/schemas/NativeBackupStatus",

@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -21,9 +22,14 @@ import (
 type liveBatchFlusher interface {
 	FlushLive(context.Context, bufferedFlushBatch) error
 }
+
+// This error proves the batch cannot fit and never reached native commit.
+var errHostedLiveBatchTooLarge = errors.New("hosted live batch exceeds output limits")
+
 type bufferedLiveEvent struct {
 	input      validatedLiveEvent
 	admittedAt time.Time
+	requestEnd bool
 }
 type bufferedFlushBatch struct {
 	id, projectID string
@@ -64,32 +70,34 @@ type bufferedProject struct {
 	pending      []bufferedLiveEvent
 	pendingBytes int64
 	oldest       time.Time
-	ready        *bufferedFlushBatch
+	ready        []*bufferedFlushBatch
 	running      bool
 	failures     int
 	retryAt      time.Time
 }
 type bufferSnapshot struct {
-	bytes                      int64
-	events, projects, inflight int
-	oldest                     time.Time
-	draining, failed, stopped  bool
-	abandoned                  int
+	bytes                          int64
+	events, projects, inflight     int
+	oldest                         time.Time
+	draining, failed, stopped      bool
+	abandoned                      int
+	droppedRequests, droppedEvents uint64
 }
 type bufferedAcceptance struct {
-	mu              sync.Mutex
-	config          bufferConfig
-	writer          liveBatchFlusher
-	keys            cookielessKeyResolver
-	projects        map[string]*bufferedProject
-	bytes           int64
-	events, running int
-	draining        bool
-	stopped         bool
-	notify          chan struct{}
-	completed       chan flushCompletion
-	done            chan struct{}
-	ctx             context.Context
+	mu                             sync.Mutex
+	config                         bufferConfig
+	writer                         liveBatchFlusher
+	keys                           cookielessKeyResolver
+	projects                       map[string]*bufferedProject
+	bytes                          int64
+	events, running                int
+	droppedRequests, droppedEvents uint64
+	draining                       bool
+	stopped                        bool
+	notify                         chan struct{}
+	completed                      chan flushCompletion
+	done                           chan struct{}
+	ctx                            context.Context
 }
 type flushCompletion struct {
 	project string
@@ -128,7 +136,8 @@ func (b *bufferedAcceptance) Accept(ctx context.Context, batch preparedLiveBatch
 		return nil, err
 	}
 	b.mu.Lock()
-	unavailable := b.ctx.Err() != nil || b.draining || b.failedLocked()
+	project := b.projects[batch.projectID]
+	unavailable := b.ctx.Err() != nil || b.draining || project != nil && project.failures > 0
 	b.mu.Unlock()
 	if unavailable {
 		return nil, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true}
@@ -218,7 +227,7 @@ func (b *bufferedAcceptance) Accept(ctx context.Context, batch preparedLiveBatch
 	}
 	for i, input := range inputs {
 		input = cloneValidatedLiveEvent(input)
-		owned[i] = bufferedLiveEvent{input: input, admittedAt: admittedAt}
+		owned[i] = bufferedLiveEvent{input: input, admittedAt: admittedAt, requestEnd: i == len(inputs)-1}
 		if withReceipts {
 			receipts[i] = bufferedReceipt{MessageID: input.event.MessageID, UUID: input.event.UUID}
 		}
@@ -279,14 +288,14 @@ func (b *bufferedAcceptance) failedLocked() bool {
 func (b *bufferedAcceptance) snapshot() bufferSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	s := bufferSnapshot{bytes: b.bytes, events: b.events, projects: len(b.projects), inflight: b.running, draining: b.draining, failed: b.failedLocked(), stopped: b.stopped}
+	s := bufferSnapshot{bytes: b.bytes, events: b.events, projects: len(b.projects), inflight: b.running, draining: b.draining, failed: b.failedLocked(), stopped: b.stopped, droppedRequests: b.droppedRequests, droppedEvents: b.droppedEvents}
 	stopping := b.ctx.Err() != nil
 	if stopping {
 		s.abandoned = b.events
 	}
 	for _, p := range b.projects {
 		if stopping && p.running {
-			s.abandoned -= len(p.ready.events)
+			s.abandoned -= len(p.ready[0].events)
 		}
 		for _, at := range []time.Time{p.oldest, readyOldest(p.ready)} {
 			if !at.IsZero() && (s.oldest.IsZero() || at.Before(s.oldest)) {
@@ -296,11 +305,11 @@ func (b *bufferedAcceptance) snapshot() bufferSnapshot {
 	}
 	return s
 }
-func readyOldest(batch *bufferedFlushBatch) time.Time {
-	if batch == nil {
+func readyOldest(batches []*bufferedFlushBatch) time.Time {
+	if len(batches) == 0 {
 		return time.Time{}
 	}
-	return batch.oldest
+	return batches[0].oldest
 }
 func (b *bufferedAcceptance) Drain(ctx context.Context) error {
 	b.stopAdmission()
@@ -333,10 +342,10 @@ func (b *bufferedAcceptance) run() {
 			if p.running {
 				continue
 			}
-			if p.ready == nil && len(p.pending) > 0 {
+			if len(p.ready) == 0 && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.flushInterval)
 				if b.draining || p.pendingBytes >= b.config.flushBytes || !now.Before(due) {
-					p.ready = &bufferedFlushBatch{id: eventapi.NewID(), projectID: project, events: p.pending, admitted: true, oldest: p.oldest, bytes: p.pendingBytes}
+					p.ready = []*bufferedFlushBatch{{id: eventapi.NewID(), projectID: project, events: p.pending, admitted: true, oldest: p.oldest, bytes: p.pendingBytes}}
 					p.pending = nil
 					p.pendingBytes = 0
 					p.oldest = time.Time{}
@@ -345,7 +354,7 @@ func (b *bufferedAcceptance) run() {
 					continue
 				}
 			}
-			if p.ready == nil {
+			if len(p.ready) == 0 {
 				continue
 			}
 			if now.Before(p.retryAt) {
@@ -355,7 +364,7 @@ func (b *bufferedAcceptance) run() {
 			if b.running >= b.config.maxFlushes {
 				continue
 			}
-			batch := *p.ready
+			batch := *p.ready[0]
 			p.running = true
 			b.running++
 			go func() {
@@ -389,18 +398,34 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	p := b.projects[result.project]
-	if p == nil || p.ready == nil || p.ready.id != result.id || !p.running {
+	if p == nil || len(p.ready) == 0 || p.ready[0].id != result.id || !p.running {
 		return
 	}
 	p.running = false
 	b.running--
 	if errors.Is(result.err, errHostedProjectFenced) {
-		b.bytes -= p.ready.bytes + p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
-		b.events -= len(p.ready.events) + len(p.pending)
+		b.bytes -= p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
+		b.events -= len(p.pending)
+		for _, batch := range p.ready {
+			b.bytes -= batch.bytes
+			b.events -= len(batch.events)
+		}
 		delete(b.projects, result.project)
 		return
 	}
-	if result.err != nil {
+	if errors.Is(result.err, errHostedLiveBatchTooLarge) {
+		if left, right, ok := splitBufferedLiveBatch(*p.ready[0]); ok {
+			p.ready[0] = right
+			p.ready = append([]*bufferedFlushBatch{left}, p.ready...)
+			p.retryAt = time.Time{}
+			return
+		}
+		count := len(p.ready[0].events)
+		b.droppedRequests++
+		b.droppedEvents += uint64(count)
+		slog.Warn("hosted ingestion dropped an oversized request", "project_id", result.project,
+			"batch_id", result.id, "events", count, "error", result.err)
+	} else if result.err != nil {
 		p.failures++
 		delay := b.config.retryMin
 		for n := 1; n < p.failures && delay < b.config.retryMax; n++ {
@@ -409,19 +434,54 @@ func (b *bufferedAcceptance) complete(result flushCompletion) {
 		p.retryAt = b.config.clock().Add(delay)
 		return
 	}
-	b.bytes -= p.ready.bytes
-	b.events -= len(p.ready.events)
-	p.ready = nil
+	b.bytes -= p.ready[0].bytes
+	b.events -= len(p.ready[0].events)
+	p.ready[0] = nil
+	p.ready = p.ready[1:]
 	p.failures = 0
 	p.retryAt = time.Time{}
-	if len(p.pending) == 0 {
+	if len(p.pending) == 0 && len(p.ready) == 0 {
 		delete(b.projects, result.project)
 		b.bytes -= bufferedProjectOverhead + int64(len(result.project))
 	}
 }
 
+// Preserve admission order and divide as close to the midpoint as request boundaries permit.
+func splitBufferedLiveBatch(batch bufferedFlushBatch) (left, right *bufferedFlushBatch, ok bool) {
+	mid := len(batch.events) / 2
+	cut := 0
+	for i, event := range batch.events[:len(batch.events)-1] {
+		if !event.requestEnd {
+			continue
+		}
+		if i+1 <= mid || cut == 0 || i+1-mid < mid-cut {
+			cut = i + 1
+		}
+		if i+1 >= mid {
+			break
+		}
+	}
+	if cut == 0 {
+		return nil, nil, false
+	}
+
+	first, second := batch, batch
+	first.id, second.id = eventapi.NewID(), eventapi.NewID()
+	first.events = batch.events[:cut:cut]
+	// The right child must not keep references to payloads released with the left.
+	second.events = append([]bufferedLiveEvent(nil), batch.events[cut:]...)
+	clear(batch.events[cut:])
+	second.oldest = second.events[0].admittedAt
+	first.bytes = 0
+	for _, event := range first.events {
+		first.bytes += bufferedInputBytes(event.input)
+	}
+	second.bytes = batch.bytes - first.bytes
+	return &first, &second, true
+}
+
 func (b *bufferedAcceptance) checkCapacityLocked(projectID string, size int64, count int) (*bufferedProject, int64, error) {
-	if b.ctx.Err() != nil || b.draining || b.failedLocked() {
+	if b.ctx.Err() != nil || b.draining {
 		return nil, 0, &acceptanceFailure{message: "buffer is unavailable or draining", retry: true}
 	}
 	p := b.projects[projectID]
@@ -434,9 +494,12 @@ func (b *bufferedAcceptance) checkCapacityLocked(projectID string, size int64, c
 	} else {
 		projectSize = p.pendingBytes
 		projectEvents = len(p.pending)
-		if p.ready != nil {
-			projectSize += p.ready.bytes
-			projectEvents += len(p.ready.events)
+		if p.failures > 0 {
+			return nil, 0, &acceptanceFailure{message: "project buffer is retrying a flush", retry: true}
+		}
+		for _, batch := range p.ready {
+			projectSize += batch.bytes
+			projectEvents += len(batch.events)
 		}
 	}
 	overhead := int64(0)
@@ -459,5 +522,5 @@ func (b *bufferedAcceptance) stopAdmission() {
 func (b *bufferedAcceptance) available() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.ctx.Err() == nil && !b.draining && !b.failedLocked()
+	return b.ctx.Err() == nil && !b.draining && b.bytes < b.config.maxBytes && b.events < b.config.maxEvents
 }
