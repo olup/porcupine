@@ -24,13 +24,14 @@ type hostedEventReader interface {
 }
 
 type hostedQueryRuntime struct {
-	reader   hostedEventReader
-	recorder *usage.Recorder
-	register func(context.Context, *sql.Tx, string, string) error
-	finish   func(context.Context, *sql.DB, string, string) error
-	mu       sync.Mutex
-	returned map[string]string
-	inFlight int
+	reader       hostedEventReader
+	recorder     *usage.Recorder
+	register     func(context.Context, *sql.Tx, string, string) error
+	finish       func(context.Context, *sql.DB, string, string) error
+	returnedHook func(string, string)
+	mu           sync.Mutex
+	returned     map[string]string
+	inFlight     int
 }
 
 const hostedQueryUsageSource = "hosted_query_executions"
@@ -38,7 +39,8 @@ const hostedReaderCompletionLimit = 256
 
 // initializeHostedQueries installs the hosted read dependencies before serving
 // requests or starting usage observation. The caller owns the global profile gate.
-func (s *Service) initializeHostedQueries(store *lakeapi.DuckLakeStore, register func(context.Context, *sql.Tx, string, string) error, finish func(context.Context, *sql.DB, string, string) error) error {
+// returned, when set, observes actual return before the acknowledgement.
+func (s *Service) initializeHostedQueries(store *lakeapi.DuckLakeStore, register func(context.Context, *sql.Tx, string, string) error, finish func(context.Context, *sql.DB, string, string) error, returned func(project, id string)) error {
 	if s.shared == nil || s.control == nil || s.usage == nil || register == nil || finish == nil {
 		return errors.New("hosted reads require shared query admission, usage and project lifetime authority")
 	}
@@ -48,7 +50,7 @@ func (s *Service) initializeHostedQueries(store *lakeapi.DuckLakeStore, register
 	}
 	s.hostedQueries = &hostedQueryRuntime{
 		reader: reader, recorder: usage.NewRecorder(s.control, hostedQueryUsageSource, s.clock),
-		register: register, finish: finish, returned: make(map[string]string),
+		register: register, finish: finish, returned: make(map[string]string), returnedHook: returned,
 	}
 	return nil
 }
@@ -77,6 +79,9 @@ func (r *hostedQueryRuntime) dropReservation() {
 }
 
 func (r *hostedQueryRuntime) noteReturn(id, project string) {
+	if r.returnedHook != nil {
+		r.returnedHook(project, id)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.inFlight--

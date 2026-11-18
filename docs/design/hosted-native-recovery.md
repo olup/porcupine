@@ -104,16 +104,32 @@ locks across the native commit. Independent PostgreSQL session failure can
 interrupt this protection. A higher native fence and the immutable seal cut
 still determine which native writes committed.
 
-An abandoned ticket has no automatic timeout. If the process returned but
-missed a control acknowledgement, retry removal with the original ticket.
-If the process cannot report a return, retain the ticket until offline
-recovery has proven quiescence. That proof requires identifying all executors
-for the deployment, blocking their restart and verifying they have
-terminated. Confirm through the storage provider and any relevant delivery
-destination that outstanding multipart operations and external requests
-have drained or been resolved. A PostgreSQL session disappearing, heartbeat
-stopping, or query permit expiring does not establish this evidence. There
-is no public operation to force a ticket clear.
+Each ticket references the registering process's worker incarnation. At
+start, a hosted process inserts a random incarnation row with `expires_at`
+(lease, 30 seconds) and `reclaim_after` (lease plus a 30-second grace). It
+renews both every 5 seconds. Renewal cannot revive an expired row. The
+process measures its local deadline from before each successful grant or
+renewal statement, so the deadline never falls after the PostgreSQL expiry.
+Registration is counted locally before its transaction commits and requires
+a current lease, both locally and in PostgreSQL. When the local deadline
+passes, the process refuses new tickets. If any of its tickets has not
+actually returned, it exits with status 75 so that the supervisor replaces
+it. With nothing outstanding, it joins again under a new incarnation.
+
+Seal and cleanup first delete incarnations past `reclaim_after`. The
+foreign key cascades to their tickets. The grace covers the owner's exit
+and the 30-second S3 request timeout ceiling for a request already sent.
+DuckLake commits stay fenced by the native epoch that the seal advances.
+Control commits stay fenced by the project tombstone. Raw object writes and
+external sends have no storage-side token. Their bound assumes that the
+process is not paused for longer than the grace. A worker resumed after a
+longer pause could still finish one request; such an object is outside the
+cleanup inventory.
+
+A returned call whose acknowledgement failed is retried with the original
+ticket while the process lives. Tickets without an incarnation, from builds
+before this lease, never expire. Offline recovery must prove that their
+executors have stopped. There is no public operation to force a ticket clear.
 
 Once all actual-return tickets clear, the deletion worker can acquire a new
 native write fence, verify the seal cut, publish the final committed

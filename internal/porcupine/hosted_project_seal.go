@@ -14,6 +14,9 @@ import (
 // sealDeletedProject starts neither physical cleanup nor tenant finalization.
 // A recorded seal is evidence for the deletion recovery worker only.
 func (f *hostedLiveFlusher) sealDeletedProject(ctx context.Context, key lakeapi.ProjectWriteKey) (resultErr error) {
+	if err := reclaimExpiredHostedIncarnations(ctx, f.publisher.control); err != nil {
+		return err
+	}
 	var tenant string
 	var busy bool
 	err := f.publisher.control.QueryRowContext(ctx, `SELECT d.tenant_id,
@@ -35,6 +38,10 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 	defer func() {
 		resultErr = errors.Join(resultErr, f.finishProjectActivity(ctx, key.ProjectID, ticket))
 	}()
+	incarnation, err := f.incarnation.reserve(key.ProjectID, ticket)
+	if err != nil {
+		return err
+	}
 	var sealed bool
 	if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var recordedSource, recordedTenant string
@@ -51,11 +58,15 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 			return err
 		}
 		var registered string
-		err = tx.QueryRowContext(ctx, `INSERT INTO hosted_project_activity(project_id,activity_id)
-SELECT d.project_id,$3 FROM project_deletions d
+		var current bool
+		if err := tx.QueryRowContext(ctx, `SELECT `+hostedIncarnationCurrent("$1"), incarnation).Scan(&current); err != nil || !current {
+			return errors.Join(err, errHostedIncarnationLost)
+		}
+		err = tx.QueryRowContext(ctx, `INSERT INTO hosted_project_activity(project_id,activity_id,incarnation_id)
+SELECT d.project_id,$3,NULLIF($4,'') FROM project_deletions d
 WHERE d.project_id=$1 AND d.tenant_id=$2 AND d.completed=0
 AND NOT EXISTS(SELECT 1 FROM hosted_project_activity a WHERE a.project_id=d.project_id)
-RETURNING activity_id`, key.ProjectID, tenant, ticket).Scan(&registered)
+RETURNING activity_id`, key.ProjectID, tenant, ticket, incarnation).Scan(&registered)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errHostedProjectBusy
 		}

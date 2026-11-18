@@ -16,6 +16,7 @@ import (
 
 type hostedRuntime struct {
 	maintenance   *hostedMaintenance
+	incarnation   *hostedIncarnation
 	native        *lakeapi.DuckLakeStore
 	flusher       *hostedLiveFlusher
 	buffer        *bufferedAcceptance
@@ -79,7 +80,12 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err := s.initializeUsage(ctx, c.Usage); err != nil {
 		return nil, err
 	}
-	if err := s.initializeHostedQueries(h.native, registerHostedProjectActivityTx, finishHostedProjectActivity); err != nil {
+	h.incarnation, err = startHostedIncarnation(ctx, control, defaultHostedIncarnationTiming, exitOnHostedLeaseLoss)
+	if err != nil {
+		return nil, err
+	}
+	inc := h.incarnation
+	if err := s.initializeHostedQueries(h.native, inc.registerTx, finishHostedProjectActivity, inc.release); err != nil {
 		return nil, err
 	}
 	coordinator, err := lakeapi.NewPostgresProjectCoordinator(control, lakeapi.DefaultProjectCoordinatorConfig())
@@ -90,12 +96,13 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
+	h.flusher.incarnation = inc
 	s.imports = newHostedImportManager(s.eventRules, h.flusher)
 	s.hostedMutations = h.flusher
 	s.sealHostedProject = h.flusher.sealProject
 	endActivity := h.flusher.finishProjectActivity
 	if err := s.configureHostedPipelines(c.Pipelines, h.flusher, hostedPipelineExecution{
-		snapshotCut: h.exportSnapshotCut, deleteGate: hostedOutputBlocked, beginAttemptTx: registerHostedProjectActivityTx, endAttempt: endActivity,
+		snapshotCut: h.exportSnapshotCut, deleteGate: hostedOutputBlocked, beginAttemptTx: inc.registerTx, endAttempt: endActivity,
 	}); err != nil {
 		return nil, err
 	}
@@ -103,7 +110,7 @@ func openHostedProfile(c Config) (_ *Service, err error) {
 	if err := s.pipelines.Initialize(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.configureHostedExports(c.Exports, registerHostedProjectActivityTx, endActivity, h.exportSnapshotCut); err != nil {
+	if err := s.configureHostedExports(c.Exports, inc.registerTx, endActivity, h.exportSnapshotCut); err != nil {
 		return nil, err
 	}
 	buffer := defaultBufferConfig()
@@ -250,6 +257,10 @@ func (s *Service) closeHosted() error {
 	var lakeErr error
 	if s.lake != nil {
 		lakeErr = s.lake.Close()
+	}
+	// Every executor has returned once the native store closes.
+	if h.incarnation != nil {
+		h.incarnation.close()
 	}
 	var cleanupErr error
 	if h.scratch != "" {
