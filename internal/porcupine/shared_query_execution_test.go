@@ -38,6 +38,7 @@ func TestSharedQueryExecutionRetainsRenewalUntilNativeReturns(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	a, b := sharedNativeJourneyPair(t, nativeS3Fixture(t))
+	stopHostedUsageLoops(a)
 	tenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"Hung query tenant"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
 	if _, err := a.service.control.Exec(`UPDATE tenants SET hot_query_max_concurrent=1,hot_query_timeout_ms=1000 WHERE id=$1`, tenant); err != nil {
 		t.Fatal(err)

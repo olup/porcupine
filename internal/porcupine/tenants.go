@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
@@ -46,7 +47,7 @@ func scanTenant(row tenantScanner) (Tenant, error) {
 
 func validateTenantBudgets(b TenantBudgets) error {
 	if b.IngestionMonthlyEvents != nil && *b.IngestionMonthlyEvents < 0 || b.HotQueryMaxConcurrent < 1 || b.HotQueryMaxConcurrent > 64 || b.HotQueryTimeoutMS < 1 || b.HotQueryTimeoutMS > 60000 || b.HotQueryMaxRows < 1 || b.HotQueryMaxRows > 100000 || b.HotQueryMaxResultBytes < 256 || b.HotQueryMaxResultBytes > 64<<20 {
-		return apiError(400, "invalid tenant budgets")
+		return apierr.New(400, "invalid tenant budgets")
 	}
 	return nil
 }
@@ -54,7 +55,7 @@ func validateTenantBudgets(b TenantBudgets) error {
 func tenantName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" || len(name) > 200 {
-		return "", apiError(400, "tenant name must contain 1 to 200 UTF-8 bytes")
+		return "", apierr.New(400, "tenant name must contain 1 to 200 UTF-8 bytes")
 	}
 	return name, nil
 }
@@ -77,10 +78,10 @@ func (s *Service) loadTenant(ctx context.Context, id string) (Tenant, error) {
 	}
 	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+tenantColumns+` FROM tenants WHERE id=$1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Tenant{}, apiError(404, "tenant not found")
+		return Tenant{}, apierr.New(404, "tenant not found")
 	}
 	if err != nil {
-		return Tenant{}, apiError(503, "tenant storage unavailable")
+		return Tenant{}, apierr.New(503, "tenant storage unavailable")
 	}
 	return t, nil
 }
@@ -92,10 +93,10 @@ func (s *Service) projectTenant(ctx context.Context, project string) (Tenant, er
 	}
 	t, err := scanTenant(s.control.QueryRowContext(ctx, `SELECT `+strings.Join(columns, ",")+` FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=p.id)`, project))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Tenant{}, apiError(404, "project not found")
+		return Tenant{}, apierr.New(404, "project not found")
 	}
 	if err != nil {
-		return Tenant{}, apiError(503, "tenant storage unavailable")
+		return Tenant{}, apierr.New(503, "tenant storage unavailable")
 	}
 	return t, nil
 }
@@ -109,7 +110,7 @@ func tenantMonth(at time.Time) (start, end time.Time) {
 func tenantPeriod(raw string) (time.Time, error) {
 	at, err := time.Parse("2006-01", raw)
 	if err != nil || at.Format("2006-01") != raw {
-		return time.Time{}, apiError(400, "period must be a UTC calendar month in YYYY-MM format")
+		return time.Time{}, apierr.New(400, "period must be a UTC calendar month in YYYY-MM format")
 	}
 	return at, nil
 }
@@ -137,7 +138,7 @@ func (s *Service) insertTenant(ctx context.Context, name string, budgets TenantB
 	t := Tenant{ID: eventapi.NewID(), Name: name, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), IngestionAllowed: true, Budgets: budgets}
 	_, err = s.control.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes)
 	if err != nil {
-		return Tenant{}, apiError(503, "tenant creation unavailable")
+		return Tenant{}, apierr.New(503, "tenant creation unavailable")
 	}
 	return t, nil
 }

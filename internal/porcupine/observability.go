@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/observability"
 )
 
@@ -255,7 +256,7 @@ func (s *Service) observeAcceptance(ctx context.Context, result acceptance.Resul
 	durability := observability.Label{Name: "durability", Value: string(s.acceptance.Durability())}
 	outcome := "accepted"
 	if err != nil {
-		var rejected *managementError
+		var rejected *apierr.Error
 		var failure *acceptance.Failure
 		var budget *tenantIngestionError
 		switch {

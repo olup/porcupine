@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 type EventCatalogInput struct {
@@ -85,14 +87,14 @@ func NormalizeCatalogInput(input EventCatalogInput) (EventCatalogInput, error) {
 		input.PropertyLimit < 1 || input.PropertyLimit > 100 || len(input.PropertyPrefix) > 200 || len(input.PropertyCursor) > 8192 ||
 		(input.PropertyKind != "all" && input.PropertyKind != "custom" && input.PropertyKind != "reserved") ||
 		(input.Event == "" && (input.PropertyPrefix != "" || input.PropertyKind != "all" || input.PropertyCursor != "")) {
-		return input, apiError(400, "invalid event catalog parameters")
+		return input, apierr.New(400, "invalid event catalog parameters")
 	}
 	input.propertyAfter = nil
 	if input.PropertyCursor != "" {
 		var cursor catalogPropertyCursor
 		raw, err := base64.RawURLEncoding.DecodeString(input.PropertyCursor)
 		if err != nil || json.Unmarshal(raw, &cursor) != nil || len(cursor.After) > 200 || cursor.Project != input.ID || cursor.Event != input.Event || cursor.Prefix != input.PropertyPrefix || cursor.Kind != input.PropertyKind {
-			return input, analyticsError(400, "invalid_property_cursor", "Invalid property cursor for this catalog request", "Use next_property_cursor with the same project, event, property_prefix and property_kind. Omit it to start a new search.", "property_cursor")
+			return input, apierr.Detailed(400, "invalid_property_cursor", "Invalid property cursor for this catalog request", "Use next_property_cursor with the same project, event, property_prefix and property_kind. Omit it to start a new search.", "property_cursor")
 		}
 		input.propertyAfter = &cursor.After
 	}

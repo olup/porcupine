@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -22,7 +24,7 @@ import (
 type eventRules struct {
 	usage             *usage.Recorder
 	receiptGates      receiptProjectGates
-	admission         *contextMutex
+	admission         *syncx.ContextMutex
 	clock             func() time.Time
 	queueMax          int
 	queueMaxBytes     int64
@@ -141,7 +143,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 	}
 	if a.rules.prepareAcceptance != nil {
 		if err := a.rules.prepareAcceptance(ctx, batch.ProjectID); err != nil {
-			var managed *managementError
+			var managed *apierr.Error
 			if errors.As(err, &managed) && managed.GetStatus() >= 400 && managed.GetStatus() < 500 {
 				return nil, managed
 			}

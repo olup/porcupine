@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -116,9 +117,9 @@ func (s *ExportJobs) storedExportPage(ctx context.Context, project string, limit
 
 func exportLookupError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
-		return apiError(404, "export not found")
+		return apierr.New(404, "export not found")
 	}
-	return apiError(503, "export storage unavailable")
+	return apierr.New(503, "export storage unavailable")
 }
 
 func (s *ExportJobs) exportJobActorTx(ctx context.Context, tx *sql.Tx, job storedExport) (auth.Principal, error) {

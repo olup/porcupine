@@ -103,6 +103,7 @@ func TestSharedHostedCloseFlushesBehindStuckNativeQuery(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
 	a, b := sharedNativeJourneyPairWithBuffer(t, nativeS3Fixture(t), testBufferConfig())
+	stopHostedUsageLoops(a)
 	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Stuck query drain")
 	other, otherIngest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Second drained project")
 	hostedCleanupWrite(t, a.service, project, "warm")

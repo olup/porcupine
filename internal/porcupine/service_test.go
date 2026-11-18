@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -26,8 +27,8 @@ func TestBootstrapRequiresTokenAndCanRetry(t *testing.T) {
 		}()
 		select {
 		case err := <-result:
-			if err == nil {
-				t.Fatal("accepted invalid bootstrap token")
+			if !errors.Is(err, ErrBootstrapTokenRequired) || err.Error() != "PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first control initialization" {
+				t.Fatalf("invalid startup error: %v", err)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("bootstrap failure blocked")

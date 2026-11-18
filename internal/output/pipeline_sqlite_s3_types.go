@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 type S3PipelineSpec struct {
@@ -96,7 +98,7 @@ func (s *PipelineJobs) createS3PipelineState(ctx context.Context, tx *sql.Tx, id
 }
 func (s *PipelineJobs) ValidateS3Spec(ctx context.Context, project string, c S3PipelineSpec) (S3PipelineSpec, error) {
 	if s.lake == nil {
-		return c, apiError(503, "analytical storage is not configured")
+		return c, apierr.New(503, "analytical storage is not configured")
 	}
 	c, err := normalizeS3PipelineSpec(c)
 	if err != nil {

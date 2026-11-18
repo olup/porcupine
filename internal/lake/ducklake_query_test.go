@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 func TestDuckLakeQueryBindingsResultsAndCatalog(t *testing.T) {
@@ -161,7 +163,7 @@ func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
 		t.Run(tc.code, func(t *testing.T) {
 			_, queryErr := store.Query(context.Background(), "policy", tc.sql, tc.params, DefaultQueryExecutionLimits())
 			_, exportErr := store.ValidateExport(context.Background(), "policy", tc.sql, tc.params, false)
-			var queryFailure, exportFailure *managementError
+			var queryFailure, exportFailure *apierr.Error
 			if !errors.As(queryErr, &queryFailure) || !errors.As(exportErr, &exportFailure) {
 				t.Fatalf("missing transport policy error: query=%v export=%v", queryErr, exportErr)
 			}

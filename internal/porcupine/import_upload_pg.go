@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -75,7 +76,7 @@ func hostedImportError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var httpErr *managementError
+	var httpErr *apierr.Error
 	var budget *tenantIngestionError
 	switch {
 	case errors.As(err, &httpErr):
@@ -83,9 +84,9 @@ func hostedImportError(err error) error {
 	case errors.As(err, &budget):
 		return tenantIngestionProblem(err)
 	case errors.Is(err, lakeapi.ErrImportChunkConflict):
-		return apiError(409, "file progress changed; reload import status")
+		return apierr.New(409, "file progress changed; reload import status")
 	default:
-		return apiError(503, "import storage unavailable; retry the same request")
+		return apierr.New(503, "import storage unavailable; retry the same request")
 	}
 }
 

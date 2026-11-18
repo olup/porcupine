@@ -15,6 +15,7 @@ import (
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/nativequery"
 )
 
@@ -53,7 +54,7 @@ func (s *DuckLakeStore) ValidateExport(ctx context.Context, project, raw string,
 	}
 	bindings, err := duckLakeExportBindings(ctx, p, raw, parameters, window)
 	if err != nil {
-		return "", apiError(400, "unsupported DuckDB SQL or parameters")
+		return "", apierr.New(400, "unsupported DuckDB SQL or parameters")
 	}
 	canonical, _, err := nativequery.Prepare(ctx, p.DB, raw, bindings)
 	if err != nil {
@@ -223,7 +224,7 @@ func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, canonical string
 			}
 			if err != nil {
 				if len(args) > 0 {
-					return analyticsError(400, "unresolved_parameter_type", "Could not resolve the parameter-dependent result type", "Add explicit casts to bound parameters or result expressions so their types are known before execution.", "")
+					return apierr.Detailed(400, "unresolved_parameter_type", "Could not resolve the parameter-dependent result type", "Add explicit casts to bound parameters or result expressions so their types are known before execution.", "")
 				}
 				return err
 			}

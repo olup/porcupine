@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 )
@@ -40,10 +41,10 @@ func (s *Service) registerServiceKeys(api huma.API, op func(string, string, stri
 func (s *Service) managementCreateServiceKey(ctx context.Context, input *ServiceKeyCreateInput) (*AccessKeyCreateOutput, error) {
 	caller, body := principal(ctx), input.Body
 	if !caller.Admin() {
-		return nil, apiError(403, "instance administrator required")
+		return nil, apierr.New(403, "instance administrator required")
 	}
 	if body.Audience != "api" && body.Audience != "mcp" {
-		return nil, apiError(400, "invalid service key audience")
+		return nil, apierr.New(400, "invalid service key audience")
 	}
 	if err := s.validateCredentialGrant(ctx, caller, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
@@ -51,11 +52,11 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, apiError(503, "service key storage unavailable")
+		return nil, apierr.New(503, "service key storage unavailable")
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
-		return nil, apiError(503, "service key storage unavailable")
+		return nil, apierr.New(503, "service key storage unavailable")
 	}
 	if err := s.requireExternalCurrent(ctx, tx); err != nil {
 		return nil, err
@@ -65,17 +66,17 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	}
 	parent, err := loadOAuthClient(ctx, tx, input.ID)
 	if err != nil || parent.ID != input.ID {
-		return nil, apiError(404, "active service account not found")
+		return nil, apierr.New(404, "active service account not found")
 	}
 	if !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) {
-		return nil, apiError(400, "a service key must belong to a machine-only client")
+		return nil, apierr.New(400, "a service key must belong to a machine-only client")
 	}
 	if !parent.ContainsProjects(body.Projects) {
-		return nil, apiError(403, "key projects exceed service account grants")
+		return nil, apierr.New(403, "key projects exceed service account grants")
 	}
 	for _, permission := range body.Permissions {
 		if !parent.Can(permission) {
-			return nil, apiError(403, "key permissions exceed service account grants")
+			return nil, apierr.New(403, "key permissions exceed service account grants")
 		}
 	}
 	sourceID, err := delegatedSourceID(parent.Principal, "", body.Permissions, body.Projects)
@@ -85,29 +86,29 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 
 	secret, err := auth.RandomSecret(serviceKeyPrefix)
 	if err != nil {
-		return nil, apiError(503, "service key generation unavailable")
+		return nil, apierr.New(503, "service key generation unavailable")
 	}
 	permissions, _ := json.Marshal(body.Permissions)
 	projects, _ := json.Marshal(body.Projects)
 	id := eventapi.NewID()
 	owner, err := credentialTenantOwner(ctx, tx, body.Permissions, body.Projects)
 	if err != nil {
-		return nil, apiError(503, "service key ownership unavailable")
+		return nil, apierr.New(503, "service key ownership unavailable")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,source_id,created_at,owner_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 		id, body.Name, hash(secret), string(permissions), string(projects), sourceID, now(), owner); err != nil {
-		return nil, apiError(503, "service key storage unavailable")
+		return nil, apierr.New(503, "service key storage unavailable")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO service_api_keys(principal_id,client_id,audience) VALUES($1,$2,$3)`, id, parent.ID, body.Audience); err != nil {
-		return nil, apiError(503, "service key storage unavailable")
+		return nil, apierr.New(503, "service key storage unavailable")
 	}
 	if len(parent.TenantIDs) == 1 {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, id, parent.TenantIDs[0]); err != nil {
-			return nil, apiError(503, "service key ownership unavailable")
+			return nil, apierr.New(503, "service key ownership unavailable")
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, apiError(503, "service key storage unavailable")
+		return nil, apierr.New(503, "service key storage unavailable")
 	}
 	tenantID := ""
 	if len(parent.TenantIDs) == 1 {

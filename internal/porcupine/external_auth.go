@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -16,7 +17,7 @@ import (
 // Project claims narrow access; they never establish a project's tenant.
 func externalPrincipal(ctx context.Context, query oauthQueryer, grant *auth.ExternalGrant, now time.Time) (auth.Principal, error) {
 	if !grant.Valid(now) {
-		return auth.Principal{}, apiError(401, "external authorization expired")
+		return auth.Principal{}, apierr.New(401, "external authorization expired")
 	}
 	actor := grant.Principal()
 	if grant.Operator() {
@@ -56,7 +57,7 @@ AND NOT EXISTS(SELECT 1 FROM tenant_deletions d WHERE d.tenant_id=p.tenant_id)`,
 			return auth.Principal{}, auth.ErrUnavailable
 		}
 		if matched != len(actor.Projects) {
-			return auth.Principal{}, apiError(403, "signed project is outside the authorized tenant")
+			return auth.Principal{}, apierr.New(403, "signed project is outside the authorized tenant")
 		}
 	}
 	return actor, nil

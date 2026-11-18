@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -47,23 +48,23 @@ func projectRolePermissions(role string) ([]string, error) {
 	case "manager":
 		return slices.Clone(auth.ProjectPermissions()), nil
 	default:
-		return nil, apiError(400, "unknown project role")
+		return nil, apierr.New(400, "unknown project role")
 	}
 }
 
 func canonicalProjectPermissions(role string, permissions []string) ([]string, error) {
 	if role != "" && permissions != nil {
-		return nil, apiError(400, "supply a project role or permissions, not both")
+		return nil, apierr.New(400, "supply a project role or permissions, not both")
 	}
 	if permissions == nil {
 		return projectRolePermissions(role)
 	}
 	if len(permissions) == 0 || len(permissions) > 32 {
-		return nil, apiError(400, "expected 1 to 32 project permissions")
+		return nil, apierr.New(400, "expected 1 to 32 project permissions")
 	}
 	for _, p := range permissions {
 		if !slices.Contains(auth.ProjectPermissions(), p) {
-			return nil, apiError(400, "unknown or non-project permission")
+			return nil, apierr.New(400, "unknown or non-project permission")
 		}
 	}
 	return sortedGrants(permissions), nil
@@ -72,11 +73,11 @@ func canonicalProjectPermissions(role string, permissions []string) ([]string, e
 func canonicalMembership(ctx context.Context, query oauthQueryer, tenantID string, input TenantMembershipSpec) (TenantMembership, error) {
 	m := TenantMembership{TenantID: tenantID, Role: input.Role, ProjectScope: input.ProjectScope, Grants: []TenantProjectGrant{}}
 	if m.Role != "admin" && m.Role != "member" {
-		return m, apiError(400, "role must be admin or member")
+		return m, apierr.New(400, "role must be admin or member")
 	}
 	if m.Role == "admin" {
 		if input.ProjectScope != "" && input.ProjectScope != "all" || input.ProjectRole != "" || input.Permissions != nil || len(input.Grants) > 0 {
-			return m, apiError(400, "tenant administrators have fixed authority over all projects in their tenant")
+			return m, apierr.New(400, "tenant administrators have fixed authority over all projects in their tenant")
 		}
 		m.ProjectScope = "all"
 		m.Permissions = sortedGrants(auth.ProjectPermissions())
@@ -86,7 +87,7 @@ func canonicalMembership(ctx context.Context, query oauthQueryer, tenantID strin
 		m.ProjectScope = "selected"
 	}
 	if m.ProjectScope != "all" && m.ProjectScope != "selected" {
-		return m, apiError(400, "project_scope must be all or selected")
+		return m, apierr.New(400, "project_scope must be all or selected")
 	}
 	permissions, err := canonicalProjectPermissions(input.ProjectRole, input.Permissions)
 	if err != nil {
@@ -94,20 +95,20 @@ func canonicalMembership(ctx context.Context, query oauthQueryer, tenantID strin
 	}
 	m.Permissions = sortedGrants(permissions)
 	if len(input.Grants) > 64 {
-		return m, apiError(400, "at most 64 explicit project grants are supported")
+		return m, apierr.New(400, "at most 64 explicit project grants are supported")
 	}
 	seen := map[string]bool{}
 	for _, grant := range input.Grants {
 		if grant.ProjectID == "" || grant.ProjectID == "*" || seen[grant.ProjectID] {
-			return m, apiError(400, "project grants require distinct explicit project IDs")
+			return m, apierr.New(400, "project grants require distinct explicit project IDs")
 		}
 		seen[grant.ProjectID] = true
 		var owner string
 		if err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, grant.ProjectID).Scan(&owner); err != nil || owner != tenantID {
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return m, apiError(503, "project ownership unavailable")
+				return m, apierr.New(503, "project ownership unavailable")
 			}
-			return m, apiError(400, "project does not belong to this tenant")
+			return m, apierr.New(400, "project does not belong to this tenant")
 		}
 		if grant.Role == "" && grant.Permissions == nil {
 			permissions = slices.Clone(m.Permissions)

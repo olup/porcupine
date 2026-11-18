@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -107,7 +108,7 @@ func (s *Service) stageProjectDeletion(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	var one int
 	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE id=$1`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
-		return apiError(404, "project not found")
+		return apierr.New(404, "project not found")
 	} else if err != nil {
 		return err
 	}
@@ -128,14 +129,14 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 		return s.deleteHostedProject(ctx, id)
 	}
 	if err := s.deletionMu.Lock(ctx); err != nil {
-		return apiError(503, "project deletion interrupted; retry DELETE")
+		return apierr.New(503, "project deletion interrupted; retry DELETE")
 	}
 	defer s.deletionMu.Unlock()
 	// Cancel local operations before waiting for the SQLite connection. A request
 	// materializing a project anchor may itself be waiting for that connection.
 	finishActivity, err := s.activity.drain(ctx, id)
 	if err != nil {
-		return apiError(503, "project deletion is waiting for local work; retry DELETE")
+		return apierr.New(503, "project deletion is waiting for local work; retry DELETE")
 	}
 	defer finishActivity()
 	ctx = context.WithValue(ctx, projectCleanupContextKey{}, true)
@@ -148,7 +149,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	}
 	var staged bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)`, id).Scan(&staged); err != nil {
-		return apiError(503, "local deletion state unavailable")
+		return apierr.New(503, "local deletion state unavailable")
 	}
 	if !staged {
 		if err := s.ensureProjectLocal(ctx, id, auth.Principal{}); err != nil {
@@ -157,7 +158,7 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	}
 	ctx, release, err := s.projectionContext(ctx)
 	if err != nil {
-		return apiError(503, "project deletion unavailable; retry DELETE")
+		return apierr.New(503, "project deletion unavailable; retry DELETE")
 	}
 	defer release()
 	var completed bool
@@ -179,16 +180,16 @@ func (s *Service) deleteProject(ctx context.Context, id string) error {
 	}
 	if err == nil {
 		if err := s.completeControlProjectDeletion(ctx, id); err != nil {
-			return apiError(503, "project metadata cleanup incomplete; retry DELETE")
+			return apierr.New(503, "project metadata cleanup incomplete; retry DELETE")
 		}
 		return nil
 	}
-	var known *managementError
+	var known *apierr.Error
 	if errors.As(err, &known) {
 		return known
 	}
 	slog.Warn("project deletion incomplete", "project_id", id)
-	return apiError(503, "project deletion incomplete; retry DELETE with the same project ID")
+	return apierr.New(503, "project deletion incomplete; retry DELETE with the same project ID")
 }
 
 // Resume interrupted cleanup after restart, even if the calling agent is gone.

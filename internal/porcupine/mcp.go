@@ -17,6 +17,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -246,10 +247,10 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a auth.Principal, input mcpDocsInput) (*mcp.CallToolResult, mcpDocsOutput, error) {
 	output := mcpDocsOutput{Operations: []mcpOperationSummary{}, Projects: a.Projects}
 	if input.Offset < 0 || input.Limit < 0 || input.Limit > 20 || len(input.Query) > 200 || len(input.OperationID) > 200 {
-		return nil, output, apiError(400, "invalid catalog parameters: offset >= 0, limit 1..20, query and operation_id <= 200 bytes")
+		return nil, output, apierr.New(400, "invalid catalog parameters: offset >= 0, limit 1..20, query and operation_id <= 200 bytes")
 	}
 	if input.OperationID != "" && (input.Query != "" || input.Offset != 0 || input.Limit != 0) {
-		return nil, output, apiError(400, "use operation_id alone to fetch a contract")
+		return nil, output, apierr.New(400, "use operation_id alone to fetch a contract")
 	}
 	matches := []*huma.Operation{}
 	for _, op := range operations {
@@ -272,7 +273,7 @@ func mcpDocs(doc *huma.OpenAPI, operations map[string]*huma.Operation, a auth.Pr
 	sort.Slice(matches, func(i, j int) bool { return matches[i].OperationID < matches[j].OperationID })
 	if input.OperationID != "" {
 		if len(matches) == 0 {
-			return nil, output, apiError(400, "unknown or unavailable operation")
+			return nil, output, apierr.New(400, "unknown or unavailable operation")
 		}
 		// Huma prunes unreferenced component schemas when marshaling this copy.
 		selected := *doc
@@ -419,7 +420,7 @@ func observedMCPTool[In, Out any](s *Service, name string, call mcp.ToolHandlerF
 		status := http.StatusOK
 		if err != nil {
 			status = http.StatusInternalServerError
-			var managed *managementError
+			var managed *apierr.Error
 			if errors.As(err, &managed) {
 				status = managed.GetStatus()
 			}

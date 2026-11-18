@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -22,13 +23,13 @@ func (s *Service) authorizeHostedMutation(ctx context.Context, tx *sql.Tx, proje
 	a := principal(ctx)
 	permission := "events:" + operation
 	if !auth.Authorize(a, permission, project) {
-		return apiError(403, "credential cannot mutate this project")
+		return apierr.New(403, "credential cannot mutate this project")
 	}
 	if a.External == nil {
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM access_keys WHERE id=$1 AND revoked_at IS NULL FOR UPDATE`, a.ID).Scan(&locked); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return apiError(403, "credential is no longer authorized")
+				return apierr.New(403, "credential is no longer authorized")
 			}
 			return err
 		}
@@ -56,7 +57,7 @@ ORDER BY k.id FOR UPDATE`, a.ID)
 		return err
 	}
 	if !auth.Authorize(current, permission, project) || a.External != nil && !current.CanAccessTenant(tenant) {
-		return apiError(403, "credential is no longer authorized")
+		return apierr.New(403, "credential is no longer authorized")
 	}
 	return nil
 }
@@ -90,20 +91,20 @@ func hostedMutationError(err error) error {
 	case errors.As(err, &status):
 		return err
 	case errors.Is(err, sql.ErrNoRows), errors.Is(err, lakeapi.ErrEventNotFound):
-		return apiError(404, "event or mutation not found")
+		return apierr.New(404, "event or mutation not found")
 	case errors.Is(err, errHostedMutationConflict):
-		return apiError(409, "idempotency_key was used for a different request")
+		return apierr.New(409, "idempotency_key was used for a different request")
 	case errors.Is(err, errHostedMutationBusy):
-		return apiError(409, "a project mutation is already pending")
+		return apierr.New(409, "a project mutation is already pending")
 	default:
-		return apiError(503, "hosted mutation storage unavailable")
+		return apierr.New(503, "hosted mutation storage unavailable")
 	}
 }
 
 func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, uuid, operation, keyHash, requestHash string, expected uint64, snapshot *EventSnapshot, authority hostedMutationAuthority) (MutationResponse, error) {
 	var response MutationResponse
 	if authority == nil {
-		return response, apiError(503, "hosted mutation authority unavailable")
+		return response, apierr.New(503, "hosted mutation authority unavailable")
 	}
 	err := f.withHostedMutationProject(ctx, project, func(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, tenant string) error {
 		fence := session.Fence(scope.StreamID)
@@ -271,7 +272,7 @@ func (f *hostedLiveFlusher) currentHostedEvent(ctx context.Context, project, uui
 		if err == nil {
 			input, err := f.publisher.readHostedMutation(ctx, i)
 			if err != nil {
-				return apiError(503, "pending mutation body unavailable")
+				return apierr.New(503, "pending mutation body unavailable")
 			}
 			if input.Projection.UUID == uuid {
 				projection, pending = input.Projection, true
@@ -303,7 +304,7 @@ func (f *hostedLiveFlusher) hostedMutationStatus(ctx context.Context, project, i
 		}
 		input, err := f.publisher.readHostedMutation(ctx, i)
 		if err != nil {
-			return apiError(503, "mutation body unavailable")
+			return apierr.New(503, "mutation body unavailable")
 		}
 		response = i.response(input.Projection.UUID)
 		return nil

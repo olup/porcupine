@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/olup/porcupine/internal/porcupine"
 )
 
 func TestMetricsListenSettings(t *testing.T) {
@@ -49,8 +53,15 @@ func TestServerFailureReasonsOmitRawError(t *testing.T) {
 		reason string
 	}{
 		{fmt.Errorf("private address: %w", syscall.EADDRINUSE), "address_in_use"},
+		{fmt.Errorf("private address: %w", syscall.EADDRNOTAVAIL), "address_unavailable"},
 		{fmt.Errorf("private file: %w", syscall.EACCES), "permission_denied"},
-		{errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization"), "bootstrap_token_required"},
+		{fmt.Errorf("private file: %w", fs.ErrNotExist), "missing_file"},
+		{fmt.Errorf("private file: %w", syscall.ENOSPC), "disk_full"},
+		{fmt.Errorf("private operation: %w", context.DeadlineExceeded), "timeout"},
+		{fmt.Errorf("private configuration: %w", porcupine.ErrBootstrapTokenRequired), "bootstrap_token_required"},
+		{porcupine.ErrRestoreInProgress, "restore_incomplete"},
+		{fmt.Errorf("private restore metadata: %w", porcupine.ErrRestoreIncomplete), "restore_incomplete"},
+		{errors.New(porcupine.ErrRestoreIncomplete.Error()), "unclassified"},
 		{errors.New("private SQL and credentials"), "unclassified"},
 	} {
 		if reason := serverFailureReason(tt.err); reason != tt.reason {

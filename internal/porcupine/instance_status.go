@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/query"
 )
@@ -62,7 +63,7 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 	case s.statusSlots <- struct{}{}:
 		defer func() { <-s.statusSlots }()
 	default:
-		return nil, apiError(429, "an instance status check is already running")
+		return nil, apierr.New(429, "an instance status check is already running")
 	}
 
 	result := InstanceStatus{

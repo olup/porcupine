@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
@@ -80,7 +81,7 @@ func (s *PipelineJobs) retireHostedScheduledTx(ctx context.Context, tx *sql.Tx, 
 			break
 		}
 		if live {
-			err = apiError(409, "pipeline attempt is stopping; retry deletion")
+			err = apierr.New(409, "pipeline attempt is stopping; retry deletion")
 			break
 		}
 		pending = append(pending, w)

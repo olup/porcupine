@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/olup/porcupine/internal/apierr"
 )
 
 type checkpointPausedHTTPClient struct {
@@ -63,7 +64,7 @@ func assertCheckpointPins(t *testing.T, store *DuckLakeStore, ctx context.Contex
 	t.Helper()
 	deadline, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	var detail *managementError
+	var detail *apierr.Error
 	if err := store.DeleteProject(deadline, project); !errors.As(err, &detail) || detail.Code != "backup_in_progress" || detail.GetStatus() != 503 {
 		t.Fatalf("checkpoint did not return a retryable deletion error: %v", err)
 	}

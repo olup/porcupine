@@ -107,7 +107,7 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 			}
 		} else {
 			if len(bootstrapToken) < 16 {
-				return errors.New("PORCUPINE_BOOTSTRAP_TOKEN must contain at least 16 characters on first shared initialization")
+				return fmt.Errorf("%w on first shared initialization", ErrBootstrapTokenRequired)
 			}
 			id := eventapi.NewID()
 			if _, err := tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,'bootstrap admin',$2,'["instance:admin"]','["*"]',$3)`, id, hash(bootstrapToken), now()); err != nil {
