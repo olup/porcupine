@@ -229,6 +229,9 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	err = p.transaction(ctx, func(tx *sql.Tx) error {
 		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
 	})
+	if errors.Is(err, output.ErrPipelineDemandTooLarge) {
+		return staged, errors.Join(errHostedLiveBatchTooLarge, err)
+	}
 	if err != nil {
 		return staged, err
 	}
