@@ -131,9 +131,3 @@ func initializeSharedControl(ctx context.Context, db *sql.DB, bootstrapToken str
 	}
 	return tx.Commit()
 }
-
-func sharedColumnExists(ctx context.Context, query oauthQueryer, table, column string) (bool, error) {
-	var exists bool
-	err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND column_name=$2)`, table, column).Scan(&exists)
-	return exists, err
-}

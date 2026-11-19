@@ -63,9 +63,9 @@ Native resource settings are deployment controls:
 
 These ranges validate configuration; they are not safe combined sizing recommendations. Keep the total engine budgets below the host's available memory with room for other allocations.
 
-Maintenance leaves a two-second gap after each pass by default. It flushes small inlined writes and uses native size-filtered compaction. It runs concurrently with event projection; ordinary event writes remain serialized to preserve revisions and retry IDs. These short passes group small files toward an 8 MB target. A separate hourly cleanup cycle expires historical snapshots and reclaims obsolete files, including in cold project catalogs. See the [cleanup policy and controls](ducklake-cleanup.md) and [maintenance measurements](../design/ducklake-maintenance.md).
+Maintenance flushes small inlined writes and compacts files concurrently with serialized event projection. See the [compaction policy and measurements](../design/ducklake-maintenance-soak.md) and [history cleanup settings](ducklake-cleanup.md#deployment-policy).
 
-Use the deployment's `PORCUPINE_DUCKLAKE_DIR` for the managed native directory. The default image uses `/data/ducklake`; preserve it with SQLite. The default original-event queue is bounded by 100,000 events and 256 MiB of pending payloads. These are queue budgets, not total disk limits. Receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history require additional space.
+The default image puts managed analytical state under `/data/ducklake`. The `PORCUPINE_DUCKLAKE_DIR` setting selects that directory. Size the disk for [standalone queue limits](reliability.md#acceptance-and-queue-limits) plus receipts, SQLite overhead and WAL, snapshots, temporary work, and Parquet history.
 
 See [retention and deletion](../storage.md#retention-and-deletion), [receipt pruning](receipts.md#bounded-receipts), and [readiness and delivery checks](instance-status.md#verify-delivery-before-routing-traffic).
 
@@ -77,8 +77,8 @@ See the [query settings](configuration.md#interactive-query-ceilings) for deploy
 
 ## Optional destinations
 
-Configure the `export.s3`, `ducklake.s3`, and `backup.s3` destinations separately. A stable private pipeline key encrypts destination credentials. Mount secret files explicitly where the server can read them. [Server configuration](configuration.md)
+See the separate [S3 destination settings](configuration.md#configuration-sections) and [secret mounts](configuration.md#secrets-and-container-paths).
 
 ## Backups and upgrades
 
-Take a complete checkpoint and record the image digest and private configuration. Follow the [backup guide](../backup-and-restore.md) and the [upgrade procedure for your version](../hosting.md).
+Follow the [backup guide](../backup-and-restore.md) and the [upgrade procedure for your version](../hosting.md#upgrade).

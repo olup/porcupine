@@ -33,12 +33,14 @@ curl --fail-with-body "$PORCUPINE_URL/ingest/v1/events" \
 	--data-binary '{"type":"track","name":"article_published","message_id":"article-42-published","actor_id":"user-7","properties":{"article_id":"42","category":"engineering"}}'
 ```
 
-The response contains the event's durable `event_id`. Reuse `message_id` when retrying that original event. For the same project and logical source, a retry returns the same `event_id` with `duplicate: true`. Use a new message ID for a new event.
+Reuse `message_id` when retrying the original event. A standalone retry in the same project and logical source returns the same `event_id` with `duplicate: true`. Hosted receipts contain `message_id` and `uuid`. Use a new message ID for each new event.
 
 Native requests can contain one object or a batch of up to 1,000 objects, within a 1 MiB request limit. See the [native reference](reference/native-and-segment-ingestion.md) for pageviews, identify messages, batches, and logical sources.
 
 ## Check delivery and identity
 
-A successful ingestion response means SQLite has accepted the event durably. It becomes queryable after delivery to analytical storage. [Query your events](query-events.md) once `delivery.pending` reaches zero.
+For native capture, standalone returns `durability: "durable"` after SQLite commits. Hosted returns `durability: "buffered"` after admitting the event to bounded worker memory. A worker failure before the DuckLake commit can lose a buffered event. [Acknowledgment contract](reference/native-event-contract.md#acknowledgment-metadata)
+
+To check delivery on standalone, wait for `delivery.pending` to reach zero. On hosted, `delivery.pending_unknown` can be true across workers. [Query for the expected event](query-events.md) to confirm delivery.
 
 Choose the identity behavior your product needs. The recommended PostHog browser profile uses a daily cookieless pseudonym. The opt-in identified profile can link anonymous activity at login. See [users and sessions](data-and-identity.md) before interpreting visitor counts or retention across days.

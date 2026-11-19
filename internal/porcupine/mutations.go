@@ -82,7 +82,6 @@ type MutationResponse struct {
 }
 
 type MutationOutput struct{ Body MutationResponse }
-type EventMutationOutput = MutationOutput
 
 func parseExpectedRevision(raw string) (uint64, error) {
 	if raw == "" {
@@ -98,10 +97,6 @@ func parseExpectedRevision(raw string) (uint64, error) {
 		return 0, apierr.New(400, "expected_revision exceeds the supported range")
 	}
 	return revision, nil
-}
-
-func validateEventSnapshot(snapshot EventSnapshot) (EventSnapshot, error) {
-	return validateEventSnapshotActor(snapshot, false)
 }
 
 func validateEventSnapshotActor(snapshot EventSnapshot, allowEmpty bool) (EventSnapshot, error) {
@@ -430,13 +425,13 @@ func (s *Service) findMutation(ctx context.Context, project, field, value string
 	return response, requestHash, err
 }
 
-func (s *Service) getEventMutation(ctx context.Context, input *EventMutationInput) (*EventMutationOutput, error) {
+func (s *Service) getEventMutation(ctx context.Context, input *EventMutationInput) (*MutationOutput, error) {
 	if s.hostedMutations != nil {
 		response, err := s.hostedMutations.hostedMutationStatus(ctx, input.ID, input.MutationID)
 		if err != nil {
 			return nil, err
 		}
-		return &EventMutationOutput{Body: response}, nil
+		return &MutationOutput{Body: response}, nil
 	}
 	response, _, err := s.findMutation(ctx, input.ID, "mutation_id", input.MutationID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -445,5 +440,5 @@ func (s *Service) getEventMutation(ctx context.Context, input *EventMutationInpu
 	if err != nil {
 		return nil, apierr.New(503, "mutation storage unavailable")
 	}
-	return &EventMutationOutput{Body: response}, nil
+	return &MutationOutput{Body: response}, nil
 }

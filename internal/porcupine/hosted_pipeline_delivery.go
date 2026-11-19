@@ -18,7 +18,6 @@ type hostedPipelineDelivery struct {
 	destination    func(context.Context, *sql.Tx, string, string, string, string, string) (output.WebhookPipelineSecret, error)
 	limits         output.HostedWebhookLimits
 	client         *http.Client
-	reconcile      func(context.Context, *lakeapi.ProjectWriteSession, lakeapi.HostedProjectScope, lakeapi.ProjectWriteFence, string) error
 	deleteGate     func(context.Context, *sql.Tx, lakeapi.HostedProjectScope, string) (bool, error)
 	beginAttemptTx func(context.Context, *sql.Tx, string, string) error
 	endAttempt     func(context.Context, string, string) error
@@ -38,7 +37,6 @@ func newHostedPipelineDelivery(
 		destination:    destination,
 		limits:         limits,
 		client:         client,
-		reconcile:      flusher.reconcileHostedWrites,
 		deleteGate:     deleteGate,
 		beginAttemptTx: beginAttemptTx,
 		endAttempt:     endAttempt,
@@ -139,7 +137,7 @@ func (w *hostedPipelineDelivery) freeze(ctx context.Context, session *lakeapi.Pr
 	if err := f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 		return out, false, false, err
 	}
-	if err := w.reconcile(ctx, session, scope, fence, c.TenantID); err != nil {
+	if err := f.reconcileHostedWrites(ctx, session, scope, fence, c.TenantID); err != nil {
 		return out, false, false, err
 	}
 	cut, _, err := p.checkpoint(ctx, scope, c.TenantID)

@@ -67,13 +67,13 @@ func testPipelineAssemblyRecomposition(t *testing.T, frozen bool) {
 		}
 		return nil
 	})
-	r := PipelineAssemblyResult{ID: "assembled", Body: PipelineRef{a.Prefix + "body", "v1", strings.Repeat("b", 64), 100}, Manifest: PipelineRef{a.Prefix + "manifest", "v2", strings.Repeat("c", 64), 100}, Count: 2, Next: []int{1, 0}}
+	r := PipelineAssemblyResult{ID: "assembled", Body: PipelineRef{a.Prefix + "body", "v1", strings.Repeat("b", 64), 100}, Manifest: PipelineRef{a.Prefix + "manifest", "v2", strings.Repeat("c", 64), 100}, Count: 3}
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := p.CompleteAssemblyTx(ctx, tx, a, r); !errors.Is(err, ErrPipelineConflict) {
-		t.Fatal("invalid cursor accepted", err)
+		t.Fatal("count exceeds frozen eligible membership", err)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func testPipelineAssemblyRecomposition(t *testing.T, frozen bool) {
 	if n := pipelineCount(t, db, `SELECT sum(next_member) FROM pipeline_effect_jobs`); n != 0 {
 		t.Fatal(n)
 	}
-	r.Next[1] = 1
+	r.Count = 2
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteAssemblyTx(ctx, tx, a, r) })
 	if n := pipelineCount(t, db, `SELECT sum(next_member) FROM pipeline_effect_jobs`); n != 2 {
 		t.Fatal(n)
@@ -121,7 +121,7 @@ func testPipelineAssemblyRecomposition(t *testing.T, frozen bool) {
 		Inputs: []PipelineAssemblyInput{{Fragment: candidates[0], Eligible: []int{1}}}}
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveAssemblyTx(ctx, tx, recompose) })
 	replacement := PipelineAssemblyResult{ID: "replacement", Body: PipelineRef{recompose.Prefix + "body", "v3", strings.Repeat("d", 64), 100},
-		Manifest: PipelineRef{recompose.Prefix + "manifest", "v4", strings.Repeat("e", 64), 100}, Count: 1, Next: []int{2}}
+		Manifest: PipelineRef{recompose.Prefix + "manifest", "v4", strings.Repeat("e", 64), 100}, Count: 1}
 	if !frozen {
 		replacement.ID = r.ID
 	}

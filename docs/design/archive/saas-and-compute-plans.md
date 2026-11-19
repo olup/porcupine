@@ -90,7 +90,7 @@ database writes. Payment integration follows that contract validation.
   project and available through API, CLI, MCP, and existing discovery responses.
   Record the author and last modification time. Documentation remains optional
   and never gates ingestion. See the deferred automation ideas below.
-- Expand historical adapter coverage from real-world export variants while preserving the common acceptance rules.
+- Expand historical adapters using real-world exports. Use the native event contract as the common format and preserve the shared acceptance rules.
 - Define a separate native historical person-snapshot encoding against the [event contract](../../reference/native-event-contract.md). Whether additional official SDK connectors or a plugin framework are useful remains an open question.
 - Scheduled SQL results delivered to webhooks, with optional alert conditions, cooldowns and repeat suppression. Reuse durable runs and destination credentials.
 - Operational metrics and measured hosting profiles. Add an external queue or multiple writers only when a deployment need justifies the shared state and failure-model changes.
@@ -203,6 +203,9 @@ revocation, cancellation, retries, crash recovery, and concurrent edits or delet
 Existing asynchronous exports provide a starting point, not proof of separate
 compute support. Leave the implementation and deployment choices for later work.
 
+The later roadmap deferred general asynchronous queries and separate analytical
+compute until both could use a common task and cancellation contract.
+
 ### Limits and open decisions
 
 Adding workers distributes new traffic without moving existing Parquet files.
@@ -247,8 +250,10 @@ budgets and protection against noisy tenants.
 
 Automatic documentation from SDK payloads, competing-description consolidation,
 codebase-driven documentation refresh, and proactive documentation reminders remain
-on hold. The editable event and property documentation above is separate planned work.
+on hold. See [catalog descriptions](../../reference/event-discovery.md#document-an-event-or-property) for the current editor workflow.
 
 Saved parameterized SQL queries and report collections remain on hold. Agents write SQL and use tested [DuckDB recipes](../../reference/duckdb-recipes.md). A server-side graph renderer is not a current priority; the client agent can generate graphs where its tools support it.
 
 General aliasing, merging identified users, unlinking, native result caching and finite native receipt history remain deferred. PostgreSQL-backed remote DuckLake catalogs are part of unreleased shared-deployment work, not v0.14.0. The [compatibility matrix](../../../compat/matrix.json) records the exact supported SDK behaviors. Feature flags and replay are outside the current product scope.
+
+The later roadmap also kept logs and tracing outside the product analytics scope.

@@ -1,18 +1,18 @@
 # Hosted runtime
 
-Use the [hosted setup](../design/hosted-architecture.md#configuration) for worker configuration, startup, and the recovery floor. The same server serves HTTP, CLI, MCP, and supported ingestion SDKs. Workers share PostgreSQL for control and DuckLake metadata and S3 for analytical data.
+Use the [hosted setup](../design/hosted-architecture.md#configuration) for worker configuration and startup. The same server serves HTTP, CLI, MCP, and supported ingestion SDKs. See [storage by profile](../storage.md#deployment-profiles).
 
 ## Live ingestion and delivery
 
-Hosted live responses confirm bounded memory admission. The worker flushes to DuckLake and publishes durable effects. A worker crash or incomplete drain can lose acknowledged events that have not committed. Keep stable producer IDs on retries. Durable import and mutation operations have separate, shared checkpoints. [Acknowledgment contract](native-event-contract.md#acknowledgment-metadata)
+Keep stable producer IDs when retrying live events. See the [live acknowledgment contract](native-event-contract.md#acknowledgment-metadata) and [durable import and mutation checkpoints](../design/hosted-architecture.md#imports-and-mutations).
 
 A hosted query can report `delivery.pending_unknown: true` because its worker cannot inspect another worker's memory buffer. Verify expected events in SQL. Do not interpret a zero pending count as a flushed deployment.
 
-The analytical catalog can contain column statistics derived from event values. Protect it with the same access and retention controls as the analytical archive. Hosted workers write event files to S3. DuckLake data inlining is disabled for the hosted PostgreSQL catalog.
+Apply the same access and retention controls to the catalog and analytical archive. Catalog statistics can contain values derived from events. [Hosted storage architecture](../design/hosted-architecture.md)
 
 ## Hosted budgets {#shared-budgets}
 
-Hosted live admission reads a short-lived snapshot of policy and usage. Admission can get ahead of that snapshot while workers buffer events. Live acceptance checks the budget before buffering. After the native commit, effect publication posts retained rows to the shared `tenant_usage` ledger. Interactive query reservations use shared PostgreSQL and local worker capacity independently. [Tenant limits](tenants.md#interactive-query-limits)
+Hosted live admission checks a short-lived snapshot of policy and usage before buffering. Workers can admit events ahead of the published usage ledger. [Hosted usage accounting](../design/hosted-architecture.md#usage) · [Interactive query limits](tenants.md#interactive-query-limits)
 
 ## Native timeouts and worker supervision
 
@@ -32,6 +32,6 @@ The default local deployment retains its ordinary native query cancellation and 
 
 ## Recovery and deletion
 
-The native standalone bundle and offline restore procedure apply to SQLite deployments. Recover hosted by coordinating PostgreSQL recovery points and versioned S3 objects. Restore in isolation and verify access, committed events, and durable jobs before reconnecting clients. [Hosted recovery requirements](../design/hosted-architecture.md#recovery-and-retention)
+Recover PostgreSQL and versioned S3 data together in isolation. Verify access, committed events, and durable jobs before reconnecting clients. [Hosted recovery requirements](../design/hosted-architecture.md#recovery-and-retention)
 
-Project and tenant deletion fence new work before physical reclamation. Reclamation waits for the configured grace, the verified operator restore floor, and reconciliation of outstanding work. Backups and noncurrent S3 versions have their own retention policies. [Hosted operator requirements](../design/hosted-architecture.md#recovery-and-retention)
+Project and tenant deletion fence new work before reclamation. See [hosted deletion](../design/hosted-architecture.md#deletion) and the [recovery floor and cleanup grace](../design/hosted-architecture.md#recovery-and-retention).
