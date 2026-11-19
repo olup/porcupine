@@ -25,25 +25,7 @@ func TestDuckLakeS3SharedPostgresNativeProofHistoryPerformance(t *testing.T) {
 	if os.Getenv("PORCUPINE_TEST_NATIVE_PROOF_BENCH") != "1" {
 		t.Skip("enable the opt-in comparative performance run")
 	}
-	fixture := nativeS3Fixture(t)
-	target, err := url.Parse(fixture.storage.Endpoint)
-	if err != nil || target.Scheme != "http" {
-		t.Fatalf("expected the loopback HTTP Silo fixture: %v", err)
-	}
-	var requests, getBytes atomic.Int64
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ModifyResponse = func(response *http.Response) error {
-		if response.Request.Method == http.MethodGet && response.StatusCode < 300 && response.ContentLength > 0 {
-			getBytes.Add(response.ContentLength)
-		}
-		return nil
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		proxy.ServeHTTP(w, r)
-	}))
-	t.Cleanup(server.Close)
-	fixture.storage.Endpoint = server.URL
+	fixture, requests, getBytes := countedNativeProofS3(t)
 	dsn := sharedPostgresDSN(t)
 	control, coordinator := nativeFenceControl(t)
 	if _, err := control.ExecContext(t.Context(), `CREATE SEQUENCE IF NOT EXISTS shared_event_id_sequence AS BIGINT INCREMENT BY 1024 MINVALUE 1 CACHE 1 NO CYCLE`); err != nil {
@@ -141,7 +123,38 @@ func TestDuckLakeS3SharedPostgresNativeProofHistoryPerformance(t *testing.T) {
 	}
 }
 
+func countedNativeProofS3(t *testing.T) (duckLakeS3Fixture, *atomic.Int64, *atomic.Int64) {
+	t.Helper()
+	fixture := nativeS3Fixture(t)
+	target, err := url.Parse(fixture.storage.Endpoint)
+	if err != nil || target.Scheme != "http" {
+		t.Fatalf("expected the loopback HTTP Silo fixture: %v", err)
+	}
+	var requests, getBytes atomic.Int64
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.Request.Method == http.MethodGet && response.StatusCode < 300 && response.ContentLength > 0 {
+			getBytes.Add(response.ContentLength)
+		}
+		return nil
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	fixture.storage.Endpoint = server.URL
+	return fixture, &requests, &getBytes
+}
+
 func seedNativeProofHistory(t *testing.T, p *ProjectLake, scope HostedProjectScope, fence ProjectWriteFence, tenant string, at time.Time, count, perFile int64) {
+	t.Helper()
+	seedNativeProofHistoryWithIDs(t, p, scope, fence, tenant, at, count, perFile, func(sequence int64) string {
+		return fmt.Sprintf("retained-%08d", sequence)
+	})
+}
+
+func seedNativeProofHistoryWithIDs(t *testing.T, p *ProjectLake, scope HostedProjectScope, fence ProjectWriteFence, tenant string, at time.Time, count, perFile int64, operationID func(int64) string) {
 	t.Helper()
 	ctx := t.Context()
 	day := at.UTC().Format("2006-01-02T00:00:00Z")
@@ -154,7 +167,7 @@ func seedNativeProofHistory(t *testing.T, p *ProjectLake, scope HostedProjectSco
 		}
 		writer := csv.NewWriter(file)
 		for sequence := start; sequence < start+perFile && sequence <= count; sequence++ {
-			operation := fmt.Sprintf("retained-%08d", sequence)
+			operation := operationID(sequence)
 			evidence := NativeCommitEvidence{
 				Kind: NativeCommitLive, Scope: scope, TenantID: tenant, Sequence: sequence, OperationID: operation,
 				InputFingerprint: nativeDigest([]byte(operation)), FenceEpoch: fence.Epoch,
