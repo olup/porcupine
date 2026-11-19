@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/olup/porcupine/internal/event"
 )
