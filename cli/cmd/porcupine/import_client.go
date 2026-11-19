@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +20,7 @@ import (
 
 type importClient struct {
 	origin string
+	apiKey string
 	client *http.Client
 }
 type importHTTPError struct {
@@ -53,7 +53,7 @@ func (i *importClient) call(ctx context.Context, id string, parameters map[strin
 	}
 	var last error
 	for attempt := 0; attempt < 8; attempt++ {
-		token := os.Getenv("PORCUPINE_API_KEY")
+		token := i.apiKey
 		var err error
 		if token == "" {
 			token, err = accessToken(ctx, i.origin)

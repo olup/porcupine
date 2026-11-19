@@ -14,6 +14,8 @@ import (
 
 var version = "dev"
 
+const cloudOrigin = "https://api.getporcupine.eu"
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -26,7 +28,7 @@ func main() {
 func newApp() *cli.Command {
 	app := &cli.Command{
 		Name: "porcupine", Version: version, Usage: "Query and manage a Porcupine instance",
-		Flags: []cli.Flag{&cli.StringFlag{Name: "url", Usage: "Instance origin", Sources: cli.EnvVars("PORCUPINE_URL"), Value: "http://127.0.0.1:8080"}},
+		Flags: []cli.Flag{&cli.StringFlag{Name: "url", Usage: "Porcupine API origin", Sources: cli.EnvVars("PORCUPINE_URL"), Value: cloudOrigin}},
 		Commands: []*cli.Command{
 			restoreCommand(),
 			importCommand(),
@@ -75,5 +77,17 @@ func parseInstanceOrigin(raw string) (string, error) {
 	if u.Scheme != "https" && !(u.Scheme == "http" && local) {
 		return "", fmt.Errorf("--url requires HTTPS or an HTTP loopback address")
 	}
-	return u.Scheme + "://" + strings.ToLower(u.Host), nil
+	origin := u.Scheme + "://" + strings.ToLower(u.Host)
+	if origin == cloudOrigin+":443" {
+		return cloudOrigin, nil
+	}
+	return origin, nil
+}
+
+func configuredAPIKey(c *cli.Command) (string, error) {
+	key := os.Getenv("PORCUPINE_API_KEY")
+	if key != "" && !c.Root().IsSet("url") {
+		return "", fmt.Errorf("pass --url or set PORCUPINE_URL to the destination origin when using PORCUPINE_API_KEY")
+	}
+	return key, nil
 }

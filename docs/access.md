@@ -20,7 +20,7 @@ Porcupine has three levels of access:
 | Tenant administrator | That team's projects, members, and scoped service accounts |
 | Member | The selected projects and permissions granted to them |
 
-A fresh installation creates the tenant `default`. The operator can keep it for one team or create another tenant, then invite its first administrator:
+A fresh installation creates the tenant `default`. The operator can keep it for one team or create another tenant. Set `PORCUPINE_URL` to your instance origin before signing in and inviting its first administrator:
 
 ```sh
 porcupine login --admin
