@@ -70,7 +70,7 @@ func (s *Service) holdQuery(ctx context.Context, project string) (context.Contex
 			entered <- admission{ctx: native, limits: limits}
 			<-resume
 			return nil
-		}}, project, "", nil)
+		}}, project, "", nil, nil)
 	}()
 	select {
 	case started := <-entered:

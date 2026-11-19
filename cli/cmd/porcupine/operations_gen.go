@@ -550,6 +550,7 @@ var operations = []operation{
 		BodyFields: []string{
 			"parameters (object) Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes.",
 			"sql (string, required) One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden.",
+			"time_range (object) Restrict every events reference to this event occurrence time range. Omit for all time.",
 		},
 	},
 	{

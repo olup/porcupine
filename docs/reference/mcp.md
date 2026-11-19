@@ -56,7 +56,7 @@ Add `event` to list that event's sampled property keys and types instead. `prope
 {"name":"porcupine_schema","arguments":{"event":"signup","property_kind":"custom"}}
 ```
 
-`porcupine_query` runs one SELECT with bound `$name` parameters and returns the `query-events` status and body:
+`porcupine_query` runs one SELECT with bound `$name` parameters and returns the `query-events` status and body. Add `time_range` with inclusive `from` and exclusive `to` timestamps in RFC3339 to restrict event occurrence time. Omit it for all time.
 
 ```json
 {"name":"porcupine_query","arguments":{"sql":"SELECT count(*) AS total FROM events WHERE event = $event","parameters":{"event":"signup"}}}

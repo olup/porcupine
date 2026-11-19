@@ -134,7 +134,7 @@ func TestUsageQueryAdmissionPreservesTimeoutAndMeterFailure(t *testing.T) {
 			_, _, err := s.queries.SQL(t.Context(), queryReadHook{read: func(context.Context, lakeapi.QueryExecutionLimits) error {
 				t.Fatal("failed usage admission entered native code")
 				return nil
-			}}, id, "", nil)
+			}}, id, "", nil, nil)
 			if queryStatus(err) != want {
 				t.Fatalf("usage admission status=%d err=%v, want %d", queryStatus(err), err, want)
 			}

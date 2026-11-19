@@ -22,7 +22,8 @@ This example counts one event by UTC day. Save it as `query.json` and replace th
 ```json
 {
 	"sql": "SELECT CAST(event_time AS DATE) AS day, count(*) AS total FROM events WHERE event = $event GROUP BY day ORDER BY day",
-	"parameters": {"event": "signup_completed"}
+	"parameters": {"event": "signup_completed"},
+	"time_range": {"from": "2026-11-01T00:00:00Z", "to": "2026-11-08T00:00:00Z"}
 }
 ```
 
@@ -30,11 +31,13 @@ This example counts one event by UTC day. Save it as `query.json` and replace th
 porcupine query-events --id "$PROJECT_ID" --body @query.json
 ```
 
+Adjust the dates for your analysis or omit `time_range` for all time.
+
 For HTTP or MCP examples, see the [analytics API](reference/analytics.md#sql-request-and-result). Rows appear in `result.data`. If you just sent an event, verify it in SQL after delivery. See [query consistency and errors](reference/analytics.md#delivery-consistency-and-errors), [event discovery](reference/event-discovery.md), and [SQL recipes](reference/duckdb-recipes.md).
 
 ## Export a result
 
-Copy the query body to `export.json` and add an `idempotency_key`. Reuse that key for a retry of the same export. Set `format` to `csv` if you want CSV.
+Copy `sql` and `parameters` to `export.json` and add an `idempotency_key`. To limit the export to a date range, add the occurrence-time conditions to its SQL. Reuse that key for a retry of the same export. Set `format` to `csv` if you want CSV.
 
 ```sh
 porcupine create-event-export --id "$PROJECT_ID" --body @export.json

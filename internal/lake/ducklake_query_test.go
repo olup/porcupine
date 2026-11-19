@@ -179,3 +179,65 @@ func TestDuckLakeQueryAndExportSharePolicyErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestDuckLakeQueryTimeRange(t *testing.T) {
+	t.Parallel()
+	store := openLakeStorageTest(t, t.TempDir(), 2)
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).Add(123 * time.Nanosecond)
+	end := start.Add(time.Hour)
+	var events []EventProjection
+	for i, event := range []struct {
+		project, uuid string
+		timestamp     time.Time
+	}{
+		{"ranged", "before", start.Add(-time.Nanosecond)},
+		{"ranged", "from", start},
+		{"ranged", "inside", end.Add(-time.Nanosecond)},
+		{"ranged", "to", end},
+		{"ranged", "after", end.Add(time.Nanosecond)},
+		{"other", "foreign", start},
+	} {
+		e := lakeStorageProjection(t, event.project, event.uuid, int64(i+1))
+		e.Timestamp = event.timestamp.Format(time.RFC3339Nano)
+		events = append(events, e)
+	}
+	if err := store.Apply(t.Context(), events); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultQueryExecutionLimits()
+	limits.TimeRange = &QueryTimeRange{From: start, To: end}
+	for _, tc := range []struct {
+		name, sql, expected string
+		params              map[string]string
+	}{
+		{name: "inclusive from and exclusive to", sql: "SELECT list(uuid ORDER BY id) AS result FROM events", expected: `["from","inside"]`},
+		{name: "join and nested CTE", sql: `WITH first_pass AS (SELECT id FROM events)
+			SELECT count(*) AS result FROM first_pass
+			CROSS JOIN "EvEnTs" e
+			CROSS JOIN (SELECT uuid FROM events WHERE uuid != $excluded) nested`,
+			params: map[string]string{"excluded": "inside"}, expected: `"4"`},
+		{name: "union", sql: `SELECT count(*) AS result FROM (SELECT id FROM events UNION ALL SELECT id FROM events)`, expected: `"4"`},
+		{name: "scalar subquery", sql: `SELECT (SELECT count(*) FROM events) AS result`, expected: `"2"`},
+		{name: "no events reference", sql: `SELECT 42 AS result`, expected: `42`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := store.Query(t.Context(), "ranged", tc.sql, tc.params, limits)
+			if err != nil || result.Rows != 1 || string(result.Data[0]["result"]) != tc.expected {
+				t.Fatalf("expected %s, got %+v (%v)", tc.expected, result, err)
+			}
+		})
+	}
+	ordered, err := store.Query(t.Context(), "ranged", `WITH cte AS (SELECT uuid, id FROM events)
+		SELECT uuid AS "Event name", id AS "Event number" FROM cte ORDER BY id DESC LIMIT 2`, nil, limits)
+	if err != nil || ordered.Rows != 2 ||
+		ordered.Meta[0].Name != "Event name" || ordered.Meta[1].Name != "Event number" ||
+		string(ordered.Data[0]["Event name"]) != `"inside"` || string(ordered.Data[0]["Event number"]) != `"3"` ||
+		string(ordered.Data[1]["Event name"]) != `"from"` || string(ordered.Data[1]["Event number"]) != `"2"` {
+		t.Fatalf("ranged query changed ordering or projected columns: %+v (%v)", ordered, err)
+	}
+	result, err := store.Query(t.Context(), "ranged", "SELECT count(*) AS result FROM events", nil, DefaultQueryExecutionLimits())
+	if err != nil || result.Rows != 1 || string(result.Data[0]["result"]) != `"5"` {
+		t.Fatalf("all-time query returned %+v (%v)", result, err)
+	}
+}

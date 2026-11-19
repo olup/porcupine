@@ -37,13 +37,17 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		}
 		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
+	prefix := ""
+	if limits.TimeRange != nil {
+		prefix = eventTimeRangeCTE(*limits.TimeRange)
+	}
 	start := time.Now()
 	conn, err := p.DB.Conn(ctx)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
 	defer conn.Close()
-	columns, types, err := duckLakeResultColumns(ctx, conn, canonical, args)
+	columns, types, err := duckLakeResultColumns(ctx, conn, prefix, canonical, args)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
@@ -67,7 +71,7 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	if bytes > limits.MaxResultBytes {
 		return AnalyticsResult{}, apierr.Detailed(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 	}
-	rows, err := conn.QueryContext(ctx, "SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
+	rows, err := conn.QueryContext(ctx, prefix+"SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
@@ -117,6 +121,36 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	result.Rows = uint64(len(result.Data))
 	result.Statistics.Elapsed = time.Since(start).Seconds()
 	return result, nil
+}
+
+// The SQL policy reserves the unqualified events name. This statement-local
+// CTE supplies that relation to every user query node without changing the
+// project view or the connection. Keep it inline so scans can push filters down.
+func eventTimeRangeCTE(window QueryTimeRange) string {
+	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE " +
+		eventTimeBound(window.From, true) + " AND " + eventTimeBound(window.To, false) +
+		") "
+}
+
+func eventTimeBound(bound time.Time, inclusive bool) string {
+	microseconds := bound.UnixMicro()
+	instant := "make_timestamptz(" + strconv.FormatInt(microseconds, 10) + ")"
+	if bound.Nanosecond()%1000 == 0 {
+		if inclusive {
+			return "event_time >= " + instant
+		}
+		return "event_time < " + instant
+	}
+
+	// TIMESTAMPTZ stores microseconds. For rows in the endpoint microsecond,
+	// compare the original UTC timestamp's fractional seconds at full precision.
+	fraction := "rpad(rtrim(substr(timestamp, 21), 'Z'), 9, '0')"
+	nanoseconds := LakeLiteral(bound.Format(".000000000")[1:])
+	if inclusive {
+		return "event_time >= " + instant + " AND (event_time > " + instant + " OR " + fraction + " >= " + nanoseconds + ")"
+	}
+	next := "make_timestamptz(" + strconv.FormatInt(microseconds+1, 10) + ")"
+	return "event_time < " + next + " AND (event_time < " + instant + " OR " + fraction + " < " + nanoseconds + ")"
 }
 
 func duckLakeValidationError(ctx context.Context, err error) error {
