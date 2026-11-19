@@ -83,7 +83,7 @@ porcupine get-client-ingestion-key --id PROJECT_ID
 porcupine ensure-client-ingestion-key --id PROJECT_ID
 ```
 
-A tenant administrator can list and revoke the tenant's owned keys. To replace a browser key, [revoke it and provision another](projects.md#get-a-browser-ingestion-key). Use a [team service account](service-keys.md) for private analytical or backend access.
+A tenant administrator can list and revoke the tenant's owned keys. To replace a browser key, [revoke it and provision another](projects.md#replace-a-browser-ingestion-key). Use a [team service account](service-keys.md) for private analytical or backend access.
 
 Invite a reader to that project:
 
