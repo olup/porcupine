@@ -105,18 +105,25 @@ func scanNativeCommitProof(row nativeProofScanner, scope HostedProjectScope) (Na
 	return e, ValidateNativeCommitEvidence(e)
 }
 func readNativeCommitProof(ctx context.Context, tx *sql.Tx, scope HostedProjectScope, operationID string) (NativeCommitEvidence, bool, error) {
-	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM lake.native_commit_proofs WHERE operation_id=?`, operationID).Scan(&count); err != nil {
+	rows, err := tx.QueryContext(ctx, "SELECT "+nativeProofColumns+" FROM lake.native_commit_proofs WHERE operation_id=? LIMIT 2", operationID)
+	if err != nil {
 		return NativeCommitEvidence{}, false, err
 	}
-	if count == 0 {
-		return NativeCommitEvidence{}, false, nil
+	defer rows.Close()
+	if !rows.Next() {
+		return NativeCommitEvidence{}, false, rows.Err()
 	}
-	if count != 1 {
+	e, err := scanNativeCommitProof(rows, scope)
+	if err != nil {
+		return NativeCommitEvidence{}, false, err
+	}
+	if rows.Next() {
 		return NativeCommitEvidence{}, false, errors.New("native operation proof is not unique")
 	}
-	e, err := scanNativeCommitProof(tx.QueryRowContext(ctx, `SELECT `+nativeProofColumns+` FROM lake.native_commit_proofs WHERE operation_id=?`, operationID), scope)
-	return e, err == nil, err
+	if err := rows.Err(); err != nil {
+		return NativeCommitEvidence{}, false, err
+	}
+	return e, true, nil
 }
 
 type NativeEvidencePage struct {
@@ -150,8 +157,11 @@ func (s *DuckLakeStore) PendingNativeEffects(ctx context.Context, scope HostedPr
 	if after > page.NativeHighWater || page.AcknowledgedThrough < 0 || page.AcknowledgedThrough > page.NativeHighWater {
 		return NativeEvidencePage{}, ErrNativeEvidenceGap
 	}
-	if err := validateNativeEffectHistory(ctx, tx, page.NativeHighWater); err != nil {
+	if err := p.validateNativeEffectHistory(ctx, tx, page.NativeHighWater); err != nil {
 		return NativeEvidencePage{}, err
+	}
+	if after == page.NativeHighWater {
+		return page, nil
 	}
 	rows, err := tx.QueryContext(ctx, "SELECT "+nativeProofColumns+" FROM lake.native_commit_proofs WHERE effect_seq>? ORDER BY effect_seq LIMIT ?", after, limit)
 	if err != nil {

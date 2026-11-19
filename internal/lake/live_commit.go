@@ -214,7 +214,7 @@ func (p *ProjectLake) beginHostedIngestionWrite(ctx context.Context, tx *sql.Tx,
 		}
 		return 0, err
 	}
-	if err := validateNativeEffectHistory(ctx, tx, previous); err != nil {
+	if err := p.validateNativeEffectHistory(ctx, tx, previous); err != nil {
 		return 0, err
 	}
 	if previous == math.MaxInt64 {

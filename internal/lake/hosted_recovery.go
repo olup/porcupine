@@ -118,7 +118,7 @@ WHERE id=1 AND source_id=? AND project_id=? AND stream_id=? AND state IN ('open'
 		if result.FinalSequence != high || result.AcknowledgedThrough < 0 || result.AcknowledgedThrough > high {
 			return ErrNativeEvidenceGap
 		}
-		if err := validateNativeEffectHistory(ctx, tx, high); err != nil {
+		if err := auditNativeEffectHistory(ctx, tx, high); err != nil {
 			return err
 		}
 		if err := checkNativeProjectNotDeleted(ctx, tx); err != nil {
@@ -164,7 +164,7 @@ func (s *DuckLakeStore) AcknowledgeNativeEffects(ctx context.Context, fence Proj
 		if through > high || ack < 0 || ack > high {
 			return ErrNativeEvidenceGap
 		}
-		if err := validateNativeEffectHistory(ctx, tx, high); err != nil {
+		if err := p.validateNativeEffectHistory(ctx, tx, high); err != nil {
 			return err
 		}
 		if err := nativeUpdateExactlyOne(ctx, tx, `UPDATE lake.hosted_write_guard SET generation=generation+1,ack_effect_seq=greatest(ack_effect_seq,?) WHERE id=1 AND fence_epoch=? AND fence_nonce=?`, through, fence.Epoch, fence.AcquisitionID); err != nil {
@@ -175,19 +175,6 @@ func (s *DuckLakeStore) AcknowledgeNativeEffects(ctx context.Context, fence Proj
 		}
 		return tx.Commit()
 	})
-}
-
-// There is deliberately no pruning floor yet. Until a retained floor and restore
-// horizon are proven, every native sequence must still have exactly one proof.
-func validateNativeEffectHistory(ctx context.Context, tx *sql.Tx, high int64) error {
-	var count, unique, first, last int64
-	if err := tx.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT effect_seq),coalesce(min(effect_seq),0),coalesce(max(effect_seq),0) FROM lake.native_commit_proofs`).Scan(&count, &unique, &first, &last); err != nil {
-		return err
-	}
-	if high < 0 || count != high || unique != high || last != high || (high > 0 && first != 1) || (high == 0 && first != 0) {
-		return ErrNativeEvidenceGap
-	}
-	return nil
 }
 
 var ErrHostedNativeGuardRequired = errors.New("hosted native operation requires the common fenced lifecycle and durable outcome protocol")
