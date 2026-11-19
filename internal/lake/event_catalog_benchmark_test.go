@@ -125,6 +125,10 @@ func withCatalogBenchmarkReader(t *testing.T, config DuckLakeConfig, key Project
 		t.Fatal(err)
 	}
 	defer release()
+	// The old wide sort exceeded the runtime spill cap at 10M events.
+	if _, err := p.DB.ExecContext(t.Context(), "SET max_temp_directory_size='4GiB'"); err != nil {
+		t.Fatal(err)
+	}
 	run(reader, p)
 }
 
