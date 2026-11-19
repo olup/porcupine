@@ -32,9 +32,34 @@ Reading the active public key requires `management:read` for the project.
 porcupine get-client-ingestion-key --id PROJECT_ID
 ```
 
-If an older mixed project has no retrievable browser key, the owning tenant's administrator or an instance operator can run `porcupine ensure-client-ingestion-key --id PROJECT_ID`. This creates a browser key once and returns the same active key on retry. Previously issued keys continue working. A `server_only` project cannot provision a browser key.
+The owning tenant's administrator or an instance operator can run
+`porcupine ensure-client-ingestion-key --id PROJECT_ID` on a `mixed` project.
+The command returns the existing active browser key and creates one only when
+there is none. Previously issued hash-only keys continue working until revoked
+separately.
 
-Browser keys can send events to their own project. To revoke one, find the `client_ingestion` key for that project with `porcupine list-access-keys`, then run `porcupine revoke-access-key --id KEY_ID`. Run `ensure-client-ingestion-key` to issue a replacement and update the browser configuration.
+Anyone with the public key can submit events to its project. Porcupine applies
+no rate limit per public key. Unwanted events can exhaust a tenant's configured
+[monthly ingestion allowance](tenants.md#monthly-ingestion-allowance), which is
+shared by all its projects. By default, capture accepts requests from any
+browser origin. The
+[browser origin allowlist](configuration.md#browser-ingestion) applies to
+requests that include an `Origin` header.
+
+## Replace a browser ingestion key
+
+To replace the active browser key, sign in as the owning tenant's administrator
+or an instance operator.
+
+1. Run `porcupine list-access-keys`. Find the key for the project with kind
+   `client_ingestion` and a null `revoked_at` field.
+2. Run `porcupine revoke-access-key --id KEY_ID` with the key ID from the list.
+3. Run `porcupine ensure-client-ingestion-key --id PROJECT_ID` to get a new key.
+4. Update and redeploy the browser configuration with the new key.
+
+Clients using the revoked key cannot submit new events until they load the new
+configuration. Replacing the key leaves recorded usage intact, and the
+replacement key is public too.
 
 ## Rename a project
 
