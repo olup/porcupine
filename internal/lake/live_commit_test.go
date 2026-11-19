@@ -110,7 +110,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	ordinary.Event.ReceivedAt = "2026-11-17T14:00:01+02:00"
 	identify := newLiveInput(t, key.ProjectID, "$identify", identifyID, "person", `{"$anon_distinct_id":"browser","$set":{"plan":"first"}}`)
 	set := newLiveInput(t, key.ProjectID, "$set", setID, "browser", `{"$set":{"plan":"new"}}`)
-	batch := LiveCommitBatch{ID: "first-batch", TenantID: "tenant-a", Scope: scope, Inputs: []LiveCommitInput{ordinary, ordinary, identify, set}}
+	batch := LiveCommitBatch{ID: event.NewID(), TenantID: "tenant-a", Scope: scope, Inputs: []LiveCommitInput{ordinary, ordinary, identify, set}}
 	stager := &liveProofStager{objects: a.Remote, attempt: fence.AcquisitionID}
 	result := commitLiveFixture(t, a, owner, batch, stager)
 	committed, ok := result.(CommittedLiveBatch)
@@ -196,7 +196,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed.Identity = &command
-	second := LiveCommitBatch{ID: "second-batch", TenantID: batch.TenantID, Scope: scope, Inputs: []LiveCommitInput{changed, newLiveInput(t, key.ProjectID, "page_viewed", "deleted-uuid", "browser", `{}`), newLiveInput(t, key.ProjectID, "page_viewed", event.NewID(), "person", `{}`)}}
+	second := LiveCommitBatch{ID: "live-01adcf5d-8600-7000-8000-000000000001", TenantID: batch.TenantID, Scope: scope, Inputs: []LiveCommitInput{changed, newLiveInput(t, key.ProjectID, "page_viewed", "deleted-uuid", "browser", `{}`), newLiveInput(t, key.ProjectID, "page_viewed", event.NewID(), "person", `{}`)}}
 	secondIDs, err := successor.ReserveEventIDs(ctx, scope.StreamID, second.ID, len(second.Inputs))
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +229,12 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 		t.Fatal(secondResult)
 	}
 	assertIdentity(`{"plan":"new"}`)
+	// The engine without the new batch in its write cache must recover the
+	// original prefixed proof even with a legacy proof in the same table.
+	otherReader := &liveProofStager{objects: a.Remote, attempt: next.AcquisitionID}
+	if got, ok := commitLiveFixture(t, a, successor, second, otherReader).(CommittedLiveBatch); !ok || got.Fresh || !reflect.DeepEqual(got.Evidence, secondProof.Evidence) || len(otherReader.selected) != 0 {
+		t.Fatal("replay changed the prefixed proof", got, secondProof)
+	}
 	duplicate := batch
 	duplicate.ID = "duplicate-only"
 	if _, ok := commitLiveFixture(t, b, successor, duplicate, recovered).(DuplicateLiveBatch); !ok {
