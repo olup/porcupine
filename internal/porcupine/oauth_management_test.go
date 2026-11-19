@@ -141,7 +141,6 @@ func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
 	a, _ := project(t, s)
-	b, _ := project(t, s)
 	admin := oauthManagementAdmin(t, s)
 	enableOAuthManagementTest(t, s)
 	manager := oauthManagementActor("manager", []string{"management:write", "events:read"}, []string{a})
@@ -150,11 +149,8 @@ func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
 		input  *OAuthClientCreateInput
 		status int
 	}{
-		{manager, oauthClientInput("elevated", []string{"events:write"}, []string{a}), 403},
-		{manager, oauthClientInput("admin", []string{"instance:admin"}, []string{"*"}), 403},
-		{manager, oauthClientInput("outside", []string{"events:read"}, []string{b}), 403},
-		{manager, oauthClientInput("wildcard", []string{"events:read"}, []string{"*"}), 403},
-		{manager, oauthClientInput("unknown", []string{"unknown"}, []string{a}), 400},
+		{manager, oauthClientInput("in scope", []string{"events:read"}, []string{a}), 403},
+		{admin, oauthClientInput("unknown", []string{"unknown"}, []string{a}), 400},
 		{admin, oauthClientInput("unknown project", []string{"events:read"}, []string{"missing"}), 400},
 		{admin, oauthClientInput("scoped admin", []string{"instance:admin"}, []string{a}), 400},
 		{admin, oauthClientInput(" ", []string{"events:read"}, []string{a}), 400},
@@ -162,9 +158,6 @@ func TestOAuthClientGrantChecksAndAtomicCreation(t *testing.T) {
 		if _, err := s.managementCreateOAuthClient(test.ctx, test.input); queryStatus(err) != test.status {
 			t.Errorf("grant status=%d, want=%d", queryStatus(err), test.status)
 		}
-	}
-	if _, err := s.managementCreateOAuthClient(manager, oauthClientInput("valid", []string{"events:read"}, []string{a})); err != nil {
-		t.Fatal("manager could not create subordinate client", err)
 	}
 	var before, after int
 	if err := s.control.QueryRow(`SELECT count(*) FROM access_keys`).Scan(&before); err != nil {
@@ -253,9 +246,10 @@ func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
 	_, manager := key(t, s, []string{"management:write", "events:read"}, []string{a})
 	input, _ := json.Marshal(map[string]any{"name": "OAuth HTTP reader", "permissions": []string{"events:read"}, "projects": []string{a}})
 	request(t, s, "POST", "/api/v1/oauth-clients", metadataReader, string(input), 403)
+	request(t, s, "POST", "/api/v1/oauth-clients", manager, string(input), 403)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/v1/oauth-clients", strings.NewReader(string(input)))
-	r.Header.Set("Authorization", "Bearer "+manager)
+	r.Header.Set("Authorization", "Bearer "+adminToken)
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 201 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("client creation failed or exposed a cacheable secret", w.Code)

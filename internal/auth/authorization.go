@@ -22,10 +22,6 @@ var projectPermissionNames = []string{"management:read", "management:write", "ev
 
 var validPermissions = append([]string{"instance:admin", "tenant:admin"}, projectPermissionNames...)
 
-func (a Principal) CanProvisionCredentials() bool {
-	return a.Admin() || len(a.TenantAdmins) > 0 && slices.Contains(a.Permissions, TenantAdminScope) || (!a.Interactive && !a.ServiceKey)
-}
-
 func (a Principal) CanAdminTenant(tenantID string) bool {
 	return a.Admin() || tenantID != "" && slices.Contains(a.Permissions, TenantAdminScope) && slices.Contains(a.TenantAdmins, tenantID)
 }

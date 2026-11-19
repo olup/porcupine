@@ -92,7 +92,7 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 	}
 }
 
-func TestCredentialSourceGrantAndDelegationBoundaries(t *testing.T) {
+func TestCredentialSourceGrantAndProvisioningBoundaries(t *testing.T) {
 	t.Parallel()
 	s, _ := oauthProtocolService(t)
 	projectID, _ := project(t, s)
@@ -108,18 +108,9 @@ func TestCredentialSourceGrantAndDelegationBoundaries(t *testing.T) {
 		request(t, s, "POST", endpoint, adminToken, sourceCredentialBody("invalid", "bad/source", []string{"events:write"}, []string{projectID}), 422)
 		request(t, s, "POST", endpoint, adminToken, sourceCredentialBody("reserved", "posthog", []string{"events:write"}, []string{projectID}), 400)
 	}
-	parent := request(t, s, "POST", "/api/v1/access-keys", adminToken, sourceCredentialBody("bound manager", "producer", []string{"management:write", "events:write", "events:read"}, []string{projectID}), 201)
-	parentToken := parent["token"].(string)
+	manager := request(t, s, "POST", "/api/v1/access-keys", adminToken, sourceCredentialBody("bound manager", "producer", []string{"management:write", "events:write", "events:read"}, []string{projectID}), 201)["token"].(string)
 	for _, endpoint := range []string{"/api/v1/access-keys", "/api/v1/oauth-clients"} {
-		request(t, s, "POST", endpoint, parentToken, sourceCredentialBody("cannot rebind", "other-producer", []string{"events:write"}, []string{projectID}), 403)
-		request(t, s, "POST", endpoint, parentToken, sourceCredentialBody("cannot cross project", "producer", []string{"events:write"}, []string{other}), 403)
-		inherited := request(t, s, "POST", endpoint, parentToken, sourceCredentialBody("inherits source", "", []string{"events:write"}, []string{projectID}), 201)
-		if inherited["source_id"] != "producer" {
-			t.Fatal("delegation escaped source binding", inherited)
-		}
-		readOnly := request(t, s, "POST", endpoint, parentToken, sourceCredentialBody("read only", "", []string{"events:read"}, []string{projectID}), 201)
-		if readOnly["source_id"] != nil {
-			t.Fatal("read-only credential received ingestion binding", readOnly)
-		}
+		request(t, s, "POST", endpoint, manager, sourceCredentialBody("same source", "producer", []string{"events:write"}, []string{projectID}), 403)
+		request(t, s, "POST", endpoint, manager, sourceCredentialBody("read only", "", []string{"events:read"}, []string{projectID}), 403)
 	}
 }

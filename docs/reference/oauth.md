@@ -26,7 +26,7 @@ In OAuth mode, exchange the bootstrap secret before calling management APIs. Its
 
 | Operation ID | Endpoint | Authority |
 | --- | --- | --- |
-| `create-oauth-client` | `POST /api/v1/oauth-clients` | `management:write`, with every requested permission and project held by the caller |
+| `create-oauth-client` | `POST /api/v1/oauth-clients` | `instance:admin` |
 | `list-oauth-clients` | `GET /api/v1/oauth-clients` | `management:read`, restricted to complete project scope |
 | `revoke-oauth-client` | `DELETE /api/v1/oauth-clients/{id}` | `instance:admin` |
 
@@ -40,7 +40,7 @@ Creation accepts this body through HTTP or `porcupine_call`:
 }
 ```
 
-The `201` response contains `client_id`, one-time `client_secret`, `name`, `permissions`, `projects`, and `created_at`. Save the secret privately. SQLite stores a separate secret hash; the client secret does not become a legacy Bearer key or ingestion key. Names contain 1 through 200 bytes and cannot be blank. Project IDs must exist, with `*` reserved for instance scope. `instance:admin` requires `*` scope. Delegation cannot exceed the calling token's effective grants.
+The `201` response contains `client_id`, one-time `client_secret`, `name`, `permissions`, `projects`, and `created_at`. Save the secret privately. SQLite stores a separate secret hash; the client secret does not become a legacy Bearer key or ingestion key. Names contain 1 through 200 bytes and cannot be blank. Project IDs must exist, with `*` reserved for instance scope. `instance:admin` requires `*` scope. Tenant administrators use the [team service-account operations](service-keys.md) to provision credentials for their teams.
 
 Listing returns `enabled` and `oauth_clients`. Items contain client ID, name, permissions, projects, creation time, and nullable revocation time. They contain no secret or hash. A client spanning projects A and B is omitted from a caller restricted to A. The bootstrap alias is not a registered client and does not appear in this list.
 

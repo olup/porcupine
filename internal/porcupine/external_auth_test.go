@@ -142,6 +142,12 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	}
 	admin := f.token(t, "admin-a", a, "tenant:admin management:read management:write events:read events:write pipelines:write", s.resources.apiResource)
 	request(t, s, "POST", "/api/v1/projects", admin, externalBody(t, map[string]any{"tenant_id": b, "name": "wrong tenant"}), 403)
+	projectWriter := f.token(t, "project-manager", a, "management:write events:write", s.resources.apiResource, idA)
+	ingestionGrant := externalBody(t, map[string]any{"name": "ingestion key", "permissions": []string{"events:write"}, "projects": []string{idA}})
+	request(t, s, "POST", "/api/v1/access-keys", projectWriter, ingestionGrant, 403)
+	request(t, s, "POST", "/api/v1/oauth-clients", projectWriter, ingestionGrant, 403)
+	request(t, s, "POST", "/api/v1/oauth-clients", admin, ingestionGrant, 403)
+	request(t, s, "POST", "/api/v1/access-keys", admin, ingestionGrant, 201)
 	client := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts", admin, externalBody(t, map[string]any{"name": "Team", "permissions": []string{"events:read", "events:write", "pipelines:write"}, "projects": []string{idA}}), 201)
 	if client["client_secret"] != nil {
 		t.Fatal("unusable builtin OAuth secret exposed in external mode")

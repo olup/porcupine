@@ -58,9 +58,14 @@ func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
 	request(t, s, "POST", "/api/v1/projects", manager, `{"name":"cannot mint ingestion"}`, 403)
 	request(t, s, "POST", "/api/v1/access-keys", manager, `{"name":"bad","permissions":["events:write"],"projects":["`+a+`"]}`, 403)
 	request(t, s, "POST", "/api/v1/access-keys", adminToken, `{"name":"bad","permissions":["unknown"],"projects":["*"]}`, 400)
-	_, scoped := key(t, s, []string{"management:write", "events:read"}, []string{a})
+	scopedID, scoped := key(t, s, []string{"management:write", "events:read"}, []string{a})
+	request(t, s, "PATCH", "/api/v1/projects/"+a, scoped, `{"name":"renamed"}`, 200)
 	request(t, s, "POST", "/api/v1/access-keys", scoped, `{"name":"bad","permissions":["events:read"],"projects":["*"]}`, 403)
-	request(t, s, "POST", "/api/v1/access-keys", scoped, `{"name":"reader","permissions":["events:read"],"projects":["`+a+`"]}`, 201)
+	reader := `{"name":"reader","permissions":["events:read"],"projects":["` + a + `"]}`
+	request(t, s, "POST", "/api/v1/access-keys", scoped, reader, 403)
+	request(t, s, "DELETE", "/api/v1/access-keys/"+scopedID, adminToken, "", 204)
+	request(t, s, "POST", "/api/v1/access-keys", scoped, reader, 401)
+	request(t, s, "POST", "/api/v1/access-keys", adminToken, reader, 201)
 	var bootstrapID string
 	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(adminToken)).Scan(&bootstrapID); err != nil {
 		t.Fatal(err)

@@ -139,8 +139,9 @@ OAuth client creation accepts this body:
 The response contains `client_id`, one-time `client_secret`, `name`,
 `permissions`, `projects`, and `created_at`. The secret is for token exchange,
 not direct API authorization. Names contain 1 to 200 UTF-8 bytes and cannot be whitespace only.
-Creating independent access keys or OAuth clients also requires an instance administrator or an eligible machine credential. A project-scoped human session or static service key with `management:write` can rename its project but cannot issue independent credentials. Permissions and projects must each contain at least one entry. Project IDs
-must exist unless the scope is `*`.
+`create-oauth-client` requires `instance:admin`. Instance administrators can also use `create-access-key`. A tenant administrator with `management:write` and `events:write` can use `create-access-key` to issue an ingestion key for exactly one project in their own tenant. Use [team service accounts](service-keys.md) for private team access.
+
+Project credentials with `management:write` can still rename their project. Credential creation through either operation returns `403` for callers without the required administrative authority. Permissions and projects must each contain at least one entry. Project IDs must exist unless the scope is `*`.
 
 OAuth client listing returns `{"enabled":true,"oauth_clients":[...]}` without
 secrets or hashes. Items contain `client_id`, name, grants, creation time, and

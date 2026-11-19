@@ -259,13 +259,18 @@ func TestTenantServiceAccountCreatorDoesNotOwnItsLifetime(t *testing.T) {
 	}
 }
 
-func TestTenantServiceProducerSourceAllowsReadOnlyChild(t *testing.T) {
+func TestTenantServiceProducerSourceInheritedOnlyByWriters(t *testing.T) {
 	t.Parallel()
 	f, admin, tenant, _, project, _ := tenantServiceFixture(t)
 	base := "/api/v1/tenants/" + tenant + "/service-accounts"
 	spec := TenantServiceAccountSpec{Name: "backend", SourceID: "backend", Permissions: []string{"events:write", "events:read"}, Projects: []string{project}}
 	var account OAuthClientCreated
 	f.call(t, "POST", base, admin, spec, 201, &account)
+	var writer AccessKeyCreated
+	f.call(t, "POST", base+"/"+account.ClientID+"/api-keys", admin, ServiceKeySpec{Name: "writer", Audience: "api", Permissions: []string{"events:write"}, Projects: []string{project}}, 201, &writer)
+	if writer.SourceID != spec.SourceID || writer.TenantID != tenant {
+		t.Fatal("write key must inherit the service account's producer and tenant")
+	}
 	var key AccessKeyCreated
 	f.call(t, "POST", base+"/"+account.ClientID+"/api-keys", admin, ServiceKeySpec{Name: "reader", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{project}}, 201, &key)
 	if key.SourceID != "" || key.TenantID != tenant || account.TenantID != tenant {

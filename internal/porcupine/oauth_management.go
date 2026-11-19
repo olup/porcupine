@@ -122,11 +122,11 @@ type OAuthClientDeleteInput struct {
 func (s *Service) registerOAuthClients(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
 	s.registerInteractiveOAuthManagement(api, op)
 	base := "/api/v1/oauth-clients"
-	createSummary := "Create a scoped machine OAuth client and return its secret once"
+	createSummary := "Create a scoped OAuth client as an instance administrator and return its secret once"
 	if s.externalAuthEnabled() {
-		createSummary = "Create a native machine account; issue static API or MCP keys separately, without local OAuth token exchange"
+		createSummary = "Create a native machine account as an instance administrator. Issue static API or MCP keys separately, without local OAuth token exchange."
 	}
-	huma.Register(api, op("create-oauth-client", "POST", base, createSummary, auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateOAuthClient)
+	huma.Register(api, op("create-oauth-client", "POST", base, createSummary, auth.OperationAccess{Permission: "instance:admin"}, 201), s.managementCreateOAuthClient)
 	huma.Register(api, op("list-oauth-clients", "GET", base, "List in-scope OAuth client metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListOAuthClients)
 	huma.Register(api, op("revoke-oauth-client", "DELETE", base+"/{id}", "Revoke an OAuth principal and its issued tokens; the last administrator is protected", auth.OperationAccess{Permission: "instance:admin"}, 204), s.managementRevokeOAuthClient)
 }
@@ -139,11 +139,8 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 		return nil, apierr.New(503, "OAuth client credentials are not configured")
 	}
 	a, body := principal(ctx), input.Body
-	if !a.Admin() && len(a.TenantIDs) > 0 {
-		return nil, apierr.New(403, "use tenant service-account operations for team credentials")
-	}
-	if !a.CanProvisionCredentials() {
-		return nil, apierr.New(403, "this credential cannot create independent clients")
+	if !a.Admin() {
+		return nil, apierr.New(403, "instance administrator required")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
@@ -157,14 +154,14 @@ func (s *Service) managementCreateOAuthClient(ctx context.Context, input *OAuthC
 	if err != nil {
 		return nil, apierr.New(400, "invalid OAuth client registration")
 	}
-	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth == nil || s.oauth.config.Email == nil || !a.Admin() || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
+	if slices.Contains(body.Permissions, "tenant:admin") && (!slices.Contains(grants, "authorization_code") || slices.Contains(grants, "client_credentials") || s.oauth == nil || s.oauth.config.Email == nil || !slices.Equal(body.Permissions, []string{"tenant:admin"}) || !slices.Equal(body.Projects, []string{"*"})) {
 		return nil, apierr.New(400, "tenant administration requires a dedicated interactive email client")
 	}
 	if slices.Contains(grants, "authorization_code") {
 		if sourceID != "" {
 			return nil, apierr.New(400, "interactive clients cannot have a producer source")
 		}
-		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || !a.Admin() || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
+		if slices.Contains(body.Permissions, "instance:admin") && (s.oauth.config.Email == nil || len(body.Permissions) != 1 || !slices.Equal(body.Projects, []string{"*"}) || slices.Contains(grants, "client_credentials")) {
 			return nil, apierr.New(400, "administrator login requires a dedicated interactive email client with only instance:admin across all projects")
 		}
 	}
