@@ -67,7 +67,14 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 		return nil, err
 	}
 	release := func() { _ = tx.Rollback(); stop() }
-	if _, err := lockActiveHostedProject(work, tx, project); err != nil {
+	if _, err = lockActiveHostedProject(work, tx, project); err == nil {
+		var quarantined bool
+		err = tx.QueryRowContext(work, `SELECT EXISTS(SELECT 1 FROM hosted_recovery_pending WHERE project_id=$1 AND quarantine_code IS NOT NULL)`, project).Scan(&quarantined)
+		if err == nil && quarantined {
+			err = acceptance.ErrProjectQuarantined
+		}
+	}
+	if err != nil {
 		release()
 		return nil, err
 	}
@@ -87,6 +94,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		return err
 	}
 	defer session.Release()
+	var quarantined bool
 	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
@@ -94,7 +102,8 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		}
 		fence := session.Fence(scope.StreamID)
 		var tenant string
-		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, b.ProjectID).Scan(&tenant); e != nil {
+		if e = f.publisher.control.QueryRowContext(ctx, `SELECT p.tenant_id,r.quarantine_code IS NOT NULL
+FROM projects p LEFT JOIN hosted_recovery_pending r ON r.project_id=p.id WHERE p.id=$1`, b.ProjectID).Scan(&tenant, &quarantined); e != nil {
 			return e
 		}
 		batch := lakeapi.LiveCommitBatch{ID: b.ID, TenantID: tenant, Scope: scope}
@@ -122,35 +131,31 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		}
 		return f.commitLiveBatch(ctx, session, fence, batch, b.CanSplit())
 	})
+	if code, _ := hostedFlushError(err); code != "" || err == nil && quarantined {
+		err = errors.Join(err, session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `INSERT INTO hosted_recovery_pending(project_id,quarantine_code) VALUES($1,NULLIF($2,''))
+ON CONFLICT(project_id) DO UPDATE SET quarantine_code=excluded.quarantine_code,generation=hosted_recovery_pending.generation+1
+WHERE hosted_recovery_pending.quarantine_code IS DISTINCT FROM excluded.quarantine_code`, b.ProjectID, code)
+			return e
+		}))
+	}
 	if err != nil && session.Context().Err() != nil {
 		return errors.Join(err, context.Cause(session.Context()))
 	}
 	return err
 }
 
-// Activity settlement can join a known error with a transient failure. Only a
-// single cause from the known deterministic checks can advance quarantine.
-func hostedDeterministicFlushError(err error) string {
-	for err != nil {
-		switch err {
-		case lakeapi.ErrNativeEvidenceGap:
-			return "native_evidence_gap"
-		case errHostedEvidenceBinding:
-			return "pipeline_evidence_conflict"
-		case lakeapi.ErrInvalidLiveProjection:
-			return "invalid_live_projection"
-		}
-		if joined, ok := err.(interface{ Unwrap() []error }); ok {
-			causes := joined.Unwrap()
-			if len(causes) != 1 {
-				return ""
-			}
-			err = causes[0]
-		} else {
-			err = errors.Unwrap(err)
-		}
+func hostedFlushError(err error) (projectCode, requestCode string) {
+	switch {
+	case errors.Is(err, lakeapi.ErrNativeEvidenceGap):
+		return "native_evidence_gap", ""
+	case errors.Is(err, errHostedEvidenceBinding):
+		return "pipeline_evidence_conflict", ""
+	case errors.Is(err, lakeapi.ErrInvalidLiveProjection):
+		// This comes before native commit, even if activity settlement also fails.
+		return "", "invalid_live_projection"
 	}
-	return ""
+	return "", ""
 }
 
 func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {

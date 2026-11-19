@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
@@ -40,14 +41,14 @@ type InstanceConfiguration struct {
 }
 
 type HostedIngestionStatus struct {
-	DroppedRequests uint64 `json:"dropped_requests" doc:"Accepted live requests whose buffered copies were discarded when live ingestion was quarantined, on this worker since startup."`
+	DroppedRequests uint64 `json:"dropped_requests" doc:"Isolated live requests discarded after deterministic rejection, on this worker since startup."`
 	DroppedEvents   uint64 `json:"dropped_events" doc:"Events in discarded requests, on this worker since startup."`
 
-	QuarantinedProjects map[string]string `json:"quarantined_projects,omitempty" doc:"Project IDs and deterministic error codes for live ingestion disabled on this worker. Holds the most recently quarantined projects up to the worker limit. Cleared on worker restart."`
+	QuarantinedProjects map[string]string `json:"quarantined_projects,omitempty" doc:"Project IDs and recovery error codes for quarantined live ingestion, including quarantine reported by other workers."`
 }
 
 type InstanceStatus struct {
-	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters and quarantined projects. Visible only to instance administrators."`
+	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters and shared quarantined projects. Visible only to instance administrators."`
 	QueryExecution  *query.QueryExecutionStatus    `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
 	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
@@ -104,6 +105,16 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 		result.HostedIngestion = &HostedIngestionStatus{
 			DroppedRequests: ingestion.DroppedRequests, DroppedEvents: ingestion.DroppedEvents,
 			QuarantinedProjects: ingestion.QuarantinedProjects,
+		}
+		if s.shared != nil {
+			probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+			var raw []byte
+			err := s.control.QueryRowContext(probe, `SELECT coalesce(jsonb_object_agg(project_id,quarantine_code),'{}')
+FROM hosted_recovery_pending WHERE quarantine_code IS NOT NULL`).Scan(&raw)
+			cancel()
+			if err != nil || json.Unmarshal(raw, &result.HostedIngestion.QuarantinedProjects) != nil {
+				result.Status = "degraded"
+			}
 		}
 		if len(result.HostedIngestion.QuarantinedProjects) > 0 {
 			result.Status = "degraded"

@@ -33,17 +33,11 @@ var (
 // in a new statement so that a waiter sees fences committed while it was blocked.
 func lockActiveHostedProject(ctx context.Context, tx *sql.Tx, project string) (string, error) {
 	var tenant, locked string
-	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&tenant); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT t.id FROM tenants t JOIN projects p ON p.tenant_id=t.id WHERE p.id=$1 FOR SHARE OF t`, project).Scan(&tenant); err != nil {
 		return "", hostedProjectLookupError(err)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM tenants WHERE id=$1 FOR SHARE`, tenant).Scan(&locked); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=$1 AND tenant_id=$2 FOR SHARE`, project, tenant).Scan(&locked); err != nil {
 		return "", hostedProjectLookupError(err)
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1 FOR SHARE`, project).Scan(&locked); err != nil {
-		return "", hostedProjectLookupError(err)
-	}
-	if tenant != locked {
-		return "", errHostedProjectFenced
 	}
 	var fenced bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=$1)

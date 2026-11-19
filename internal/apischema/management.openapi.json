@@ -1659,7 +1659,7 @@
             "type": "integer"
           },
           "dropped_requests": {
-            "description": "Accepted live requests whose buffered copies were discarded when live ingestion was quarantined, on this worker since startup.",
+            "description": "Isolated live requests discarded after deterministic rejection, on this worker since startup.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -1668,7 +1668,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Project IDs and deterministic error codes for live ingestion disabled on this worker. Holds the most recently quarantined projects up to the worker limit. Cleared on worker restart.",
+            "description": "Project IDs and recovery error codes for quarantined live ingestion, including quarantine reported by other workers.",
             "type": "object"
           }
         },
@@ -2224,7 +2224,7 @@
           },
           "hosted_ingestion": {
             "$ref": "#/components/schemas/HostedIngestionStatus",
-            "description": "Worker-local hosted ingestion counters and quarantined projects. Visible only to instance administrators."
+            "description": "Worker-local hosted ingestion counters and shared quarantined projects. Visible only to instance administrators."
           },
           "native_backup": {
             "$ref": "#/components/schemas/NativeBackupStatus",

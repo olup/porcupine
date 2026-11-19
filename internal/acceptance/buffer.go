@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +29,9 @@ var ErrBatchTooLarge = errors.New("hosted live batch exceeds output limits")
 
 // ErrProjectFenced marks a durable deletion fence for hosted writes.
 var ErrProjectFenced = errors.New("hosted project is fenced")
+
+// ErrProjectQuarantined signals project-scoped backpressure during hosted recovery.
+var ErrProjectQuarantined = &Failure{Message: "project ingestion is quarantined", Retry: true, Pressure: true}
 
 type BufferedEvent struct {
 	Input      Input
@@ -62,8 +64,8 @@ type BufferConfig struct {
 	FlushInterval, RetryMin, RetryMax                    time.Duration
 	Clock                                                func() time.Time
 	Metrics                                              *observability.Registry
-	// DeterministicError returns a fixed metric code for a proven permanent error.
-	DeterministicError func(error) string
+	// ClassifyFlushError returns a quarantine code or a code for a request rejected before commit.
+	ClassifyFlushError func(error) (projectCode, requestCode string)
 }
 
 func DefaultBufferConfig() BufferConfig {
@@ -87,11 +89,9 @@ type bufferedProject struct {
 	oldest       time.Time
 	ready        []*FlushBatch
 	running      bool
-	failures     int
+	retryDelay   time.Duration
 	retryAt      time.Time
-
-	sameCodeFailures int
-	failureCode      string
+	quarantine   string
 }
 type BufferSnapshot struct {
 	Bytes                          int64
@@ -111,8 +111,6 @@ type Buffer struct {
 	keys                           DailyKeyFunc
 	lockAdmission                  func(context.Context, string) (func(), error)
 	projects                       map[string]*bufferedProject
-	quarantined                    map[string]string
-	quarantineOrder                []string
 	bytes                          int64
 	events, running                int
 	droppedRequests, droppedEvents uint64
@@ -225,8 +223,11 @@ func (b *Buffer) Accept(ctx context.Context, batch Batch, peer Peer, withReceipt
 	if b.lockAdmission != nil {
 		release, err := b.lockAdmission(ctx, batch.ProjectID)
 		if err != nil {
-			if errors.Is(err, ErrProjectFenced) {
+			switch {
+			case errors.Is(err, ErrProjectFenced):
 				return nil, apierr.New(404, "project not found")
+			case errors.Is(err, ErrProjectQuarantined):
+				return nil, ErrProjectQuarantined
 			}
 			return nil, &Failure{Message: "project admission unavailable", Retry: true}
 		}
@@ -241,7 +242,6 @@ func (b *Buffer) Accept(ctx context.Context, batch Batch, peer Peer, withReceipt
 	if err != nil {
 		return nil, err
 	}
-	newProject := p == nil
 	owned := make([]BufferedEvent, len(inputs))
 	var receipts []BufferedReceipt
 	if withReceipts {
@@ -254,7 +254,7 @@ func (b *Buffer) Accept(ctx context.Context, batch Batch, peer Peer, withReceipt
 			receipts[i] = BufferedReceipt{MessageID: input.Event.MessageID, UUID: input.Event.UUID}
 		}
 	}
-	if newProject {
+	if p == nil {
 		p = &bufferedProject{}
 		b.projects[strings.Clone(batch.ProjectID)] = p
 	}
@@ -305,32 +305,33 @@ func (b *Buffer) Snapshot() BufferSnapshot {
 	s := BufferSnapshot{
 		Bytes: b.bytes, Events: b.events, projects: len(b.projects), Inflight: b.running,
 		Stopped: b.stopped, DroppedRequests: b.droppedRequests, DroppedEvents: b.droppedEvents,
-		QuarantinedProjects: maps.Clone(b.quarantined),
-		draining:            b.draining,
-		CapacityEvents:      b.config.MaxEvents, CapacityBytes: b.config.MaxBytes,
+		draining:       b.draining,
+		CapacityEvents: b.config.MaxEvents, CapacityBytes: b.config.MaxBytes,
 	}
 	stopping := b.ctx.Err() != nil
 	if stopping {
 		s.abandoned = b.events
 	}
-	for _, p := range b.projects {
-		s.failed = s.failed || p.failures > 0
+	for project, p := range b.projects {
+		if p.quarantine != "" {
+			if s.QuarantinedProjects == nil {
+				s.QuarantinedProjects = make(map[string]string)
+			}
+			s.QuarantinedProjects[project] = p.quarantine
+		}
+		s.failed = s.failed || p.retryDelay > 0
 		if stopping && p.running {
 			s.abandoned -= len(p.ready[0].Events)
 		}
-		for _, at := range []time.Time{p.oldest, readyOldest(p.ready)} {
-			if !at.IsZero() && (s.Oldest.IsZero() || at.Before(s.Oldest)) {
-				s.Oldest = at
-			}
+		oldest := p.oldest
+		if len(p.ready) > 0 && !p.ready[0].oldest.IsZero() && (oldest.IsZero() || p.ready[0].oldest.Before(oldest)) {
+			oldest = p.ready[0].oldest
+		}
+		if !oldest.IsZero() && (s.Oldest.IsZero() || oldest.Before(s.Oldest)) {
+			s.Oldest = oldest
 		}
 	}
 	return s
-}
-func readyOldest(batches []*FlushBatch) time.Time {
-	if len(batches) == 0 {
-		return time.Time{}
-	}
-	return batches[0].oldest
 }
 func (b *Buffer) Drain(ctx context.Context) error {
 	b.StopAdmission()
@@ -431,108 +432,76 @@ func (b *Buffer) complete(result flushCompletion) {
 		}
 	}
 	if errors.Is(result.err, ErrProjectFenced) {
-		b.discardProject(result.project, p, "project_fenced")
+		events := len(p.pending)
+		b.bytes -= p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
+		for _, batch := range p.ready {
+			events += len(batch.Events)
+			b.bytes -= batch.bytes
+		}
+		b.events -= events
+		delete(b.projects, result.project)
+		b.countDiscarded(events, "project_fenced")
 		observe("dropped")
 		return
 	}
-	if errors.Is(result.err, ErrBatchTooLarge) {
+	projectCode, requestCode := "", ""
+	if b.config.ClassifyFlushError != nil && b.ctx.Err() == nil {
+		projectCode, requestCode = b.config.ClassifyFlushError(result.err)
+	}
+	if projectCode == "" && (requestCode != "" || errors.Is(result.err, ErrBatchTooLarge)) {
 		if left, right, ok := splitBufferedLiveBatch(*p.ready[0]); ok {
 			observe("split")
 			p.ready[0] = right
 			p.ready = append([]*FlushBatch{left}, p.ready...)
 			p.retryAt = time.Time{}
-			p.failureCode, p.sameCodeFailures = "", 0
 			return
 		}
 	}
-	if result.err != nil {
-		if b.ctx.Err() != nil {
-			observe("cancelled")
-		} else if b.quarantineFailedProject(result, p) {
+	switch {
+	case requestCode != "":
+		events := len(p.ready[0].Events)
+		b.droppedRequests++
+		b.droppedEvents += uint64(events)
+		b.countDiscarded(events, requestCode)
+		slog.Error("hosted ingestion discarded an isolated request", "project_id", result.project, "batch_id", result.id, "reason", requestCode, "discarded_events", events)
+		observe("dropped")
+	case result.err == nil:
+		p.quarantine = ""
+		observe("ok")
+	default:
+		switch {
+		case projectCode != "" && p.quarantine != projectCode:
+			p.quarantine = projectCode
+			if m := b.config.Metrics; m != nil {
+				m.Add("porcupine_flush_quarantined_projects_total", 1, observability.Label{Name: "reason", Value: projectCode})
+			}
+			slog.Error("hosted ingestion quarantined project", "project_id", result.project, "batch_id", result.id, "reason", projectCode)
 			observe("quarantined")
-			return
-		} else {
+		case b.ctx.Err() != nil:
+			observe("cancelled")
+		default:
 			observe("retry")
 		}
-		p.failures++
-		delay := b.config.RetryMin
-		for n := 1; n < p.failures && delay < b.config.RetryMax; n++ {
-			delay = min(b.config.RetryMax, delay+min(delay, b.config.RetryMax-delay))
-		}
-		p.retryAt = b.config.Clock().Add(delay)
+		p.retryDelay += min(p.retryDelay, b.config.RetryMax-p.retryDelay)
+		p.retryDelay = max(b.config.RetryMin, p.retryDelay)
+		p.retryAt = b.config.Clock().Add(p.retryDelay)
 		return
-	} else {
-		observe("ok")
 	}
 	b.bytes -= p.ready[0].bytes
 	b.events -= len(p.ready[0].Events)
 	p.ready[0] = nil
 	p.ready = p.ready[1:]
-	p.failures, p.sameCodeFailures, p.failureCode = 0, 0, ""
-	p.retryAt = time.Time{}
+	p.retryAt, p.retryDelay = time.Time{}, 0
 	if len(p.pending) == 0 && len(p.ready) == 0 {
 		delete(b.projects, result.project)
 		b.bytes -= bufferedProjectOverhead + int64(len(result.project))
 	}
 }
 
-// Only repeated evidence of the same deterministic failure releases admitted
-// copies. A different code or an uncertain outcome restarts that count.
-func (b *Buffer) quarantineFailedProject(result flushCompletion, p *bufferedProject) bool {
-	if b.config.DeterministicError == nil {
-		return false
-	}
-	code := b.config.DeterministicError(result.err)
-	if p.failureCode != code {
-		p.failureCode, p.sameCodeFailures = code, 0
-	}
-	if code == "" {
-		return false
-	}
-	p.sameCodeFailures++
-	if p.sameCodeFailures < 3 {
-		return false
-	}
-	if b.quarantined == nil {
-		b.quarantined = make(map[string]string)
-	}
-	if len(b.quarantineOrder) == b.config.MaxProjects {
-		delete(b.quarantined, b.quarantineOrder[0])
-		copy(b.quarantineOrder, b.quarantineOrder[1:])
-		b.quarantineOrder = b.quarantineOrder[:len(b.quarantineOrder)-1]
-	}
-	b.quarantined[result.project] = code
-	b.quarantineOrder = append(b.quarantineOrder, result.project)
-	requests, events := b.discardProject(result.project, p, code)
-	b.droppedRequests += uint64(requests)
-	b.droppedEvents += uint64(events)
-	if m := b.config.Metrics; m != nil {
-		m.Add("porcupine_flush_quarantined_projects_total", 1, observability.Label{Name: "reason", Value: code})
-	}
-	slog.Error("hosted ingestion quarantined project", "project_id", result.project, "batch_id", result.id, "reason", code, "discarded_requests", requests, "discarded_events", events)
-	return true
-}
-
-func (b *Buffer) discardProject(project string, p *bufferedProject, reason string) (requests, events int) {
-	discard := func(rows []BufferedEvent, bytes int64) {
-		b.bytes -= bytes
-		events += len(rows)
-		for _, row := range rows {
-			if row.requestEnd {
-				requests++
-			}
-		}
-	}
-	for _, batch := range p.ready {
-		discard(batch.Events, batch.bytes)
-	}
-	discard(p.pending, p.pendingBytes+bufferedProjectOverhead+int64(len(project)))
-	b.events -= events
-	delete(b.projects, project)
+func (b *Buffer) countDiscarded(events int, reason string) {
 	if m := b.config.Metrics; m != nil {
 		m.Add("porcupine_flush_dropped_events_total", uint64(events), observability.Label{Name: "reason", Value: reason})
 	}
-	return requests, events
 }
 
 // Preserve admission order and divide as close to the midpoint as request boundaries permit.
@@ -574,9 +543,9 @@ func (b *Buffer) projectForAdmissionLocked(projectID string) (*bufferedProject, 
 	switch {
 	case b.ctx.Err() != nil || b.draining:
 		return nil, &Failure{Message: "buffer is unavailable or draining", Retry: true, Pressure: true}
-	case b.quarantined[projectID] != "":
-		return nil, &Failure{Message: "project ingestion is quarantined on this worker", Retry: true, Pressure: true}
-	case p != nil && p.failures > 0:
+	case p != nil && p.quarantine != "":
+		return nil, ErrProjectQuarantined
+	case p != nil && p.retryDelay > 0:
 		return nil, &Failure{Message: "project buffer is retrying a flush", Retry: true, Pressure: true}
 	}
 	return p, nil
@@ -587,12 +556,12 @@ func (b *Buffer) checkCapacityLocked(projectID string, size int64, count int) (*
 	if err != nil {
 		return nil, 0, err
 	}
-	newProject := p == nil
-	projectSize, projectEvents := int64(0), 0
-	if newProject {
+	projectSize, overhead, projectEvents := int64(0), int64(0), 0
+	if p == nil {
 		if len(b.projects) >= b.config.MaxProjects {
 			return nil, 0, &Failure{Message: "buffer is full", Retry: true, Pressure: true}
 		}
+		overhead = bufferedProjectOverhead + int64(len(projectID))
 	} else {
 		projectSize = p.pendingBytes
 		projectEvents = len(p.pending)
@@ -600,10 +569,6 @@ func (b *Buffer) checkCapacityLocked(projectID string, size int64, count int) (*
 			projectSize += batch.bytes
 			projectEvents += len(batch.Events)
 		}
-	}
-	overhead := int64(0)
-	if newProject {
-		overhead = bufferedProjectOverhead + int64(len(projectID))
 	}
 	if size > b.config.MaxBytes-b.bytes-overhead || count > b.config.MaxEvents-b.events || size > b.config.ProjectMaxBytes-projectSize || count > b.config.ProjectMaxEvents-projectEvents {
 		return nil, 0, &Failure{Message: "buffer is full", Retry: true, Pressure: true}

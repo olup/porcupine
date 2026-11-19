@@ -769,6 +769,12 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		}
 	}
 	if s.hosted != nil {
+		for _, input := range prepared.Events {
+			if err := lakeapi.ValidateLiveProjection(input.Event); err != nil {
+				write(w, 400, map[string]string{"error": err.Error(), "code": "invalid_live_projection"})
+				return
+			}
+		}
 		tenant, err := s.projectTenant(ctx, projectID)
 		if err != nil {
 			s.observeAcceptance(ctx, nil, err)
@@ -798,6 +804,10 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		var failure *acceptance.Failure
 		if errors.As(err, &failure) && failure.Retry {
 			w.Header().Set("Retry-After", "1")
+		}
+		if errors.Is(err, acceptance.ErrProjectQuarantined) {
+			write(w, 503, map[string]string{"error": err.Error(), "code": "project_ingestion_quarantined"})
+			return
 		}
 		problem(w, 503, err.Error())
 		return

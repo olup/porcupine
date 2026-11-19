@@ -113,7 +113,7 @@ var hostedImportSchema string
 // 19: isolate hosted pipeline capacity by tenant and project.
 // 20: worker incarnation leases for hosted project activity tickets.
 // 21: tenant ownership of operator credentials.
-// 22: indexed hosted recovery work.
+// 22: indexed hosted recovery work. 23: shared ingestion quarantine.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -142,6 +142,7 @@ ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.a
 	hostedIncarnationSchemaV1,
 	credentialOwnerSchema,
 	hostedRecoverySchema,
+	`ALTER TABLE hosted_recovery_pending ADD COLUMN quarantine_code TEXT`,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

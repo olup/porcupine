@@ -98,11 +98,11 @@ The native count includes only commits observed by the worker. Replays
 do not increment it. Commits whose response was lost can be missing from
 this operational count.
 
-`porcupine_flush_quarantined_projects_total` counts quarantine transitions.
-For each transition, `porcupine_flush_dropped_events_total` counts the
-buffered event copies released by the worker. An event can already have a
-native commit. Both counters use a fixed `reason` label such as
-`native_evidence_gap`. Project and batch IDs appear in the flush log.
+`porcupine_flush_quarantined_projects_total` counts transitions into project
+quarantine on a worker, with a `reason` such as `native_evidence_gap`.
+Quarantine retains buffered copies. `porcupine_flush_dropped_events_total`
+counts event copies discarded after a confirmed request-level rejection or
+a durable project deletion fence. Project and batch IDs appear in the flush log.
 
 A standalone flush attempt covers projecting originals and acknowledging
 them in the journal. A hosted attempt covers one call to the live flusher.
