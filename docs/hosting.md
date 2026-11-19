@@ -45,7 +45,7 @@ See [server configuration](reference/configuration.md) for validation and contai
 
 ### One VM with analytical S3
 
-[vm-s3.json](examples/configuration/vm-s3.json) adds settings for an existing private bucket. Choose S3 before initializing a fresh archive. See [analytical S3 configuration](reference/ducklake-s3.md) and [backups to a separate destination](reference/native-backup-recovery.md).
+Use [vm-s3.json](examples/configuration/vm-s3.json) to [configure a fresh archive on S3](reference/ducklake-s3.md#configure-a-new-deployment).
 
 ## Configure access and backups
 
