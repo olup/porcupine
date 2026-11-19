@@ -276,15 +276,19 @@ func purgeProjectHumanGrants(ctx context.Context, tx *sql.Tx, projectID string) 
 
 func purgeProjectTokenScopes(ctx context.Context, tx *sql.Tx, table, projectID string) error {
 	// Table names come only from the fixed caller list, never from a request.
-	rows, err := tx.QueryContext(ctx, `SELECT token_hash,projects_json FROM `+table)
+	rows, err := tx.QueryContext(ctx, `SELECT o.token_hash,o.projects_json,t.principal_id IS NOT NULL
+FROM `+table+` o LEFT JOIN tenant_credentials t ON t.principal_id=o.client_id`)
 	if err != nil {
 		return err
 	}
-	type tokenScope struct{ hash, raw string }
+	type tokenScope struct {
+		hash, raw        string
+		tenantCredential bool
+	}
 	var tokens []tokenScope
 	for rows.Next() {
 		var token tokenScope
-		if err := rows.Scan(&token.hash, &token.raw); err != nil {
+		if err := rows.Scan(&token.hash, &token.raw, &token.tenantCredential); err != nil {
 			rows.Close()
 			return err
 		}
@@ -309,7 +313,9 @@ func purgeProjectTokenScopes(ctx context.Context, tx *sql.Tx, table, projectID s
 				retained = append(retained, project)
 			}
 		}
-		if len(retained) == 0 {
+		// A previously narrowed team account can still have a token issued
+		// with several projects. Delete it instead of making it usable again.
+		if token.tenantCredential || len(retained) == 0 {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE token_hash=$1`, token.hash); err != nil {
 				return err
 			}

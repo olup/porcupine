@@ -78,6 +78,23 @@ func TestSharedTenantServiceCredentialsAcrossWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stale := a.token(t, machine.ClientID, machine.ClientSecret, a.s.resources.apiResource).AccessToken
+	if _, err := a.s.control.Exec(`UPDATE oauth_tokens SET projects_json=$1 WHERE token_hash=$2`, string(legacyScope), hash(stale)); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := a.s.control.BeginTx(a.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := a.s.purgeProjectGrants(a.ctx, tx, peer); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	b.call(t, "GET", path, stale, nil, 401, nil)
+	b.call(t, "GET", path, issued, nil, 200, nil)
 	if _, err := a.s.control.Exec(`UPDATE access_keys SET projects=$1 WHERE id=$2`, string(legacyScope), key.ID); err != nil {
 		t.Fatal(err)
 	}

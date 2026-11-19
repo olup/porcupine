@@ -304,12 +304,14 @@ func TestLegacyMultiProjectTeamCredentialsCannotAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Emulate a token issued before its legacy parent was narrowed.
-	if _, err := f.s.control.Exec(`UPDATE oauth_tokens SET projects_json=$1 WHERE token_hash=$2`, string(legacyScope), hash(issued)); err != nil {
+	// Emulate an old token whose parent had already been narrowed before upgrading.
+	var narrowed OAuthClientCreated
+	f.call(t, "POST", base, admin, spec, 201, &narrowed)
+	stale := f.token(t, narrowed.ClientID, narrowed.ClientSecret, f.s.resources.apiResource).AccessToken
+	if _, err := f.s.control.Exec(`UPDATE oauth_tokens SET projects_json=$1 WHERE token_hash=$2`, string(legacyScope), hash(stale)); err != nil {
 		t.Fatal(err)
 	}
-	f.call(t, "GET", apiPath, issued, nil, 401, nil)
-	issued = f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource).AccessToken
+	f.call(t, "GET", apiPath, stale, nil, 401, nil)
 
 	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=$1 WHERE id IN ($2,$3)`, string(legacyScope), key.ID, mcpKey.ID); err != nil {
 		t.Fatal(err)
@@ -343,7 +345,9 @@ func TestLegacyMultiProjectTeamCredentialsCannotAuthenticate(t *testing.T) {
 	}
 	var list TenantServiceAccountListOutput
 	f.call(t, "GET", base, admin, nil, 200, &list.Body)
-	if len(list.Body.ServiceAccounts) != 1 || !slices.Equal(list.Body.ServiceAccounts[0].Projects, []string{project, peer}) {
+	if !slices.ContainsFunc(list.Body.ServiceAccounts, func(candidate OAuthClient) bool {
+		return candidate.ClientID == account.ClientID && slices.Equal(candidate.Projects, []string{project, peer})
+	}) {
 		t.Fatal("legacy account must remain discoverable")
 	}
 	f.call(t, "PUT", accountPath, admin, spec, 404, nil)
@@ -364,6 +368,8 @@ func TestLegacyMultiProjectTeamCredentialsCannotAuthenticate(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.call(t, "GET", apiPath, issued, nil, 401, nil)
+	f.call(t, "GET", apiPath, stale, nil, 401, nil)
+	f.call(t, "GET", apiPath, f.token(t, narrowed.ClientID, narrowed.ClientSecret, f.s.resources.apiResource).AccessToken, nil, 200, nil)
 	f.call(t, "DELETE", accountPath, admin, nil, 204, nil)
 	var replacement OAuthClientCreated
 	f.call(t, "POST", base, admin, spec, 201, &replacement)
