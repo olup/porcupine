@@ -167,11 +167,6 @@ func (s *ExportJobs) exportPressure(ctx context.Context) (bool, error) {
 }
 
 func (s *ExportJobs) runExport(parent context.Context, job storedExport) {
-	parent, finish, active := s.beginActivity(parent, job.ProjectID)
-	if !active {
-		return
-	}
-	defer finish()
 	started, err := time.Parse(time.RFC3339Nano, job.StartedAt)
 	if err != nil {
 		s.failExport(parent, job, errors.New("invalid export start"))
@@ -546,6 +541,12 @@ func (s *ExportJobs) RunOne(ctx context.Context) (bool, error) {
 	if !available {
 		return false, nil
 	}
+	ctx, finish, active := s.beginActivity(ctx, job.ProjectID)
+	if !active {
+		release()
+		return false, nil
+	}
+	defer finish()
 	claimed, err := s.claimExport(ctx, job)
 	if err == nil {
 		s.runExport(ctx, claimed)

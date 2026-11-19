@@ -86,6 +86,8 @@ WHERE d.completed=0 ORDER BY d.project_id`)
 
 func (s *Service) cleanHostedProject(ctx context.Context, project string) error {
 	h := s.hosted
+	ctx, cancel := h.incarnation.writeContext(ctx)
+	defer cancel()
 	key := lakeapi.ProjectWriteKey{SourceID: h.native.Config.SharedSourceID, ProjectID: project}
 	if err := reclaimExpiredHostedIncarnations(ctx, s.control); err != nil {
 		return err

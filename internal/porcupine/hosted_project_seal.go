@@ -15,12 +15,18 @@ import (
 // sealDeletedProject starts neither physical cleanup nor tenant finalization.
 // A recorded seal is evidence for the deletion recovery worker only.
 func (f *hostedLiveFlusher) sealDeletedProject(ctx context.Context, key lakeapi.ProjectWriteKey) (resultErr error) {
+	ctx, cancel := f.incarnation.writeContext(ctx)
+	defer cancel()
+	incarnation, err := f.incarnation.current()
+	if err != nil {
+		return err
+	}
 	if err := reclaimExpiredHostedIncarnations(ctx, f.publisher.control); err != nil {
 		return err
 	}
 	var tenant string
 	var busy bool
-	err := f.publisher.control.QueryRowContext(ctx, `SELECT d.tenant_id,
+	err = f.publisher.control.QueryRowContext(ctx, `SELECT d.tenant_id,
 EXISTS(SELECT 1 FROM hosted_project_activity a WHERE a.project_id=d.project_id)
 FROM project_deletions d JOIN projects p ON p.id=d.project_id AND p.tenant_id=d.tenant_id
 WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
@@ -39,10 +45,6 @@ WHERE d.project_id=$1 AND d.completed=0`, key.ProjectID).Scan(&tenant, &busy)
 	defer func() {
 		resultErr = errors.Join(resultErr, f.finishProjectActivity(ctx, key.ProjectID, ticket))
 	}()
-	incarnation, err := f.incarnation.reserve(key.ProjectID, ticket, true)
-	if err != nil {
-		return err
-	}
 	var sealed bool
 	if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var recordedSource, recordedTenant string

@@ -563,9 +563,11 @@ func (s *Service) Handler() http.Handler {
 			problem(w, 503, "analytics execution unavailable")
 			return
 		}
-		if s.hosted != nil && !s.hosted.buffer.Available() {
-			problem(w, 503, "ingestion buffer unavailable")
-			return
+		if s.hosted != nil {
+			if _, err := s.hosted.incarnation.current(); err != nil || !s.hosted.buffer.Available() {
+				problem(w, 503, "hosted ingestion unavailable")
+				return
+			}
 		}
 		if s.db != nil && s.db.PingContext(r.Context()) != nil {
 			problem(w, 503, "storage unavailable")
@@ -691,6 +693,16 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 				rawKey = candidate
 			}
 		}
+	}
+	if s.hosted != nil {
+		ctx, cancel := s.hosted.incarnation.writeContext(r.Context())
+		defer cancel()
+		if ctx.Err() != nil {
+			w.Header().Set("Retry-After", "1")
+			problem(w, 503, "hosted ingestion unavailable")
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	var a auth.Principal
 	var err error
