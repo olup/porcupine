@@ -66,6 +66,8 @@ An ordinary live flush follows this sequence:
 
 The two PostgreSQL transactions serve different recovery points. A worker that dies after PUT leaves a durable reservation identifying the abandoned prefix. A worker that dies after the native commit leaves the proof and reservation its successor needs for publication. Cold recovery reads the durable binding and verifies the immutable bodies, including their size, checksum, and version when present. Before retiring an orphan reservation, it commits a successor fence and checks native history for proof or absence. Cold recovery, imports, mutations, and deletion can still use separate native fence and acknowledgment commits.
 
+With verified DuckLake versions, a worker caches the last snapshot whose proof sequences passed a full audit. Across up to 64 snapshots, it checks PostgreSQL catalog metadata and validates newly appended proof sequences. A cold engine, missing metadata, proof deletion or compaction, and a project seal require a full audit. Cached validation assumes the retained Parquet objects stay immutable.
+
 Delivery and assembly verify the stored bodies they consume. Delivery retries can reach a receiver more than once. Use the stable delivery ID to deduplicate a request whose response was lost. The scheduled body's contents remain fixed after later edits or deletes.
 
 ## Imports and mutations
