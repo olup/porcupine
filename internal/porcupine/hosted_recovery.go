@@ -124,12 +124,11 @@ func (f *hostedLiveFlusher) recoverProject(ctx context.Context, key lakeapi.Proj
 	defer session.Release()
 	var generation int64
 	var tenant string
-	err = f.publisher.control.QueryRowContext(ctx, `SELECT p.tenant_id,r.generation FROM hosted_recovery_pending r
-JOIN projects p ON p.id=r.project_id WHERE r.project_id=$1`, key.ProjectID).Scan(&tenant, &generation)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	if err := f.publisher.control.QueryRowContext(ctx, `SELECT p.tenant_id,r.generation FROM hosted_recovery_pending r
+JOIN projects p ON p.id=r.project_id WHERE r.project_id=$1`, key.ProjectID).Scan(&tenant, &generation); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
 		return err
 	}
 	return f.recoverProjectHeld(ctx, session, key, tenant, generation)

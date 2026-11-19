@@ -188,6 +188,9 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), live("first-live", firstID)); err != nil {
 		t.Fatal(err)
 	}
+	if err = fb.recoverProject(t.Context(), key); err != nil {
+		t.Fatal("settle the previous live reservation before testing import-only recovery", err)
+	}
 	importedID := eventapi.NewID()
 	input := makeInput("events", lakeapi.ImportFileCheckpoint{}, "bytes", firstID, importedID, importedID)
 	p, release, err := sa.LeaseProject(t.Context(), project)

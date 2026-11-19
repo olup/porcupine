@@ -186,6 +186,6 @@ WHERE incarnation_id=$1 AND NOT EXISTS(SELECT 1 FROM hosted_project_activity WHE
 // lock waits for any registration still using the incarnation, then cascades
 // the deletion to its tickets.
 func reclaimExpiredHostedIncarnations(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM hosted_worker_incarnations WHERE reclaim_after<clock_timestamp()`)
+	_, err := db.ExecContext(ctx, `DELETE FROM hosted_worker_incarnations WHERE reclaim_after<statement_timestamp()`)
 	return err
 }
