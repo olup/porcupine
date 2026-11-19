@@ -74,7 +74,7 @@ The restorer verifies the inventory, checks application and DuckLake formats, an
 
 ## Reconnect deliberately
 
-Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in a builtin control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials; the bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
+Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in a builtin control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials. A replacement for a retrievable browser key is also available through [`get-client-ingestion-key`](projects.md#get-a-browser-ingestion-key). The bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.
 
 ### Restore an external-authentication instance
 

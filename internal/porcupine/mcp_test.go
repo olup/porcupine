@@ -235,7 +235,7 @@ func TestMCPProjectIsolationAndEscalation(t *testing.T) {
 	for _, item := range catalog["operations"].([]any) {
 		names = append(names, item.(map[string]any)["operation_id"].(string))
 	}
-	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-event", "get-event-catalog", "get-event-export", "get-event-input-contract", "get-event-mutation", "get-event-profile", "get-event-schema", "get-instance-status", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events"}) {
+	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-client-ingestion-key", "get-event", "get-event-catalog", "get-event-export", "get-event-input-contract", "get-event-mutation", "get-event-profile", "get-event-schema", "get-instance-status", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events"}) {
 		t.Fatalf("discovery exceeded reader permissions: %v", names)
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "porcupine_docs", Arguments: mcpDocsInput{OperationID: "create-project"}})

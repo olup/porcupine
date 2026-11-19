@@ -50,7 +50,8 @@ func TestUsageAcceptanceImportRetryIsolationAndPermissions(t *testing.T) {
 	}
 	_, reader := key(t, s, []string{"events:read", "management:read"}, []string{a})
 	request(t, s, "GET", "/api/v1/usage?tenant_id="+defaultTenantID, reader, "", 403)
-	request(t, s, "GET", "/api/v1/usage", token, "", 403)
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
+	request(t, s, "GET", "/api/v1/usage", writer, "", 403)
 	request(t, s, "GET", "/api/v1/usage", "", "", 401)
 	tenantAllowance(t, s, defaultTenantID, 2)
 	nativeRequest(t, s, token, `[{"type":"track","message_id":"denied-a","actor_id":"u","name":"message"},{"type":"track","message_id":"denied-b","actor_id":"u","name":"message"}]`, 429)

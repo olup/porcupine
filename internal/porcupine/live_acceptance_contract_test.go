@@ -18,8 +18,8 @@ func TestLiveAcceptanceNativeAndVendorContractsByMode(t *testing.T) {
 		t.Run(map[bool]string{false: "durable", true: "buffered"}[buffered], func(t *testing.T) {
 			t.Parallel()
 			s := service(t, 100)
-			projectID, writer := project(t, s)
-			bindIngestionSource(t, s, writer, "checkout")
+			projectID, _ := project(t, s)
+			writer := sourceKey(t, s, projectID, "checkout", "events:write")
 			if buffered {
 				s.acceptance = newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error { return nil })
 			}
@@ -101,9 +101,9 @@ func TestLiveAcceptanceNativeAndVendorContractsByMode(t *testing.T) {
 				t.Fatal("received count meaning absent")
 			}
 			// A reader from another project cannot discover or select the producer's scope.
-			other, otherKey := project(t, s)
+			other, _ := project(t, s)
 			request(t, s, "GET", "/api/v1/projects/"+other+"/input-contract", reader, "", 403)
-			bindIngestionSource(t, s, otherKey, "checkout")
+			otherKey := sourceKey(t, s, other, "checkout", "events:write")
 			otherReceipt := receiptFrom(t, nativeRequest(t, s, otherKey, `{"type":"track","message_id":"one","name":"other"}`, 200), 0)
 			if otherReceipt["uuid"] == receiptFrom(t, first, 0)["uuid"] {
 				t.Fatal("same source/message ID crossed project scope")

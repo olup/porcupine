@@ -91,10 +91,18 @@ PRIMARY KEY(project_id,event_name,kind,property_key));`
 const credentialOwnerSchema = `ALTER TABLE access_keys ADD COLUMN owner_tenant_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX access_keys_owner_tenant ON access_keys(owner_tenant_id) WHERE owner_tenant_id<>'';`
 
+const clientIngestionKeySchema = `ALTER TABLE access_keys ADD COLUMN kind TEXT NOT NULL DEFAULT 'access' CHECK(kind IN ('access','client_ingestion'));
+ALTER TABLE access_keys ADD COLUMN client_ingestion_token TEXT CHECK(
+	(kind='access' AND client_ingestion_token IS NULL) OR
+	(kind='client_ingestion' AND (client_ingestion_token IS NOT NULL OR revoked_at IS NOT NULL)));
+CREATE UNIQUE INDEX active_client_ingestion_key ON access_keys(projects)
+WHERE kind='client_ingestion' AND revoked_at IS NULL;`
+
 // 6: operator usage rollups, samples and bounded replayable snapshots.
 // 7: project catalog descriptions.
 // 8: tenant ownership of operator credentials.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 9: explicit public client ingestion credentials.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -115,6 +123,7 @@ var hostedImportSchema string
 // 21: tenant ownership of operator credentials.
 // 22: indexed hosted recovery work. 23: shared ingestion quarantine.
 // 24: discover unpublished live reservations directly.
+// 25: explicit public client ingestion credentials.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -146,6 +155,7 @@ ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.a
 	`ALTER TABLE hosted_recovery_pending ADD COLUMN quarantine_code TEXT`,
 	`DROP TRIGGER hosted_recovery_reservation ON pipeline_effect_reservations;
 CREATE INDEX hosted_recovery_reservation_project ON pipeline_effect_reservations(project_id);`,
+	clientIngestionKeySchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

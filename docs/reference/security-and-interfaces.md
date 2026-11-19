@@ -84,7 +84,7 @@ authentication and authorization must use a separate source of authority.
 
 ## Ingestion compatibility
 
-[Native and Segment inputs](native-and-segment-ingestion.md) accept product events with stable producer message IDs. Public capture uses the project's ingestion key. A server can use an API-audience service key or access token scoped to that project.
+[Native and Segment inputs](native-and-segment-ingestion.md) accept product events with stable producer message IDs. Public capture uses the [project's browser ingestion key](projects.md#get-a-browser-ingestion-key). The control database stores its public value. Browser keys authorize live capture into a single mixed project. A server can use an API-audience service key or access token scoped to that project.
 
 Porcupine accepts [a tested PostHog ingestion subset](compatibility.md), including
 JSON capture, batches, and bounded gzip transport. The matrix names pinned SDKs

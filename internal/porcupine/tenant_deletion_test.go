@@ -48,13 +48,14 @@ func TestTenantDeletionIsolationInterruptionAndRestart(t *testing.T) {
 	pa, ka := tenantJourneyProject(t, s, a)
 	_, _ = tenantJourneyProject(t, s, a)
 	pb, kb := tenantJourneyProject(t, s, b)
+	_, otherWriter := key(t, s, []string{"events:write"}, []string{pb})
 	request(t, s, "POST", "/capture/", "", captureBody(ka, "a-private-payload"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(kb, "b-kept"), 200)
 	if _, err := s.db.Exec(`INSERT INTO metadata(key,value) VALUES('ducklake_source_id','temporarily-disconnected')`); err != nil {
 		t.Fatal(err)
 	}
 	request(t, s, "DELETE", "/api/v1/tenants/"+a, "", "", 401)
-	request(t, s, "DELETE", "/api/v1/tenants/"+a, kb, "", 403)
+	request(t, s, "DELETE", "/api/v1/tenants/"+a, otherWriter, "", 403)
 	first := request(t, s, "DELETE", "/api/v1/tenants/"+a, adminToken, "", 202)
 	retry := request(t, s, "DELETE", "/api/v1/tenants/"+a, adminToken, "", 202)
 	if first["started_at"] != retry["started_at"] {
@@ -66,7 +67,7 @@ func TestTenantDeletionIsolationInterruptionAndRestart(t *testing.T) {
 	request(t, s, "POST", "/api/v1/projects", adminToken, tenantTestBody(t, map[string]any{"name": "late", "tenant_id": a}), 404)
 	request(t, s, "POST", "/api/v1/access-keys", adminToken, tenantTestBody(t, map[string]any{"name": "late", "permissions": []string{"events:write"}, "projects": []string{pa}}), 404)
 	request(t, s, "GET", "/api/v1/tenants/"+a, adminToken, "", 404)
-	request(t, s, "GET", "/api/v1/tenants/"+a+"/deletion", kb, "", 403)
+	request(t, s, "GET", "/api/v1/tenants/"+a+"/deletion", otherWriter, "", 403)
 	request(t, s, "GET", "/api/v1/tenants/"+b, adminToken, "", 200)
 	api := s.registerManagement(http.NewServeMux())
 	for path, item := range api.OpenAPI().Paths {

@@ -74,17 +74,16 @@ From the tenant-administrator connection, create the project:
 porcupine create-project --body '{"name":"Website","tenant_id":"TENANT_ID"}'
 ```
 
-Keep the returned project ID. For a mixed-ingestion project, store its one-time ingestion key privately until you configure the producer.
+Keep the returned project ID. The response for a mixed project includes the public `ingest_token` for browser capture.
 
-To replace a public ingestion key, create another single-project write key:
+Run `get-client-ingestion-key` to read the active browser key. If the mixed project has no retrievable key, run `ensure-client-ingestion-key` to create one.
 
 ```sh
-porcupine create-access-key --body '{"name":"Browser capture","permissions":["events:write"],"projects":["PROJECT_ID"]}'
-porcupine list-access-keys
-porcupine revoke-access-key --id KEY_ID
+porcupine get-client-ingestion-key --id PROJECT_ID
+porcupine ensure-client-ingestion-key --id PROJECT_ID
 ```
 
-The secret is returned only at creation. A tenant administrator can list and revoke the tenant's owned credentials, including public ingestion keys. These credentials cannot grant instance administration or access another tenant. Use a [team service account](service-keys.md) for private analytical or backend access.
+A tenant administrator can list and revoke the tenant's owned keys. To replace a browser key, [revoke it and provision another](projects.md#get-a-browser-ingestion-key). Use a [team service account](service-keys.md) for private analytical or backend access.
 
 Invite a reader to that project:
 

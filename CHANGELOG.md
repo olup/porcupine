@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.0
+
+- Mixed projects can use a retrievable browser key scoped to event capture. Tenant administrators can provision one for existing mixed projects. Existing ingestion keys continue to work.
+- Hosted workers retain accepted events in memory while retrying a quarantined project. Shared quarantine blocks new ingestion for that project across workers until recovery or a flush succeeds. (#141)
+- Hosted recovery discovers unpublished live reservations directly, avoiding an extra reconciliation pass after normal flushes. (#142)
+- Native, PostHog, and Segment capture now allow cross-origin browser requests when `allowed_origins` is missing or empty. Set an explicit list to restrict origins. Use `server_only` projects to require private API credentials for capture. (#143)
+- The CLI connects to Porcupine Cloud by default. Set `PORCUPINE_URL` or pass `--url` for a self-hosted instance. (#139)
+- Shortened the onboarding, hosting, and recovery guides. (#140)
+
+Stop the deployment and take a recovery point before upgrading. Follow the [v0.17.0 upgrade steps](https://github.com/olup/porcupine/blob/v0.18.0/docs/hosting.md#upgrade-from-v0170).
+
 ## 0.17.0
 
 - Hosted recovery looks for pending work in PostgreSQL before opening DuckLake. Idle projects no longer create recovery snapshots or write Parquet objects. The upgrade seeds recovery for existing effect streams once. (#136)

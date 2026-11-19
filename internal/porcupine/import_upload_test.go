@@ -210,6 +210,7 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 	s := service(t, 100)
 	other, _ := project(t, s)
 	project, public := project(t, s)
+	_, eventWriter := key(t, s, []string{"events:write"}, []string{project})
 	_, writer := key(t, s, []string{"imports:write", "events:write"}, []string{project})
 	_, onlyImport := key(t, s, []string{"imports:write"}, []string{project})
 	peerID, peer := key(t, s, []string{"imports:write", "events:write"}, []string{project})
@@ -218,7 +219,8 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 	raw, _ := json.Marshal(manifest)
 	base := "/api/v1/projects/" + project + "/imports"
 	importTestRequest(t, s, "POST", base, "", raw, nil, 401)
-	importTestRequest(t, s, "POST", base, public, raw, nil, 403)
+	importTestRequest(t, s, "POST", base, public, raw, nil, 401)
+	importTestRequest(t, s, "POST", base, eventWriter, raw, nil, 403)
 	importTestRequest(t, s, "POST", base, onlyImport, raw, nil, 403)
 	job := importTestCreate(t, s, project, writer, "auth", manifest["files"].([]importer.ImportUploadFileSpec))
 	importTestRequest(t, s, "GET", importTestBase(other, job.ID), writer, nil, nil, 403)

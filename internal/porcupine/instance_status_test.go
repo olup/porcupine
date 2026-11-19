@@ -27,7 +27,9 @@ func TestInstanceStatusHTTPPermissionsAndPrivacy(t *testing.T) {
 	id, reader := key(t, s, []string{"management:read"}, []string{a})
 	_, eventsOnly := key(t, s, []string{"events:read"}, []string{a})
 	request(t, s, "GET", "/api/v1/status", "", "", 401)
-	request(t, s, "GET", "/api/v1/status", public, "", 403)
+	request(t, s, "GET", "/api/v1/status", public, "", 401)
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
+	request(t, s, "GET", "/api/v1/status", writer, "", 403)
 	request(t, s, "GET", "/api/v1/status", eventsOnly, "", 403)
 	result := request(t, s, "GET", "/api/v1/status", reader, "", 200)
 	if result["status"] != "ok" || result["version"] != Version {

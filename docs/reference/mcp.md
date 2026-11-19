@@ -140,8 +140,8 @@ An agent can discover `rename-project` or `delete-project` with `porcupine_docs`
 
 Renaming requires `management:write` on that project. Permanent deletion requires instance administration or `tenant:admin` consent for the project's tenant. Call `{"operation_id":"delete-project","path":{"id":"PROJECT_ID"}}` and check for HTTP `204`. See [project cleanup scope](management-api.md#operations).
 
-Mutating operations are available to suitably scoped access tokens. Project and key
-creation return one-time secrets, just as their HTTP counterparts do. Event
+Mutating operations are available to suitably scoped access tokens. Access key
+creation returns a one-time secret. Mixed project creation returns a public browser key, also available through `get-client-ingestion-key` with project `management:read`. Event
 corrections require `events:edit`, and deletions require `events:delete`. Their
 `body` includes an idempotency key and expected revision, including for DELETE. Key
 listing returns metadata only. There is no separate MCP permission system or
