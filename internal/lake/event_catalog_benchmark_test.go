@@ -25,8 +25,10 @@ func TestDuckLakeS3SharedPostgresEventCatalogPerformance(t *testing.T) {
 		t.Skip("enable the opt-in event catalog benchmark")
 	}
 	fixture, requests, getBytes := countedNativeProofS3(t)
+	// The 10M legacy profile ranks wide rows for the hot event. Keep both
+	// versions within the same memory budget and the store's spill limit.
 	config := DuckLakeConfig{PostgresURL: sharedPostgresDSN(t), SharedSourceID: event.NewID(), S3: &fixture.storage,
-		MemoryLimitMB: 1024, Threads: 4, MaxOpenProjects: 1, DisableCleanup: true}
+		MemoryLimitMB: 3072, Threads: 4, MaxOpenProjects: 1, DisableCleanup: true}
 	for _, count := range []int{1_000_000, 10_000_000} {
 		t.Run(fmt.Sprintf("events_%d", count), func(t *testing.T) {
 			key := ProjectWriteKey{config.SharedSourceID, fmt.Sprintf("event-catalog-bench-%d", count)}
