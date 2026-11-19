@@ -79,31 +79,12 @@ func TestDuckLakeS3SharedPostgresRecoveryExistingOnly(t *testing.T) {
 	if err := a.SharedCatalog.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname=$1)`, SharedNativeSchema(SharedNativeCatalogID(missing.SourceID, missing.ProjectID))).Scan(&exists); err != nil || exists {
 		t.Fatal("recovery created missing native schema", exists, err)
 	}
-	// A deletion-pending/tombstone record remains in inventory and cannot reopen.
+	// A deletion-pending/tombstone record cannot reopen.
 	if _, err := a.SharedCatalog.ExecContext(ctx, `UPDATE pc_native_projects SET deleted=1 WHERE source_id=$1 AND project_id=$2`, key.SourceID, key.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	records, err := b.ScanHostedProjects(ctx, "", 256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, r := range records {
-		if r.Key == key {
-			found = true
-			if !r.Deleted {
-				t.Fatal("inventory lost deletion truth")
-			}
-		}
-	}
-	if !found {
-		t.Fatal("inventory dropped deleted record")
-	}
 	if _, err := b.LookupHostedProjectExisting(ctx, key); !errors.Is(err, errSharedNativeDeleted) {
 		t.Fatal("cached recovery ignored tombstone", err)
-	}
-	if _, err := b.ScanHostedProjects(ctx, "", 257); err == nil {
-		t.Fatal("unbounded inventory accepted")
 	}
 }
 
@@ -399,9 +380,6 @@ func TestDuckLakeS3SharedPostgresRecoveryMetadataUnavailable(t *testing.T) {
 	}
 	if _, err := b.LookupHostedProjectExisting(ctx, key); err == nil {
 		t.Fatal("recovery ignored unavailable metadata")
-	}
-	if _, err := b.ScanHostedProjects(ctx, "", 1); err == nil {
-		t.Fatal("inventory ignored unavailable metadata")
 	}
 	if len(b.Projects) != 0 {
 		t.Fatal("metadata failure opened engine")

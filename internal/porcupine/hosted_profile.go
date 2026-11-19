@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"time"
 
@@ -200,46 +199,6 @@ func (s *Service) initializeHostedProject(ctx context.Context, project string) e
 		_, err := h.native.InitializeHostedProject(ctx, key)
 		return err
 	})
-}
-
-func (s *Service) startHostedRecovery(interval time.Duration) {
-	if interval == 0 {
-		interval = 2 * time.Second
-	}
-	h := s.hosted
-	ctx, stop := context.WithCancel(context.Background())
-	h.stopRecovery, h.recoveryDone = stop, make(chan struct{})
-	go func() {
-		defer close(h.recoveryDone)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		var after string
-		for {
-			work, cancel := h.incarnation.writeContext(ctx)
-			h.flusher.flushReturnedProjectActivities(work)
-			records, err := h.native.ScanHostedProjects(work, after, 32)
-			if err == nil {
-				if len(records) == 0 {
-					after = ""
-				}
-				for _, record := range records {
-					after = record.Key.ProjectID
-					if !record.Ready || record.Deleted || s.requireProjectActive(work, after) != nil {
-						continue
-					}
-					if err := h.flusher.RecoverProject(work, record.Key); err != nil && work.Err() == nil {
-						slog.Warn("hosted project reconciliation pending", "project_id", after)
-					}
-				}
-			}
-			cancel()
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
 }
 
 // Shutdown bounds. The drain deadline covers the flush of accepted batches.

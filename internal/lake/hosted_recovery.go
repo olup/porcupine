@@ -8,36 +8,6 @@ import (
 
 var ErrHostedProjectNotReady = errors.New("existing hosted project is not ready for recovery")
 
-// HostedProjectRecord retains deletion tombstones in bounded source inventory.
-// A record alone is not permission to create or physically delete a catalog.
-type HostedProjectRecord struct {
-	Key            ProjectWriteKey
-	CatalogID      string
-	Ready, Deleted bool
-}
-
-func (s *DuckLakeStore) ScanHostedProjects(ctx context.Context, after string, limit int) ([]HostedProjectRecord, error) {
-	if s.SharedCatalog == nil {
-		return nil, ErrHostedProjectNotReady
-	}
-	if err := s.Mu.Lock(ctx); err != nil {
-		return nil, err
-	}
-	defer s.Mu.Unlock()
-	if _, err := s.sourceIDLocked(ctx); err != nil {
-		return nil, err
-	}
-	records, err := s.registry.scan(ctx, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]HostedProjectRecord, 0, len(records))
-	for _, r := range records {
-		result = append(result, HostedProjectRecord{Key: ProjectWriteKey{s.Config.SharedSourceID, r.ProjectID}, CatalogID: r.CatalogID, Ready: r.Ready, Deleted: r.Deleted})
-	}
-	return result, nil
-}
-
 func (s *DuckLakeStore) existingHostedRecord(ctx context.Context, project string) (nativeProjectRecord, error) {
 	if s.SharedCatalog == nil {
 		return nativeProjectRecord{}, ErrHostedProjectNotReady

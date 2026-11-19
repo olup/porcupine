@@ -808,11 +808,15 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), ackLost); err != nil || !failACK.Load() {
 		t.Fatalf("live flush attempted standalone native ACK: %v", err)
 	}
-	if err = fa.RecoverProject(t.Context(), key); err != nil || failACK.Load() {
-		t.Fatalf("best-effort ACK failure boundary not exercised: %v", err)
+	if err = fa.recoverProject(t.Context(), key); !errors.Is(err, errHostedACKPending) || failACK.Load() {
+		t.Fatalf("recovery did not retain its pending ACK: %v", err)
 	}
-	if err = fb.RecoverProject(t.Context(), key); err != nil {
+	if err = fb.recoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold ACK retry", err)
+	}
+	var pending bool
+	if err := a.service.control.QueryRow(`SELECT EXISTS(SELECT 1 FROM hosted_recovery_pending WHERE project_id=$1)`, project).Scan(&pending); err != nil || pending {
+		t.Fatal("successful ACK left recovery work pending", pending, err)
 	}
 
 	// Lose a native response immediately before deleting the tenant project.

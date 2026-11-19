@@ -239,44 +239,17 @@ func (f *hostedLiveFlusher) commitLiveIfActive(ctx context.Context, project, ten
 	return commit()
 }
 
-// CommitImport coordinates already validated historical input. Upload storage,
-// actor authorization and manifest/file validation remain at the upload boundary.
-// It preflights the only PG cursor row before any new native import outcome.
-func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.ImportChunkInput) (lakeapi.NativeCommitEvidence, error) {
-	session, err := f.coordinator.Acquire(ctx, input.Key.Scope.Key)
-	if err != nil {
-		return lakeapi.NativeCommitEvidence{}, err
-	}
-	defer session.Release()
-	var result lakeapi.NativeCommitEvidence
-	err = f.runActiveHostedProject(ctx, session, input.Key.Scope.Key.ProjectID, func(ctx context.Context) error {
-		scope, err := f.native.LookupHostedProjectExisting(ctx, input.Key.Scope.Key)
-		if err != nil {
-			return err
-		}
-		if scope != input.Key.Scope {
-			return output.ErrPipelineConflict
-		}
-		fence := session.Fence(scope.StreamID)
-		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
-			return err
-		}
-		if err = f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
-			return err
-		}
-		result, err = f.commitImportHeld(ctx, session, fence, input, nil)
-		return err
-	})
-	return result, err
-}
-
 func (f *hostedLiveFlusher) commitImportHeld(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, input lakeapi.ImportChunkInput, authorize func(context.Context) error) (lakeapi.NativeCommitEvidence, error) {
 	prior, found, err := f.native.FindImportChunk(ctx, fence, input)
 	if err != nil || found {
 		return prior, err
 	}
 	if err = f.publisher.transaction(ctx, func(tx *sql.Tx) error {
-		return f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(input.Key.Scope), input.TenantID)
+		if err := f.publisher.effects.PrepareNoOutputStreamTx(ctx, tx, pipelineScope(input.Key.Scope), input.TenantID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO hosted_recovery_pending(project_id) VALUES($1) `+hostedRecoveryConflict, input.Key.Scope.Key.ProjectID)
+		return err
 	}); err != nil {
 		return lakeapi.NativeCommitEvidence{}, err
 	}
@@ -303,42 +276,25 @@ func (f *hostedLiveFlusher) commitImportHeld(ctx context.Context, session *lakea
 	return result, nil
 }
 
-// RecoverProject can run cold without producer credentials, payload or worker
-// disk. It fences before high-water capture and never creates missing projects.
-func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.ProjectWriteKey) error {
-	session, err := f.coordinator.Acquire(ctx, key)
-	if err != nil {
-		return err
-	}
-	defer session.Release()
-	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
-		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
-		if e != nil {
-			return e
-		}
-		fence := session.Fence(scope.StreamID)
-		if e = f.native.AdvanceRecoveryFence(ctx, fence); e != nil {
-			return e
-		}
-		var tenant string
-		if e = f.publisher.control.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, key.ProjectID).Scan(&tenant); e != nil {
-			return e
-		}
-		return f.reconcileHostedWrites(ctx, session, scope, fence, tenant)
-	})
-}
-
 // reconcileHostedWrites runs on an acquired project session after the caller
 // advances its native fence. Use it before selecting a snapshot or send cut.
 func (f *hostedLiveFlusher) reconcileHostedWrites(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
-	if err := f.reconcile(ctx, session, scope, fence, tenant); err != nil {
-		return err
-	}
-	return f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, false)
+	return ignoreHostedACKPending(f.reconcileAndSettle(ctx, session, scope, fence, tenant))
 }
 
 func (f *hostedLiveFlusher) reconcile(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
-	return f.reconcileEvidence(ctx, session, scope, fence, tenant, false)
+	return ignoreHostedACKPending(f.reconcileEvidence(ctx, session, scope, fence, tenant, false))
+}
+
+func (f *hostedLiveFlusher) reconcileAndSettle(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string) error {
+	err := f.reconcileEvidence(ctx, session, scope, fence, tenant, false)
+	if ignoreHostedACKPending(err) != nil {
+		return err
+	}
+	if settleErr := f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, false); settleErr != nil {
+		return settleErr
+	}
+	return err
 }
 
 func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lakeapi.ProjectWriteSession, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, tenant string, deleting bool) error {
@@ -409,7 +365,7 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		}
 	}
 	if seq > page.AcknowledgedThrough {
-		_ = f.native.AcknowledgeNativeEffects(ctx, fence, scope, seq)
+		return f.acknowledgeHostedEffects(ctx, fence, scope, seq)
 	}
 	return nil
 }
