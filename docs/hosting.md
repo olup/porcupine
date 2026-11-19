@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.16.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.17.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,16 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Choose the procedure for the version you are running.
+
+### Upgrade from v0.16.0
+
+1. Pause producers and let the existing workers finish writing accepted events. Stop all v0.16.0 workers and keep the last working image and configuration.
+2. Back up the stopped deployment. Use [native backups](backup-and-restore.md) for standalone or the [PostgreSQL and S3 recovery policy](design/hosted-architecture.md#recovery-and-retention) for hosted.
+3. Start v0.17.0 with the existing configuration and storage. Check readiness and confirm that a new test event becomes queryable before resuming producers.
+
+Hosted startup migrates the PostgreSQL control database and queues existing effect streams for one reconciliation pass. To roll back, restore the pre-upgrade recovery point before starting v0.16.0.
+
+Replace older [multi-project team credentials](reference/service-keys.md) with one service account and new keys per project before restarting integrations.
 
 ### Upgrade from v0.15.1
 

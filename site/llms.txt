@@ -7,7 +7,7 @@ The running instance's contracts are authoritative. Send credentials and events 
 ## Connect
 
 - Person using an agent: connect the MCP client to `INSTANCE_ORIGIN/mcp` and complete OAuth with S256 PKCE. An administrator invites the email once; the person requests an email verification code when connecting a tool. Configured OIDC is another sign-in option.
-- Person using the CLI: install the version matching the server ([current release](https://github.com/olup/porcupine/releases/tag/v0.16.0)), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
+- Person using the CLI: install the version matching the server ([current release](https://github.com/olup/porcupine/releases/tag/v0.17.0)), set `PORCUPINE_URL` to the instance origin, then run `porcupine login`.
 - Backend or shared agent: use a scoped service credential from private configuration. API and MCP credentials have separate audiences. Never put keys, codes, or token responses in prompts, logs, or URLs.
 
 [Connect tools](https://olup.github.io/porcupine/docs/connect-tools.md) · [Access](https://olup.github.io/porcupine/docs/access.md)
