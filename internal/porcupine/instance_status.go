@@ -40,16 +40,18 @@ type InstanceConfiguration struct {
 }
 
 type HostedIngestionStatus struct {
-	DroppedRequests uint64 `json:"dropped_requests" doc:"Legacy count of live requests discarded due to output capacity. Always zero."`
-	DroppedEvents   uint64 `json:"dropped_events" doc:"Legacy count of live events discarded due to output capacity. Always zero."`
+	DroppedRequests uint64 `json:"dropped_requests" doc:"Accepted live requests whose buffered copies were discarded when live ingestion was quarantined, on this worker since startup."`
+	DroppedEvents   uint64 `json:"dropped_events" doc:"Events in discarded requests, on this worker since startup."`
+
+	QuarantinedProjects map[string]string `json:"quarantined_projects,omitempty" doc:"Project IDs and deterministic error codes for live ingestion disabled on this worker. Holds the most recently quarantined projects up to the worker limit. Cleared on worker restart."`
 }
 
 type InstanceStatus struct {
-	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters. Visible only to instance administrators."`
+	HostedIngestion *HostedIngestionStatus         `json:"hosted_ingestion,omitempty" doc:"Worker-local hosted ingestion counters and quarantined projects. Visible only to instance administrators."`
 	QueryExecution  *query.QueryExecutionStatus    `json:"query_execution,omitempty" doc:"Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."`
 	NativeBackup    *NativeBackupStatus            `json:"native_backup,omitempty" doc:"Configured native backup schedule and progress. Visible only to instance administrators."`
 	DuckLakeCleanup *lakeapi.DuckLakeCleanupStatus `json:"ducklake_cleanup,omitempty" doc:"Snapshot and obsolete-file cleanup policy and progress. Visible only to instance administrators."`
-	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance."`
+	Status          string                         `json:"status" enum:"ok,degraded" doc:"Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible hosted ingestion quarantine or DuckLake cleanup reports a failure. Unconfigured optional services do not degrade the instance."`
 	Version         string                         `json:"version" doc:"Server build version, or dev for an unversioned build."`
 	CheckedAt       string                         `json:"checked_at" doc:"UTC RFC3339 time when these checks started. This response is not cached."`
 	Checks          InstanceChecks                 `json:"checks"`
@@ -99,7 +101,13 @@ func (s *Service) getInstanceStatus(ctx context.Context, _ *struct{}) (*Instance
 	}
 	if s.hosted != nil && principal(ctx).Admin() {
 		ingestion := s.hosted.buffer.Snapshot()
-		result.HostedIngestion = &HostedIngestionStatus{DroppedRequests: ingestion.DroppedRequests, DroppedEvents: ingestion.DroppedEvents}
+		result.HostedIngestion = &HostedIngestionStatus{
+			DroppedRequests: ingestion.DroppedRequests, DroppedEvents: ingestion.DroppedEvents,
+			QuarantinedProjects: ingestion.QuarantinedProjects,
+		}
+		if len(result.HostedIngestion.QuarantinedProjects) > 0 {
+			result.Status = "degraded"
+		}
 	}
 	if s.db == nil {
 		result.Checks.SQLite = dependencyNotConfigured

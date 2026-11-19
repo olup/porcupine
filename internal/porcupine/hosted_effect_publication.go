@@ -272,9 +272,11 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	return staged, nil
 }
 
+var errHostedEvidenceBinding = fmt.Errorf("immutable evidence binding: %w", output.ErrPipelineConflict)
+
 func (p *hostedEffectPublisher) verify(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, uploadedManifest lakeapi.ImmutableObjectRef) (output.PipelinePublication, error) {
 	fail := func() (output.PipelinePublication, error) {
-		return output.PipelinePublication{}, output.ErrPipelineConflict
+		return output.PipelinePublication{}, errHostedEvidenceBinding
 	}
 	if e.Kind != lakeapi.NativeCommitLive || b.Scope != pipelineScope(e.Scope) || b.TenantID != e.TenantID || b.BatchID != e.OperationID || b.Epoch != e.FenceEpoch || b.PlanID != e.Effects.PlanID {
 		return fail()

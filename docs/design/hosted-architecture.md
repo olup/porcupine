@@ -40,6 +40,10 @@ When the matched webhooks exceed a fixed preparation, manifest, or reservation l
 
 On observing the native commit, the worker emits a structured warning per affected pipeline, with the project, batch ID, refusal reason, and number of declined references. `porcupine_webhook_refused_references_total` counts those references by reason across pipelines. A lost commit response can leave the operational signals missing. The committed UUIDs and proof prevent a replay from scheduling previously declined outputs.
 
+After three consecutive flush failures with the same deterministic error code, the worker quarantines the project and returns HTTP 503 with `Retry-After` for that project's new ingestion. Missing native evidence, an inconsistent immutable pipeline binding, and an invalid native live projection can trigger quarantine. Connection failures, deadlines, stale write sessions, and output capacity still use backoff and retain their inputs.
+
+Quarantine discards the project's buffered copies and frees their flush slots and memory. An accepted event that never reached a native commit is lost. Native commits and their recovery evidence remain intact. The flush log includes the project, batch, reason, and discard counts, and the [worker metrics](../reference/observability.md#read-the-dashboard) count each quarantine and discarded event copy. The worker keeps only a project ID and reason for up to 1,024 quarantines by default. A restart clears that list. At the limit, a new quarantine lets the oldest project try ingestion again. Administrators see the list in the [instance status](../reference/instance-status.md#interpret-the-response).
+
 Shutdown allows ten seconds for HTTP shutdown and 30 seconds for the buffer drain. The worker drains before waiting up to five seconds for canceled analytics and maintenance. If they stay active, it reports a shutdown error and leaves their native resources open until process exit. Other background jobs and in-flight flushes can still affect shutdown time. Allow termination grace for HTTP shutdown, draining, and cleanup.
 
 ## Flush and publication
