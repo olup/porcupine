@@ -45,11 +45,18 @@ func TestSharedPipelineDeliveryAttemptCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := freeze(d, "first")
+	if remaining, err := p.DeliveryLeaseRemaining(ctx, db, original); err != nil || remaining <= 0 {
+		t.Fatalf("initial delivery lease = %v, %v", remaining, err)
+	}
 	if _, err := p.NextDelivery(ctx, db, "source"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`UPDATE pipeline_effect_jobs SET lease_until=clock_timestamp()-interval '1 second'`); err != nil {
 		t.Fatal(err)
+	}
+
+	if _, err := p.DeliveryLeaseRemaining(ctx, db, original); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expired delivery still owned its lease: %v", err)
 	}
 
 	// A pre-send failure can defer an expired attempt without changing its
@@ -75,7 +82,7 @@ func TestSharedPipelineDeliveryAttemptCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	reclaimed, err := p.NextDelivery(ctx, db, "source")
-	if err != nil || reclaimed.Attempts != 1 || reclaimed.Body != d.Body {
+	if err != nil || reclaimed.Attempts != 1 || reclaimed.Body != d.Body || reclaimed.Claim.Generation != original.Generation {
 		t.Fatal(reclaimed, err)
 	}
 	current := freeze(reclaimed, "second")
@@ -106,5 +113,61 @@ func TestSharedPipelineDeliveryAttemptCAS(t *testing.T) {
 	})
 	if n := pipelineCount(t, db, `SELECT sum(webhook_success) FROM usage_rollups`); n != 1 {
 		t.Fatal(n)
+	}
+	if n := pipelineCount(t, db, `SELECT used_refs FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`); n != 1 {
+		t.Fatalf("retained references after delivery completion = %d, want 1", n)
+	}
+}
+
+func TestSharedPipelineDeliveryRetiresIneligibleAttempts(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		attempts int
+		code     string
+	}{
+		{name: "creator revoked after selection", code: "creator_unauthorized"},
+		{name: "retry budget exhausted", attempts: 3, code: "attempts_exhausted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			db, effects := pipelineFixture(t)
+			binding, plan, publication := pipelinePrepare(t, db, effects)
+			pipelineTx(t, db, func(tx *sql.Tx) error {
+				if err := effects.ReserveEffectsTx(ctx, tx, binding, plan, publication.Outputs); err != nil {
+					return err
+				}
+				_, err := effects.PublishReservedEffectsTx(ctx, tx, binding, publication)
+				return err
+			})
+			if _, err := db.ExecContext(ctx, `UPDATE pipeline_effect_jobs SET attempts=$1`, tc.attempts); err != nil {
+				t.Fatal(err)
+			}
+			d, err := effects.NextDeliveryOutsideProjects(ctx, db, binding.Scope.SourceID, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.code == "creator_unauthorized" {
+				if _, err := db.ExecContext(ctx, `UPDATE access_keys SET revoked_at='now' WHERE id='creator'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pipelineTx(t, db, func(tx *sql.Tx) error {
+				_, frozen, err := effects.FreezeDeliveryTx(ctx, tx, d, "ineligible", publication.Sequence, HostedWebhookLimits{MaxAttempts: 3, Timeout: time.Second})
+				if frozen {
+					t.Error("froze an ineligible delivery")
+				}
+				return err
+			})
+			var state, code string
+			var attempts int
+			var unclaimed bool
+			err = db.QueryRowContext(ctx, `SELECT state,error_code,attempts,lease_until IS NULL AND send_cut IS NULL FROM pipeline_effect_jobs`).Scan(&state, &code, &attempts, &unclaimed)
+			if err != nil || state != "retired" || code != tc.code || attempts != tc.attempts || !unclaimed {
+				t.Fatalf("retired delivery = (%q, %q, %d, unclaimed=%t), err=%v", state, code, attempts, unclaimed, err)
+			}
+		})
 	}
 }
