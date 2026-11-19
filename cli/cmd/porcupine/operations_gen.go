@@ -38,7 +38,7 @@ var operations = []operation{
 	},
 	{
 		ID: "create-access-key", Method: "POST", Path: "/api/v1/access-keys",
-		Summary:     "Create a scoped key and return its secret once; cannot exceed caller grants",
+		Summary:     "Issue a scoped key as an instance administrator and return its secret once. Tenant administrators can issue single-project ingestion keys.",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"name (string, required)",
@@ -76,7 +76,7 @@ var operations = []operation{
 	},
 	{
 		ID: "create-oauth-client", Method: "POST", Path: "/api/v1/oauth-clients",
-		Summary:     "Create a scoped machine OAuth client and return its secret once",
+		Summary:     "Create a scoped OAuth client as an instance administrator and return its secret once",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"grant_types (array of string) Defaults to client_credentials. authorization_code enables PKCE and rotating refresh tokens.",

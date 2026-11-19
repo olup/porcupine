@@ -282,7 +282,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", auth.OperationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
 	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", auth.OperationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListKeys)
-	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Create a scoped key and return its secret once; cannot exceed caller grants", auth.OperationAccess{Permission: "management:write"}, 201), s.managementCreateKey)
+	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Issue a scoped key as an instance administrator and return its secret once. Tenant administrators can issue single-project ingestion keys.", auth.OperationAccess{Permission: "management:write", TenantAdmin: true}, 201), s.managementCreateKey)
 	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
 	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent events in the configured storage profile; use query-events for analytical history", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
@@ -524,14 +524,9 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	if slices.Contains(body.Permissions, tenantAdminScope) {
 		return nil, apierr.New(400, "tenant administration requires interactive human consent")
 	}
-	if len(a.TenantIDs) > 0 && len(a.TenantAdmins) == 0 && !a.Admin() {
-		return nil, apierr.New(403, "team service accounts cannot provision independent raw credentials")
-	}
-	if len(a.TenantAdmins) > 0 && !a.Admin() && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
+	singleProjectWriter := len(body.Permissions) == 1 && body.Permissions[0] == "events:write" && len(body.Projects) == 1 && body.Projects[0] != "*"
+	if !a.Admin() && !singleProjectWriter {
 		return nil, apierr.New(403, "use tenant service accounts for private team access")
-	}
-	if !a.CanProvisionCredentials() {
-		return nil, apierr.New(403, "instance administrator required to provision independent credentials")
 	}
 	if err := s.validateCredentialGrant(ctx, a, body.Name, body.Permissions, body.Projects); err != nil {
 		return nil, err
@@ -541,7 +536,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		return nil, err
 	}
 	body.SourceID = sourceID
-	if s.resources != nil && (s.oauth == nil || !s.oauth.config.AllowLegacyKeys) && (len(body.Permissions) != 1 || body.Permissions[0] != "events:write" || len(body.Projects) != 1 || body.Projects[0] == "*") {
+	if s.resources != nil && (s.oauth == nil || !s.oauth.config.AllowLegacyKeys) && !singleProjectWriter {
 		return nil, apierr.New(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
 	id, raw := eventapi.NewID(), token()
@@ -562,11 +557,11 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 	if err := requireActiveProjectSet(ctx, tx, body.Projects); err != nil {
 		return nil, err
 	}
-	if len(body.Permissions) == 1 && body.Permissions[0] == "events:write" && len(body.Projects) == 1 && body.Projects[0] != "*" {
+	if singleProjectWriter {
 		if err := tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, body.Projects[0]).Scan(&tenantID); err != nil {
 			return nil, apierr.New(404, "project not found")
 		}
-		if len(a.TenantAdmins) > 0 && !a.Admin() {
+		if !a.Admin() {
 			if err := s.requireTenantAdminCurrent(ctx, tx, a, tenantID); err != nil {
 				return nil, err
 			}

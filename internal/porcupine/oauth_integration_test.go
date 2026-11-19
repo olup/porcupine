@@ -145,8 +145,9 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 		f.call(t, "GET", "/mcp", secret, nil, 401, nil)
 	}
 	f.call(t, "POST", "/api/v1/oauth-clients", read.AccessToken, map[string]any{"name": "forbidden", "permissions": []string{"events:read"}, "projects": []string{a}}, 403, nil)
-	f.call(t, "POST", "/api/v1/oauth-clients", broad.AccessToken, map[string]any{"name": "escalation", "permissions": []string{"instance:admin"}, "projects": []string{"*"}}, 403, nil)
-	f.call(t, "POST", "/api/v1/oauth-clients", broad.AccessToken, map[string]any{"name": "wrong project", "permissions": []string{"events:read"}, "projects": []string{b}}, 403, nil)
+	childGrant := map[string]any{"name": "independent child", "permissions": []string{"events:write"}, "projects": []string{a}}
+	f.call(t, "POST", "/api/v1/oauth-clients", broad.AccessToken, childGrant, 403, nil)
+	f.call(t, "POST", "/api/v1/access-keys", broad.AccessToken, childGrant, 403, nil)
 	if _, err := f.credentials(created.ClientID, created.ClientSecret, apiResource, "instance:admin").Token(f.ctx); err == nil {
 		t.Fatal("OAuth scope widened client grants")
 	}
@@ -194,7 +195,7 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	}
 
 	// The official MCP client obtains its token through the standard OAuth HTTP client.
-	mcpHTTP := f.credentials(created.ClientID, created.ClientSecret, mcpResource, "events:read").Client(f.ctx)
+	mcpHTTP := f.credentials(created.ClientID, created.ClientSecret, mcpResource).Client(f.ctx)
 	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "oauth-integration", Version: "1"}, nil)
 	session, err := mcpClient.Connect(f.ctx, &mcp.StreamableClientTransport{Endpoint: f.host.URL + "/mcp", HTTPClient: mcpHTTP, DisableStandaloneSSE: true, MaxRetries: -1}, nil)
 	if err != nil {
@@ -206,6 +207,10 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 		t.Fatal("MCP OAuth internal dispatch lost events:read grants")
 	}
 	mcpTestCall(t, f.ctx, session, mcpCallInput{OperationID: "list-project-events", Path: map[string]string{"id": b}}, 403)
+	for _, operation := range []string{"create-oauth-client", "create-access-key"} {
+		mcpTestTool(t, f.ctx, session, "porcupine_docs", mcpDocsInput{OperationID: operation}, true)
+		mcpTestCall(t, f.ctx, session, mcpCallInput{OperationID: operation, Body: childGrant}, 403)
+	}
 	mcpToken := f.token(t, created.ClientID, created.ClientSecret, mcpResource, "events:read")
 	f.call(t, "GET", path, mcpToken.AccessToken, nil, 401, nil)
 	f.call(t, "GET", "/mcp", read.AccessToken, nil, 401, nil)
@@ -271,6 +276,11 @@ func TestOAuthIntegrationClientCredentialsHTTPAndMCP(t *testing.T) {
 	}
 	f.call(t, "DELETE", "/api/v1/oauth-clients/"+created.ClientID, admin.AccessToken, nil, 204, nil)
 	f.call(t, "GET", path, read.AccessToken, nil, 401, nil)
+	f.call(t, "POST", "/api/v1/oauth-clients", broad.AccessToken, childGrant, 401, nil)
+	var children int
+	if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys WHERE name=$1`, childGrant["name"]).Scan(&children); err != nil || children != 0 {
+		t.Fatalf("denied creation left %d independent credentials: %v", children, err)
+	}
 	if _, err := f.credentials(created.ClientID, created.ClientSecret, apiResource).Token(f.ctx); err == nil {
 		t.Fatal("revoked OAuth client obtained new token")
 	}

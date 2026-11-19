@@ -154,7 +154,7 @@ func TestTenantMembershipConcurrentLastAdminProtectionAndScopeAttenuation(t *tes
 		t.Fatal("tenant lost its last active administrator")
 	}
 	current := auth.Principal{Permissions: []string{"events:read", "management:read"}, TenantAdmins: []string{tenant}, TenantIDs: []string{tenant}, Interactive: true}
-	if current.CanAdminTenant(tenant) || current.CanProvisionCredentials() {
+	if current.CanAdminTenant(tenant) {
 		t.Fatal("a read token retained administrative authority from role metadata")
 	}
 	page := request(t, f.s, "GET", base+"?limit=1", operator, "", 200)
@@ -186,6 +186,9 @@ func TestTenantAdministratorPublicIngestionKeyLifecycle(t *testing.T) {
 		t.Fatal("tenant administrator retry did not return the active key")
 	}
 	key := request(t, j.service, "POST", "/api/v1/access-keys", admin, tenantTestBody(t, map[string]any{"name": "rotated browser key", "permissions": []string{"events:write"}, "projects": []string{project}}), 201)
+	privateGrant := tenantTestBody(t, map[string]any{"name": "private reader", "permissions": []string{"events:read"}, "projects": []string{project}})
+	request(t, j.service, "POST", "/api/v1/access-keys", admin, privateGrant, 403)
+	request(t, j.service, "POST", "/api/v1/oauth-clients", admin, privateGrant, 403)
 	if key["tenant_id"] != tenant {
 		t.Fatal("public ingestion key lost authoritative team ownership")
 	}
@@ -202,7 +205,9 @@ func TestTenantAdministratorPublicIngestionKeyLifecycle(t *testing.T) {
 	}
 	request(t, j.service, "DELETE", "/api/v1/access-keys/"+global, admin, "", 403)
 	foreign := request(t, j.service, "POST", "/api/v1/projects", operator, tenantTestBody(t, map[string]string{"name": "foreign", "tenant_id": otherTenant}), 201)
-	foreignPath := "/api/v1/projects/" + foreign["project"].(map[string]any)["id"].(string) + "/client-ingestion-key"
+	foreignProject := foreign["project"].(map[string]any)["id"].(string)
+	request(t, j.service, "POST", "/api/v1/access-keys", admin, tenantTestBody(t, map[string]any{"name": "foreign ingestion key", "permissions": []string{"events:write"}, "projects": []string{foreignProject}}), 403)
+	foreignPath := "/api/v1/projects/" + foreignProject + "/client-ingestion-key"
 	request(t, j.service, "GET", foreignPath, admin, "", 403)
 	request(t, j.service, "POST", foreignPath, admin, "", 403)
 	var foreignKey string

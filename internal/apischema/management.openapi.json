@@ -6066,7 +6066,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Create a scoped key and return its secret once; cannot exceed caller grants"
+        "summary": "Issue a scoped key as an instance administrator and return its secret once. Tenant administrators can issue single-project ingestion keys."
       }
     },
     "/api/v1/access-keys/{id}": {
@@ -12379,14 +12379,14 @@
         "security": [
           {
             "oauth2": [
-              "management:write"
+              "instance:admin"
             ]
           },
           {
             "serviceKey": []
           }
         ],
-        "summary": "Create a scoped machine OAuth client and return its secret once"
+        "summary": "Create a scoped OAuth client as an instance administrator and return its secret once"
       }
     },
     "/api/v1/oauth-clients/{id}": {

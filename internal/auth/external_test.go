@@ -65,8 +65,8 @@ func TestExternalAccessTokenBoundaries(t *testing.T) {
 		t.Fatal("mutable grant")
 	}
 	actor := grant.Principal()
-	if actor.CanProvisionCredentials() || actor.Admin() {
-		t.Fatal("project token provisions permanent credentials")
+	if actor.Admin() || actor.CanAdminTenant("a") {
+		t.Fatal("project token received administrative authority")
 	}
 	cases := []struct {
 		name   string

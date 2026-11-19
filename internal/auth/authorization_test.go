@@ -30,7 +30,7 @@ func TestTenantAdministrationRequiresExplicitScopeAndMembership(t *testing.T) {
 		t.Fatal("tenant boundary failed")
 	}
 	p.Permissions = []string{"management:write"}
-	if p.CanAdminTenant("team-a") || p.CanProvisionCredentials() || op.Visible(p) {
+	if p.CanAdminTenant("team-a") || op.Visible(p) {
 		t.Fatal("membership restored an unconsented administrator scope")
 	}
 }
