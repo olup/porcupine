@@ -3,7 +3,7 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
-	"reflect"
+	"errors"
 	"regexp"
 	"time"
 
@@ -79,7 +79,7 @@ type AnalyticsQueryTimeRange struct {
 func (r *AnalyticsQueryTimeRange) UnmarshalJSON(data []byte) error {
 	type bounds AnalyticsQueryTimeRange
 	if string(data) == "null" {
-		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[AnalyticsQueryTimeRange]()}
+		return errors.New("time_range must be an object")
 	}
 	if err := json.Unmarshal(data, (*bounds)(r)); err != nil {
 		return err

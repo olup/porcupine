@@ -72,14 +72,17 @@ Profiles distinguish occurrence time from receipt time. Exact activity covers de
 
 ## SQL request and result
 
-A body contains `sql` and an optional `parameters` string map:
+A body contains `sql`. It can include a `parameters` string map and a `time_range` object.
 
 ```json
 {
 	"sql": "SELECT event, count(*) AS total FROM events WHERE event=$event GROUP BY event",
-	"parameters": {"event": "article_published"}
+	"parameters": {"event": "article_published"},
+	"time_range": {"from": "2026-11-01T00:00:00Z", "to": "2026-11-08T00:00:00Z"}
 }
 ```
+
+`time_range` requires two RFC3339 timestamps, with `from` earlier than `to`. It includes events that occurred at `from` and excludes events at `to`. The range applies to every reference to `events`, including joins, CTEs, and subqueries. Omit `time_range` to query all delivered history.
 
 Rows appear under `result.data`, with column metadata under `result.meta`. The result preserves 64-bit integers as decimal strings to avoid client precision loss. `result.statistics.elapsed` reports query duration. An empty `result.data` means no delivered rows matched the query. Physical scan counts and bytes are omitted.
 
@@ -160,7 +163,7 @@ Successful schema, catalog, and query responses include project-scoped delivery 
 
 Queries do not wait for queued originals or corrections. Read [hosted delivery status](shared-deployment.md#live-ingestion-and-delivery) before treating a zero pending count as a drained deployment. A committed analytical write can be visible before SQLite records its acknowledgment. The [current-event API](../events.md) reflects accepted pending corrections earlier than analytical SQL. Query results and delivery state have no shared cross-database snapshot, and catalog requests can also observe separate points in time.
 
-Invalid SQL or bindings return `400`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
+Invalid SQL, bindings or reversed or empty time ranges return `400`. Missing or malformed bounds return `422`. Invalid credentials return `401`; missing authority returns `403`. Concurrency and resource limits return `429`. Unavailable storage or invalid storage responses return `503`. Storage errors exclude server messages, SQL text, and credentials.
 
 Porcupine returns `429` with `code: "active_project_limit"` when every resident project engine is in use and another project cannot open within the configured count limit. Retry after active work finishes. This applies to SQL, catalog reads, and export validation. The operator can adjust `PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS` within the deployment's memory budget.
 
@@ -172,6 +175,7 @@ DuckDB query errors can also include `code`, `hint` and a safe `field`. HTTP, MC
 
 | Code | Recovery |
 | --- | --- |
+| `invalid_time_range` | Supply an earlier `from` and later `to`, or omit `time_range` for all time |
 | `missing_parameter`, `unused_parameter`, `invalid_parameter` | Match the supplied string map to the `$name` bindings |
 | `unsupported_function`, `unsupported_sql`, `invalid_sql` | Read the discovered dialect and allowlist; correct the SQL |
 | `unknown_column`, `unknown_reference` | Check schema columns, JSON paths, CTEs and aliases |

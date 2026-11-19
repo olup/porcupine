@@ -105,3 +105,36 @@ func TestAnalyticsQueryTimeRangeRequests(t *testing.T) {
 	}
 	request(t, s, "POST", path, token, `{"sql":"SELECT count(*) FROM events"}`, 503)
 }
+
+func TestAnalyticsQueryTimeRangeThroughHTTP(t *testing.T) {
+	t.Parallel()
+	s := duckLakeJourneyService(t)
+	id, _ := project(t, s)
+	otherID, _ := project(t, s)
+	_, token := key(t, s, []string{"events:read"}, []string{id})
+	events := []lakeapi.EventProjection{
+		lakeStorageProjection(t, id, "before", 1),
+		lakeStorageProjection(t, id, "inclusive", 2),
+		lakeStorageProjection(t, id, "exclusive", 3),
+		lakeStorageProjection(t, otherID, "foreign", 4),
+	}
+	events[0].Timestamp = "2026-11-01T00:59:59Z"
+	events[1].Timestamp = "2026-11-01T01:00:00Z"
+	events[2].Timestamp = "2026-11-01T02:00:00Z"
+	events[3].Timestamp = "2026-11-01T01:00:00Z"
+	if err := s.lake.Apply(t.Context(), events); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + id + "/query"
+	sql := `"sql":"SELECT count(*) AS n FROM events a CROSS JOIN events b"`
+	window := `"time_range":{"from":"2026-11-01T02:00:00+01:00","to":"2026-11-01T03:00:00+01:00"}`
+	scoped := request(t, s, "POST", path, token, "{"+sql+","+window+"}", 200)
+	if rows := scoped["result"].(map[string]any)["data"].([]any); len(rows) != 1 || rows[0].(map[string]any)["n"] != "1" {
+		t.Fatalf("unexpected ranged result %v", rows)
+	}
+	unbounded := request(t, s, "POST", path, token, "{"+sql+"}", 200)
+	if rows := unbounded["result"].(map[string]any)["data"].([]any); len(rows) != 1 || rows[0].(map[string]any)["n"] != "9" {
+		t.Fatalf("unexpected all-time result %v", rows)
+	}
+	request(t, s, "POST", "/api/v1/projects/"+otherID+"/query", token, "{"+sql+","+window+"}", 403)
+}
