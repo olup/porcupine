@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.1
+
+- Event catalogs and profiles now select event IDs before reading occurrence details and sample payloads from DuckLake. Catalog counts still cover the full delivered history. (#154)
+
+v0.19.1 uses the v0.19.0 storage schemas. [Upgrade from v0.19.0](https://github.com/olup/porcupine/blob/v0.19.1/docs/hosting.md#upgrade-from-v0190)
+
 ## 0.19.0
 
 - Interactive event queries accept an optional `time_range` through HTTP, CLI, and MCP. The range applies to every `events` reference and includes `from` while excluding `to`. Both bounds are RFC3339 occurrence timestamps. (#152) [Query reference](https://github.com/olup/porcupine/blob/v0.19.0/docs/reference/analytics.md#sql-request-and-result)
