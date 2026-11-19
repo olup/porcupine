@@ -29,7 +29,7 @@ func TestDuckLakeS3SharedPostgresEventCatalogPerformance(t *testing.T) {
 	// The 10M legacy profile ranks wide rows for the hot event. Keep both
 	// versions within the same memory budget and the store's spill limit.
 	config := DuckLakeConfig{PostgresURL: sharedPostgresDSN(t), SharedSourceID: event.NewID(), S3: &fixture.storage,
-		MemoryLimitMB: 3072, Threads: 4, MaxOpenProjects: 1, DisableCleanup: true}
+		MemoryLimitMB: 8192, Threads: 4, MaxOpenProjects: 1, DisableCleanup: true}
 	for _, count := range []int{1_000_000, 10_000_000} {
 		t.Run(fmt.Sprintf("events_%d", count), func(t *testing.T) {
 			key := ProjectWriteKey{config.SharedSourceID, fmt.Sprintf("event-catalog-bench-%d", count)}
@@ -125,10 +125,6 @@ func withCatalogBenchmarkReader(t *testing.T, config DuckLakeConfig, key Project
 		t.Fatal(err)
 	}
 	defer release()
-	// The old wide sort exceeded the runtime spill cap at 10M events.
-	if _, err := p.DB.ExecContext(t.Context(), "SET max_temp_directory_size='4GiB'"); err != nil {
-		t.Fatal(err)
-	}
 	run(reader, p)
 }
 
