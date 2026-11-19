@@ -183,38 +183,20 @@ FROM events_with_times ORDER BY id`, start, min(start+batch, count+1), key.Proje
 	return files, parquetBytes
 }
 
-const catalogBenchProfileBoundsSQL = `SELECT min(id),max(id) FROM (
- SELECT id FROM lake.current_events WHERE identity_snapshot='' AND event=? ORDER BY timestamp_ms DESC,id DESC LIMIT ?
-)`
-
-const catalogBenchProfileNarrowPrefix = `WITH selected AS (
- SELECT sort_id,CAST(sort_id AS VARCHAR) AS id,uuid,timestamp,timestamp_ms,received_at,properties,context,
- row_number() OVER (ORDER BY timestamp_ms DESC,sort_id DESC) AS rn FROM (
-  SELECT id AS sort_id,uuid,timestamp,timestamp_ms,received_at,properties,context
-  FROM lake.current_events WHERE identity_snapshot='' AND event=? AND id BETWEEN ? AND ?
-  ORDER BY timestamp_ms DESC,id DESC LIMIT ?
- )
-`
-
 func catalogBenchmarkProfileQuery(t *testing.T, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, narrow bool) (string, []any) {
 	t.Helper()
 	const limit = 1000
-	query, args := duckLakeProfileSampleSQL, []any{catalogBenchEvent, limit}
+	query, args := legacyDuckLakeProfileSampleSQL, []any{catalogBenchEvent, limit}
 	if narrow {
 		// The inclusive range contains every selected ID. Re-applying the same
 		// order and limit inside that range yields the same sample.
 		var low, high int64
-		if err := q.QueryRowContext(t.Context(), catalogBenchProfileBoundsSQL, catalogBenchEvent, limit).Scan(&low, &high); err != nil {
+		if err := q.QueryRowContext(t.Context(), duckLakeProfileSampleBoundsSQL, catalogBenchEvent, limit).Scan(&low, &high); err != nil {
 			t.Fatal(err)
 		}
-		const bounded = "), bounded AS ("
-		_, budgets, ok := strings.Cut(duckLakeProfileSampleSQL, bounded)
-		if !ok {
-			t.Fatal("cannot find profile budget clauses")
-		}
-		query, args = catalogBenchProfileNarrowPrefix+bounded+budgets, []any{catalogBenchEvent, low, high, limit}
+		query, args = duckLakeProfileSampleSQL, []any{catalogBenchEvent, low, high, limit}
 	}
 	return query, append(args, EventProfileFieldBytes, 3, EventProfileFieldBytes,
 		EventProfileSampleBytes, EventProfileSampleBytes, eventProfileMetadataBytes)
@@ -334,7 +316,7 @@ func explainEventCatalogBenchmark(t *testing.T, p *ProjectLake, detailQuery stri
 	explain("catalog_event_after_sample", duckLakeCatalogSampleSQL, catalogBenchEvent, low, high)
 	profileQuery, profileArgs := catalogBenchmarkProfileQuery(t, p.DB, false)
 	explain("profile_before_sample", profileQuery, profileArgs...)
-	explain("profile_after_ids", catalogBenchProfileBoundsSQL, catalogBenchEvent, 1000)
+	explain("profile_after_ids", duckLakeProfileSampleBoundsSQL, catalogBenchEvent, 1000)
 	profileQuery, profileArgs = catalogBenchmarkProfileQuery(t, p.DB, true)
 	explain("profile_after_sample", profileQuery, profileArgs...)
 }

@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -249,13 +250,12 @@ func catalogProject(ctx context.Context, lease analyticalProjectLease, input Eve
 	}
 	defer tx.Rollback()
 	query := duckLakeCatalogAggregateSQL
-	args := []any{}
+	args := []any{limit + 1, offset}
 	if event != "" {
 		query += " AND event=?"
-		args = append(args, event)
+		args = []any{event, limit + 1, offset}
 	}
 	query += " GROUP BY event ORDER BY max(id) DESC LIMIT ? OFFSET ?"
-	args = append(args, limit+1, offset)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return EventCatalog{}, DuckLakeQueryError(ctx, err)
@@ -343,19 +343,14 @@ func catalogProject(ctx context.Context, lease analyticalProjectLease, input Eve
 				keys = append(keys, key)
 			}
 		}
-		sort.Strings(keys)
-		if len(keys) > 200 {
-			keys = keys[:200]
-		}
-		for _, key := range keys {
+		slices.Sort(keys)
+		for _, key := range keys[:min(len(keys), 200)] {
 			sample := properties[key]
 			if sample == nil {
 				if len(properties) >= input.PropertyLimit+1 {
 					maximum := ""
 					for candidate := range properties {
-						if candidate > maximum {
-							maximum = candidate
-						}
+						maximum = max(maximum, candidate)
 					}
 					if key >= maximum {
 						continue
@@ -372,18 +367,9 @@ func catalogProject(ctx context.Context, lease analyticalProjectLease, input Eve
 	if err := rows.Err(); err != nil {
 		return EventCatalog{}, DuckLakeQueryError(ctx, err)
 	}
-	keys := make([]string, 0, len(properties))
-	for key := range properties {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
+	for _, key := range slices.Sorted(maps.Keys(properties)) {
 		sample := properties[key]
-		types := make([]string, 0, len(sample.types))
-		for kind := range sample.types {
-			types = append(types, kind)
-		}
-		sort.Strings(types)
+		types := slices.Sorted(maps.Keys(sample.types))
 		result.Properties = append(result.Properties, EventCatalogProperty{Key: key, Types: types, SampleOccurrences: strconv.Itoa(sample.count), LatestEventUUID: sample.uuid, LastReceivedAt: sample.at})
 	}
 	finishCatalogProperties(&result, input)
