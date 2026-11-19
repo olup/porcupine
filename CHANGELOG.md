@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.0
+
+- Hosted recovery looks for pending work in PostgreSQL before opening DuckLake. Idle projects no longer create recovery snapshots or write Parquet objects. The upgrade seeds recovery for existing effect streams once. (#136)
+- Hosted webhook output limits can split a flush at request boundaries. If a single request still exceeds a permanent output limit, Porcupine keeps its events and reports the refused webhook outputs. (#134)
+- On loss of the PostgreSQL incarnation lease, hosted workers cancel writes, keep their in-memory events, and resume under a new lease. Readiness stays down while the worker lacks a valid lease. (#137)
+- A hosted project that repeatedly fails with the same deterministic error is quarantined on the worker. The worker reports the discarded buffered copies and rejects new requests for that project while other projects can continue. (#135)
+- Team service accounts and their API or MCP keys are bound to a single project. Older team credentials with multiple projects require replacements. (#133)
+
+Follow the [v0.16.0 upgrade steps](https://github.com/olup/porcupine/blob/v0.17.0/docs/hosting.md#upgrade-from-v0160) and back up hosted control storage before the recovery queue migration.
+
 ## 0.16.0
 
 - Added a private, opt-in Prometheus listener for each server process and a Grafana operator dashboard. They report ingestion, queue pressure, flushes, HTTP and MCP activity, and interactive query timing. Server logs use JSON on stderr. (#118)
