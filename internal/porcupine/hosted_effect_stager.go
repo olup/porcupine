@@ -13,6 +13,7 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 type frozenWebhookTarget struct {
@@ -21,18 +22,13 @@ type frozenWebhookTarget struct {
 	RuleRevision        string               `json:"rule_revision"`
 	DestinationRevision string               `json:"destination_revision"`
 	Rule                delivery.WebhookRule `json:"rule"`
+	cutoff              time.Time
 }
 type frozenLiveOutputPlan struct {
 	Scope              lakeapi.HostedProjectScope `json:"scope"`
 	TenantID           string                     `json:"tenant_id"`
 	Targets            []frozenWebhookTarget      `json:"targets"`
 	MaxEventReferences int64                      `json:"max_event_references"`
-}
-type immutableWebhookOutput struct {
-	DeliveryID string                     `json:"delivery_id"`
-	Target     frozenWebhookTarget        `json:"target"`
-	EventUUIDs []string                   `json:"event_uuids"`
-	Body       lakeapi.ImmutableObjectRef `json:"body"`
 }
 type immutableWebhookFragment struct {
 	FragmentID                 string                     `json:"fragment_id"`
@@ -42,23 +38,12 @@ type immutableWebhookFragment struct {
 	Body                       lakeapi.ImmutableObjectRef `json:"body"`
 	WindowStartMS, WindowEndMS int64
 }
-type immutableLiveEffectManifest struct {
-	Version           int                        `json:"version"`
-	Scope             lakeapi.HostedProjectScope `json:"scope"`
-	TenantID, BatchID string
-	Sequence          int64                      `json:"sequence"`
-	PlanID            string                     `json:"plan_id"`
-	Outputs           []immutableWebhookOutput   `json:"outputs"`
-	BatchFragments    []immutableWebhookFragment `json:"batch_fragments"`
-}
 
-// Only the frozen routing plan and immutable object store are retained. This
-// component cannot query mutable pipeline state, publish jobs or commit events.
+// The stager builds output metadata and bodies from the frozen routing plan.
 type hostedImmutableEffects struct {
 	objects *lakeapi.DuckLakeObjectStore
 	fence   lakeapi.ProjectWriteFence
 	plan    frozenLiveOutputPlan
-	planID  string
 	put     func(context.Context, []byte) (lakeapi.ImmutableObjectRef, error)
 }
 
@@ -74,7 +59,8 @@ func newHostedImmutableEffects(objects *lakeapi.DuckLakeObjectStore, fence lakea
 	if err := json.Unmarshal(encoded, &detached); err != nil {
 		return nil, err
 	}
-	for _, target := range detached.Targets {
+	for i := range detached.Targets {
+		target := &detached.Targets[i]
 		if target.PipelineID == "" || len(target.PipelineID) > 200 || target.PipelineIncarnation == "" || len(target.PipelineIncarnation) > 200 || target.RuleRevision == "" || len(target.RuleRevision) > 200 || target.DestinationRevision == "" || len(target.DestinationRevision) > 200 {
 			return nil, errors.New("output plan requires immutable pipeline and destination revisions")
 		}
@@ -88,24 +74,31 @@ func newHostedImmutableEffects(objects *lakeapi.DuckLakeObjectStore, fence lakea
 			return nil, errors.New("event webhook rules cannot set a batch interval or cutoff")
 		}
 		if target.Rule.StartAt != "" {
-			if _, err := time.Parse(time.RFC3339Nano, target.Rule.StartAt); err != nil {
+			if target.cutoff, err = time.Parse(time.RFC3339Nano, target.Rule.StartAt); err != nil {
 				return nil, errors.New("invalid frozen webhook cutoff")
 			}
 		}
 	}
-	digest := sha256.Sum256(encoded)
-	return &hostedImmutableEffects{objects: objects, fence: fence, plan: detached, planID: hex.EncodeToString(digest[:])}, nil
+	return &hostedImmutableEffects{objects: objects, fence: fence, plan: detached}, nil
 }
-func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+func (t frozenWebhookTarget) match(e eventapi.Event) (time.Time, bool, error) {
+	if !t.Rule.Matches(e.Event) {
+		return time.Time{}, false, nil
+	}
+	received, err := time.Parse(time.RFC3339Nano, e.ReceivedAt)
+	return received, !received.Before(t.cutoff), err
+}
+
+func (s *hostedImmutableEffects) prepare(ctx context.Context, selected lakeapi.SelectedLiveEffects) ([]output.PipelineOutput, error) {
 	if selected.Scope != s.plan.Scope || selected.TenantID != s.plan.TenantID || selected.Sequence <= 0 || selected.BatchID == "" {
-		return lakeapi.StagedLiveEffects{}, errors.New("selected output scope differs from frozen plan")
+		return nil, errors.New("selected output scope differs from frozen plan")
 	}
 	for _, e := range selected.Events {
 		if e.ProjectID != s.plan.Scope.Key.ProjectID || e.IdentitySnapshot != "" || identityapi.IsControl(e.Event) {
-			return lakeapi.StagedLiveEffects{}, errors.New("private identity controls cannot enter output staging")
+			return nil, errors.New("private identity controls cannot enter output staging")
 		}
 	}
-	manifest := immutableLiveEffectManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, Sequence: selected.Sequence, PlanID: s.planID}
+	prepared := []output.PipelineOutput{}
 	references := int64(0)
 	for _, target := range s.plan.Targets {
 		group := []eventapi.Event{}
@@ -114,18 +107,16 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 			if len(group) == 0 {
 				return nil
 			}
-			idHash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s\x00%d", selected.Scope.StreamID, selected.Sequence, target.PipelineIncarnation, target.RuleRevision, target.DestinationRevision, len(manifest.Outputs)+len(manifest.BatchFragments))))
+			idHash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s\x00%d", selected.Scope.StreamID, selected.Sequence, target.PipelineIncarnation, target.RuleRevision, target.DestinationRevision, len(prepared))))
 			id := hex.EncodeToString(idHash[:])
-			var raw []byte
-			var err error
+			o := output.PipelineOutput{ID: "pc_hook_" + id, PipelineID: target.PipelineID, Incarnation: target.PipelineIncarnation, RuleRevision: target.RuleRevision, DestinationRevision: target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "delivery"}
+			var payload any = delivery.WebhookPayload{DeliveryID: o.ID, PipelineID: target.PipelineID, ProjectID: selected.Scope.Key.ProjectID, Event: &group[0]}
 			if target.Rule.DeliveryMode == "batch" {
-				// Fragments are not deliveries. The window assembler combines them
-				// across native commits before freezing the final body and ID.
-				raw, err = delivery.EncodeJSON(group)
-			} else {
-				id = "pc_hook_" + id
-				raw, err = delivery.EncodeJSON(delivery.WebhookPayload{DeliveryID: id, PipelineID: target.PipelineID, ProjectID: selected.Scope.Key.ProjectID, Event: &group[0]})
+				o.ID, o.Kind = "pc_frag_"+id, "fragment"
+				o.Fragment = &output.PipelineFragmentSpec{WindowStartMS: *windowStart, WindowEndMS: *windowEnd, Rule: target.Rule}
+				payload = group
 			}
+			raw, err := delivery.EncodeJSON(payload)
 			if err != nil {
 				return err
 			}
@@ -133,53 +124,42 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 			if err != nil {
 				return err
 			}
-			if target.Rule.DeliveryMode == "batch" {
-				fragment := immutableWebhookFragment{FragmentID: "pc_frag_" + id, Target: target, Body: body, WindowStartMS: *windowStart, WindowEndMS: *windowEnd}
-				for _, e := range group {
-					encoded, err := delivery.EncodeJSON(e)
-					if err != nil {
-						return err
-					}
-					fragment.EventUUIDs = append(fragment.EventUUIDs, e.UUID)
-					fragment.EventBytes = append(fragment.EventBytes, int64(len(encoded)))
+			o.Body = pipelineRef(body)
+			var queued int64
+			for _, e := range group {
+				encoded, err := delivery.EncodeJSON(e)
+				if err != nil {
+					return err
 				}
-				manifest.BatchFragments = append(manifest.BatchFragments, fragment)
-			} else {
-				output := immutableWebhookOutput{DeliveryID: id, Target: target, Body: body}
-				for _, e := range group {
-					output.EventUUIDs = append(output.EventUUIDs, e.UUID)
-				}
-				manifest.Outputs = append(manifest.Outputs, output)
+				o.Members = append(o.Members, output.PipelineMember{UUID: e.UUID, Bytes: int64(len(encoded))})
+				queued += int64(len(encoded)) + 1024
 			}
+			o.Charge = output.PipelineDemand{References: int64(len(group)), QueuedBytes: body.Bytes, MetadataRows: int64(1 + len(group)), ArtifactBytes: body.Bytes}
+			if o.Fragment != nil {
+				o.Charge.QueuedBytes = max(queued, body.Bytes)
+			}
+			prepared = append(prepared, o)
 			group = nil
 			return nil
 		}
 		bytes := 0
 		for _, e := range selected.Events {
-			if !target.Rule.Matches(e.Event) {
+			received, matches, err := target.match(e)
+			if err != nil {
+				return nil, err
+			}
+			if !matches {
 				continue
 			}
-			received, err := time.Parse(time.RFC3339Nano, e.ReceivedAt)
-			if err != nil {
-				return lakeapi.StagedLiveEffects{}, err
-			}
-			if target.Rule.StartAt != "" {
-				start, err := time.Parse(time.RFC3339Nano, target.Rule.StartAt)
-				if err != nil {
-					return lakeapi.StagedLiveEffects{}, err
-				}
-				if received.Before(start) {
-					continue
-				}
-			}
+
 			if references >= s.plan.MaxEventReferences {
-				return lakeapi.StagedLiveEffects{}, delivery.ErrWebhookCapacity
+				return nil, delivery.ErrWebhookCapacity
 			}
 			references++
 			if target.Rule.DeliveryMode != "batch" {
 				group = []eventapi.Event{e}
 				if err := flush(); err != nil {
-					return lakeapi.StagedLiveEffects{}, err
+					return nil, err
 				}
 				continue
 			}
@@ -188,11 +168,11 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 			end := start + interval
 			encoded, err := delivery.EncodeJSON(e)
 			if err != nil {
-				return lakeapi.StagedLiveEffects{}, err
+				return nil, err
 			}
 			if len(group) > 0 && (*windowEnd != end || len(group) >= delivery.WebhookChunkEvents || bytes+len(encoded)+1024 > delivery.WebhookChunkBytes) {
 				if err := flush(); err != nil {
-					return lakeapi.StagedLiveEffects{}, err
+					return nil, err
 				}
 				bytes = 0
 			}
@@ -203,19 +183,10 @@ func (s *hostedImmutableEffects) StageLiveEffects(ctx context.Context, selected 
 			bytes += len(encoded) + 1
 		}
 		if err := flush(); err != nil {
-			return lakeapi.StagedLiveEffects{}, err
+			return nil, err
 		}
 	}
-	staged := lakeapi.StagedLiveEffects{PlanID: s.planID, OutputCount: int64(len(manifest.Outputs) + len(manifest.BatchFragments))}
-	if staged.OutputCount == 0 {
-		return staged, nil
-	}
-	raw, err := json.Marshal(manifest)
-	if err != nil {
-		return lakeapi.StagedLiveEffects{}, err
-	}
-	staged.Manifest, err = s.stageObject(ctx, raw)
-	return staged, err
+	return prepared, nil
 }
 
 func (s *hostedImmutableEffects) stageObject(ctx context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {

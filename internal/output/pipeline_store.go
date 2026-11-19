@@ -176,10 +176,14 @@ func (p *PGPipelineEffects) ReserveEffectsTx(ctx context.Context, tx *sql.Tx, b 
 	}
 	reservationCharge := b.Demand
 	reservationCharge.MetadataRows -= 1 - checkpointRows
-	admission := b
-	admission.Demand = reservationCharge
-	if e = p.lockCapacity(ctx, tx, admission, true); e != nil {
-		return e
+	// An artifact-free reservation owns the in-flight native proof and usage
+	// cursor. The project lock and stream key bound it to one per project.
+	if b.PlanRef != (PipelineRef{}) {
+		admission := b
+		admission.Demand = reservationCharge
+		if e = p.lockCapacity(ctx, tx, admission, true); e != nil {
+			return e
+		}
 	}
 	if _, e = tx.ExecContext(ctx, `INSERT INTO pipeline_effect_plans(id,tenant_id,source_id,project_id,catalog_id,stream_id) VALUES($1,$2,$3,$4,$5,$6)`, plan.ID, b.TenantID, b.Scope.SourceID, b.Scope.ProjectID, b.Scope.CatalogID, b.Scope.StreamID); e != nil {
 		return e

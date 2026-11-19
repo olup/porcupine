@@ -191,6 +191,12 @@ delivery IDs as well as deduplicating whole requests. Delivered events and
 requests already in flight cannot be recalled. Corrections do not update a
 receiver's previous copy.
 
+### Hosted webhook capacity
+
+Hosted workers split a flush at request boundaries if its matched webhook references exceed a fixed preparation, manifest, or reservation limit. If an individual request still exceeds a limit, its events remain queryable and all webhook matches for that request are permanently refused. Log entries with message `hosted webhook output refused` identify each affected pipeline and reference count. The worker's `porcupine_webhook_refused_references_total` metric counts refused references by reason. An already committed event UUID stays deduplicated on retry. A temporarily full output queue delays the flush and triggers a retry.
+
+Queued webhook jobs use at-least-once delivery attempts with the normal retry limits. A receiver may see the same delivery ID again if its response was lost. Use that ID to deduplicate retries.
+
 ### Destination protection
 
 Webhook destinations must be public HTTPS URLs. The transport checks all DNS

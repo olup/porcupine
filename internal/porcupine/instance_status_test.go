@@ -86,7 +86,7 @@ func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := newTestBuffer(t, testBufferConfig(), func(context.Context, acceptance.FlushBatch) error {
-		return acceptance.ErrBatchTooLarge
+		return nil
 	})
 	s.hosted = &hostedRuntime{buffer: b}
 	_, reader := key(t, s, []string{"management:read"}, []string{projectID})
@@ -100,7 +100,7 @@ func TestInstanceStatusHostedIngestionPrivacy(t *testing.T) {
 	}
 	admin := request(t, s, "GET", "/api/v1/status", adminToken, "", 200)
 	ingestion, ok := admin["hosted_ingestion"].(map[string]any)
-	if !ok || ingestion["dropped_requests"] != float64(1) || ingestion["dropped_events"] != float64(2) {
+	if !ok || ingestion["dropped_requests"] != float64(0) || ingestion["dropped_events"] != float64(0) {
 		t.Fatal("missing or incorrect hosted ingestion counters", admin)
 	}
 	if status := request(t, s, "GET", "/api/v1/status", reader, "", 200); status["hosted_ingestion"] != nil {

@@ -69,22 +69,20 @@ func (h *assemblyS3Harness) stage(t *testing.T, events []eventapi.Event) []hoste
 	if err != nil {
 		t.Fatal(err)
 	}
-	staged, err := stager.StageLiveEffects(t.Context(), lakeapi.SelectedLiveEffects{Scope: h.scope, TenantID: "tenant", BatchID: eventapi.NewID(), Sequence: h.sequence, Events: events})
+	prepared, err := stager.prepare(t.Context(), lakeapi.SelectedLiveEffects{Scope: h.scope, TenantID: "tenant", BatchID: eventapi.NewID(), Sequence: h.sequence, Events: events})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := h.objects.ReadImmutableEffectObject(t.Context(), h.scope, staged.Manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest immutableLiveEffectManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	inputs := make([]hostedAssemblyFragment, len(manifest.BatchFragments))
-	for i, fragment := range manifest.BatchFragments {
-		members := make([]int, len(fragment.EventUUIDs))
-		for j := range members {
+	inputs := make([]hostedAssemblyFragment, len(prepared))
+	for i, o := range prepared {
+		if o.Fragment == nil {
+			t.Fatal("stager created a delivery instead of a fragment", o)
+		}
+		fragment := immutableWebhookFragment{FragmentID: o.ID, Target: h.target, Body: nativeRef(o.Body), WindowStartMS: o.Fragment.WindowStartMS, WindowEndMS: o.Fragment.WindowEndMS}
+		members := make([]int, len(o.Members))
+		for j, m := range o.Members {
+			fragment.EventUUIDs = append(fragment.EventUUIDs, m.UUID)
+			fragment.EventBytes = append(fragment.EventBytes, m.Bytes)
 			members[j] = j
 		}
 		inputs[i] = hostedAssemblyFragment{hostedFragmentPosition{h.scope, h.sequence, fragment.FragmentID, 0}, fragment, members}

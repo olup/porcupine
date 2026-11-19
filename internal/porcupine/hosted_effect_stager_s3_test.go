@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/olup/porcupine/internal/delivery"
@@ -51,69 +52,50 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			staged, err := stager.StageLiveEffects(ctx, selected)
-			expected := int64(2)
+			prepared, err := stager.prepare(ctx, selected)
+			expected := 2
 			if mode == "batch" {
 				expected = 1
 			}
-			if err != nil || staged.OutputCount != expected {
-				t.Fatal(staged, err)
+			if err != nil || len(prepared) != expected {
+				t.Fatal(prepared, err)
 			}
-			replay, err := stager.StageLiveEffects(ctx, selected)
-			if err != nil || replay != staged {
-				t.Fatal("immutable restaging changed reference", replay, staged, err)
-			}
-			raw, err := store.Remote.ReadImmutableEffectObject(ctx, scope, staged.Manifest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var manifest immutableLiveEffectManifest
-			if err := json.Unmarshal(raw, &manifest); err != nil {
-				t.Fatal(err)
-			}
-			if manifest.PlanID != staged.PlanID || manifest.Sequence != selected.Sequence || manifest.Scope != scope {
-				t.Fatal(manifest)
+			replay, err := stager.prepare(ctx, selected)
+			if err != nil || !reflect.DeepEqual(replay, prepared) {
+				t.Fatal("immutable restaging changed references", replay, prepared, err)
 			}
 			members := []string{}
-			for _, output := range manifest.Outputs {
-				if output.Target.PipelineIncarnation != "incarnation" || output.Target.DestinationRevision != "destination-v1" {
-					t.Fatal("routing revision changed", output)
+			for _, o := range prepared {
+				if o.Incarnation != "incarnation" || o.DestinationRevision != "destination-v1" {
+					t.Fatal("routing revision changed", o)
 				}
-				members = append(members, output.EventUUIDs...)
-				body, err := store.Remote.ReadImmutableEffectObject(ctx, scope, output.Body)
+				for _, m := range o.Members {
+					members = append(members, m.UUID)
+				}
+				body, err := store.Remote.ReadImmutableEffectObject(ctx, scope, nativeRef(o.Body))
 				if err != nil {
 					t.Fatal(err)
 				}
-				var payload delivery.WebhookPayload
-				if err := json.Unmarshal(body, &payload); err != nil {
-					t.Fatal(err)
-				}
-				if payload.DeliveryID != output.DeliveryID || payload.PipelineID != "pipeline" || payload.ProjectID != key.ProjectID {
-					t.Fatal(payload)
-				}
-				if mode == "event" && (payload.Event == nil || len(payload.Events) != 0) {
-					t.Fatal("event contract changed", payload)
-				}
-			}
-			if mode == "batch" && (len(manifest.Outputs) != 0 || len(manifest.BatchFragments) != 1) {
-				t.Fatal("batch fragment was prematurely made a delivery", manifest)
-			}
-			for _, fragment := range manifest.BatchFragments {
-				members = append(members, fragment.EventUUIDs...)
-				body, err := store.Remote.ReadImmutableEffectObject(ctx, scope, fragment.Body)
-				if err != nil {
-					t.Fatal(err)
+				if mode == "event" {
+					var payload delivery.WebhookPayload
+					if err := json.Unmarshal(body, &payload); err != nil {
+						t.Fatal(err)
+					}
+					if o.Fragment != nil || payload.DeliveryID != o.ID || payload.PipelineID != "pipeline" || payload.ProjectID != key.ProjectID || payload.Event == nil || len(payload.Events) != 0 {
+						t.Fatal("event contract changed", payload)
+					}
+					continue
 				}
 				var events []eventapi.Event
 				if err := json.Unmarshal(body, &events); err != nil {
 					t.Fatal(err)
 				}
-				if len(events) != 2 || len(fragment.EventBytes) != 2 || fragment.WindowEndMS-fragment.WindowStartMS != 60000 {
-					t.Fatal(fragment, events)
+				if o.Fragment == nil || len(events) != 2 || len(o.Members) != 2 || o.Fragment.WindowEndMS-o.Fragment.WindowStartMS != 60000 {
+					t.Fatal(o, events)
 				}
 				for i, e := range events {
 					encoded, err := delivery.EncodeJSON(e)
-					if err != nil || int64(len(encoded)) != fragment.EventBytes[i] {
+					if err != nil || int64(len(encoded)) != o.Members[i].Bytes {
 						t.Fatal("fragment byte metadata diverged", err)
 					}
 				}
@@ -124,13 +106,13 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 			wrong := scope
 			wrong.Key.ProjectID = "another-project"
 			wrong.CatalogID = lakeapi.SharedNativeCatalogID(source, wrong.Key.ProjectID)
-			if _, err := store.Remote.ReadImmutableEffectObject(ctx, wrong, staged.Manifest); err == nil {
+			if _, err := store.Remote.ReadImmutableEffectObject(ctx, wrong, nativeRef(prepared[0].Body)); err == nil {
 				t.Fatal("cross-project body access accepted")
 			}
 			private := selected
 			private.Events = append([]eventapi.Event(nil), selected.Events...)
 			private.Events[0].IdentitySnapshot = `{"private":true}`
-			if _, err := stager.StageLiveEffects(ctx, private); err == nil {
+			if _, err := stager.prepare(ctx, private); err == nil {
 				t.Fatal("private identity snapshot reached staging")
 			}
 			bounded := plan
@@ -139,7 +121,7 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := limited.StageLiveEffects(ctx, selected); !errors.Is(err, delivery.ErrWebhookCapacity) {
+			if _, err := limited.prepare(ctx, selected); !errors.Is(err, delivery.ErrWebhookCapacity) {
 				t.Fatal("fanout capacity was not enforced atomically", err)
 			}
 		})

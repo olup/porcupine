@@ -274,10 +274,9 @@ func TestBufferedAcceptanceSplitsAtRequestBoundaries(t *testing.T) {
 	for _, testcase := range []struct {
 		name                       string
 		sizes, attempts, committed []int
-		droppedEvents              uint64
 	}{
 		{name: "both requests fit", sizes: []int{3, 3}, attempts: []int{6, 3, 3}, committed: []int{3, 3}},
-		{name: "one oversized request", sizes: []int{5, 2, 1}, attempts: []int{8, 5, 3}, committed: []int{3}, droppedEvents: 5},
+		{name: "one oversized request", sizes: []int{5, 2, 1}, attempts: []int{8, 5, 3}, committed: []int{5, 3}},
 	} {
 		t.Run(testcase.name, func(t *testing.T) {
 			t.Parallel()
@@ -289,7 +288,7 @@ func TestBufferedAcceptanceSplitsAtRequestBoundaries(t *testing.T) {
 				}
 				ids[batch.ID] = true
 				attempts = append(attempts, len(batch.Events))
-				if len(batch.Events) > 3 {
+				if len(batch.Events) > 3 && batch.CanSplit() {
 					return ErrBatchTooLarge
 				}
 				committed = append(committed, len(batch.Events))
@@ -310,11 +309,7 @@ func TestBufferedAcceptanceSplitsAtRequestBoundaries(t *testing.T) {
 				t.Fatal("unexpected attempts or commits", attempts, committed)
 			}
 			s := b.Snapshot()
-			var droppedRequests uint64
-			if testcase.droppedEvents > 0 {
-				droppedRequests = 1
-			}
-			if s.Events != 0 || s.Bytes != 0 || s.projects != 0 || s.DroppedRequests != droppedRequests || s.DroppedEvents != testcase.droppedEvents {
+			if s.Events != 0 || s.Bytes != 0 || s.projects != 0 || s.DroppedRequests != 0 || s.DroppedEvents != 0 {
 				t.Fatal("incorrect capacity or drop counts after drain", s)
 			}
 		})
@@ -684,7 +679,7 @@ func TestBufferedAcceptanceDropsOnlyFencedProject(t *testing.T) {
 	waitBuffer(t, buffer, func(s BufferSnapshot) bool { return s.projects == 0 })
 }
 
-func TestOperationalHostedFlushRetryAndDrop(t *testing.T) {
+func TestOperationalHostedFlushRetriesAnIndivisibleBatch(t *testing.T) {
 	t.Parallel()
 	m := observability.NewRegistry("hosted")
 	c := testBufferConfig()
@@ -699,15 +694,16 @@ func TestOperationalHostedFlushRetryAndDrop(t *testing.T) {
 	results <- errors.New("private-backend-error")
 	nextFlush(t, calls)
 	results <- ErrBatchTooLarge
-	waitBuffer(t, b, func(s BufferSnapshot) bool { return s.DroppedEvents == 1 })
+	nextFlush(t, calls)
+	results <- nil
+	waitBuffer(t, b, func(s BufferSnapshot) bool { return s.Events == 0 && s.DroppedEvents == 0 })
 	var out strings.Builder
 	m.Write(&out, nil)
 	metrics := out.String()
 	for _, expected := range []string{
-		`porcupine_flush_attempts_total{profile="hosted",outcome="retry"} 1`,
-		`porcupine_flush_attempts_total{profile="hosted",outcome="dropped"} 1`,
-		`porcupine_flush_dropped_events_total{profile="hosted",reason="oversized"} 1`,
-		`porcupine_flush_duration_seconds_count{profile="hosted"} 2`,
+		`porcupine_flush_attempts_total{profile="hosted",outcome="retry"} 2`,
+		`porcupine_flush_attempts_total{profile="hosted",outcome="ok"} 1`,
+		`porcupine_flush_duration_seconds_count{profile="hosted"} 3`,
 	} {
 		if !strings.Contains(metrics, expected+"\n") {
 			t.Fatalf("missing metric %q in %s", expected, metrics)
