@@ -16,7 +16,6 @@ const (
 	hostedScheduledRulePrefix = "scheduled-query/"
 	hostedScheduledMaxBytes   = 64 << 20
 	hostedScheduledMaxFiles   = 128
-	scheduledMaxAttempts      = 3
 )
 
 type HostedScheduledReader interface {
