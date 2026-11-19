@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.17.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.18.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,19 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Choose the procedure for the version you are running.
+
+### Upgrade from v0.17.0
+
+1. Pause producers and let accepted events become queryable. In hosted mode, drain all workers and check for shutdown errors. Acknowledged events can still be in memory if a drain fails.
+2. Stop all v0.17.0 instances. Keep the matching image and private configuration. Back up all standalone storage, including any analytical objects in S3, or take a coordinated hosted recovery point. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+3. If you limit browser capture to specific websites, set `allowed_origins` before starting the new server. Start v0.18.0 with the existing storage. [Browser ingestion settings](reference/configuration.md#browser-ingestion)
+4. Update the CLI. For self-hosted deployments, set `PORCUPINE_URL` or pass `--url`. Check readiness and confirm that a new test event becomes queryable before resuming producers.
+
+Hosted startup applies PostgreSQL control migrations 23 and 24. They store the shared quarantine reason and index unpublished live reservations by project. Recovery reads the reservations directly, so the upgrade removes the trigger that queued them.
+
+SQLite control migration 9 and PostgreSQL control migration 25 add the browser key type. Existing credentials continue to work. For an existing mixed project, a tenant administrator can provision a browser key that authorized project members can retrieve.
+
+To roll back after the migration, restore the pre-upgrade recovery point before starting v0.17.0. Reconcile any writes accepted after cutover before resuming producers.
 
 ### Upgrade from v0.16.0
 
