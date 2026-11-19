@@ -86,6 +86,10 @@ func TestNativeRestoreCredentialResetKeepsAnalyticsAndRevokesHumans(t *testing.T
 		t.Fatalf("missing rotated ingestion credential: %+v", result)
 	}
 	nativeRequest(t, s, result.IngestionKeys[0].Token, `{"type":"track","name":"new-key","actor_id":"person"}`, 200)
+	path := "/api/v1/projects/" + projectID + "/client-ingestion-key"
+	if got := request(t, s, "GET", path, fresh, "", 200)["key"]; got != result.IngestionKeys[0].Token {
+		t.Fatal("restored browser key is not retrievable")
+	}
 	for _, table := range []string{"email_humans", "oidc_identities", "tenant_memberships", "oauth_grant_tenants", "oauth_clients", "oauth_tokens", "oauth_authorization_codes", "oauth_refresh_tokens", "oauth_interactive_grants", "service_api_keys", "webhook_deliveries", "export_files"} {
 		var count int
 		database := s.control

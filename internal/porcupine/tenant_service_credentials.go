@@ -424,7 +424,7 @@ func (s *Service) listTenantServiceKeys(ctx context.Context, input *TenantServic
 	if err := tenantMachineOwned(ctx, s.control, input.TenantID, input.ID); err != nil {
 		return nil, err
 	}
-	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,b.audience FROM service_api_keys b JOIN access_keys k ON k.id=b.principal_id JOIN tenant_credentials t ON t.principal_id=k.id WHERE b.client_id=$1 AND t.tenant_id=$2 ORDER BY k.created_at,k.id LIMIT $3 OFFSET $4`, input.ID, input.TenantID, input.Limit+1, input.Offset)
+	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.kind,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,b.audience FROM service_api_keys b JOIN access_keys k ON k.id=b.principal_id JOIN tenant_credentials t ON t.principal_id=k.id WHERE b.client_id=$1 AND t.tenant_id=$2 ORDER BY k.created_at,k.id LIMIT $3 OFFSET $4`, input.ID, input.TenantID, input.Limit+1, input.Offset)
 	if err != nil {
 		return nil, apierr.New(503, "team credential storage unavailable")
 	}
@@ -434,7 +434,7 @@ func (s *Service) listTenantServiceKeys(ctx context.Context, input *TenantServic
 	for rows.Next() {
 		var key AccessKey
 		var permissions, projects string
-		if err := rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.Audience); err != nil {
+		if err := rows.Scan(&key.ID, &key.Kind, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.Audience); err != nil {
 			return nil, apierr.New(503, "team credential storage unavailable")
 		}
 		if len(out.Body.AccessKeys) == input.Limit {

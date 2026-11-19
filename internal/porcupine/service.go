@@ -417,7 +417,7 @@ func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal,
 	}
 	err := s.control.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id,t.principal_id IS NOT NULL
 FROM access_keys k LEFT JOIN tenant_credentials t ON t.principal_id=k.id
-WHERE k.token_hash=$1 AND k.revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID, &tenantCredential)
+WHERE k.token_hash=$1 AND k.kind='access' AND k.revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID, &tenantCredential)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return a, err
@@ -690,7 +690,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	if len(r.Header.Values("Authorization")) != 0 {
 		var access string
 		access, err = auth.BearerCredential(r)
-		if err == nil {
+		if err == nil && strings.HasPrefix(access, clientIngestionKeyPrefix) {
+			a, err = s.authenticateIngestionKey(r.Context(), access)
+		} else if err == nil {
 			resource := ""
 			if s.resources != nil {
 				resource = s.resources.apiResource
@@ -700,7 +702,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		}
 		if err == nil && rawKey != "" {
 			var selector auth.Principal
-			selector, err = s.authenticate(r.Context(), rawKey)
+			selector, err = s.authenticateIngestionKey(r.Context(), rawKey)
 			if err == nil {
 				if selector.Can("events:write") && len(selector.Projects) == 1 && selector.Projects[0] != "*" && auth.Authorize(a, "events:write", selector.Projects[0]) && (a.SourceID == "" || selector.SourceID == "" || a.SourceID == selector.SourceID) {
 					a.Projects = []string{selector.Projects[0]}
@@ -713,7 +715,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			}
 		}
 	} else {
-		a, err = s.authenticate(r.Context(), rawKey)
+		a, err = s.authenticateIngestionKey(r.Context(), rawKey)
 	}
 	if err != nil {
 		if writeAuthenticationUnavailable(w, err) {

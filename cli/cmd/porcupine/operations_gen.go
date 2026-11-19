@@ -105,7 +105,7 @@ var operations = []operation{
 	},
 	{
 		ID: "create-project", Method: "POST", Path: "/api/v1/projects",
-		Summary:     "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key",
+		Summary:     "Create a project in a tenant administered by this caller; mixed projects return a public client ingestion key",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"ingestion_mode (string) [mixed server_only] server_only requires configured OAuth, creates no public ingestion key, and requires an API-resource access token or service key on every capture route.",
@@ -212,6 +212,20 @@ var operations = []operation{
 			"expected_revision (string, required) Required current decimal revision from get-event.",
 			"idempotency_key (string, required)",
 			"snapshot (object, required) Full replacement of the editable event fields.",
+		},
+	},
+	{
+		ID: "ensure-client-ingestion-key", Method: "POST", Path: "/api/v1/projects/{id}/client-ingestion-key",
+		Summary: "Get or create the active public client ingestion key for a mixed project in a tenant administered by this caller",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
+		ID: "get-client-ingestion-key", Method: "GET", Path: "/api/v1/projects/{id}/client-ingestion-key",
+		Summary: "Read the active public client ingestion key for a mixed project",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 		},
 	},
 	{

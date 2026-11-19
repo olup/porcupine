@@ -38,6 +38,8 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `GET /api/v1/status` | `management:read`; no project data or secrets in the [instance report](instance-status.md) | `200`, including a degraded report |
 | `GET /api/v1/projects` | `management:read`; results restricted to permitted projects | `200` |
 | `POST /api/v1/projects` | Instance operator or administrator of the selected tenant | `201` |
+| `GET /api/v1/projects/{id}/client-ingestion-key` | `management:read` for this project | `200` with the active public key, or `404` if absent |
+| `POST /api/v1/projects/{id}/client-ingestion-key` | Instance operator or administrator of the owning tenant | `200` with the active public key, or `409` for `server_only` |
 | `PATCH /api/v1/projects/{id}` | `management:write` for this project | `200` with the updated project |
 | `DELETE /api/v1/projects/{id}` | Instance operator or administrator of the owning tenant | `204` |
 | `GET /api/v1/access-keys` | `management:read`; results restricted to keys whose entire project scope the caller holds | `200` |
@@ -110,11 +112,13 @@ The [tenant guide](tenants.md) explains shared allowances, resumable imports, qu
 ### Project and credential details
 
 Project creation accepts `{"name":"Example"}` and returns a `mixed` project plus
-a one-time public `ingest_token` with `events:write` for that project. With OAuth
+a public `ingest_token` for live capture into that project. With OAuth
 enabled, send `{"name":"Trusted service","ingestion_mode":"server_only"}` to
 require authenticated backend writes. The response omits the public key. The
 creation operation requires the same permissions for both modes. See the
 [ingestion policy](oauth.md#project-ingestion-policy).
+
+`get-client-ingestion-key` and `ensure-client-ingestion-key` both take a project ID and return `{"key":"..."}`. Ensure takes no request body and creates a key only when the mixed project has no active client ingestion key. Existing hash-only keys retain their scopes and continue working.
 
 `rename-project` accepts `{"name":"Research"}`. Names must contain 1–200 UTF-8 bytes after trimming whitespace. The response contains the updated `project`. Existing SDKs, dashboards and pipelines continue to address the project by ID.
 
@@ -147,10 +151,10 @@ In OAuth mode with legacy keys disabled, access-key creation is restricted to
 `permissions: ["events:write"]` and exactly one project. It returns the one-time
 `token` used by public PostHog ingestion. Use an OAuth machine client or a [service key](service-keys.md) for service and agent access. Legacy mode retains the older scoped-key behavior.
 
-Key listing returns `{"access_keys":[...]}`. Each item contains `id`, `name`,
+Key listing returns `{"access_keys":[...]}`. Each item contains `id`, `kind`, `name`,
 `permissions`, `projects`, `created_at`, and `revoked_at`. Active keys have
 `revoked_at: null`. Revoked keys remain visible within scope. A key spanning
-projects A and B is omitted entirely from a caller restricted to A.
+projects A and B is omitted entirely from a caller restricted to A. Use `kind: "client_ingestion"` to identify a project's browser key for revocation.
 
 Client or principal revocation disables future authentication, including all
 access tokens issued to it. Ordinary already-authenticated requests are not

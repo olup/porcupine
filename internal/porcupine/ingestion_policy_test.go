@@ -28,6 +28,9 @@ func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
 			if _, present := created["ingest_token"]; present {
 				t.Fatal("server-only project minted a public ingestion key")
 			}
+			clientKeyPath := "/api/v1/projects/" + id + "/client-ingestion-key"
+			f.call(t, "GET", clientKeyPath, admin.AccessToken, nil, 404, nil)
+			f.call(t, "POST", clientKeyPath, admin.AccessToken, nil, 409, nil)
 			var credentials int
 			if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
 				t.Fatal("server-only creation stored an ingestion credential")

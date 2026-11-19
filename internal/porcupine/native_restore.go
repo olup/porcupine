@@ -372,15 +372,16 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, `SELECT k.name,k.projects,k.source_id FROM access_keys k WHERE k.revoked_at IS NULL AND json_array_length(k.permissions)=1 AND json_extract(k.permissions,'$[0]')='events:write' AND json_array_length(k.projects)=1 AND NOT EXISTS(SELECT 1 FROM oauth_clients c WHERE c.client_id=k.id) AND NOT EXISTS(SELECT 1 FROM service_api_keys s WHERE s.principal_id=k.id)`)
+	rows, err := tx.QueryContext(ctx, `SELECT k.name,k.projects,k.source_id,k.kind FROM access_keys k WHERE k.revoked_at IS NULL AND json_array_length(k.permissions)=1 AND json_extract(k.permissions,'$[0]')='events:write' AND json_array_length(k.projects)=1 AND NOT EXISTS(SELECT 1 FROM oauth_clients c WHERE c.client_id=k.id) AND NOT EXISTS(SELECT 1 FROM service_api_keys s WHERE s.principal_id=k.id)`)
 	if err != nil {
 		return result, err
 	}
-	type ingestion struct{ name, project, source string }
+	type ingestion struct{ name, project, source, kind string }
 	var keys []ingestion
 	for rows.Next() {
-		var name, projects, source string
-		if err = rows.Scan(&name, &projects, &source); err != nil {
+		var key ingestion
+		var projects string
+		if err = rows.Scan(&key.name, &projects, &key.source, &key.kind); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -389,13 +390,14 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 			rows.Close()
 			return result, errors.New("invalid archived ingestion key scope")
 		}
-		keys = append(keys, ingestion{name, scope[0], source})
+		key.project = scope[0]
+		keys = append(keys, key)
 	}
 	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?),token_hash='restored-revoked-'||id`, now()); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=coalesce(revoked_at,?),token_hash='restored-revoked-'||id,client_ingestion_token=NULL`, now()); err != nil {
 		return result, err
 	}
 	tables := []string{"service_api_keys", "tenant_credentials", "oauth_clients"}
@@ -421,11 +423,20 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 		result.Warning += " Recover administration with an external JWT operator; no local recovery administrator was created."
 	}
 	for _, key := range keys {
-		var mixed bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE id=? AND ingestion_mode='mixed')`, key.project).Scan(&mixed); err != nil {
+		var tenant string
+		err = tx.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=? AND ingestion_mode='mixed'`, key.project).Scan(&tenant)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			return result, err
 		}
-		if !mixed {
+		if key.kind == clientIngestionKeyKind {
+			raw, err := createClientIngestionKey(ctx, tx, key.project, tenant, key.name, now())
+			if err != nil {
+				return result, err
+			}
+			result.IngestionKeys = append(result.IngestionKeys, NativeRestoreIngestionKey{key.project, key.source, raw})
 			continue
 		}
 		raw := token()
@@ -434,7 +445,7 @@ func resetNativeRestoreCredentials(ctx context.Context, journal, control *sql.DB
 		if _, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at,source_id) VALUES(?,?,?,'["events:write"]',?,?,?)`, keyID, key.name, hash(raw), string(scope), now(), key.source); err != nil {
 			return result, err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) SELECT ?,tenant_id FROM projects WHERE id=?`, keyID, key.project); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES(?,?)`, keyID, tenant); err != nil {
 			return result, err
 		}
 		result.IngestionKeys = append(result.IngestionKeys, NativeRestoreIngestionKey{key.project, key.source, raw})

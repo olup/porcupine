@@ -20,9 +20,21 @@ Create a project for backend-only capture:
 porcupine create-project --body '{"name":"Demo","ingestion_mode":"server_only"}'
 ```
 
-For browser capture, use `"ingestion_mode":"mixed"`. The creation response includes the project's public `ingest_token`. Store it in your browser configuration and configure the application's allowed origin on the server. For private backend credentials, create a [service key](service-keys.md).
+For browser capture, use `"ingestion_mode":"mixed"`. The creation response includes the project's public `ingest_token`. Use it in your browser configuration. For private backend credentials, create a [service key](service-keys.md).
 
 Keep the returned project ID for future requests. An instance operator or that tenant's administrator can create a project. Include the team's `tenant_id` in the request body. Omitting it selects `default` and still requires authority for that tenant. The response includes the immutable tenant ownership. `list-projects` accepts a `tenant_id` filter and still restricts results to the caller's grants.
+
+## Get a browser ingestion key
+
+Reading the active public key requires `management:read` for the project.
+
+```sh
+porcupine get-client-ingestion-key --id PROJECT_ID
+```
+
+If an older mixed project has no retrievable browser key, the owning tenant's administrator or an instance operator can run `porcupine ensure-client-ingestion-key --id PROJECT_ID`. This creates a browser key once and returns the same active key on retry. Previously issued keys continue working. A `server_only` project cannot provision a browser key.
+
+Browser keys can send events to their own project. To revoke one, find the `client_ingestion` key for that project with `porcupine list-access-keys`, then run `porcupine revoke-access-key --id KEY_ID`. Run `ensure-client-ingestion-key` to issue a replacement and update the browser configuration.
 
 ## Rename a project
 

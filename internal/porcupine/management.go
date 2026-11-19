@@ -43,7 +43,7 @@ type ProjectCreateInput struct {
 }
 type ProjectCreated struct {
 	Project     Project `json:"project"`
-	IngestToken string  `json:"ingest_token,omitempty" doc:"One-time public single-project ingestion key for mixed projects only. Absent for server_only projects."`
+	IngestToken string  `json:"ingest_token,omitempty" doc:"Public client ingestion key. Retrievable for mixed projects through get-client-ingestion-key. Absent for server_only projects."`
 }
 type ProjectCreateOutput struct{ Body ProjectCreated }
 
@@ -68,6 +68,7 @@ type AccessKey struct {
 	ServiceClientID string   `json:"service_client_id,omitempty" doc:"Owning machine client for a static service key."`
 	Audience        string   `json:"audience,omitempty" doc:"API or MCP resource for a static service key."`
 	ID              string   `json:"id"`
+	Kind            string   `json:"kind" enum:"access,client_ingestion" doc:"Credential type. Client ingestion keys are public and valid only on capture routes."`
 	Name            string   `json:"name"`
 	SourceID        string   `json:"source_id,omitempty" doc:"Credential-bound logical producer for ingestion; blank uses protocol defaults."`
 	Permissions     []string `json:"permissions"`
@@ -275,7 +276,9 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("get-instance-status", "GET", "/api/v1/status", "Read instance version, bounded storage checks, and optional service configuration without secrets or project data", auth.OperationAccess{Permission: "management:read"}, 200), s.getInstanceStatus)
 	huma.Register(api, op("get-event-input-contract", "GET", "/api/v1/projects/{id}/input-contract", "Discover native live and historical schemas, trusted server fields and import semantics", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventInputContract)
 	huma.Register(api, op("list-projects", "GET", "/api/v1/projects", "List projects accessible to this key", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListProjects)
-	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant administered by this caller; mixed projects return a one-time public ingestion key", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 201), s.managementCreateProject)
+	huma.Register(api, op("create-project", "POST", "/api/v1/projects", "Create a project in a tenant administered by this caller; mixed projects return a public client ingestion key", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 201), s.managementCreateProject)
+	huma.Register(api, op("get-client-ingestion-key", "GET", "/api/v1/projects/{id}/client-ingestion-key", "Read the active public client ingestion key for a mixed project", auth.OperationAccess{Permission: "management:read", ProjectParameter: "id"}, 200), s.getClientIngestionKey)
+	huma.Register(api, op("ensure-client-ingestion-key", "POST", "/api/v1/projects/{id}/client-ingestion-key", "Get or create the active public client ingestion key for a mixed project in a tenant administered by this caller", auth.OperationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 200), s.ensureClientIngestionKey)
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", auth.OperationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
 	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", auth.OperationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListKeys)
@@ -413,23 +416,15 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 		return nil, apierr.New(503, "server_only ingestion requires configured OAuth")
 	}
 	p := Project{ID: eventapi.NewID(), TenantID: tenantID, Name: name, CreatedAt: now(), IngestionMode: mode}
-	raw := ""
-	if mode == ingestionMixed {
-		raw = token()
-	}
 	tx, err := s.beginTenantAdministration(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES($1,$2,$3,$4,$5)`, p.ID, p.TenantID, p.Name, p.CreatedAt, p.IngestionMode)
+	raw := ""
 	if err == nil && mode == ingestionMixed {
-		projects, _ := json.Marshal([]string{p.ID})
-		ingestionID := eventapi.NewID()
-		_, err = tx.ExecContext(ctx, `INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES($1,$2,$3,$4,$5,$6)`, ingestionID, p.Name+" ingestion", hash(raw), `["events:write"]`, string(projects), p.CreatedAt)
-		if err == nil {
-			_, err = tx.ExecContext(ctx, `INSERT INTO tenant_credentials(principal_id,tenant_id) VALUES($1,$2)`, ingestionID, tenantID)
-		}
+		raw, err = createClientIngestionKey(ctx, tx, p.ID, p.TenantID, p.Name+" ingestion", p.CreatedAt)
 	}
 	if err != nil || tx.Commit() != nil {
 		return nil, apierr.New(500, "storage error")
@@ -448,7 +443,7 @@ func (s *Service) managementCreateProject(ctx context.Context, input *ProjectCre
 
 func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessKeyListOutput, error) {
 	a := principal(ctx)
-	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
+	rows, err := s.control.QueryContext(ctx, `SELECT k.id,k.kind,k.name,k.permissions,k.projects,k.created_at,k.revoked_at,k.source_id,
 		coalesce(b.client_id,''),coalesce(b.audience,''),coalesce(t.tenant_id,'') FROM access_keys k LEFT JOIN service_api_keys b ON b.principal_id=k.id LEFT JOIN tenant_credentials t ON t.principal_id=k.id ORDER BY k.created_at,k.id`)
 	if err != nil {
 		return nil, apierr.New(500, "storage error")
@@ -458,7 +453,7 @@ func (s *Service) managementListKeys(ctx context.Context, _ *struct{}) (*AccessK
 	for rows.Next() {
 		var key AccessKey
 		var permissions, projects string
-		if err = rows.Scan(&key.ID, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience, &key.TenantID); err != nil {
+		if err = rows.Scan(&key.ID, &key.Kind, &key.Name, &permissions, &projects, &key.CreatedAt, &key.RevokedAt, &key.SourceID, &key.ServiceClientID, &key.Audience, &key.TenantID); err != nil {
 			return nil, apierr.New(500, "storage error")
 		}
 		if json.Unmarshal([]byte(permissions), &key.Permissions) != nil || json.Unmarshal([]byte(projects), &key.Projects) != nil {
@@ -644,7 +639,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 			return nil, apierr.New(409, "cannot revoke the last independent administrator")
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=$1 WHERE id=$2`, now(), input.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE access_keys SET revoked_at=$1,client_ingestion_token=NULL WHERE id=$2`, now(), input.ID); err != nil {
 		return nil, apierr.New(500, "storage error")
 	}
 	if err = tx.Commit(); err != nil {

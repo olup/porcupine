@@ -156,7 +156,7 @@ EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_
 		if err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE access_keys SET projects=$1,permissions=$2,revoked_at=coalesce(revoked_at,$3),
+		result, err := tx.ExecContext(ctx, `UPDATE access_keys SET projects=$1,permissions=$2,revoked_at=coalesce(revoked_at,$3),client_ingestion_token=NULL,
 owner_tenant_id=coalesce(nullif(owner_tenant_id,''),$7)
 WHERE id=$4 AND projects=$5 AND permissions=$6`, string(encoded), permissions, revoked, p.id, p.projects, p.permissions, owner)
 		if err != nil {

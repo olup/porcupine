@@ -114,7 +114,7 @@ The authenticated service's client ID is never substituted for the event's `dist
 
 | Mode | Capture authority | Creation response |
 | --- | --- | --- |
-| `mixed` | Public single-project key, authorized API-resource OAuth token or API-audience service key | Returns a one-time `ingest_token` |
+| `mixed` | Public single-project key, authorized API-resource OAuth token or API-audience service key | Returns the public `ingest_token`, which can be [retrieved later](projects.md#get-a-browser-ingestion-key) |
 | `server_only` | API-resource access token or private service key with `events:write` for the selected project | Omits `ingest_token` and creates no public ingestion credential |
 
 Omitting the field selects `mixed`. Existing projects migrate to `mixed`, preserving their ingestion keys. Each project object in creation and listing responses includes `ingestion_mode`. There is no API for changing an existing project's mode.

@@ -177,6 +177,14 @@ func TestTenantAdministratorPublicIngestionKeyLifecycle(t *testing.T) {
 	admin := j.browserLoginSelection(t, app, "lea@example.test", "/api/v1", "tenant", tenant, otherTenant, 200).AccessToken
 	created := request(t, j.service, "POST", "/api/v1/projects", admin, tenantTestBody(t, map[string]string{"name": "browser app", "tenant_id": tenant}), 201)
 	project := created["project"].(map[string]any)["id"].(string)
+	clientKeyPath := "/api/v1/projects/" + project + "/client-ingestion-key"
+	clientKey := created["ingest_token"].(string)
+	if got := request(t, j.service, "GET", clientKeyPath, admin, "", 200)["key"]; got != clientKey {
+		t.Fatal("tenant administrator could not read the browser key")
+	}
+	if got := request(t, j.service, "POST", clientKeyPath, admin, "", 200)["key"]; got != clientKey {
+		t.Fatal("tenant administrator retry did not return the active key")
+	}
 	key := request(t, j.service, "POST", "/api/v1/access-keys", admin, tenantTestBody(t, map[string]any{"name": "rotated browser key", "permissions": []string{"events:write"}, "projects": []string{project}}), 201)
 	if key["tenant_id"] != tenant {
 		t.Fatal("public ingestion key lost authoritative team ownership")
@@ -194,6 +202,9 @@ func TestTenantAdministratorPublicIngestionKeyLifecycle(t *testing.T) {
 	}
 	request(t, j.service, "DELETE", "/api/v1/access-keys/"+global, admin, "", 403)
 	foreign := request(t, j.service, "POST", "/api/v1/projects", operator, tenantTestBody(t, map[string]string{"name": "foreign", "tenant_id": otherTenant}), 201)
+	foreignPath := "/api/v1/projects/" + foreign["project"].(map[string]any)["id"].(string) + "/client-ingestion-key"
+	request(t, j.service, "GET", foreignPath, admin, "", 403)
+	request(t, j.service, "POST", foreignPath, admin, "", 403)
 	var foreignKey string
 	if err := j.service.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(foreign["ingest_token"].(string))).Scan(&foreignKey); err != nil {
 		t.Fatal(err)

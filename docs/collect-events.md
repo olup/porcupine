@@ -17,7 +17,7 @@ PostHog compatibility covers ingestion. Queries and management use Porcupine's o
 
 Create or select a [project](reference/projects.md) before configuring the producer.
 
-- For browser capture, use a `mixed` project's public ingestion key. Browser ingestion accepts any origin by default. Public ingestion keys permit event submission only. [Restrict browser origins](reference/configuration.md#browser-ingestion)
+- For browser capture, use a `mixed` project's [public ingestion key](reference/projects.md#get-a-browser-ingestion-key). Browser ingestion accepts any origin by default. Public ingestion keys permit event submission only. [Restrict browser origins](reference/configuration.md#browser-ingestion)
 - For native backend capture, use an API-audience [service key](reference/service-keys.md) or OAuth token with `events:write` for the project. A `server_only` project requires private credentials.
 
 Keep private credentials on the backend. Use the adapter-specific authentication described in the PostHog or Segment guide when configuring those SDKs.
