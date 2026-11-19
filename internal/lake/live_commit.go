@@ -36,6 +36,16 @@ var ErrNativeEffectsPending = errors.New("native effects await publication")
 // ErrInvalidLiveProjection means the validated input cannot form a native row.
 var ErrInvalidLiveProjection = errors.New("invalid hosted live projection")
 
+// ValidateLiveProjection checks admitted fields without a reserved event ID or identity state.
+func ValidateLiveProjection(e event.Event) error {
+	if !validLiveEventUUID(e.UUID) {
+		return ErrInvalidLiveProjection
+	}
+	e.ID = 1
+	_, err := PrepareLakeProjection(EventProjection{Event: e})
+	return err
+}
+
 // CommitLiveFromCheckpoint advances the write fence and acknowledges the
 // published predecessor in the same transaction as the next live outcome.
 // The guard checks the control fence and invokes COMMIT synchronously,
@@ -107,7 +117,7 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 				continue
 			}
 			known[input.Event.UUID] = true
-			canonical := EventWithMetadata(input.Event)
+			canonical := input.Event
 			canonical.ID = reservation.ids[position]
 			if input.Identity != nil {
 				canonical, err = p.applyHostedIdentity(ctx, tx, canonical, *input.Identity)

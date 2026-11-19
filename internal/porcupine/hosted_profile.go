@@ -138,7 +138,7 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	if err := s.configureHostedExports(c.Exports, inc.registerTx, endActivity, h.exportSnapshotCut); err != nil {
 		return nil, err
 	}
-	buffer.Clock, buffer.DeterministicError = s.clock, hostedDeterministicFlushError
+	buffer.Clock, buffer.ClassifyFlushError = s.clock, hostedFlushError
 	if s.metrics != nil {
 		buffer.Metrics = s.metrics.Registry
 	}
