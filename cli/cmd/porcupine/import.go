@@ -100,6 +100,10 @@ func runImport(ctx context.Context, c *cli.Command) error {
 	if c.Duration("wait-timeout") <= 0 {
 		return fmt.Errorf("--wait-timeout must be positive")
 	}
+	apiKey, err := configuredAPIKey(c)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(c.Root().ErrWriter, "Validating files and computing checksums…")
 	files, err := prepareImportFiles(ctx, c.Args().First(), format, kind)
 	if err != nil {
@@ -115,7 +119,7 @@ func runImport(ctx context.Context, c *cli.Command) error {
 	}{format, specs}
 	canonical, _ := json.Marshal(manifest)
 	sum := sha256.Sum256(canonical)
-	client := importClient{origin: origin, client: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	client := importClient{origin: origin, apiKey: apiKey, client: &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	parameters := map[string]string{"id": project}
 	var job importJob
 	if id := c.String("resume"); id != "" {

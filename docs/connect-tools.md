@@ -4,9 +4,9 @@ Use this guide when your team already runs Porcupine. Ask its administrator for 
 
 If you are setting up the instance, start with [hosting](hosting.md) and [team sign-in](reference/connect-your-team.md).
 
-If your administrator uses an [external identity provider](reference/external-auth.md), follow its invitation and authorization flow. Use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT` for the CLI. The email steps below apply to builtin mode.
+If you use Porcupine Cloud, sign in with the address invited to your team. For a self-hosted instance with an [external identity provider](reference/external-auth.md), follow its invitation and authorization flow. The email steps below apply to builtin mode.
 
-Tenant members can use the instance's configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and explicitly select their team. Follow [tenant access](reference/tenant-access.md) and [sign-in configuration](reference/mcp-interactive-oauth.md).
+On instances with builtin sign-in, members use the configured email OTP or Google/OIDC sign-in. Tenant administrators use a separate `tenant:admin` connection and select their team. Follow [tenant access](reference/tenant-access.md) and [sign-in configuration](reference/mcp-interactive-oauth.md).
 
 ## Connect an agent through MCP
 
@@ -36,17 +36,18 @@ Follow [Query your events](query-events.md) for an example or see the [MCP refer
 
 ## Connect the CLI
 
-Install the [standalone CLI](../cli/README.md#install) for your operating system. Replace the example origin with your instance's exact URL:
+Install the [standalone CLI](../cli/README.md#install) for your operating system. It connects to Porcupine Cloud by default:
 
 ```sh
-export PORCUPINE_URL=https://analytics.example.com
 porcupine login
 porcupine list-projects
 ```
 
 The CLI opens a browser to sign in by email or Google/OIDC and approve a connection. Ordinary login requests read access to events and project information. Copy an accessible project ID and run [your first query](query-events.md).
 
-For team administration, run `porcupine login --tenant-admin` and choose a tenant. For deployment administration, use `porcupine login --admin`. To request permitted project writes, use `porcupine login --scopes 'events:read events:write management:read'`. The browser shows the scopes and project choices. Use `--scopes` by itself to request project permissions. See [authentication options](reference/connect-your-team.md).
+For a self-hosted instance, set `PORCUPINE_URL` to its API origin before running the same commands. If it uses an [external identity provider](reference/external-auth.md), pass `--client-id YOUR_EXTERNAL_PUBLIC_CLIENT` to `porcupine login`.
+
+Use `porcupine login --tenant-admin` for team administration or `porcupine login --scopes 'events:read events:write management:read'` for permitted project writes. On a self-hosted instance with builtin sign-in, choose which tenant or projects to authorize in the browser. An instance operator uses `porcupine login --admin`. See [authentication options](reference/connect-your-team.md).
 
 ## Connect a backend or shared agent
 

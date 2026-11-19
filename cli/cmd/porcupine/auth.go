@@ -32,6 +32,7 @@ const (
 	analyticsClient   = "porcupine-local"
 	adminClient       = "porcupine-local-admin"
 	tenantAdminClient = "porcupine-local-tenant-admin"
+	cloudOAuthClient  = "porcupine-cloud-cli"
 )
 
 func oauthScope(client string) string {
@@ -181,7 +182,7 @@ func storedAccessToken(ctx context.Context, origin, path string) (string, error)
 	defer unlock()
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("no OAuth session for this instance; run porcupine login")
+		return "", fmt.Errorf("no OAuth session for %s. Run porcupine login for that instance", origin)
 	}
 	if err != nil {
 		return "", err
@@ -283,16 +284,30 @@ func exchangeProviderToken(ctx context.Context, origin string, provider oauthPro
 	return session, nil
 }
 
-func login(ctx context.Context, origin, clientID string, scopes []string, configuredClient string) error {
+func loginClientID(origin string, provider oauthProvider, builtinClient, configuredClient string) (string, error) {
+	if configuredClient != "" {
+		return configuredClient, nil
+	}
+	if !provider.External {
+		return builtinClient, nil
+	}
+	if origin == cloudOrigin {
+		if builtinClient == adminClient {
+			return "", errors.New("the Porcupine Cloud public CLI client supports tenant administration with --tenant-admin. Select your own instance with --url for self-hosted administration")
+		}
+		return cloudOAuthClient, nil
+	}
+	return "", errors.New("this instance uses an external identity provider. Register a public PKCE client and pass --client-id")
+}
+
+func login(ctx context.Context, origin, builtinClient string, scopes []string, configuredClient string) error {
 	provider, err := discoverProvider(ctx, origin)
 	if err != nil {
 		return err
 	}
-	if provider.External && configuredClient == "" {
-		return errors.New("this instance uses an external identity provider; register a public PKCE client and pass --client-id")
-	}
-	if configuredClient != "" {
-		clientID = configuredClient
+	clientID, err := loginClientID(origin, provider, builtinClient, configuredClient)
+	if err != nil {
+		return err
 	}
 	path, err := sessionFile(origin)
 	if err != nil {

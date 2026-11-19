@@ -124,7 +124,7 @@ func TestLocalLoginAndRotatingRefresh(t *testing.T) {
 			if got, err := storedAccessToken(ctx, origin, path); got != "issued" || err != nil {
 				t.Fatal("fresh token was not reused:", err)
 			}
-			if _, err := storedAccessToken(ctx, "https://other.example", path); err == nil {
+			if _, err := storedAccessToken(ctx, cloudOrigin, path); err == nil {
 				t.Fatal("cross-origin access returned a token")
 			}
 			b, err := os.ReadFile(path)
@@ -207,6 +207,41 @@ func TestLoginRejectsCombinedAdministratorModes(t *testing.T) {
 	_, err := invoke(t, "http://127.0.0.1:8080", "login", "--admin", "--tenant-admin")
 	if err == nil || !strings.Contains(err.Error(), "cannot combine") {
 		t.Fatalf("combined administrator modes were not rejected: %v", err)
+	}
+}
+
+func TestLoginClientIDSelection(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, url, builtin, configured, want, errorText string
+		external                                        bool
+	}{
+		{name: "Cloud reader", url: "https://api.getporcupine.eu", builtin: analyticsClient, external: true, want: "porcupine-cloud-cli"},
+		{name: "Cloud tenant administrator", url: "https://API.GETPORCUPINE.EU:443/", builtin: tenantAdminClient, external: true, want: "porcupine-cloud-cli"},
+		{name: "Cloud instance administrator", url: "https://api.getporcupine.eu", builtin: adminClient, external: true, errorText: "--tenant-admin"},
+		{name: "Cloud client override", url: "https://api.getporcupine.eu", builtin: adminClient, configured: "custom-cli", external: true, want: "custom-cli"},
+		{name: "self-hosted builtin", url: "http://127.0.0.1:8080", builtin: adminClient, want: adminClient},
+		{name: "self-hosted external", url: "https://analytics.example.com", builtin: analyticsClient, external: true, errorText: "--client-id"},
+		{name: "self-hosted external client", url: "https://analytics.example.com", builtin: analyticsClient, configured: "custom-cli", external: true, want: "custom-cli"},
+		{name: "Cloud hostname with a different port", url: "https://api.getporcupine.eu:8443", builtin: analyticsClient, external: true, errorText: "--client-id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			origin, err := parseInstanceOrigin(tc.url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := loginClientID(origin, oauthProvider{External: tc.external}, tc.builtin, tc.configured)
+			if tc.errorText != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errorText) {
+					t.Fatalf("expected an error mentioning %s, got %v", tc.errorText, err)
+				}
+				return
+			}
+			if err != nil || id != tc.want {
+				t.Fatalf("expected %q, got %q and %v", tc.want, id, err)
+			}
+		})
 	}
 }
 

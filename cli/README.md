@@ -10,29 +10,37 @@ To build from the repository, run `make cli`. The executable is written to `bin/
 
 ## Connect and query
 
-Set the origin to match your deployment's OAuth issuer. Local HTTP is supported on loopback addresses. The default origin is `http://127.0.0.1:8080`.
+The CLI connects to Porcupine Cloud at `https://api.getporcupine.eu` by default. Sign in with the email address invited to your team.
 
 ```sh
-export PORCUPINE_URL=https://analytics.example.com
 porcupine status
 porcupine login
 porcupine list-projects
 porcupine query-events --id PROJECT_ID --body '{"sql":"SELECT count() FROM events"}'
 ```
 
+If `porcupine --help` shows a local default, set `PORCUPINE_URL=https://api.getporcupine.eu` and use `porcupine login --client-id porcupine-cloud-cli`.
+
 Use `porcupine get-instance-status` for an authenticated report of dependency health and optional service configuration. The `status` command checks public readiness. See [instance status](../docs/reference/instance-status.md).
 
 Use `porcupine visibility-probe` to send a synthetic event and measure how long it takes to become queryable after capture acknowledgment. [Visibility probe setup](../docs/reference/observability.md#measure-live-query-visibility)
 
-On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"`. You can also pass the origin before a command with `porcupine --url URL ...`.
+For a self-hosted instance, set `PORCUPINE_URL` to its API origin, or pass `--url` before the command. The flag takes precedence over the environment variable. HTTP is supported on loopback addresses.
 
-On an email-enabled instance, login opens the browser for approval using OAuth with PKCE. The default client requests event and management read access. An instance administrator can run `porcupine login --admin` to authorize administration. Login needs the local callback port 43179. The latest login replaces the previous session for that origin. Tokens are refreshed on demand and stored in the user's configuration directory under `porcupine/credentials`.
+```sh
+export PORCUPINE_URL=https://analytics.example.com
+porcupine login
+```
 
-For automation, set `PORCUPINE_API_KEY` from your secret manager to an [API-audience service key](../docs/reference/service-keys.md). The CLI uses it ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. [Google or another trusted OIDC provider](../docs/reference/mcp-interactive-oauth.md) can also authenticate invited humans for CLI login, using the same account permissions as email OTP. See [team setup](../docs/reference/connect-your-team.md).
+On Windows PowerShell, use `$env:PORCUPINE_URL = "https://analytics.example.com"`. To sign in to a local instance for one command, run `porcupine --url http://127.0.0.1:8080 login`.
+
+Login opens the browser for approval using OAuth with PKCE. The default client requests event and management read access. An instance administrator can run `porcupine login --admin` to authorize administration. Login needs the local callback port 43179. The latest login replaces the previous session for that origin. Tokens are refreshed on demand and stored in the user's configuration directory under `porcupine/credentials`.
+
+For automation, set the destination explicitly with `PORCUPINE_URL` or `--url` and load an [API-audience service key](../docs/reference/service-keys.md) into `PORCUPINE_API_KEY` from your secret manager. The CLI uses the key ahead of any browser session and enforces its project grants. Service keys work on OAuth-enabled instances with SMTP disabled. [Google or another trusted OIDC provider](../docs/reference/mcp-interactive-oauth.md) can also authenticate invited humans for CLI login, using the same account permissions as email OTP. See [team setup](../docs/reference/connect-your-team.md).
 
 Use `porcupine login --tenant-admin` to authorize administration of one tenant, or `porcupine login --scopes 'events:read events:write management:read'` for selected project permissions. The default remains read-only. Project scopes cannot be combined with `--admin` or `--tenant-admin`, and requesting a scope never adds rights to the human account.
 
-For a server configured with [external authentication](../docs/reference/external-auth.md), use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT`. Register that public client with the external issuer. The CLI discovers its endpoints, keeps the API resource through exchange and refresh, and requires PKCE and issuer identification in the authorization response. A session without a refresh token works until its access token expires, then requires another login.
+Porcupine Cloud selects its registered public client automatically. For another server configured with [external authentication](../docs/reference/external-auth.md), use `porcupine login --client-id YOUR_EXTERNAL_PUBLIC_CLIENT`. Register that public client with the external issuer. The CLI discovers its endpoints, keeps the API resource through exchange and refresh, and requires PKCE and issuer identification in the authorization response. A session without a refresh token works until its access token expires, then requires another login.
 
 ## Import event history
 

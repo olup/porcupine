@@ -133,7 +133,10 @@ func runOperation(ctx context.Context, c *cli.Command, op operation, authenticat
 		defer req.Body.Close()
 	}
 	if authenticated {
-		token := os.Getenv("PORCUPINE_API_KEY")
+		token, err := configuredAPIKey(c)
+		if err != nil {
+			return err
+		}
 		if token == "" {
 			token, err = accessToken(ctx, origin)
 			if err != nil {

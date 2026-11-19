@@ -2,27 +2,48 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
 
 func invoke(t *testing.T, origin string, args ...string) (string, error) {
 	t.Helper()
+	return invokeCommand(t, append([]string{"--url", origin}, args...)...)
+}
+
+func invokeCommand(t *testing.T, args ...string) (string, error) {
+	t.Helper()
 	var output bytes.Buffer
 	app := newApp()
 	app.Writer = &output
 	app.ErrWriter = io.Discard
-	err := app.Run(context.Background(), append([]string{"porcupine", "--url", origin}, args...))
+	err := app.Run(t.Context(), append([]string{"porcupine"}, args...))
 	return output.String(), err
 }
 
 func TestCommandOriginsAndPaths(t *testing.T) {
 	t.Setenv("PORCUPINE_API_KEY", "example")
-	for _, origin := range []string{"http://external.example", "https://key@example.org", "https://example.org/path", "https://example.org?test", "https://example.org#fragment"} {
+	t.Setenv("PORCUPINE_URL", "")
+	if err := os.Unsetenv("PORCUPINE_URL"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := invokeCommand(t, "--help")
+	if err != nil || !strings.Contains(output, "https://api.getporcupine.eu") {
+		t.Fatalf("Cloud default is missing from help: %v", err)
+	}
+	for _, args := range [][]string{
+		{"list-projects"},
+		{"import", "--project", "example", "--format", "native", "events.jsonl"},
+	} {
+		if _, err := invokeCommand(t, args...); err == nil || !strings.Contains(err.Error(), "pass --url or set PORCUPINE_URL") {
+			t.Fatalf("%s did not require an explicit origin for the service key: %v", args[0], err)
+		}
+	}
+	for _, origin := range []string{"", "http://external.example", "https://key@example.org", "https://example.org/path", "https://example.org?test", "https://example.org#fragment"} {
 		if _, err := invoke(t, origin, "status"); err == nil || !strings.Contains(err.Error(), "--url") {
 			t.Fatalf("accepted invalid origin: %v", err)
 		}
@@ -47,7 +68,8 @@ func TestRedirectDoesNotForwardKey(t *testing.T) {
 		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
 	}))
 	defer s.Close()
-	if _, err := invoke(t, s.URL, "list-projects"); err == nil || !strings.Contains(err.Error(), "307") {
+	t.Setenv("PORCUPINE_URL", s.URL)
+	if _, err := invokeCommand(t, "list-projects"); err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("expected HTTP 307, got %v", err)
 	}
 }
@@ -61,9 +83,15 @@ func TestStatusIsPublic(t *testing.T) {
 		io.WriteString(w, "ready")
 	}))
 	defer s.Close()
-	result, err := invoke(t, s.URL, "status")
+	t.Setenv("PORCUPINE_URL", s.URL)
+	result, err := invokeCommand(t, "status")
 	if err != nil || result != "ready" {
 		t.Fatalf("unexpected status %q / %v", result, err)
+	}
+	t.Setenv("PORCUPINE_URL", "https://example.org/unusable-origin")
+	result, err = invoke(t, s.URL, "status")
+	if err != nil || result != "ready" {
+		t.Fatalf("--url did not override PORCUPINE_URL: %q / %v", result, err)
 	}
 }
 
