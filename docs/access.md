@@ -41,7 +41,7 @@ The `reader`, `contributor`, and `manager` presets group project permissions. Ex
 
 Create a [service account and scoped key](reference/service-keys.md). Use an API-audience key for HTTP and the CLI, or an MCP-audience key for `/mcp`. Store the secret in a secret manager or private environment variable.
 
-A team-owned service account has its own lifecycle. Revoking its creator's membership does not revoke that account. Give each integration only the projects and operations it needs.
+A team-owned service account has its own lifecycle. Revoking its creator's membership does not revoke that account. Create one account per project and grant only the operations the integration needs.
 
 ## Remove access
 

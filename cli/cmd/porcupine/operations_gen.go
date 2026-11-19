@@ -146,8 +146,8 @@ var operations = []operation{
 		BodyFields: []string{
 			"name (string, required)",
 			"permissions (array of string, required) Fixed project permissions; administration scopes are not available to machine accounts.",
-			"projects (array of string, required) Explicit projects belonging to this tenant. No wildcard.",
-			"source_id (string) Optional producer source, requiring events:write and exactly one project. Immutable after creation.",
+			"projects (array of string, required) The single project belonging to this tenant. Immutable after creation.",
+			"source_id (string) Optional producer source, requiring events:write. Immutable after creation.",
 		},
 	},
 	{
@@ -162,7 +162,7 @@ var operations = []operation{
 			"audience (string, required) [api mcp] Use the key with this resource only.",
 			"name (string, required)",
 			"permissions (array of string, required) Subset of the service account's permissions.",
-			"projects (array of string, required) Subset of the service account's projects.",
+			"projects (array of string, required) The single project of the service account.",
 		},
 	},
 	{
@@ -720,7 +720,7 @@ var operations = []operation{
 	},
 	{
 		ID: "update-tenant-service-account", Method: "PUT", Path: "/api/v1/tenants/{tenant_id}/service-accounts/{id}",
-		Summary: "Replace a team machine account's name and project grants; grant changes revoke its existing keys",
+		Summary: "Replace a team machine account's name and permissions; permission changes revoke its existing keys",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "tenant_id", In: "path", Type: "string", Description: "", Required: true},
@@ -729,8 +729,8 @@ var operations = []operation{
 		BodyFields: []string{
 			"name (string, required)",
 			"permissions (array of string, required) Fixed project permissions; administration scopes are not available to machine accounts.",
-			"projects (array of string, required) Explicit projects belonging to this tenant. No wildcard.",
-			"source_id (string) Optional producer source, requiring events:write and exactly one project. Immutable after creation.",
+			"projects (array of string, required) The single project belonging to this tenant. Immutable after creation.",
+			"source_id (string) Optional producer source, requiring events:write. Immutable after creation.",
 		},
 	},
 	{

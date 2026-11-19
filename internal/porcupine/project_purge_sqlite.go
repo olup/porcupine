@@ -66,9 +66,9 @@ EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_
 			return err
 		}
 	}
-	statement := `SELECT id,permissions,projects,NULL FROM access_keys`
+	statement := `SELECT k.id,k.permissions,k.projects,NULL,t.principal_id IS NOT NULL FROM access_keys k LEFT JOIN tenant_credentials t ON t.principal_id=k.id`
 	if builtin {
-		statement = `SELECT k.id,k.permissions,k.projects,h.project_grants FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id`
+		statement = `SELECT k.id,k.permissions,k.projects,h.project_grants,t.principal_id IS NOT NULL FROM access_keys k LEFT JOIN email_humans h ON h.principal_id=k.id LEFT JOIN tenant_credentials t ON t.principal_id=k.id`
 	}
 	rows, err := tx.QueryContext(ctx, statement)
 	if err != nil {
@@ -77,11 +77,12 @@ EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_
 	type principalGrant struct {
 		id, permissions, projects string
 		humanGrants               sql.NullString
+		tenantCredential          bool
 	}
 	var principals []principalGrant
 	for rows.Next() {
 		var p principalGrant
-		if err := rows.Scan(&p.id, &p.permissions, &p.projects, &p.humanGrants); err != nil {
+		if err := rows.Scan(&p.id, &p.permissions, &p.projects, &p.humanGrants, &p.tenantCredential); err != nil {
 			rows.Close()
 			return err
 		}
@@ -140,7 +141,9 @@ EXISTS(SELECT 1 FROM projects p JOIN tenant_deletions d ON d.tenant_id=p.tenant_
 		}
 		var revoked any
 		owner := ""
-		if len(retained) == 0 && !p.humanGrants.Valid {
+		// A project deletion must not turn a blocked legacy team credential
+		// into a valid single-project credential.
+		if p.tenantCredential || len(retained) == 0 && !p.humanGrants.Valid {
 			revoked = now()
 			// Preserve the tenant of legacy credentials before the last scope
 			// is removed. Ownership does not authorize tenant operations.

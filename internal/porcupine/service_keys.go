@@ -71,6 +71,9 @@ func (s *Service) managementCreateServiceKey(ctx context.Context, input *Service
 	if !slices.Equal(parent.GrantTypes, []string{"client_credentials"}) {
 		return nil, apierr.New(400, "a service key must belong to a machine-only client")
 	}
+	if len(parent.TenantIDs) == 1 && len(body.Projects) != 1 {
+		return nil, apierr.New(400, "team service keys require exactly one project ID")
+	}
 	if !parent.ContainsProjects(body.Projects) {
 		return nil, apierr.New(403, "key projects exceed service account grants")
 	}

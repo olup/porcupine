@@ -122,9 +122,14 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	project := func(tenant string) map[string]any {
 		return request(t, s, "POST", "/api/v1/projects", operator, externalBody(t, map[string]any{"name": "project", "tenant_id": tenant}), 201)
 	}
-	pa, pb := project(a), project(b)
+	pa, peer, pb := project(a), project(a), project(b)
 	idA := pa["project"].(map[string]any)["id"].(string)
 	idB := pb["project"].(map[string]any)["id"].(string)
+	peerID := peer["project"].(map[string]any)["id"].(string)
+	multiReader := f.token(t, "multi-reader", a, "events:read", s.resources.apiResource, idA, peerID)
+	for _, id := range []string{idA, peerID} {
+		request(t, s, "GET", "/api/v1/projects/"+id+"/events", multiReader, "", 200)
+	}
 	reader := f.token(t, "reader", a, "management:read events:read", s.resources.apiResource, idA)
 	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", reader, "", 200)
 	request(t, s, "GET", "/api/v1/projects/"+idB+"/events", reader, "", 403)
@@ -145,6 +150,7 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	key := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts/"+clientID+"/api-keys", admin, externalBody(t, map[string]any{"name": "worker", "audience": "api", "permissions": []string{"events:read", "events:write", "pipelines:write"}, "projects": []string{idA}}), 201)
 	native := key["token"].(string)
 	request(t, s, "GET", "/api/v1/projects/"+idA+"/events", native, "", 200)
+	request(t, s, "GET", "/api/v1/projects/"+peerID+"/events", native, "", 403)
 	rejected := request(t, s, "POST", "/api/v1/projects/"+idA+"/pipelines", admin, `{"name":"schedule","kind":"webhook","credentials":{},"webhook":{"endpoint":"https://example.test"}}`, 403)
 	if rejected["code"] != "execution_credential_required" {
 		t.Fatal("missing execution credential guidance", rejected)

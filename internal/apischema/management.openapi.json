@@ -4104,11 +4104,11 @@
             ]
           },
           "projects": {
-            "description": "Explicit projects belonging to this tenant. No wildcard.",
+            "description": "The single project belonging to this tenant. Immutable after creation.",
             "items": {
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 1,
             "minItems": 1,
             "type": [
               "array",
@@ -4116,7 +4116,7 @@
             ]
           },
           "source_id": {
-            "description": "Optional producer source, requiring events:write and exactly one project. Immutable after creation.",
+            "description": "Optional producer source, requiring events:write. Immutable after creation.",
             "maxLength": 128,
             "type": "string"
           }
@@ -4147,6 +4147,55 @@
         },
         "required": [
           "access_keys"
+        ],
+        "type": "object"
+      },
+      "TenantServiceKeySpec": {
+        "additionalProperties": false,
+        "properties": {
+          "audience": {
+            "description": "Use the key with this resource only.",
+            "enum": [
+              "api",
+              "mcp"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "permissions": {
+            "description": "Subset of the service account's permissions.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "projects": {
+            "description": "The single project of the service account.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "audience",
+          "permissions",
+          "projects"
         ],
         "type": "object"
       },
@@ -54994,7 +55043,7 @@
             "serviceKey": []
           }
         ],
-        "summary": "Replace a team machine account's name and project grants; grant changes revoke its existing keys"
+        "summary": "Replace a team machine account's name and permissions; permission changes revoke its existing keys"
       }
     },
     "/api/v1/tenants/{tenant_id}/service-accounts/{id}/api-keys": {
@@ -55749,7 +55798,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ServiceKeySpec"
+                "$ref": "#/components/schemas/TenantServiceKeySpec"
               }
             }
           },

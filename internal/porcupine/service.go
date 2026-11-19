@@ -435,10 +435,13 @@ func hash(v string) string { b := sha256.Sum256([]byte(v)); return hex.EncodeToS
 func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal, error) {
 	var a auth.Principal
 	var permissions, projects string
+	var tenantCredential bool
 	if raw == "" || strings.HasPrefix(raw, serviceKeyPrefix) {
 		return a, errors.New("invalid access key")
 	}
-	err := s.control.QueryRowContext(ctx, `SELECT id,permissions,projects,source_id FROM access_keys WHERE token_hash=$1 AND revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID)
+	err := s.control.QueryRowContext(ctx, `SELECT k.id,k.permissions,k.projects,k.source_id,t.principal_id IS NOT NULL
+FROM access_keys k LEFT JOIN tenant_credentials t ON t.principal_id=k.id
+WHERE k.token_hash=$1 AND k.revoked_at IS NULL`, hash(raw)).Scan(&a.ID, &permissions, &projects, &a.SourceID, &tenantCredential)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return a, err
@@ -452,7 +455,10 @@ func (s *Service) authenticate(ctx context.Context, raw string) (auth.Principal,
 	if err != nil {
 		return a, auth.ErrUnavailable
 	}
-	return a, err
+	if tenantCredential && (len(a.Projects) != 1 || a.Projects[0] == "" || a.Projects[0] == "*") {
+		return auth.Principal{}, errors.New("tenant credential requires one explicit project")
+	}
+	return a, nil
 }
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

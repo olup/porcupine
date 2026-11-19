@@ -50,7 +50,7 @@ For team administration, run `porcupine login --tenant-admin` and choose a tenan
 
 ## Connect a backend or shared agent
 
-Ask an administrator for a [service key](reference/service-keys.md) with the projects and permissions that integration needs. Team service accounts belong to a tenant and work independently of the person who created them.
+Ask an administrator for a [service key](reference/service-keys.md) for the project and permissions that integration needs. Team service accounts belong to a tenant and work independently of the person who created them.
 
 For HTTP or the CLI, use an API-audience key. Load it into `PORCUPINE_API_KEY` through your secret manager. For MCP clients that accept a bearer header, use an MCP-audience key on `/mcp`. A key for one audience cannot be used for the other.
 

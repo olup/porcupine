@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -49,9 +50,17 @@ func tenantServiceFixture(t *testing.T) (*oauthIntegration, string, string, stri
 	return f, admin, a, b, project(a), project(b)
 }
 
+func teamServiceProject(t *testing.T, f *oauthIntegration, admin, tenant string) string {
+	t.Helper()
+	var out ProjectCreated
+	f.call(t, "POST", "/api/v1/projects", admin, map[string]string{"name": "second app", "tenant_id": tenant}, 201, &out)
+	return out.Project.ID
+}
+
 func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 	t.Parallel()
 	f, admin, a, b, projectA, projectB := tenantServiceFixture(t)
+	peer := teamServiceProject(t, f, admin, a)
 	base := "/api/v1/tenants/" + a + "/service-accounts"
 	body := TenantServiceAccountSpec{Name: "reports", Permissions: []string{"events:read", "events:write", "management:read"}, Projects: []string{projectA}}
 	var account OAuthClientCreated
@@ -81,6 +90,7 @@ func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 	reader := f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource, "events:read").AccessToken
 	f.call(t, "GET", "/api/v1/projects/"+projectA+"/events", reader, nil, 200, nil)
 	f.call(t, "GET", "/api/v1/projects/"+projectB+"/events", reader, nil, 403, nil)
+	f.call(t, "GET", "/api/v1/projects/"+peer+"/events", reader, nil, 403, nil)
 	f.call(t, "POST", "/capture/", reader, map[string]string{"event": "forbidden", "distinct_id": "test"}, 403, nil)
 	f.call(t, "GET", base, reader, nil, 403, nil)
 	for _, bad := range []TenantServiceAccountSpec{
@@ -90,7 +100,14 @@ func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 	} {
 		f.call(t, "POST", base, admin, bad, 400, nil)
 	}
+	for _, projects := range [][]string{{}, {projectA, peer}, {projectA, projectA}} {
+		f.call(t, "POST", base, admin, TenantServiceAccountSpec{Name: "invalid project count", Permissions: []string{"events:read"}, Projects: projects}, 422, nil)
+	}
 	f.call(t, "POST", base, admin, TenantServiceAccountSpec{Name: "cross tenant", Permissions: []string{"events:read"}, Projects: []string{projectB}}, 403, nil)
+	moved := body
+	moved.Projects = []string{peer}
+	f.call(t, "PUT", base+"/"+account.ClientID, admin, moved, 400, nil)
+	f.call(t, "GET", "/api/v1/projects/"+projectA+"/events", reader, nil, 200, nil)
 	f.call(t, "PUT", "/api/v1/tenants/"+b+"/service-accounts/"+account.ClientID, admin, body, 404, nil)
 	f.call(t, "DELETE", "/api/v1/tenants/"+b+"/service-accounts/"+account.ClientID, admin, nil, 404, nil)
 	f.call(t, "DELETE", base+"/"+account.ClientID, admin, nil, 204, nil)
@@ -101,6 +118,7 @@ func TestTenantServiceAccountsLifecycleAndScope(t *testing.T) {
 func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T) {
 	t.Parallel()
 	f, admin, tenant, other, project, otherProject := tenantServiceFixture(t)
+	peer := teamServiceProject(t, f, admin, tenant)
 	base := "/api/v1/tenants/" + tenant + "/service-accounts"
 	var account OAuthClientCreated
 	spec := TenantServiceAccountSpec{Name: "backend", Projects: []string{project}, Permissions: []string{"events:read", "events:write"}}
@@ -119,14 +137,25 @@ func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T
 		}
 		return key
 	}
+	f.call(t, "POST", keys, admin, TenantServiceKeySpec{Name: "two projects", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{project, peer}}, 422, nil)
+	f.call(t, "POST", keys, admin, TenantServiceKeySpec{Name: "peer project", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{peer}}, 403, nil)
+	f.call(t, "POST", keys, admin, TenantServiceKeySpec{Name: "outside tenant", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{otherProject}}, 403, nil)
+	f.call(t, "POST", keys, admin, TenantServiceKeySpec{Name: "excess permission", Audience: "api", Permissions: []string{"management:write"}, Projects: []string{project}}, 403, nil)
+	operatorKeys := "/api/v1/oauth-clients/" + account.ClientID + "/api-keys"
+	f.call(t, "POST", operatorKeys, admin, ServiceKeySpec{Name: "repeated project", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{project, project}}, 400, nil)
 	api, mcp := makeKey("api"), makeKey("mcp")
+	rotated := makeKey("api")
+	f.call(t, "GET", "/api/v1/projects/"+project+"/events", rotated.Token, nil, 200, nil)
 	f.call(t, "GET", "/api/v1/projects/"+project+"/events", api.Token, nil, 200, nil)
 	f.call(t, "GET", "/api/v1/projects/"+otherProject+"/events", api.Token, nil, 403, nil)
+	f.call(t, "GET", "/api/v1/projects/"+peer+"/events", api.Token, nil, 403, nil)
+	f.call(t, "POST", "/capture/", api.Token, map[string]string{"event": "forbidden", "distinct_id": "test"}, 403, nil)
 	f.call(t, "GET", "/api/v1/projects/"+project+"/events", mcp.Token, nil, 401, nil)
 	f.call(t, "POST", keys, api.Token, ServiceKeySpec{Name: "more", Audience: "api", Permissions: []string{"events:read"}, Projects: []string{project}}, 403, nil)
 	ctx, session := mcpTestSession(t, f.host.URL, mcp.Token, "2025-11-25")
 	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": project}}, 200)
 	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": otherProject}}, 403)
+	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": peer}}, 403)
 	var page struct {
 		Keys []AccessKey `json:"access_keys"`
 		Next *int        `json:"next_offset"`
@@ -136,7 +165,7 @@ func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T
 		t.Fatal("key pagination missing")
 	}
 	page.Next = nil
-	f.call(t, "GET", keys+"?limit=1&offset=1", admin, nil, 200, &page)
+	f.call(t, "GET", keys+"?limit=1&offset=2", admin, nil, 200, &page)
 	if len(page.Keys) != 1 || page.Next != nil {
 		t.Fatal("key pagination lost keys")
 	}
@@ -144,6 +173,7 @@ func TestTenantServiceKeysParentContainmentAndIndependentRevocation(t *testing.T
 	f.call(t, "DELETE", keys+"/"+api.ID, admin, nil, 204, nil)
 	f.call(t, "DELETE", keys+"/"+api.ID, admin, nil, 204, nil)
 	f.call(t, "GET", "/api/v1/projects/"+project+"/events", api.Token, nil, 401, nil)
+	f.call(t, "GET", "/api/v1/projects/"+project+"/events", rotated.Token, nil, 200, nil)
 	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "get-event-schema", Path: map[string]string{"id": project}}, 200)
 	var updated OAuthClientCreated
 	spec.Permissions = []string{"events:read"}
@@ -248,4 +278,94 @@ func TestTenantServiceProducerSourceAllowsReadOnlyChild(t *testing.T) {
 	if err := f.s.control.QueryRow(`SELECT t.tenant_id,k.source_id FROM tenant_credentials t JOIN access_keys k ON k.id=t.principal_id WHERE k.id=?`, account.ClientID).Scan(&owner, &source); err != nil || owner != tenant || source != "backend" {
 		t.Fatal("failed source update changed service account")
 	}
+}
+
+func TestLegacyMultiProjectTeamCredentialsCannotAuthenticate(t *testing.T) {
+	t.Parallel()
+	f, admin, tenant, _, project, _ := tenantServiceFixture(t)
+	peer := teamServiceProject(t, f, admin, tenant)
+	base := "/api/v1/tenants/" + tenant + "/service-accounts"
+	spec := TenantServiceAccountSpec{Name: "legacy", Projects: []string{project}, Permissions: []string{"events:read"}}
+	var account OAuthClientCreated
+	f.call(t, "POST", base, admin, spec, 201, &account)
+	accountPath := base + "/" + account.ClientID
+	keys := accountPath + "/api-keys"
+	keySpec := TenantServiceKeySpec{Name: "legacy", Audience: "api", Projects: []string{project}, Permissions: spec.Permissions}
+	var key AccessKeyCreated
+	f.call(t, "POST", keys, admin, keySpec, 201, &key)
+	var mcpKey AccessKeyCreated
+	keySpec.Audience = "mcp"
+	f.call(t, "POST", keys, admin, keySpec, 201, &mcpKey)
+	apiPath := "/api/v1/projects/" + project + "/events"
+	f.call(t, "GET", apiPath, key.Token, nil, 200, nil)
+	issuer := f.credentials(account.ClientID, account.ClientSecret, f.s.resources.apiResource)
+	issued := f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource).AccessToken
+	legacyScope, err := json.Marshal([]string{project, peer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Emulate a token issued before its legacy parent was narrowed.
+	if _, err := f.s.control.Exec(`UPDATE oauth_tokens SET projects_json=$1 WHERE token_hash=$2`, string(legacyScope), hash(issued)); err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", apiPath, issued, nil, 401, nil)
+	issued = f.token(t, account.ClientID, account.ClientSecret, f.s.resources.apiResource).AccessToken
+
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=$1 WHERE id IN ($2,$3)`, string(legacyScope), key.ID, mcpKey.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", apiPath, key.Token, nil, 401, nil)
+	if _, err := f.s.authenticateResource(f.ctx, mcpKey.Token, f.s.resources.mcpResource); err == nil {
+		t.Fatal("legacy MCP key authenticated")
+	}
+	f.call(t, "GET", apiPath, issued, nil, 200, nil)
+	f.call(t, "DELETE", keys+"/"+mcpKey.ID, admin, nil, 204, nil)
+
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=$1 WHERE id=$2`, string(legacyScope), account.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	// Restore an otherwise valid child to model a key issued by the legacy parent.
+	singleScope, err := json.Marshal([]string{project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.control.Exec(`UPDATE access_keys SET projects=$1,revoked_at=NULL WHERE id=$2`, string(singleScope), key.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", apiPath, key.Token, nil, 401, nil)
+	f.call(t, "GET", apiPath, issued, nil, 401, nil)
+	if _, err := f.s.loadCredentialActor(f.ctx, key.ID); err == nil {
+		t.Fatal("legacy parent still authorizes deferred work")
+	}
+	var response *oauth2.RetrieveError
+	if _, err := issuer.Token(f.ctx); !errors.As(err, &response) || response.Response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("legacy account token issuance returned %v", err)
+	}
+	var list TenantServiceAccountListOutput
+	f.call(t, "GET", base, admin, nil, 200, &list.Body)
+	if len(list.Body.ServiceAccounts) != 1 || !slices.Equal(list.Body.ServiceAccounts[0].Projects, []string{project, peer}) {
+		t.Fatal("legacy account must remain discoverable")
+	}
+	f.call(t, "PUT", accountPath, admin, spec, 404, nil)
+	f.call(t, "POST", keys, admin, keySpec, 404, nil)
+	f.call(t, "GET", keys, admin, nil, 200, nil)
+	f.call(t, "DELETE", keys+"/"+key.ID, admin, nil, 204, nil)
+
+	// Purging one historical project must not reactivate the blocked account.
+	tx, err := f.s.control.BeginTx(f.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := f.s.purgeProjectGrants(f.ctx, tx, peer); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	f.call(t, "GET", apiPath, issued, nil, 401, nil)
+	f.call(t, "DELETE", accountPath, admin, nil, 204, nil)
+	var replacement OAuthClientCreated
+	f.call(t, "POST", base, admin, spec, 201, &replacement)
+	f.call(t, "GET", apiPath, f.token(t, replacement.ClientID, replacement.ClientSecret, f.s.resources.apiResource).AccessToken, nil, 200, nil)
 }
