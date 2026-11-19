@@ -113,6 +113,7 @@ var hostedImportSchema string
 // 19: isolate hosted pipeline capacity by tenant and project.
 // 20: worker incarnation leases for hosted project activity tickets.
 // 21: tenant ownership of operator credentials.
+// 22: indexed hosted recovery work.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -140,6 +141,7 @@ ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.a
 	output.PipelineTenantCapacitySchema,
 	hostedIncarnationSchemaV1,
 	credentialOwnerSchema,
+	hostedRecoverySchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

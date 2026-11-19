@@ -221,7 +221,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 	if _, err = a.service.control.ExecContext(t.Context(), `CREATE FUNCTION reject_import_usage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected import usage failure'; END $$; CREATE TRIGGER reject_import_usage BEFORE INSERT OR UPDATE ON usage_rollups FOR EACH ROW EXECUTE FUNCTION reject_import_usage()`); err != nil {
 		t.Fatal(err)
 	}
-	if err = fb.RecoverProject(t.Context(), key); err == nil {
+	if err = fb.recoverProject(t.Context(), key); err == nil {
 		t.Fatal("failed import usage participant published")
 	}
 	seqBefore, _, err := fb.publisher.checkpoint(t.Context(), scope, defaultTenantID)
@@ -255,11 +255,11 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		if _, err = sa.Remote.ReadImmutableImportCheckpoint(t.Context(), scope, "other-job", "events", original.Import.Next.Parser); err == nil {
 			t.Fatal("checkpoint crossed job scope")
 		}
-		if err = fb.RecoverProject(t.Context(), key); err != nil {
+		if err = fb.recoverProject(t.Context(), key); err != nil {
 			t.Fatal("pinned checkpoint changed with latest version", err)
 		}
 	} else {
-		if err = fb.RecoverProject(t.Context(), key); err == nil {
+		if err = fb.recoverProject(t.Context(), key); err == nil {
 			t.Fatal("unversioned checkpoint tamper published")
 		}
 		seq, _, e := fb.publisher.checkpoint(t.Context(), scope, defaultTenantID)
@@ -267,7 +267,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 			t.Fatal("tamper moved common cursor", seq, e)
 		}
 		putParser(parserBody)
-		if err = fb.RecoverProject(t.Context(), key); err != nil {
+		if err = fb.recoverProject(t.Context(), key); err != nil {
 			t.Fatal("restored original checkpoint", err)
 		}
 	}
@@ -497,4 +497,35 @@ func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher
 	if after != expected {
 		t.Fatal("import charged output backlog", before, after)
 	}
+}
+
+// CommitImport coordinates already validated historical input. Upload storage,
+// actor authorization and manifest/file validation remain at the upload boundary.
+// It preflights the only PG cursor row before any new native import outcome.
+func (f *hostedLiveFlusher) CommitImport(ctx context.Context, input lakeapi.ImportChunkInput) (lakeapi.NativeCommitEvidence, error) {
+	session, err := f.coordinator.Acquire(ctx, input.Key.Scope.Key)
+	if err != nil {
+		return lakeapi.NativeCommitEvidence{}, err
+	}
+	defer session.Release()
+	var result lakeapi.NativeCommitEvidence
+	err = f.runActiveHostedProject(ctx, session, input.Key.Scope.Key.ProjectID, func(ctx context.Context) error {
+		scope, err := f.native.LookupHostedProjectExisting(ctx, input.Key.Scope.Key)
+		if err != nil {
+			return err
+		}
+		if scope != input.Key.Scope {
+			return output.ErrPipelineConflict
+		}
+		fence := session.Fence(scope.StreamID)
+		if err = f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
+			return err
+		}
+		if err = f.reconcileHostedWrites(ctx, session, scope, fence, input.TenantID); err != nil {
+			return err
+		}
+		result, err = f.commitImportHeld(ctx, session, fence, input, nil)
+		return err
+	})
+	return result, err
 }

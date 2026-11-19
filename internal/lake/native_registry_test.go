@@ -31,13 +31,12 @@ func TestNativeRegistryStandaloneDiscovery(t *testing.T) {
 	if _, err := s.Registry.Exec(`INSERT INTO deleting_projects(project_id) VALUES('a'),('uncataloged')`); err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.registry.scan(t.Context(), "", 1)
-	if err != nil || len(page) != 1 || page[0].ProjectID != "a" || !page[0].Ready || !page[0].Deleted {
-		t.Fatal("standalone discovery lost catalog fence", page, err)
+	record, err := s.registry.lookup(t.Context(), "a")
+	if err != nil || record.ProjectID != "a" || !record.Ready || !record.Deleted {
+		t.Fatal("standalone discovery lost catalog fence", record, err)
 	}
-	page, err = s.registry.scan(t.Context(), "a", 1)
-	if err != nil || len(page) != 1 || page[0].ProjectID != "uncataloged" || page[0].Ready || !page[0].Deleted {
-		t.Fatal("standalone discovery lost unfinished fence", page, err)
+	if deleted, err := s.registry.deleting(t.Context(), "uncataloged"); err != nil || !deleted {
+		t.Fatal("standalone discovery lost unfinished fence", deleted, err)
 	}
 	if _, err := s.registry.lookup(t.Context(), "uncataloged"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("unfinished fence became a catalog", err)
@@ -170,13 +169,13 @@ func TestSharedNativeRegistryCleanupTakeoverAndReadOnly(t *testing.T) {
 	if _, err := db.Exec(`UPDATE pc_native_projects SET ready=1,deleted=1 WHERE project_id='b'`); err != nil {
 		t.Fatal(err)
 	}
-	page, err := b.scan(t.Context(), "", 1)
-	if err != nil || len(page) != 1 || page[0].ProjectID != "a" || !page[0].Ready {
-		t.Fatal("cold scan did not find first active project", page, err)
+	record, err := b.lookup(t.Context(), "a")
+	if err != nil || !record.Ready || record.Deleted {
+		t.Fatal("cold lookup did not find the active project", record, err)
 	}
-	page, err = b.scan(t.Context(), page[0].ProjectID, 1)
-	if err != nil || len(page) != 1 || page[0].ProjectID != "b" || !page[0].Deleted {
-		t.Fatal("cold scan dropped terminal fence metadata", page, err)
+	record, err = b.lookup(t.Context(), "b")
+	if err != nil || !record.Deleted {
+		t.Fatal("cold lookup dropped terminal fence metadata", record, err)
 	}
 	at := time.Now()
 	first, err := a.claimCleanup(t.Context(), at, at.Add(time.Minute))

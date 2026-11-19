@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -228,7 +229,59 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	}
 	reportHostedEconomics(t, fixture, traffic, "setup", quietProjects*2+1, 0, 0, started, runtime.GOOS+"/"+runtime.GOARCH)
 
+	snapshotCount := func() int64 {
+		t.Helper()
+		var total int64
+		for _, cohort := range append(projects, []string{noisyProject}) {
+			for _, project := range cohort {
+				schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(store.Config.SharedSourceID, project))
+				var id int64
+				if err := store.SharedCatalog.QueryRowContext(ctx, "SELECT max(snapshot_id) FROM "+schema+".ducklake_snapshot").Scan(&id); err != nil {
+					t.Fatal(err)
+				}
+				total += id
+			}
+		}
+		return total
+	}
+	for _, node := range nodes {
+		node.service.hosted.stopRecovery()
+		<-node.service.hosted.recoveryDone
+	}
+	before := snapshotCount()
+	started = time.Now()
+	for _, node := range nodes {
+		node.service.startHostedRecovery(2 * time.Second)
+	}
+	time.Sleep(time.Minute)
+	for _, node := range nodes {
+		node.service.hosted.stopRecovery()
+		<-node.service.hosted.recoveryDone
+	}
+	snapshots := snapshotCount() - before
+	traffic.mu.Lock()
+	puts := 0
+	for request, count := range traffic.calls {
+		if strings.HasPrefix(request, "PUT/") || strings.HasPrefix(request, "UPLOAD_PART/") {
+			puts += count
+		}
+	}
+	traffic.mu.Unlock()
+	hours := time.Since(started).Hours()
+	reportHostedEconomics(t, fixture, traffic, "idle_recovery", quietProjects*2+1, 0, 0, started,
+		map[string]any{"write_commits": snapshots, "snapshots": snapshots, "s3_puts": puts,
+			"write_commits_per_hour": float64(snapshots) / hours, "snapshots_per_hour": float64(snapshots) / hours, "s3_puts_per_hour": float64(puts) / hours})
+	defer func() {
+		if snapshots != 0 || puts != 0 {
+			t.Errorf("idle recovery wrote %d DuckLake snapshots and issued %d S3 PUTs", snapshots, puts)
+		}
+	}()
+	for _, node := range nodes {
+		node.service.startHostedRecovery(2 * time.Second)
+	}
+
 	epoch := time.Now().UTC().Add(-windows * time.Minute)
+	var flushLatencies []float64
 	flush := func(flusher *hostedLiveFlusher, project string, window, count int, span, step time.Duration) {
 		t.Helper()
 		batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project}
@@ -246,9 +299,11 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 			}
 			batch.Events = append(batch.Events, acceptance.BufferedEvent{Input: input, AdmittedAt: time.Now().UTC()})
 		}
+		start := time.Now()
 		if err := flusher.FlushLive(ctx, batch); err != nil {
 			t.Fatalf("flush %s window %d (%d events): %v", project, window, count, err)
 		}
+		flushLatencies = append(flushLatencies, float64(time.Since(start))/float64(time.Millisecond))
 	}
 
 	for cohort, scenario := range []struct {
@@ -275,6 +330,12 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 		flush(flushers[0], noisyProject, window, noisyEventsPerWindow, flushWindowSeconds*time.Second, flushWindowSeconds*time.Second/noisyEventsPerWindow)
 	}
 	reportHostedEconomics(t, fixture, traffic, "noisy_flush", 1, windows*noisyEventsPerWindow, windows, started, nil)
+	for _, node := range nodes {
+		node.service.hosted.stopRecovery()
+		<-node.service.hosted.recoveryDone
+	}
+	slices.Sort(flushLatencies)
+	t.Logf("hosted-economics concurrent recovery, %d flushes, p95 %.2f ms", len(flushLatencies), flushLatencies[(95*len(flushLatencies)+99)/100-1])
 
 	query := func(project string, want int) (float64, error) {
 		start := time.Now()

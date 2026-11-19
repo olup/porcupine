@@ -96,10 +96,10 @@ RETURNING activity_id`, key.ProjectID, tenant, ticket, incarnation).Scan(&regist
 		if err := f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := f.reconcileEvidence(ctx, session, scope, fence, tenant, true); err != nil {
+		if err := ignoreHostedACKPending(f.reconcileEvidence(ctx, session, scope, fence, tenant, true)); err != nil {
 			return err
 		}
-		if err := f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, true); err != nil {
+		if err := ignoreHostedACKPending(f.settleReadyHostedMutation(ctx, session, scope, fence, tenant, true)); err != nil {
 			return err
 		}
 		var unresolved bool
@@ -121,7 +121,7 @@ RETURNING activity_id`, key.ProjectID, tenant, ticket, incarnation).Scan(&regist
 		if seal.Scope != scope {
 			return lakeapi.ErrNativeEvidenceGap
 		}
-		if err := f.reconcileEvidence(ctx, session, scope, fence, tenant, true); err != nil {
+		if err := ignoreHostedACKPending(f.reconcileEvidence(ctx, session, scope, fence, tenant, true)); err != nil {
 			return err
 		}
 		sequence, hash, err := f.publisher.checkpoint(ctx, scope, tenant)

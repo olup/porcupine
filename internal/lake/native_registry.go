@@ -30,7 +30,6 @@ type nativeCleanupSummary struct {
 type nativeRegistry interface {
 	sourceID(context.Context) (string, error)
 	lookup(context.Context, string) (nativeProjectRecord, error)
-	scan(context.Context, string, int) ([]nativeProjectRecord, error)
 	ensure(context.Context, string) (nativeProjectRecord, error)
 	markReady(context.Context, string) error
 	deleting(context.Context, string) (bool, error)
@@ -50,16 +49,6 @@ func (r *sqliteNativeRegistry) lookup(ctx context.Context, project string) (nati
 	p := nativeProjectRecord{ProjectID: project}
 	err := r.db.QueryRowContext(ctx, `SELECT id,ready,EXISTS(SELECT 1 FROM deleting_projects WHERE project_id=?) FROM catalogs WHERE project_id=?`, project, project).Scan(&p.CatalogID, &p.Ready, &p.Deleted)
 	return p, err
-}
-func (r *sqliteNativeRegistry) scan(ctx context.Context, after string, limit int) ([]nativeProjectRecord, error) {
-	if limit < 1 || limit > 256 {
-		return nil, errors.New("native registry page size must be between 1 and 256")
-	}
-	rows, err := r.db.QueryContext(ctx, `SELECT project_id,id,ready,deleted FROM (
-SELECT c.project_id,c.id,c.ready,EXISTS(SELECT 1 FROM deleting_projects d WHERE d.project_id=c.project_id) AS deleted FROM catalogs c
-UNION ALL SELECT d.project_id,'',0,1 FROM deleting_projects d WHERE NOT EXISTS(SELECT 1 FROM catalogs c WHERE c.project_id=d.project_id))
-WHERE project_id>? ORDER BY project_id LIMIT ?`, after, limit)
-	return readNativeRegistryPage(rows, err)
 }
 func (r *sqliteNativeRegistry) ensure(ctx context.Context, project string) (nativeProjectRecord, error) {
 	p, err := r.lookup(ctx, project)
@@ -140,40 +129,6 @@ func (r *postgresNativeRegistry) lookup(ctx context.Context, project string) (na
 		return p, errors.New("shared analytical catalog identity changed")
 	}
 	return p, err
-}
-func (r *postgresNativeRegistry) scan(ctx context.Context, after string, limit int) ([]nativeProjectRecord, error) {
-	if limit < 1 || limit > 256 {
-		return nil, errors.New("native registry page size must be between 1 and 256")
-	}
-	ctx, cancel := r.metadataContext(ctx)
-	defer cancel()
-	rows, err := r.db.QueryContext(ctx, `SELECT project_id,catalog_id,ready<>0,deleted<>0 FROM pc_native_projects WHERE source_id=$1 AND project_id>$2 ORDER BY project_id LIMIT $3`, r.source, after, limit)
-	page, err := readNativeRegistryPage(rows, err)
-	if err != nil {
-		return nil, err
-	}
-	for _, record := range page {
-		if record.CatalogID != SharedNativeCatalogID(r.source, record.ProjectID) {
-			return nil, errors.New("shared analytical catalog identity changed")
-		}
-	}
-	return page, nil
-}
-
-func readNativeRegistryPage(rows *sql.Rows, err error) ([]nativeProjectRecord, error) {
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var page []nativeProjectRecord
-	for rows.Next() {
-		var record nativeProjectRecord
-		if err := rows.Scan(&record.ProjectID, &record.CatalogID, &record.Ready, &record.Deleted); err != nil {
-			return nil, err
-		}
-		page = append(page, record)
-	}
-	return page, rows.Err()
 }
 func (r *postgresNativeRegistry) ensure(ctx context.Context, project string) (nativeProjectRecord, error) {
 	ctx, cancel := r.metadataContext(ctx)

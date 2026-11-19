@@ -92,6 +92,8 @@ Hosted project cleanup seals the native writer, waits for conflicting activity, 
 
 ## Recovery and retention
 
+Background reconciliation selects projects from an indexed PostgreSQL work queue. Output reservations, ready mutations, import preflight, and reclaimed worker tickets add work. The worker confirms native effect acknowledgements before removing the entry. It yields to a project writer that already holds the lock. Once recovery settles, an idle project causes no DuckLake commits or S3 writes from reconciliation. An upgrade from control schema 21 queues a one-time check of existing effect streams because those native acknowledgements were recorded only in DuckLake.
+
 Hosted recovery uses PostgreSQL point-in-time recovery (PITR) and S3. Keep control state and catalog metadata in one PostgreSQL recovery domain. Preserve the deployment configuration and pipeline encryption keys separately. Before restoring, fence old writers and keep the restored service isolated with outbound jobs paused. Verify expected objects, authority, and pending jobs. Reapply revocations and deletion instructions after the target, or rotate recovered access. Rotate the usage epoch before publishing reports from restored history. A receiver can see a replay of a previously delivered job.
 
 Set `cleanup_grace` to at least `restore_window + restore_max_reader_time + restore_safety_margin`. Include exports when establishing the reader limit. Keep all referenced S3 objects readable for the supported restore window. Bucket versioning alone may leave ordinary reads returning 404 under a delete marker. Check provider lifecycle policies and test a real restore against the deployed PostgreSQL and S3 services.

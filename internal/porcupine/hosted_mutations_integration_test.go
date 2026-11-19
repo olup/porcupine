@@ -193,7 +193,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	}
 	fb.coordinator = recoveryCoordinator
 	losePublication.Store(true)
-	if err := fb.RecoverProject(ctx, scope.Key); err != nil || losePublication.Load() {
+	if err := fb.recoverProject(ctx, scope.Key); err != nil || losePublication.Load() {
 		t.Fatal("mutation publication response was not resolved", err)
 	}
 	after, err := b.service.getEventMutation(actorContext, &EventMutationInput{ID: project, MutationID: first.Body.MutationID})
