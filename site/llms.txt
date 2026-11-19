@@ -27,6 +27,8 @@ For other operations, use `porcupine_docs` to list permitted operations and load
 
 ## Collect or import
 
+For web capture into a mixed project, follow the [PostHog browser quickstart](https://olup.github.io/porcupine/docs/reference/compatibility.md#configure-browser-capture). Retrieve the project's public key with `porcupine get-client-ingestion-key --id PROJECT_ID` if your authenticated CLI has project `management:read`. Initialize the SDK with that key and the instance's API origin as `api_host`. The key selects the project. Keep private service credentials on the backend.
+
 Native ingestion accepts `track`, `pageview`, and `identify` at `/ingest/v1/events`; `/ingest/v1/schema` publishes the live schema. The credential selects the project. Keep the producer's message ID stable on retry. Supported PostHog SDK profiles and Segment endpoints map into the same native contract.
 
 For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_DIRECTORY`, selecting `native`, `posthog`, or `segment`. The CLI validates, uploads, resumes, preserves occurrence times, and waits for analytical visibility. Historical native JSONL needs a producer ID and occurrence time; convert custom CSV or arbitrary JSON to that documented format. Do not write a custom upload script for a supported format.
