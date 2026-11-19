@@ -224,6 +224,14 @@ func (s *DuckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (E
 	return catalogProject(ctx, s.LeaseProject, input)
 }
 
+// The writers keep at most one link per anonymous_id and one profile per
+// identified_id, so the catalog can skip both joins.
+const duckLakeCatalogRows = ` FROM lake.current_events WHERE identity_snapshot=''`
+const duckLakeCatalogAggregateSQL = `SELECT event, CAST(count(*) AS VARCHAR), min(id), max(id)` + duckLakeCatalogRows
+const duckLakeCatalogDetailsSQL = `SELECT event, arg_min(received_at,id), arg_max(received_at,id), arg_max(uuid,id), arg_max(timestamp,id)` + duckLakeCatalogRows + ` AND id IN (?`
+const duckLakeCatalogSampleBoundsSQL = `SELECT coalesce(min(id),0), coalesce(max(id),0) FROM (SELECT id` + duckLakeCatalogRows + ` AND event=? ORDER BY id DESC LIMIT 1000)`
+const duckLakeCatalogSampleSQL = `SELECT uuid,received_at,properties` + duckLakeCatalogRows + ` AND event=? AND id BETWEEN ? AND ? ORDER BY id DESC LIMIT 1000`
+
 func catalogProject(ctx context.Context, lease analyticalProjectLease, input EventCatalogInput) (EventCatalog, error) {
 	input, err := NormalizeCatalogInput(input)
 	if err != nil {
@@ -235,33 +243,61 @@ func catalogProject(ctx context.Context, lease analyticalProjectLease, input Eve
 		return EventCatalog{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
-	query := `SELECT event, CAST(count(*) AS VARCHAR), arg_min(received_at,id), arg_max(received_at,id), arg_max(uuid,id), arg_max(timestamp,id) FROM events`
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return EventCatalog{}, DuckLakeQueryError(ctx, err)
+	}
+	defer tx.Rollback()
+	query := duckLakeCatalogAggregateSQL
 	args := []any{}
 	if event != "" {
-		query += " WHERE event=?"
+		query += " AND event=?"
 		args = append(args, event)
 	}
 	query += " GROUP BY event ORDER BY max(id) DESC LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
-	rows, err := p.DB.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return EventCatalog{}, DuckLakeQueryError(ctx, err)
 	}
+	defer rows.Close()
 	result := EventCatalog{Events: []EventCatalogEvent{}, Properties: []EventCatalogProperty{}, Sampling: EventCatalogSampling{
 		PropertiesRequested: event != "", SampleEventLimit: 1000, KeysPerEventLimit: 200, MaxPropertyNameBytes: 200, PropertyLimit: input.PropertyLimit,
 	}}
+	var ids []any
+	positions := make(map[string]int)
 	for rows.Next() {
 		var item EventCatalogEvent
-		if err := rows.Scan(&item.Event, &item.Count, &item.FirstReceivedAt, &item.LastReceivedAt, &item.LatestEventUUID, &item.LatestEventTimestamp); err != nil {
-			rows.Close()
+		var firstID, lastID int64
+		if err := rows.Scan(&item.Event, &item.Count, &firstID, &lastID); err != nil {
 			return EventCatalog{}, DuckLakeQueryError(ctx, err)
 		}
+		ids = append(ids, firstID, lastID)
+		positions[item.Event] = len(result.Events)
 		result.Events = append(result.Events, item)
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return EventCatalog{}, DuckLakeQueryError(ctx, err)
+	}
+	if len(ids) > 0 {
+		rows, err = tx.QueryContext(ctx, duckLakeCatalogDetailsSQL+strings.Repeat(",?", len(ids)-1)+") GROUP BY event", ids...)
+		if err != nil {
+			return EventCatalog{}, DuckLakeQueryError(ctx, err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item EventCatalogEvent
+			if err := rows.Scan(&item.Event, &item.FirstReceivedAt, &item.LastReceivedAt, &item.LatestEventUUID, &item.LatestEventTimestamp); err != nil {
+				return EventCatalog{}, DuckLakeQueryError(ctx, err)
+			}
+			if i, ok := positions[item.Event]; ok {
+				item.Count = result.Events[i].Count
+				result.Events[i] = item
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return EventCatalog{}, DuckLakeQueryError(ctx, err)
+		}
 	}
 	if len(result.Events) > limit {
 		result.Events = result.Events[:limit]
@@ -275,7 +311,12 @@ func catalogProject(ctx context.Context, lease analyticalProjectLease, input Eve
 	if event == "" {
 		return result, nil
 	}
-	rows, err = p.DB.QueryContext(ctx, "SELECT uuid,received_at,properties FROM events WHERE event=? ORDER BY id DESC LIMIT 1000", event)
+	var firstID, lastID int64
+	if err := tx.QueryRowContext(ctx, duckLakeCatalogSampleBoundsSQL, event).Scan(&firstID, &lastID); err != nil {
+		return EventCatalog{}, DuckLakeQueryError(ctx, err)
+	}
+	// Project event IDs are unique, so this interval selects the same top 1000 in this snapshot.
+	rows, err = tx.QueryContext(ctx, duckLakeCatalogSampleSQL, event, firstID, lastID)
 	if err != nil {
 		return EventCatalog{}, DuckLakeQueryError(ctx, err)
 	}
