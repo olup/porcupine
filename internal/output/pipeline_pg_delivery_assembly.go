@@ -301,11 +301,10 @@ type PipelineAssemblyResult struct {
 	ID             string
 	Body, Manifest PipelineRef
 	Count          int
-	Next           []int
 }
 
 func (p *PGPipelineEffects) CompleteAssemblyTx(ctx context.Context, tx *sql.Tx, a PipelineAssembly, r PipelineAssemblyResult) error {
-	if tx == nil || !a.valid() || len(r.Next) != len(a.Inputs) || r.Count < 0 || r.Count > 100 || !r.validObjects(a) {
+	if tx == nil || !a.valid() || r.Count < 0 || r.Count > 100 || !r.validObjects(a) {
 		return ErrPipelineConflict
 	}
 	b := PipelineBinding{Scope: a.Scope, TenantID: a.TenantID}
@@ -337,15 +336,12 @@ func (p *PGPipelineEffects) CompleteAssemblyTx(ctx context.Context, tx *sql.Tx, 
 	}
 	var members []PipelineMember
 	var bytes int64
-	for i, in := range a.Inputs {
+	for _, in := range a.Inputs {
 		f := in.Fragment
 		count := min(r.Count-len(members), len(in.Eligible))
 		next := f.Count
 		if count < len(in.Eligible) {
 			next = in.Eligible[count]
-		}
-		if next != r.Next[i] {
-			return ErrPipelineConflict
 		}
 		var transferred int64
 		for _, ix := range in.Eligible[:count] {

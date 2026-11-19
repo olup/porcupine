@@ -110,6 +110,11 @@ func (s *DuckLakeObjectStore) readHostedStreamObject(ctx context.Context, scope 
 	if len(ref.VersionID) > 1024 || !ok || len(parts) != 2 || len(parts[0]) != 36 || !LakePrefixSegmentPattern.MatchString(parts[0]) || parts[1] != ref.SHA256+".json" || hashErr != nil || len(digest) != sha256.Size || ref.Bytes <= 0 || ref.Bytes > MaxImmutableEffectObjectBytes {
 		return nil, "", errors.New("immutable effect object reference is invalid")
 	}
+	return s.readImmutableObject(ctx, ref, "immutable effect")
+}
+
+// readImmutableObject requires the caller to validate the reference's scope and bounds.
+func (s *DuckLakeObjectStore) readImmutableObject(ctx context.Context, ref ImmutableObjectRef, description string) ([]byte, string, error) {
 	input := &s3.GetObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(ref.Key)}
 	if ref.VersionID != "" {
 		input.VersionId = aws.String(ref.VersionID)
@@ -119,16 +124,17 @@ func (s *DuckLakeObjectStore) readHostedStreamObject(ctx context.Context, scope 
 		return nil, "", analyticalS3Error(ctx)
 	}
 	defer out.Body.Close()
-	if ref.VersionID != "" && aws.ToString(out.VersionId) != ref.VersionID {
-		return nil, "", errors.New("immutable effect version pin mismatch")
+	version := aws.ToString(out.VersionId)
+	if ref.VersionID != "" && version != ref.VersionID {
+		return nil, "", errors.New(description + " version pin mismatch")
 	}
 	raw, err := io.ReadAll(io.LimitReader(out.Body, ref.Bytes+1))
 	if err != nil || int64(len(raw)) != ref.Bytes {
-		return nil, "", errors.New("immutable effect object size mismatch")
+		return nil, "", errors.New(description + " object size mismatch")
 	}
 	actual := sha256.Sum256(raw)
 	if hex.EncodeToString(actual[:]) != ref.SHA256 {
-		return nil, "", errors.New("immutable effect object checksum mismatch")
+		return nil, "", errors.New(description + " object checksum mismatch")
 	}
-	return raw, aws.ToString(out.VersionId), nil
+	return raw, version, nil
 }

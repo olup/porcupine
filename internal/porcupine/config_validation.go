@@ -16,6 +16,11 @@ import (
 // ValidateConfig checks operator settings without opening a database, contacting
 // an identity provider, or starting workers. File credentials are read by the caller.
 func ValidateConfig(c Config) error {
+	return validateConfig(&c)
+}
+
+// validateConfig resolves local database paths for startup as it checks them.
+func validateConfig(c *Config) error {
 	if c.Auth != nil {
 		if c.Auth.Mode != "builtin" && c.Auth.Mode != "external" {
 			return errors.New("auth.mode must be builtin or external")
@@ -34,7 +39,7 @@ func ValidateConfig(c Config) error {
 			return errors.New("external settings require auth.mode external")
 		}
 	}
-	if err := validateDeploymentProfile(c); err != nil {
+	if err := validateDeploymentProfile(*c); err != nil {
 		return err
 	}
 	if _, err := usage.Normalize(c.Usage); err != nil {
@@ -46,10 +51,10 @@ func ValidateConfig(c Config) error {
 	if c.QueueMaxBytes < 0 {
 		return errors.New("queue byte limit must be nonnegative")
 	}
-	if c.DBPath == "" {
-		c.DBPath = "./data/porcupine.db"
-	}
 	if c.Shared == nil {
+		if c.DBPath == "" {
+			c.DBPath = "./data/porcupine.db"
+		}
 		if c.ControlDBPath == "" {
 			c.ControlDBPath = localControlPath(c.DBPath)
 		}

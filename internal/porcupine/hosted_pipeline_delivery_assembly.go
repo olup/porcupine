@@ -46,7 +46,7 @@ func (w *hostedPipelineDelivery) assembleNext(ctx context.Context) (bool, error)
 		if err := f.native.AdvanceRecoveryFence(ctx, fence); err != nil {
 			return err
 		}
-		if err := w.reconcile(ctx, session, scope, fence, first.Claim.TenantID); err != nil {
+		if err := f.reconcileHostedWrites(ctx, session, scope, fence, first.Claim.TenantID); err != nil {
 			return err
 		}
 		progress, err = w.assembleUnderFence(ctx, session, scope, first)
@@ -227,23 +227,13 @@ func (w *hostedPipelineDelivery) stageAssembly(ctx context.Context, scope lakeap
 		}
 		r.ID, r.Body, r.Manifest, r.Count = staged.DeliveryID, pipelineRef(staged.Body), pipelineRef(staged.Manifest), staged.EventCount
 	}
-	remaining := r.Count
-	for _, in := range a.Inputs {
-		take := min(remaining, len(in.Eligible))
-		remaining -= take
-		next := len(in.Fragment.Members)
-		if take < len(in.Eligible) {
-			next = in.Eligible[take]
-		}
-		r.Next = append(r.Next, next)
-	}
 	return r, nil
 }
 
 func (w *hostedPipelineDelivery) recomposeAssembly(ctx context.Context, scope lakeapi.HostedProjectScope, a output.PipelineAssembly) (output.PipelineAssemblyResult, error) {
 	in := a.Inputs[0]
 	f := in.Fragment
-	r := output.PipelineAssemblyResult{Next: []int{f.Count}}
+	var r output.PipelineAssemblyResult
 	if len(in.Eligible) == 0 {
 		return r, nil
 	}

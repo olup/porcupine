@@ -188,7 +188,7 @@ func Open(c Config) (*Service, error) {
 }
 
 func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
-	if err := ValidateConfig(c); err != nil {
+	if err := validateConfig(&c); err != nil {
 		return nil, err
 	}
 	if c.Profile == ProfileHosted {
@@ -196,24 +196,6 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	}
 	interactiveConfig, err := query.Normalize(c.InteractiveQueries)
 	if err != nil {
-		return nil, err
-	}
-	if c.DuckLake != nil {
-		cleanup := *c.DuckLake
-		if err := lakeapi.NormalizeDuckLakeCleanup(&cleanup); err != nil {
-			return nil, err
-		}
-	}
-	if c.DuckLake != nil && c.DuckLake.MaintenanceInterval < 0 {
-		return nil, errors.New("DuckLake maintenance interval must be nonnegative")
-	}
-	if c.DBPath == "" {
-		c.DBPath = "./data/porcupine.db"
-	}
-	if c.ControlDBPath == "" {
-		c.ControlDBPath = localControlPath(c.DBPath)
-	}
-	if err := validateLocalDatabasePaths(c.DBPath, c.ControlDBPath); err != nil {
 		return nil, err
 	}
 	if err := checkNativeRestoreMarker(c.ControlDBPath); err != nil {
@@ -229,14 +211,8 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	if c.QueueMaxEvents <= 0 {
 		c.QueueMaxEvents = 100000
 	}
-	if c.QueueMaxBytes < 0 {
-		return nil, errors.New("queue byte limit must be nonnegative")
-	}
 	if c.QueueMaxBytes == 0 {
 		c.QueueMaxBytes = DefaultQueueMaxBytes
-	}
-	if c.Exports != nil && c.DuckLake == nil {
-		return nil, errors.New("exports require an analytical store")
 	}
 	if c.DBPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(c.DBPath), 0700); err != nil {

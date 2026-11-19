@@ -127,7 +127,6 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 	}
 	limits := output.HostedWebhookLimits{MaxAttempts: 3, Timeout: 3 * time.Second}
 	w := newHostedPipelineDelivery(f, destination, limits, client, hostedReadyDelete, beginAttemptTx, endAttempt)
-	w.reconcile = f.reconcileHostedWrites
 	flush(deleteFirst)
 	acceptDelete(deleteFirst)
 	if _, err := w.Step(ctx); err != nil || calls != 0 {
