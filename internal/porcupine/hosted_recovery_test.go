@@ -2,17 +2,22 @@ package porcupine
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
+	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -50,6 +55,100 @@ VALUES('source','stream','catalog','effects','t');`); err != nil {
 	}
 }
 
+func TestSharedHostedRecoveryBackoffMigratesV25(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	db, _ := sharedControlFixture(t)
+	exec := func(query string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ddl := range sharedControlSteps[:25] {
+		exec(ddl)
+	}
+	exec(`INSERT INTO metadata(key,value) VALUES('schema_version','25');
+INSERT INTO tenants(id,name,created_at,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes)
+VALUES('tenant','tenant','now',1,1000,1,256);
+INSERT INTO projects(id,tenant_id,name,created_at) VALUES('project','tenant','project','now');
+INSERT INTO hosted_recovery_pending(project_id,generation,quarantine_code) VALUES('project',9,'native_evidence_gap');`)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := migrateSharedControl(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var version string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil || version != "26" {
+		t.Fatalf("expected upgraded schema version 26, got %q, error %v", version, err)
+	}
+	assertPending := func(generation int64, deferred bool) {
+		t.Helper()
+		var actualGeneration int64
+		var quarantine string
+		var retryAt sql.NullTime
+		err := db.QueryRowContext(ctx, `SELECT generation,quarantine_code,retry_at FROM hosted_recovery_pending WHERE project_id='project'`).Scan(&actualGeneration, &quarantine, &retryAt)
+		if err != nil || actualGeneration != generation || quarantine != "native_evidence_gap" || retryAt.Valid != deferred {
+			t.Fatalf("pending generation=%d, quarantine=%q, retry_at=%v, error=%v", actualGeneration, quarantine, retryAt, err)
+		}
+	}
+	coordinator, err := lakeapi.NewPostgresProjectCoordinator(db, lakeapi.DefaultProjectCoordinatorConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Acquire(ctx, lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Release()
+	postpone := func(generation int64) {
+		t.Helper()
+		if err := deferHostedRecovery(ctx, session, "project", generation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertPending(9, false)
+	postpone(0) // A producer queued a positive generation after a reservation-only read.
+	assertPending(9, false)
+	postpone(9)
+	assertPending(9, true)
+	exec(`INSERT INTO hosted_mutation_projects(source_id,project_id,tenant_id,catalog_id,stream_id)
+VALUES('source','project','tenant','catalog','stream');
+INSERT INTO hosted_mutation_intents(source_id,project_id,tenant_id,catalog_id,stream_id,mutation_id,key_hash,request_hash,actor_hash,operation,expected_revision,revision,state,body_key,body_sha256,body_bytes,body_prefix,created_at)
+VALUES('source','project','tenant','catalog','stream','mutation','key','request','actor','edit',0,1,'staging','body','hash',1,'prefix','now');
+UPDATE hosted_mutation_intents SET state='ready',acceptance_order=1 WHERE project_id='project';`)
+	assertPending(10, false)
+	postpone(9) // A ready mutation superseded the failure from the previous generation.
+	assertPending(10, false)
+	postpone(10)
+	assertPending(10, true)
+	exec(`INSERT INTO hosted_worker_incarnations(incarnation_id,expires_at,reclaim_after)
+VALUES('lost-worker',clock_timestamp()-interval '2 seconds',clock_timestamp()-interval '1 second');
+INSERT INTO hosted_project_activity(project_id,activity_id,incarnation_id) VALUES('project','activity','lost-worker');`)
+	if projects, err := hostedRecoveryProjects(ctx, db, ""); err != nil || !slices.Equal(projects, []string{"project"}) {
+		t.Fatalf("reclaimed activity did not make project eligible: %v, %v", projects, err)
+	}
+	assertPending(11, false)
+}
+
+func expireHostedRecovery(t *testing.T, db *sql.DB, project string) {
+	t.Helper()
+	result, err := db.ExecContext(t.Context(), `UPDATE hosted_recovery_pending SET retry_at=clock_timestamp()-interval '1 second'
+WHERE project_id=$1 AND retry_at IS NOT NULL`, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("expected one deferred recovery, affected %d rows, error %v", n, err)
+	}
+}
+
 func (f *hostedLiveFlusher) RecoverProject(ctx context.Context, key lakeapi.ProjectWriteKey) error {
 	session, err := f.coordinator.Acquire(ctx, key)
 	if err != nil {
@@ -64,6 +163,168 @@ FROM projects p LEFT JOIN hosted_recovery_pending r ON r.project_id=p.id WHERE p
 		return err
 	}
 	return ignoreHostedACKPending(f.recoverProjectHeld(ctx, session, key, tenant, generation))
+}
+
+func TestDuckLakeS3SharedPostgresHostedRecoveryBackoff(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
+	ctx := t.Context()
+	fixture := nativeS3Fixture(t)
+	traffic := economicsS3Proxy(t, &fixture)
+	a, b := sharedNativeJourneyPair(t, fixture)
+	db := a.service.control
+	first, second := a.service.hosted.flusher, b.service.hosted.flusher
+	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "blocked recovery")
+	healthy, _ := sharedJourneyProject(t, b.host.URL, defaultTenantID, "healthy recovery")
+	key := lakeapi.ProjectWriteKey{SourceID: first.native.Config.SharedSourceID, ProjectID: project}
+	healthyKey := lakeapi.ProjectWriteKey{SourceID: key.SourceID, ProjectID: healthy}
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE test_blocked_publications(project_id TEXT PRIMARY KEY);
+CREATE FUNCTION test_block_effect_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.sequence > OLD.sequence AND EXISTS(SELECT 1 FROM test_blocked_publications WHERE project_id=NEW.project_id) THEN
+  RAISE EXCEPTION 'fixture blocked publication';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER test_block_effect_publication BEFORE UPDATE ON pipeline_effect_streams
+FOR EACH ROW EXECUTE FUNCTION test_block_effect_publication();`); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshots := func(project string) int64 {
+		t.Helper()
+		schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(key.SourceID, project))
+		var count int64
+		if err := first.native.SharedCatalog.QueryRowContext(ctx, `SELECT count(*) FROM `+schema+`.ducklake_snapshot`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	blocked := func(err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "fixture blocked publication") {
+			t.Fatalf("expected publication failure, got %v", err)
+		}
+	}
+	stageUnpublished := func(flusher *hostedLiveFlusher, project string) acceptance.FlushBatch {
+		t.Helper()
+		exec(`INSERT INTO test_blocked_publications(project_id) VALUES($1)`, project)
+		at := time.Now().UTC()
+		event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "unpublished", DistinctID: "actor",
+			Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: at.Format(time.RFC3339Nano), ReceivedAt: at.Format(time.RFC3339Nano)}
+		batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project, Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
+		blocked(flusher.FlushLive(ctx, batch))
+		return batch
+	}
+	candidates := func() []string {
+		t.Helper()
+		projects, err := hostedRecoveryProjects(ctx, db, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return projects
+	}
+	batch := stageUnpublished(first, project)
+	stageUnpublished(second, healthy)
+	exec(`DELETE FROM test_blocked_publications WHERE project_id=$1`, healthy)
+	func() {
+		session, err := first.coordinator.Acquire(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Release()
+		if err := second.recoverProject(ctx, key); !errors.Is(err, lakeapi.ErrProjectWriteBusy) {
+			t.Fatalf("expected contention to yield, got %v", err)
+		}
+	}()
+	var pending bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM hosted_recovery_pending WHERE project_id=$1)`, project).Scan(&pending); err != nil || pending {
+		t.Fatalf("expected reservation-only recovery, pending row=%t, error=%v", pending, err)
+	}
+	if projects := candidates(); !slices.Contains(projects, project) || !slices.Contains(projects, healthy) {
+		t.Fatalf("workers missed queued reservations: %v", projects)
+	}
+	start, startPuts := snapshots(project), traffic.puts()
+	blocked(first.recoverProject(ctx, key))
+	var deferred bool
+	if err := db.QueryRowContext(ctx, `SELECT retry_at>clock_timestamp() FROM hosted_recovery_pending WHERE project_id=$1`, project).Scan(&deferred); err != nil || !deferred {
+		t.Fatalf("reservation-only failure did not create a shared retry deadline: %t, %v", deferred, err)
+	}
+	// The second worker discovered this project before the first finished.
+	if err := second.recoverProject(ctx, key); err != nil {
+		t.Fatal("stale candidate ignored the deadline", err)
+	}
+	workers := [2]*hostedLiveFlusher{first, second}
+	for i := range 4 {
+		projects, err := hostedRecoveryProjects(ctx, workers[i%2].publisher.control, "")
+		if err != nil || slices.Contains(projects, project) || !slices.Contains(projects, healthy) {
+			t.Fatalf("expected only the healthy candidate, got %v, error %v", projects, err)
+		}
+	}
+	if writes, puts := snapshots(project)-start, traffic.puts()-startPuts; writes != 1 || puts != 1 {
+		t.Fatalf("six scheduled replays wrote %d DuckLake snapshots and issued %d S3 PUTs, want one each", writes, puts)
+	}
+	t.Log("six scheduled replays: 1 DuckLake snapshot, 1 S3 PUT")
+	if err := second.recoverProject(ctx, healthyKey); err != nil {
+		t.Fatal("healthy sibling could not reconcile", err)
+	}
+	if slices.Contains(candidates(), healthy) {
+		t.Fatal("healthy recovery stayed queued")
+	}
+	healthyStart := snapshots(healthy)
+	hostedCleanupWrite(t, b.service, healthy, "ordinary successful live flush")
+	if got := snapshots(healthy) - healthyStart; got != 1 {
+		t.Fatalf("ordinary live flush wrote %d DuckLake snapshots, want one", got)
+	}
+	start, startPuts = snapshots(project), traffic.puts()
+	blocked(first.FlushLive(ctx, batch))
+	t.Logf("one explicit buffered-flush retry: %d DuckLake snapshots, %d S3 PUTs", snapshots(project)-start, traffic.puts()-startPuts)
+
+	// A quarantine signal is a new generation and makes the project eligible now.
+	exec(`UPDATE hosted_recovery_pending SET quarantine_code='native_evidence_gap',generation=generation+1 WHERE project_id=$1`, project)
+	if !slices.Contains(candidates(), project) {
+		t.Fatal("new quarantine generation did not wake recovery")
+	}
+	blocked(second.recoverProject(ctx, key))
+	var quarantine string
+	if err := db.QueryRowContext(ctx, `SELECT retry_at>clock_timestamp(),quarantine_code FROM hosted_recovery_pending WHERE project_id=$1`, project).Scan(&deferred, &quarantine); err != nil || !deferred || quarantine != "native_evidence_gap" {
+		t.Fatalf("quarantined generation did not retain its reason and defer: %t, %q, %v", deferred, quarantine, err)
+	}
+	if slices.Contains(candidates(), project) {
+		t.Fatal("quarantined generation bypassed the retry deadline")
+	}
+	exec(`DELETE FROM test_blocked_publications WHERE project_id=$1`, project)
+	start, startPuts = snapshots(project), traffic.puts()
+	if err := first.recoverProject(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots(project) != start || traffic.puts() != startPuts {
+		t.Fatal("scheduled recovery wrote before the retry deadline")
+	}
+	expireHostedRecovery(t, db, project)
+	if !slices.Contains(candidates(), project) {
+		t.Fatal("retry deadline passed without making the project eligible")
+	}
+	if err := second.recoverProject(ctx, key); err != nil {
+		t.Fatal("repaired project could not reconcile", err)
+	}
+	if slices.Contains(candidates(), project) {
+		t.Fatal("repaired recovery stayed queued")
+	}
+	scope, err := second.native.LookupHostedProjectExisting(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := second.native.PendingNativeEffects(ctx, scope, 0, 1)
+	if err != nil || proof.AcknowledgedThrough != 1 || len(proof.Evidence) != 1 || proof.Evidence[0].OperationID != batch.ID {
+		t.Fatalf("recovery did not publish and acknowledge the original batch: %+v, %v", proof, err)
+	}
 }
 
 func TestDuckLakeS3SharedPostgresHostedRecoveryAfterWriterKill(t *testing.T) {

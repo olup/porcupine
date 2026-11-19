@@ -825,6 +825,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.recoverProject(t.Context(), key); !errors.Is(err, errHostedACKPending) || failACK.Load() {
 		t.Fatalf("recovery did not retain its pending ACK: %v", err)
 	}
+	expireHostedRecovery(t, a.service.control, project)
 	if err = fb.recoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold ACK retry", err)
 	}

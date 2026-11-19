@@ -124,6 +124,7 @@ var hostedImportSchema string
 // 22: indexed hosted recovery work. 23: shared ingestion quarantine.
 // 24: discover unpublished live reservations directly.
 // 25: explicit public client ingestion credentials.
+// 26: shared retry deadline for scheduled hosted recovery.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -156,6 +157,14 @@ ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=tenant_usage.a
 	`DROP TRIGGER hosted_recovery_reservation ON pipeline_effect_reservations;
 CREATE INDEX hosted_recovery_reservation_project ON pipeline_effect_reservations(project_id);`,
 	clientIngestionKeySchema,
+	`ALTER TABLE hosted_recovery_pending ADD COLUMN retry_at TIMESTAMPTZ;
+CREATE FUNCTION reset_hosted_recovery_retry() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ NEW.retry_at := NULL;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER hosted_recovery_reset_retry BEFORE UPDATE OF generation ON hosted_recovery_pending
+FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCTION reset_hosted_recovery_retry();`,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
