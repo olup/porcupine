@@ -6,7 +6,9 @@ Native, Segment and supported [PostHog inputs](compatibility.md) write to the sa
 
 ## Send native events
 
-`POST /ingest/v1/events` accepts one JSON object or an array of up to 1,000 objects. Use `Content-Type: application/json`. The request limit is 1 MiB, including after gzip decompression. For a mixed project, use its public write key in `X-Porcupine-Key`. Configure the exact allowed browser origin before using browser capture. For backend ingestion, send an API-audience OAuth token or [service key](service-keys.md) with project-scoped `events:write` in the bearer header. A `server_only` project requires one of these private API credentials. [OAuth guide](oauth.md)
+`POST /ingest/v1/events` accepts one JSON object or an array of up to 1,000 objects. Use `Content-Type: application/json`. The request limit is 1 MiB, including after gzip decompression. For a mixed project, use its public write key in `X-Porcupine-Key`. Browser ingestion accepts any origin by default. [Restrict browser origins](configuration.md#browser-ingestion)
+
+For backend ingestion, send an API-audience OAuth token or [service key](service-keys.md) with project-scoped `events:write` in the bearer header. A `server_only` project requires one of these private API credentials. [OAuth guide](oauth.md)
 
 ```sh
 curl --fail-with-body "$PORCUPINE_URL/ingest/v1/events" \

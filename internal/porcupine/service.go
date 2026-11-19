@@ -498,11 +498,15 @@ func (s *Service) ingestionCORS(next http.Handler) http.Handler {
 		w.Header().Add("Vary", "Origin")
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			if !s.allowedOrigins[origin] {
+			switch {
+			case len(s.allowedOrigins) == 0:
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			case s.allowedOrigins[origin]:
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			default:
 				problem(w, 403, "origin is not allowed")
 				return
 			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		if r.Method == http.MethodOptions {
 			w.Header().Add("Vary", "Access-Control-Request-Method")

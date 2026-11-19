@@ -20,4 +20,8 @@ Then verify that a separate service can provision tenants, set budgets, and read
 
 <a id="later-decisions"></a>
 
+## Later improvements
+
+- Add an optional per-project origin allowlist for browser ingestion so teams can restrict capture to their own sites on a shared instance.
+
 Earlier proposals are in the design archive. [Imports and webhooks](design/archive/saas-and-compute-plans.md#other-planned-improvements) · [Query execution](design/archive/saas-and-compute-plans.md#separate-analytical-compute-to-validate-later) · [Documentation and reporting](design/archive/saas-and-compute-plans.md#deferred)
