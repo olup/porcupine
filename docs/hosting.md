@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.18.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,17 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Choose the procedure for the version you are running.
+
+### Upgrade from v0.18.0
+
+1. Review any automation that provisions credentials. Use an instance administrator for `create-oauth-client` and for general `create-access-key` calls. A tenant administrator with `management:write` and `events:write` can issue an ingestion key for one project in their tenant. For private team access, use [team service accounts](reference/service-keys.md).
+2. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and check for shutdown errors. Acknowledged events can still be in memory if a drain fails.
+3. Stop all v0.18.0 instances. Keep their image and private configuration. Back up standalone storage, including any analytical objects in S3, or take a coordinated hosted recovery point. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+4. Start v0.19.0 with the existing configuration and storage. Update the CLI. Check readiness and confirm that a new test event becomes queryable before resuming producers.
+
+Hosted startup applies PostgreSQL control migration 26 to store a shared retry deadline for scheduled recovery. Standalone can start directly with its v0.18.0 storage.
+
+To roll back a hosted deployment after the migration, restore the pre-upgrade recovery point before starting v0.18.0. Reconcile any writes accepted after cutover before resuming producers.
 
 ### Upgrade from v0.17.0
 
