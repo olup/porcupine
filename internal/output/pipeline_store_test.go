@@ -117,55 +117,47 @@ func TestSharedPipelineEffectsReservePublishRollbackReplay(t *testing.T) {
 		t.Fatal("members missing")
 	}
 }
-func TestSharedPipelineEffectsPauseReplaceAndClaims(t *testing.T) {
+func TestSharedPipelineEffectsPauseRetainsBacklog(t *testing.T) {
 	t.Parallel()
-	db, p := pipelineFixture(t)
-	b, plan, v := pipelinePrepare(t, db, p)
-	ctx := context.Background()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
-	db.Exec(`UPDATE pipeline_effect_definitions SET state='paused'`)
-	pipelineTx(t, db, func(tx *sql.Tx) error { _, e := p.PublishReservedEffectsTx(ctx, tx, b, v); return e })
-	tx, _ := db.Begin()
-	if _, e := p.ClaimJobTx(ctx, tx, b.Scope, b.TenantID, "delivery", "attempt1", time.Second); !errors.Is(e, ErrPipelineAuthority) {
-		t.Fatal(e)
+	ctx := t.Context()
+	db, effects := pipelineFixture(t)
+	binding, plan, publication := pipelinePrepare(t, db, effects)
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		return effects.ReserveEffectsTx(ctx, tx, binding, plan, publication.Outputs)
+	})
+	setState := func(state string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `UPDATE pipeline_effect_definitions SET state=$1`, state); err != nil {
+			t.Fatal(err)
+		}
 	}
-	tx.Rollback()
+	setState("paused")
+	pipelineTx(t, db, func(tx *sql.Tx) error {
+		_, err := effects.PublishReservedEffectsTx(ctx, tx, binding, publication)
+		return err
+	})
+	if _, err := effects.NextDeliveryOutsideProjects(ctx, db, binding.Scope.SourceID, nil); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("selected a paused delivery: %v", err)
+	}
 	if pipelineCount(t, db, `SELECT used_refs FROM pipeline_capacity WHERE scope_kind='project'`) != 1 {
 		t.Fatal("pause refunded backlog")
 	}
-	db.Exec(`UPDATE pipeline_effect_definitions SET state='active'`)
-	var old, current PipelineClaim
-	pipelineTx(t, db, func(tx *sql.Tx) error {
-		var e error
-		old, e = p.ClaimJobTx(ctx, tx, b.Scope, b.TenantID, "delivery", "attempt1", time.Second)
-		return e
-	})
-	db.Exec(`UPDATE pipeline_effect_jobs SET lease_until=clock_timestamp()-interval '1 second'`)
-	pipelineTx(t, db, func(tx *sql.Tx) error {
-		var e error
-		current, e = p.ClaimJobTx(ctx, tx, b.Scope, b.TenantID, "delivery", "attempt2", time.Minute)
-		return e
-	})
-	if old.Generation != current.Generation || old.Attempt == current.Attempt {
-		t.Fatal("takeover changed frozen generation")
+
+	setState("active")
+	delivery, err := effects.NextDeliveryOutsideProjects(ctx, db, binding.Scope.SourceID, nil)
+	if err != nil || delivery.Body != publication.Outputs[0].Body {
+		t.Fatalf("resumed backlog lost its frozen body: %+v %v", delivery, err)
 	}
-	tx, _ = db.Begin()
-	if e := p.FinishJobTx(ctx, tx, old, true); !errors.Is(e, ErrPipelineConflict) {
-		t.Fatal(e)
-	}
-	tx.Rollback()
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.FinishJobTx(ctx, tx, current, true) })
-	current.Version++
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.RemoveCleanedJobTx(ctx, tx, current) })
-	var clean PipelineCleanupClaim
+	setState("paused")
 	pipelineTx(t, db, func(tx *sql.Tx) error {
-		var e error
-		clean, e = p.ClaimCleanupTx(ctx, tx, b.Scope, b.TenantID, b.BatchID, "cleanup")
-		return e
+		_, frozen, err := effects.FreezeDeliveryTx(ctx, tx, delivery, "attempt-paused", publication.Sequence, HostedWebhookLimits{MaxAttempts: 3, Timeout: time.Second})
+		if frozen {
+			t.Error("froze a delivery selected before pause")
+		}
+		return err
 	})
-	pipelineTx(t, db, func(tx *sql.Tx) error { return p.CompleteCleanupTx(ctx, tx, clean) })
-	if pipelineCount(t, db, `SELECT used_artifacts FROM pipeline_capacity WHERE scope_kind='project'`) != 0 {
-		t.Fatal("cleanup did not settle artifacts")
+	if pipelineCount(t, db, `SELECT attempts FROM pipeline_effect_jobs`) != 0 {
+		t.Fatal("pause consumed a delivery attempt")
 	}
 }
 func TestSharedPipelineEffectsDestinationChangeAndUnknown(t *testing.T) {

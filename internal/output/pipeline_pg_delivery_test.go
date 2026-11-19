@@ -75,7 +75,7 @@ func TestSharedPipelineDeliveryAttemptCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	reclaimed, err := p.NextDelivery(ctx, db, "source")
-	if err != nil || reclaimed.Attempts != 1 || reclaimed.Body != d.Body {
+	if err != nil || reclaimed.Attempts != 1 || reclaimed.Body != d.Body || reclaimed.Claim.Generation != original.Generation {
 		t.Fatal(reclaimed, err)
 	}
 	current := freeze(reclaimed, "second")
@@ -106,5 +106,8 @@ func TestSharedPipelineDeliveryAttemptCAS(t *testing.T) {
 	})
 	if n := pipelineCount(t, db, `SELECT sum(webhook_success) FROM usage_rollups`); n != 1 {
 		t.Fatal(n)
+	}
+	if n := pipelineCount(t, db, `SELECT used_refs FROM pipeline_capacity WHERE scope_kind='project' AND scope_id='project'`); n != 1 {
+		t.Fatalf("retained references after delivery completion = %d, want 1", n)
 	}
 }
