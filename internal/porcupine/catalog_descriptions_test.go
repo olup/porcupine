@@ -23,8 +23,9 @@ func TestCatalogDescriptionPersistenceAndProjectIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { s.Close() }()
-	a, ingest := project(t, s)
+	a, _ := project(t, s)
 	b, _ := project(t, s)
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
 	editorID, editor := key(t, s, []string{"management:write"}, []string{a})
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
 	endpoint := func(id string) string { return "/api/v1/projects/" + id + "/catalog/description" }
@@ -34,7 +35,7 @@ func TestCatalogDescriptionPersistenceAndProjectIsolation(t *testing.T) {
 	request(t, s, "PUT", endpoint(a), editor, body, 204)
 	request(t, s, "PUT", endpoint(a), editor, `{"event":"purchase","property":"","description":"Empty key"}`, 204)
 	request(t, s, "PUT", endpoint(a), reader, body, 403)
-	request(t, s, "PUT", endpoint(a), ingest, body, 403)
+	request(t, s, "PUT", endpoint(a), writer, body, 403)
 	request(t, s, "PUT", endpoint(b), editor, body, 403)
 	request(t, s, "PUT", endpoint(a), editor, `{"event":"purchase"}`, 422)
 	request(t, s, "PUT", endpoint(b), adminToken, `{"event":"purchase","description":"Other project"}`, 204)

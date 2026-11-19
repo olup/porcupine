@@ -149,7 +149,8 @@ func TestScopesRevocationAndEscalation(t *testing.T) {
 	if len(v["projects"].([]any)) != 1 {
 		t.Fatal("project scope leaked")
 	}
-	request(t, s, "GET", "/api/v1/projects/"+a+"/events", ingestA, "", 403)
+	ingestID, revokable := key(t, s, []string{"events:write"}, []string{a})
+	request(t, s, "GET", "/api/v1/projects/"+a+"/events", revokable, "", 403)
 	_, manager := key(t, s, []string{"management:write", "events:read"}, []string{a})
 	request(t, s, "POST", "/api/v1/access-keys", manager, `{"name":"bad","permissions":["instance:admin"],"projects":["*"]}`, 403)
 	request(t, s, "POST", "/api/v1/access-keys", manager, `{"name":"bad","permissions":["events:read"],"projects":["`+b+`"]}`, 403)
@@ -157,7 +158,6 @@ func TestScopesRevocationAndEscalation(t *testing.T) {
 	request(t, s, "POST", "/api/v1/projects", manager, `{"name":"bad"}`, 403)
 	request(t, s, "DELETE", "/api/v1/access-keys/"+id, adminToken, "", 204)
 	request(t, s, "GET", "/api/v1/projects/"+a+"/events", reader, "", 401)
-	ingestID, revokable := key(t, s, []string{"events:write"}, []string{a})
 	request(t, s, "DELETE", "/api/v1/access-keys/"+ingestID, adminToken, "", 204)
 	request(t, s, "POST", "/capture/", "", captureBody(revokable, "revoked"), 401)
 }

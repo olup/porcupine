@@ -126,8 +126,8 @@ func TestLiveAcceptanceHTTPPreservesAuthorityFailureStatus(t *testing.T) {
 func TestLivePreparationPreservesSourceBoundPostHogResponse(t *testing.T) {
 	t.Parallel()
 	s := service(t, 10)
-	_, ingest := project(t, s)
-	bindIngestionSource(t, s, ingest, "web")
+	projectID, _ := project(t, s)
+	ingest := sourceKey(t, s, projectID, "web", "events:write")
 	response := request(t, s, "POST", "/capture/", "", captureBody(ingest, "message"), 200)
 	if response["accepted"] != float64(1) || response["receipts"] != nil {
 		t.Fatal("source enrichment changed the SDK response flavor", response)

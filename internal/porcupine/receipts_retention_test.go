@@ -255,8 +255,7 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 			s.eventRules.clock = func() time.Time { return time.UnixMilli(clock.Load()).UTC() }
 			s.receiptRetention = 48 * time.Hour
 			projectID, _ := project(t, s)
-			_, writer := key(t, s, []string{"imports:write", "events:write"}, []string{projectID})
-			bindIngestionSource(t, s, writer, "checkout")
+			writer := sourceKey(t, s, projectID, "checkout", "imports:write", "events:write")
 			data := historicalJourney(t, format)
 			job := createFormatImport(t, s, projectID, writer, format, "initial", data)
 			completed := finishFormatImport(t, s, projectID, writer, job, data)

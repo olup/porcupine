@@ -102,8 +102,9 @@ func TestNativeContractSchemasAndExamples(t *testing.T) {
 func TestNativeContractDiscoveryAndProjectIsolation(t *testing.T) {
 	t.Parallel()
 	s := service(t, 10)
-	a, writer := project(t, s)
+	a, _ := project(t, s)
 	b, _ := project(t, s)
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
 	route := "/api/v1/projects/" + a + "/input-contract"
 	body := request(t, s, "GET", route, reader, "", 200)
@@ -148,8 +149,8 @@ func TestNativeContractAdaptersAndCrossProtocolRetry(t *testing.T) {
 	for _, adapter := range []string{"native", "segment", "posthog"} {
 		t.Run(adapter, func(t *testing.T) {
 			s := service(t, 20)
-			projectID, ingest := project(t, s)
-			bindIngestionSource(t, s, ingest, "checkout")
+			projectID, _ := project(t, s)
+			ingest := sourceKey(t, s, projectID, "checkout", "events:write")
 			send := func(adapter string) {
 				raw := contractExample(t, adapter)
 				switch adapter {

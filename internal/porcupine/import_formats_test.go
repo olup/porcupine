@@ -68,11 +68,10 @@ func TestHistoricalFormatsResumeAndCrossAdapterDedup(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { s.Close() }()
-			a, ingest := project(t, s)
+			a, _ := project(t, s)
 			b, _ := project(t, s)
-			_, writer := key(t, s, []string{"imports:write", "events:write"}, []string{a})
-			bindIngestionSource(t, s, writer, "checkout")
-			bindIngestionSource(t, s, ingest, "checkout")
+			writer := sourceKey(t, s, a, "checkout", "imports:write", "events:write")
+			ingest := sourceKey(t, s, a, "checkout", "events:write")
 			data := historicalJourney(t, format)
 			job := createFormatImport(t, s, a, writer, format, "resumable", data)
 			split := bytes.IndexByte(data, '\n') + 12

@@ -37,18 +37,18 @@ func receiptFrom(t *testing.T, result map[string]any, index int) map[string]any 
 	return result["receipts"].([]any)[index].(map[string]any)
 }
 
-func bindIngestionSource(t *testing.T, s *Service, token, source string) {
+func sourceKey(t *testing.T, s *Service, projectID, source string, permissions ...string) string {
 	t.Helper()
-	if _, err := s.control.Exec(`UPDATE access_keys SET source_id=? WHERE token_hash=?`, source, hash(token)); err != nil {
-		t.Fatal(err)
-	}
+	body := sourceCredentialBody("test key", source, permissions, []string{projectID})
+	result := request(t, s, "POST", "/api/v1/access-keys", adminToken, body, 201)
+	return result["token"].(string)
 }
 
 func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 	t.Parallel()
 	s := service(t, 100)
-	projectID, token := project(t, s)
-	bindIngestionSource(t, s, token, "checkout")
+	projectID, _ := project(t, s)
+	token := sourceKey(t, s, projectID, "checkout", "events:write")
 	first := normalizedCapture(t, s, token, eventBatch{normalizedTrack("native", "shared-message")}, 200)
 	receipt := receiptFrom(t, first, 0)
 	uuid, id := receipt["uuid"].(string), receipt["event_id"].(string)
@@ -63,14 +63,12 @@ func TestNormalizedCaptureSourceNamespacesAndLegacyUUIDs(t *testing.T) {
 	if posthog["duplicates"] != float64(1) || eventCount(t, s) != 1 {
 		t.Fatal("source-bound PostHog did not share producer identity")
 	}
-	_, rotated := key(t, s, []string{"events:write"}, []string{projectID})
-	bindIngestionSource(t, s, rotated, "checkout")
+	rotated := sourceKey(t, s, projectID, "checkout", "events:write")
 	rotatedResult := normalizedCapture(t, s, rotated, eventBatch{normalizedTrack("native", "shared-message")}, 200)
 	if receiptFrom(t, rotatedResult, 0)["event_id"] != id {
 		t.Fatal("credential rotation changed stable source identity")
 	}
-	_, other := key(t, s, []string{"events:write"}, []string{projectID})
-	bindIngestionSource(t, s, other, "other-source")
+	other := sourceKey(t, s, projectID, "other-source", "events:write")
 	independent := normalizedCapture(t, s, other, eventBatch{normalizedTrack("native", "shared-message")}, 200)
 	if receiptFrom(t, independent, 0)["event_id"] == id {
 		t.Fatal("different logical source collided")

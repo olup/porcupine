@@ -5,7 +5,7 @@
 - Mixed projects can use a retrievable browser key scoped to event capture. Tenant administrators can provision one for existing mixed projects. Existing ingestion keys continue to work.
 - Hosted workers retain accepted events in memory while retrying a quarantined project. Shared quarantine blocks new ingestion for that project across workers until recovery or a flush succeeds. (#141)
 - Hosted recovery discovers unpublished live reservations directly, avoiding an extra reconciliation pass after normal flushes. (#142)
-- Native, PostHog, and Segment capture now allow browser requests from any origin by default. Set `allowed_origins` to restrict them to specific origins. (#143)
+- Native, PostHog, and Segment capture now allow cross-origin browser requests when `allowed_origins` is missing or empty. Set an explicit list to restrict origins. Use `server_only` projects to require private API credentials for capture. (#143)
 - The CLI connects to Porcupine Cloud by default. Set `PORCUPINE_URL` or pass `--url` for a self-hosted instance. (#139)
 - Shortened the onboarding, hosting, and recovery guides. (#140)
 

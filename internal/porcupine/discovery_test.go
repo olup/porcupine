@@ -27,11 +27,12 @@ func TestEventCatalogInputAndDisabledStorage(t *testing.T) {
 func TestEventCatalogHTTPProjectAuthorization(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
-	a, ingest := project(t, s)
+	a, _ := project(t, s)
 	b, _ := project(t, s)
+	_, writer := key(t, s, []string{"events:write"}, []string{a})
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
 	request(t, s, "GET", "/api/v1/projects/"+a+"/catalog", reader, "", 503)
 	request(t, s, "GET", "/api/v1/projects/"+b+"/catalog", reader, "", 403)
-	request(t, s, "GET", "/api/v1/projects/"+a+"/catalog", ingest, "", 403)
+	request(t, s, "GET", "/api/v1/projects/"+a+"/catalog", writer, "", 403)
 	request(t, s, "GET", "/api/v1/projects/"+a+"/catalog", "", "", 401)
 }
