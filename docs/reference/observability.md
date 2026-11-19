@@ -85,7 +85,7 @@ consumption and storage measurements in the authenticated [usage report](usage.m
 | Scrape availability drops | Check the worker and the private listener. Confirm each replica has its own scrape target. |
 | HTTP errors or management and MCP failures increase | Check the endpoint or operation and inspect the affected worker's stderr. |
 | Admission rejections, queue depth, or oldest age increase | Check whether only one worker is under pressure. Compare the backlog with flush failures and retries. |
-| Hosted drops appear | Check buffering and shutdown logs for recorded discards. Use the visibility probe to check the write and read path. |
+| Hosted drops appear | Check buffering and shutdown logs for recorded discards. Check [instance status](instance-status.md) for affected projects. |
 | Query latency increases | Compare time spent in admission and backend execution. Check admission outcomes and per-worker backlog during the same interval. |
 | Visibility slows or times out | Check ingestion, flushing, and queries in the same time window. If the probe crosses workers, confirm that both endpoints share the same deployment. |
 
@@ -97,6 +97,12 @@ durable events. Hosted event throughput distinguishes memory admissions
 The native count includes only commits observed by the worker. Replays
 do not increment it. Commits whose response was lost can be missing from
 this operational count.
+
+`porcupine_flush_quarantined_projects_total` counts quarantine transitions.
+For each transition, `porcupine_flush_dropped_events_total` counts the
+buffered event copies released by the worker. An event can already have a
+native commit. Both counters use a fixed `reason` label such as
+`native_evidence_gap`. Project and batch IDs appear in the flush log.
 
 A standalone flush attempt covers projecting originals and acknowledging
 them in the journal. A hosted attempt covers one call to the live flusher.

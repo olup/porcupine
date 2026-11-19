@@ -1653,16 +1653,23 @@
         "additionalProperties": false,
         "properties": {
           "dropped_events": {
-            "description": "Legacy count of live events discarded due to output capacity. Always zero.",
+            "description": "Events in discarded requests, on this worker since startup.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
           "dropped_requests": {
-            "description": "Legacy count of live requests discarded due to output capacity. Always zero.",
+            "description": "Accepted live requests whose buffered copies were discarded when live ingestion was quarantined, on this worker since startup.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "quarantined_projects": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Project IDs and deterministic error codes for live ingestion disabled on this worker. Holds the most recently quarantined projects up to the worker limit. Cleared on worker restart.",
+            "type": "object"
           }
         },
         "required": [
@@ -2217,7 +2224,7 @@
           },
           "hosted_ingestion": {
             "$ref": "#/components/schemas/HostedIngestionStatus",
-            "description": "Worker-local hosted ingestion counters. Visible only to instance administrators."
+            "description": "Worker-local hosted ingestion counters and quarantined projects. Visible only to instance administrators."
           },
           "native_backup": {
             "$ref": "#/components/schemas/NativeBackupStatus",
@@ -2228,7 +2235,7 @@
             "description": "Shared execution scope counts, uncertain permits, and worker-local project quarantine. Visible only to instance administrators; expiry does not guarantee that a partitioned native call stopped."
           },
           "status": {
-            "description": "Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible DuckLake cleanup reports a failed/interrupted attempt. Unconfigured optional services do not degrade the instance.",
+            "description": "Degraded when a live dependency check fails, shared analytical execution is unhealthy or draining, or administrator-visible hosted ingestion quarantine or DuckLake cleanup reports a failure. Unconfigured optional services do not degrade the instance.",
             "enum": [
               "ok",
               "degraded"

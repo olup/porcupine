@@ -81,7 +81,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		return err
 	}
 	defer session.Release()
-	return f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
+	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
 		if e != nil {
 			return e
@@ -116,6 +116,35 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		}
 		return f.commitLiveBatch(ctx, session, fence, batch, b.CanSplit())
 	})
+	if err != nil && session.Context().Err() != nil {
+		return errors.Join(err, context.Cause(session.Context()))
+	}
+	return err
+}
+
+// Activity settlement can join a known error with a transient failure. Only a
+// single cause from the known deterministic checks can advance quarantine.
+func hostedDeterministicFlushError(err error) string {
+	for err != nil {
+		switch err {
+		case lakeapi.ErrNativeEvidenceGap:
+			return "native_evidence_gap"
+		case errHostedEvidenceBinding:
+			return "pipeline_evidence_conflict"
+		case lakeapi.ErrInvalidLiveProjection:
+			return "invalid_live_projection"
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			causes := joined.Unwrap()
+			if len(causes) != 1 {
+				return ""
+			}
+			err = causes[0]
+		} else {
+			err = errors.Unwrap(err)
+		}
+	}
+	return ""
 }
 
 func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {
