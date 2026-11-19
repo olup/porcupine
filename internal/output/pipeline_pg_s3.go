@@ -208,6 +208,14 @@ func (s *PipelineJobs) runHostedScheduled(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	defer s.s3StepMu.Unlock()
+	if s.beginActivity != nil {
+		work, finish, active := s.beginActivity(ctx, "")
+		if !active {
+			return false, nil
+		}
+		defer finish()
+		ctx = work
+	}
 	release, ok := s.acquire(ctx)
 	if !ok {
 		return false, nil

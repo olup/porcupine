@@ -66,6 +66,7 @@ func (s *Service) configureHostedExports(config *output.ExportConfig,
 	d.CurrentActorTx = func(ctx context.Context, tx *sql.Tx, caller auth.Principal) (auth.Principal, error) {
 		return s.currentAuthority(ctx, tx, caller)
 	}
+	d.BeginActivity = s.hosted.incarnation.beginOutputWork
 	d.BeginAttemptTx = begin
 	d.EndAttempt = end
 	d.SnapshotCut = snapshotCut

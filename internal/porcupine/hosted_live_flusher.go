@@ -59,15 +59,19 @@ func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordi
 }
 
 func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project string) (func(), error) {
-	tx, err := f.publisher.control.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	work, cancel := context.WithTimeout(ctx, hostedActivityControlTimeout)
+	stop := f.incarnation.cancelOnLoss(cancel)
+	tx, err := f.publisher.control.BeginTx(work, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
+		stop()
 		return nil, err
 	}
-	if _, err := lockActiveHostedProject(ctx, tx, project); err != nil {
-		_ = tx.Rollback()
+	release := func() { _ = tx.Rollback(); stop() }
+	if _, err := lockActiveHostedProject(work, tx, project); err != nil {
+		release()
 		return nil, err
 	}
-	return func() { _ = tx.Rollback() }, nil
+	return release, nil
 }
 
 // FlushLive processes batches admitted by the buffered ingestion path.
@@ -75,6 +79,8 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 	if b.ID == "" || b.ProjectID == "" || len(b.Events) == 0 {
 		return output.ErrPipelineConflict
 	}
+	ctx, cancel := f.incarnation.writeContext(ctx)
+	defer cancel()
 	key := lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: b.ProjectID}
 	session, err := f.coordinator.Acquire(ctx, key)
 	if err != nil {

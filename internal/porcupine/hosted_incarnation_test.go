@@ -19,14 +19,14 @@ import (
 var shortHostedIncarnation = hostedIncarnationTiming{lease: 600 * time.Millisecond, renew: 100 * time.Millisecond, grace: 400 * time.Millisecond}
 
 // hostedIncarnationWorker opens a separate control pool, as another process would.
-func hostedIncarnationWorker(t *testing.T, dsn string, timing hostedIncarnationTiming, failStop func()) (*sql.DB, *hostedIncarnation) {
+func hostedIncarnationWorker(t *testing.T, dsn string, timing hostedIncarnationTiming) (*sql.DB, *hostedIncarnation) {
 	t.Helper()
 	db, err := openSharedControl(t.Context(), SharedConfig{DatabaseURL: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	worker, err := startHostedIncarnation(t.Context(), db, timing, failStop)
+	worker, err := startHostedIncarnation(t.Context(), db, timing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +53,10 @@ func TestSharedHostedIncarnationReclaimsOnlyDeadWorkerTickets(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('removed','default','Removed','now','mixed'),('kept','default','Kept','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}
-	var stopped atomic.Int32
 	timing := defaultHostedIncarnationTiming
 	timing.renew = shortHostedIncarnation.renew
-	deadDB, dead := hostedIncarnationWorker(t, dsn, timing, func() { stopped.Add(1) })
-	liveDB, live := hostedIncarnationWorker(t, dsn, timing, func() { stopped.Add(1) })
+	deadDB, dead := hostedIncarnationWorker(t, dsn, timing)
+	liveDB, live := hostedIncarnationWorker(t, dsn, timing)
 	if err := dead.beginActivity(ctx, deadDB, "removed", "dead-query"); err != nil {
 		t.Fatal(err)
 	}
@@ -117,16 +116,12 @@ SET reclaim_after=expires_at+interval '1 second' WHERE incarnation_id=$1`, dead.
 		t.Fatal(err)
 	}
 	reclaimAndCheckTickets("live-query")
-	if stopped.Load() != 0 {
-		t.Fatal("a renewing worker stopped itself")
-	}
-	live.release("kept", "live-query")
 	if err := finishHostedProjectActivity(ctx, liveDB, "kept", "live-query"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestSharedHostedIncarnationStopsBeforeItsTicketsAreReclaimable(t *testing.T) {
+func TestSharedHostedIncarnationCancelsBeforeTicketsAreReclaimable(t *testing.T) {
 	t.Parallel()
 	db, dsn := sharedControlFixture(t)
 	ctx := t.Context()
@@ -137,54 +132,32 @@ func TestSharedHostedIncarnationStopsBeforeItsTicketsAreReclaimable(t *testing.T
 	if _, err := db.Exec(`INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('busy','default','Busy','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}
-	// The fail-stop observes PostgreSQL from another worker at that instant.
-	fenced := make(chan error, 1)
-	busyDB, busy := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, func() {
-		var reclaimable bool
-		err := db.QueryRow(`SELECT reclaim_after<=clock_timestamp() FROM hosted_worker_incarnations i
-JOIN hosted_project_activity a USING(incarnation_id) WHERE a.activity_id='running'`).Scan(&reclaimable)
-		if err == nil && reclaimable {
-			err = errors.New("ticket became reclaimable before its worker stopped")
-		}
-		fenced <- err
-	})
-	readerDB, reader := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, func() { fenced <- errors.New("read-only query stopped its worker") })
-	tx, err := readerDB.BeginTx(ctx, nil)
-	if err != nil {
+	timing := shortHostedIncarnation
+	timing.grace = 2 * time.Second
+	workerDB, worker := hostedIncarnationWorker(t, dsn, timing)
+	write, cancel := worker.writeContext(ctx)
+	defer cancel()
+	if err := worker.beginActivity(write, workerDB, "busy", "running"); err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
-	if err := reader.registerReadTx(ctx, tx, "busy", "read-only"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if err := busy.beginActivity(ctx, busyDB, "busy", "running"); err != nil {
-		t.Fatal(err)
-	}
-	// Control becomes unreachable for both workers, while the call keeps running.
-	busyDB.Close()
-	readerDB.Close()
+	workerDB.Close()
 	select {
-	case err := <-fenced:
-		if err != nil {
-			t.Fatal(err)
-		}
+	case <-write.Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("worker kept an outstanding call after its lease expired")
+		t.Fatal("worker did not cancel in-flight work after lease expiry")
 	}
-	time.Sleep(shortHostedIncarnation.lease)
-	select {
-	case err := <-fenced:
-		t.Fatal(err)
-	default:
+	var reclaimable bool
+	if err := db.QueryRowContext(ctx, `SELECT reclaim_after<=clock_timestamp() FROM hosted_worker_incarnations
+JOIN hosted_project_activity USING(incarnation_id) WHERE activity_id='running'`).Scan(&reclaimable); err != nil || reclaimable {
+		t.Fatalf("ticket became reclaimable before cancellation: %t, %v", reclaimable, err)
 	}
-	if _, err := reader.reserve("busy", "late", true); !errors.Is(err, errHostedIncarnationLost) {
-		t.Fatalf("read-only worker without a current lease admitted a ticket: %v", err)
+	if _, err := worker.current(); !errors.Is(err, errHostedIncarnationLost) {
+		t.Fatalf("expired worker was still ready: %v", err)
 	}
-	if _, err := busy.reserve("busy", "late", true); !errors.Is(err, errHostedIncarnationLost) {
-		t.Fatalf("fenced worker admitted a ticket: %v", err)
+	late, stop := worker.writeContext(ctx)
+	defer stop()
+	if !errors.Is(late.Err(), context.Canceled) {
+		t.Fatal("expired worker started additional write work")
 	}
 }
 
@@ -299,7 +272,7 @@ func TestHostedIncarnationCrashChild(t *testing.T) {
 	if dsn == "" || project == "" {
 		t.Skip("run by the crash recovery integration test")
 	}
-	db, worker := hostedIncarnationWorker(t, dsn, shortHostedIncarnation, exitOnHostedLeaseLoss)
+	db, worker := hostedIncarnationWorker(t, dsn, shortHostedIncarnation)
 	if err := worker.beginActivity(t.Context(), db, project, "crash-child-in-flight"); err != nil {
 		t.Fatal(err)
 	}

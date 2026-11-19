@@ -56,6 +56,8 @@ func (w *hostedPipelineDelivery) Step(ctx context.Context) (bool, error) {
 		return false, output.ErrPipelineAuthority
 	}
 	f := w.flusher
+	ctx, cancel := f.incarnation.writeContext(ctx)
+	defer cancel()
 	p := f.publisher
 	var skipped []string
 	var failures error

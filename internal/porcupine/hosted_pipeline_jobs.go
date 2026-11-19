@@ -95,6 +95,7 @@ func (s *Service) newHostedPipelines(c *output.PipelineConfig, effects *output.P
 		},
 	}
 	if execution.snapshotCut != nil {
+		d.BeginActivity = s.hosted.incarnation.beginOutputWork
 		reader, ok := s.lake.(output.HostedScheduledReader)
 		if !ok || execution.beginAttemptTx == nil || execution.endAttempt == nil {
 			return nil, errors.New("hosted scheduled pipelines require retained analytical snapshots")

@@ -85,12 +85,12 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	if err := s.initializeUsage(ctx, c.Usage); err != nil {
 		return nil, err
 	}
-	h.incarnation, err = startHostedIncarnation(ctx, control, defaultHostedIncarnationTiming, exitOnHostedLeaseLoss)
+	h.incarnation, err = startHostedIncarnation(ctx, control, defaultHostedIncarnationTiming)
 	if err != nil {
 		return nil, err
 	}
 	inc := h.incarnation
-	if err := s.initializeHostedQueries(h.native, inc.registerReadTx, finishHostedProjectActivity); err != nil {
+	if err := s.initializeHostedQueries(h.native, inc.registerTx, finishHostedProjectActivity); err != nil {
 		return nil, err
 	}
 	coordinator, err := lakeapi.NewPostgresProjectCoordinator(control, lakeapi.DefaultProjectCoordinatorConfig())
@@ -215,7 +215,7 @@ func (s *Service) startHostedRecovery(interval time.Duration) {
 		defer ticker.Stop()
 		var after string
 		for {
-			work, cancel := context.WithTimeout(ctx, 30*time.Second)
+			work, cancel := h.incarnation.writeContext(ctx)
 			h.flusher.flushReturnedProjectActivities(work)
 			records, err := h.native.ScanHostedProjects(work, after, 32)
 			if err == nil {

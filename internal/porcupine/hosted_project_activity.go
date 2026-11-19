@@ -65,30 +65,16 @@ func hostedProjectLookupError(err error) error {
 // call. Reusing a ticket would make one return stand for two operations. The
 // ticket lives until acknowledged or until its incarnation lease is reclaimed.
 func (i *hostedIncarnation) registerTx(ctx context.Context, tx *sql.Tx, project, activityID string) error {
-	return i.registerActivityTx(ctx, tx, project, activityID, true)
-}
-
-// Register read-only queries without making them a reason to stop the worker.
-func (i *hostedIncarnation) registerReadTx(ctx context.Context, tx *sql.Tx, project, activityID string) error {
-	return i.registerActivityTx(ctx, tx, project, activityID, false)
-}
-
-func (i *hostedIncarnation) registerActivityTx(ctx context.Context, tx *sql.Tx, project, activityID string, mayWrite bool) (err error) {
 	if activityID == "" {
 		return errors.New("hosted project activity requires a unique identifier")
+	}
+	incarnation, err := i.current()
+	if err != nil {
+		return err
 	}
 	if _, err := lockActiveHostedProject(ctx, tx, project); err != nil {
 		return err
 	}
-	incarnation, err := i.reserve(project, activityID, mayWrite)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			i.release(project, activityID)
-		}
-	}()
 	result, err := tx.ExecContext(ctx, `INSERT INTO hosted_project_activity(project_id,activity_id,incarnation_id)
 SELECT $1,$2,NULLIF($3,'') WHERE `+hostedIncarnationCurrent("$3"), project, activityID, incarnation)
 	if err != nil {
@@ -136,6 +122,11 @@ func endHostedProjectActivity(ctx context.Context, db *sql.DB, project, activity
 // Run the whole operation under one ticket so cold opens, reconciliation, and
 // object access before a downstream dispatch each participate in the drain.
 func (f *hostedLiveFlusher) runActiveHostedProject(ctx context.Context, session *lakeapi.ProjectWriteSession, project string, run func(context.Context) error) (err error) {
+	ctx, cancel := f.incarnation.writeContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ticket := eventapi.NewID()
 	defer func() { err = errors.Join(err, f.finishProjectActivity(ctx, project, ticket)) }()
 	if err := f.incarnation.beginActivity(ctx, f.publisher.control, project, ticket); err != nil {
@@ -150,10 +141,8 @@ type returnedHostedProjectActivity struct {
 }
 
 // Remember actual return when control is unavailable. Recovery can retry the
-// acknowledgement while this executor lives. The lease frees tickets only
-// after the process stops, so a live worker still needs this retry.
+// acknowledgment while the lease remains current.
 func (f *hostedLiveFlusher) finishProjectActivity(ctx context.Context, project, ticket string) error {
-	f.incarnation.release(project, ticket)
 	err := endHostedProjectActivity(ctx, f.publisher.control, project, ticket)
 	if err != nil {
 		f.returnedActivities.Store(returnedHostedProjectActivity{project: project, ticket: ticket}, struct{}{})

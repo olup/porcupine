@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"sync"
 	"time"
 
@@ -26,47 +25,34 @@ CREATE INDEX hosted_project_activity_incarnation ON hosted_project_activity(inca
 
 var errHostedIncarnationLost = errors.New("hosted worker lease is not current")
 
-// hostedIncarnationExitCode asks the supervisor to replace the worker.
-const hostedIncarnationExitCode = 75
-
-// The grace gives requests already sent when the worker stops time to drain.
+// Grace lets requests already sent before cancellation drain.
 type hostedIncarnationTiming struct {
 	lease, renew, grace time.Duration
 }
 
 var defaultHostedIncarnationTiming = hostedIncarnationTiming{lease: 30 * time.Second, renew: 5 * time.Second, grace: 45 * time.Second}
 
-type hostedActivityKey struct{ project, ticket string }
+const hostedWriteTimeout = 30 * time.Second
 
-// hostedIncarnation owns one renewable PostgreSQL lease per process lifetime.
-// The local deadline is measured from before each successful grant or
-// renewal statement, so it never passes after the PostgreSQL expiry. At that
-// deadline the process stops if any write-capable activity has not returned.
-// A nil incarnation registers unleased tickets for unit fixtures.
+// Only the keeper changes the lease. Operations capture its cancellation
+// context so replacing an expired lease cannot revive work from that lease.
 type hostedIncarnation struct {
 	control  *sql.DB
 	timing   hostedIncarnationTiming
-	failStop func()
 	mu       sync.Mutex
 	id       string
 	deadline time.Time
-	lost     bool
-	held     map[hostedActivityKey]struct{}
+	lease    context.Context
+	fence    context.CancelFunc
 	stop     context.CancelFunc
 	done     chan struct{}
 }
 
-func exitOnHostedLeaseLoss() { os.Exit(hostedIncarnationExitCode) }
-
-func startHostedIncarnation(ctx context.Context, control *sql.DB, timing hostedIncarnationTiming, failStop func()) (*hostedIncarnation, error) {
-	if control == nil || failStop == nil || timing.renew <= 0 || timing.lease <= timing.renew || timing.grace <= 0 {
-		return nil, errors.New("hosted worker lease requires control storage, a fail-stop action and a renewal shorter than its lease")
+func startHostedIncarnation(ctx context.Context, control *sql.DB, timing hostedIncarnationTiming) (*hostedIncarnation, error) {
+	if control == nil || timing.renew <= 0 || timing.lease <= timing.renew || timing.grace <= 0 {
+		return nil, errors.New("hosted worker lease requires control storage and a renewal shorter than its lease")
 	}
-	i := &hostedIncarnation{control: control, timing: timing, failStop: failStop, held: make(map[hostedActivityKey]struct{})}
-	// Remove dead incarnations left by earlier processes before joining.
-	if err := reclaimExpiredHostedIncarnations(ctx, control); err != nil {
-		return nil, err
-	}
+	i := &hostedIncarnation{control: control, timing: timing}
 	if err := i.grant(ctx); err != nil {
 		return nil, err
 	}
@@ -77,7 +63,13 @@ func startHostedIncarnation(ctx context.Context, control *sql.DB, timing hostedI
 }
 
 func (i *hostedIncarnation) grant(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, hostedActivityControlTimeout)
+	defer cancel()
+	if err := reclaimExpiredHostedIncarnations(ctx, i.control); err != nil {
+		return err
+	}
 	id := eventapi.NewID()
+	// Start the local lease before sending the statement, conservatively.
 	sent := time.Now()
 	if _, err := i.control.ExecContext(ctx, `INSERT INTO hosted_worker_incarnations(incarnation_id,expires_at,reclaim_after)
 VALUES($1,clock_timestamp()+$2::bigint*interval '1 millisecond',clock_timestamp()+$3::bigint*interval '1 millisecond')`,
@@ -86,19 +78,18 @@ VALUES($1,clock_timestamp()+$2::bigint*interval '1 millisecond',clock_timestamp(
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	i.id, i.deadline, i.lost = id, sent.Add(i.timing.lease), false
+	i.id, i.deadline = id, sent.Add(i.timing.lease)
+	i.lease, i.fence = context.WithCancel(context.Background())
 	return nil
 }
 
 func (i *hostedIncarnation) keep(ctx context.Context) {
 	defer close(i.done)
+	defer func() { i.fence() }()
 	for {
-		i.mu.Lock()
-		lost, deadline := i.lost, i.deadline
-		i.mu.Unlock()
 		wait := i.timing.renew
-		if !lost {
-			wait = min(wait, time.Until(deadline))
+		if i.lease.Err() == nil {
+			wait = min(wait, time.Until(i.deadline))
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -107,20 +98,10 @@ func (i *hostedIncarnation) keep(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		switch {
-		case lost:
-			// Only reached with nothing outstanding; rejoin under a new identity.
-			work, cancel := context.WithTimeout(ctx, hostedActivityControlTimeout)
-			_ = i.grant(work)
-			cancel()
-		case !time.Now().Before(deadline):
-			if !i.fence() {
-				return
-			}
-		default:
-			if !i.renew(ctx, deadline) && !i.fence() {
-				return
-			}
+		if i.lease.Err() != nil {
+			_ = i.grant(ctx)
+		} else if !time.Now().Before(i.deadline) || !i.renew(ctx, i.deadline) {
+			i.fence()
 		}
 	}
 }
@@ -128,15 +109,12 @@ func (i *hostedIncarnation) keep(ctx context.Context) {
 // renew reports false only when PostgreSQL no longer holds a current lease.
 // It returns by the local deadline, so a stalled statement cannot delay fencing.
 func (i *hostedIncarnation) renew(ctx context.Context, deadline time.Time) bool {
-	i.mu.Lock()
-	id := i.id
-	i.mu.Unlock()
 	work, cancel := context.WithTimeout(ctx, min(time.Until(deadline), hostedActivityControlTimeout))
 	defer cancel()
 	sent := time.Now()
 	result, err := i.control.ExecContext(work, `UPDATE hosted_worker_incarnations
 SET expires_at=clock_timestamp()+$2::bigint*interval '1 millisecond',reclaim_after=clock_timestamp()+$3::bigint*interval '1 millisecond'
-WHERE incarnation_id=$1 AND expires_at>clock_timestamp()`, id, i.timing.lease.Milliseconds(), (i.timing.lease + i.timing.grace).Milliseconds())
+WHERE incarnation_id=$1 AND expires_at>clock_timestamp()`, i.id, i.timing.lease.Milliseconds(), (i.timing.lease + i.timing.grace).Milliseconds())
 	if err != nil {
 		return true
 	}
@@ -144,77 +122,69 @@ WHERE incarnation_id=$1 AND expires_at>clock_timestamp()`, id, i.timing.lease.Mi
 		return err != nil
 	}
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	if i.id == id && !i.lost {
-		i.deadline = sent.Add(i.timing.lease)
-	}
+	i.deadline = sent.Add(i.timing.lease)
+	i.mu.Unlock()
 	return true
 }
 
-// fence ends this incarnation. It reports whether the keeper may continue.
-func (i *hostedIncarnation) fence() bool {
-	i.mu.Lock()
-	i.lost = true
-	outstanding := len(i.held)
-	i.mu.Unlock()
-	if outstanding == 0 {
-		return true
-	}
-	// A returned call no longer counts, even with an unacknowledged ticket.
-	// Anything still running could otherwise write after reclamation.
-	i.failStop()
-	return false
+func (i *hostedIncarnation) currentLocked() bool {
+	return i.lease.Err() == nil && time.Now().Before(i.deadline)
 }
 
-// reserve counts a write-capable ticket before its registration commits. The
-// fence takes the same lock so expiry cannot miss an activity being registered.
-func (i *hostedIncarnation) reserve(project, ticket string, mayWrite bool) (string, error) {
+// Nil is used by fixtures that register unleased tickets.
+func (i *hostedIncarnation) current() (string, error) {
 	if i == nil {
 		return "", nil
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.lost || !time.Now().Before(i.deadline) {
+	if !i.currentLocked() {
 		return "", errHostedIncarnationLost
-	}
-	if mayWrite {
-		i.held[hostedActivityKey{project, ticket}] = struct{}{}
 	}
 	return i.id, nil
 }
 
-// release records actual return. It does not acknowledge the ticket.
-func (i *hostedIncarnation) release(project, ticket string) {
+func (i *hostedIncarnation) cancelOnLoss(cancel context.CancelFunc) func() {
 	if i == nil {
-		return
+		return cancel
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	delete(i.held, hostedActivityKey{project, ticket})
+	if !i.currentLocked() {
+		cancel()
+		return cancel
+	}
+	stop := context.AfterFunc(i.lease, cancel)
+	return func() { stop(); cancel() }
 }
 
-// close runs after the native store and every executor have stopped. A
-// ticket still held then belongs to a call that cannot run, so reclamation
-// after the lease is safe; only an empty incarnation is removed at once.
+func (i *hostedIncarnation) writeContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(parent, hostedWriteTimeout)
+	return ctx, i.cancelOnLoss(cancel)
+}
+
+func (i *hostedIncarnation) beginOutputWork(parent context.Context, _ string) (context.Context, func(), bool) {
+	ctx, cancel := context.WithCancel(parent)
+	finish := i.cancelOnLoss(cancel)
+	if ctx.Err() != nil {
+		finish()
+		return ctx, nil, false
+	}
+	return ctx, finish, true
+}
+
 func (i *hostedIncarnation) close() {
 	i.stop()
 	<-i.done
-	i.mu.Lock()
-	id, outstanding := i.id, len(i.held)
-	i.mu.Unlock()
-	if outstanding != 0 {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), hostedActivityControlTimeout)
 	defer cancel()
 	_, _ = i.control.ExecContext(ctx, `DELETE FROM hosted_worker_incarnations
-WHERE incarnation_id=$1 AND NOT EXISTS(SELECT 1 FROM hosted_project_activity WHERE incarnation_id=$1)`, id)
+WHERE incarnation_id=$1 AND NOT EXISTS(SELECT 1 FROM hosted_project_activity WHERE incarnation_id=$1)`, i.id)
 }
 
-// reclaimExpiredHostedIncarnations removes incarnations whose owner has
-// stopped by its own promise, cascading to their tickets. Its row lock
-// waits for a registration still referencing the incarnation, then removes
-// that ticket too.
+// Reclaim only after the lease and cancellation grace have ended. The row
+// lock waits for any registration still using the incarnation, then cascades
+// the deletion to its tickets.
 func reclaimExpiredHostedIncarnations(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM hosted_worker_incarnations WHERE reclaim_after<clock_timestamp()`)
 	return err
