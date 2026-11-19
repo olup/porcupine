@@ -1,16 +1,13 @@
 package output
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -123,16 +120,7 @@ func (s *PipelineJobs) runHostedScheduledAttempt(ctx context.Context, w *hostedS
 	}
 	record, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
-	state, code := "queued", "attempt_failed"
-	if w.attempts >= hostedScheduledMaxAttempts {
-		state, code = "failed", "attempts_exhausted"
-	}
-	if errors.Is(err, ErrPipelineAuthority) {
-		state, code = "failed", "creator_unauthorized"
-	}
-	if ctx.Err() != nil {
-		code = "interrupted"
-	}
+	state, code := scheduledFailure(ctx, w.attempts, errors.Is(err, ErrPipelineAuthority))
 	_, err = s.db.ExecContext(record, `UPDATE hosted_s3_pipeline_runs SET state=$3,error_code=$4,lease_until=NULL,
 next_attempt=clock_timestamp()+$5::double precision*interval '1 second',completed_at_ms=CASE WHEN $3='failed' THEN $6::bigint ELSE 0 END
 WHERE id=$1 AND claim_id=$2 AND state='running'`, w.id, w.claimID, state, code, 1<<w.attempts, s.clock().UnixMilli())
@@ -150,28 +138,20 @@ func (s *PipelineJobs) executeHostedScheduled(ctx context.Context, w *hostedSche
 	}
 	defer store.Close()
 	if w.manifest == "" {
-		_, err = store.ReadManifest(ctx, pipelineManifestKey(&w.s3PipelineWork))
+		_, err = store.ReadManifest(ctx, pipelineManifestKey(w.pipeline.ID, w.start))
 		if !errors.Is(err, exportstore.ErrNotFound) {
 			return ErrPipelineConflict
 		}
 		if err = s.prepareHostedScheduledAttempt(ctx, w); err != nil {
 			return err
 		}
-		sink := newPipelineS3Sink(ctx, s, &w.s3PipelineWork, store)
-		sink.hosted = w
-		sink.config.MaxOutputBytes = w.reservedBytes
-		window := lakeapi.AnalyticalWindow{StartMS: w.start, EndMS: w.end}
-		if _, err = s.pg.scheduled.Reader.ExportWindowAtSnapshot(ctx, w.pipeline.ProjectID, w.spec.SQL, w.spec.Parameters, window, w.snapshot,
-			s.config.ExportLimits.MaxRowBytes, lakeapi.ExportStreamCallbacks{Columns: sink.columns, Row: sink.row}); err != nil {
-			return err
-		}
-		manifest, err := sink.finish()
+		manifest, err := s.buildScheduledManifest(ctx, &w.s3PipelineWork, w, store)
 		if err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(manifest)
-		if err != nil || len(encoded) > exportstore.MaxManifestBytes {
-			return errPipelineOutputLimit
+		encoded, err := encodePipelineManifest(manifest)
+		if err != nil {
+			return err
 		}
 		w.manifest = string(encoded)
 		err = s.withHostedScheduledRun(ctx, w, func(tx *sql.Tx) error {
@@ -205,21 +185,12 @@ func (s *PipelineJobs) prepareHostedScheduledAttempt(ctx context.Context, w *hos
 	})
 }
 
-func readHostedScheduledManifest(w *hostedScheduledWork) (pipelineS3Manifest, error) {
-	var manifest pipelineS3Manifest
-	if json.Unmarshal([]byte(w.manifest), &manifest) != nil || manifest.ProjectID != w.pipeline.ProjectID || manifest.PipelineID != w.pipeline.ID ||
-		manifest.RunID != w.id || manifest.WindowStartMS != w.start || manifest.WindowEndMS != w.end {
-		return pipelineS3Manifest{}, ErrPipelineConflict
-	}
-	return manifest, nil
-}
-
 func (s *PipelineJobs) publishHostedScheduled(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store) error {
-	manifest, err := readHostedScheduledManifest(w)
-	if err != nil {
-		return err
-	}
 	encoded := []byte(w.manifest)
+	manifest, ok := decodePipelineManifest(&w.s3PipelineWork, encoded)
+	if !ok {
+		return ErrPipelineConflict
+	}
 	// Linearize the immutable marker against pause, rotation and the project
 	// fence. A lost database commit is retried using the exact cached marker.
 	publish, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -235,27 +206,17 @@ func (s *PipelineJobs) publishHostedScheduled(ctx context.Context, w *hostedSche
 		if err := lockHostedScheduledRun(ctx, tx, w); err != nil {
 			return err
 		}
-		key := pipelineManifestKey(&w.s3PipelineWork)
-		remote, err := store.ReadManifest(ctx, key)
-		if errors.Is(err, exportstore.ErrNotFound) {
-			if err = store.CommitManifest(ctx, key, encoded); err != nil && !errors.Is(err, exportstore.ErrExists) {
-				return err
-			}
-			remote, err = store.ReadManifest(ctx, key)
-		}
-		if err != nil {
+		if err := commitPipelineManifest(ctx, store, pipelineManifestKey(w.pipeline.ID, w.start), encoded, ErrPipelineConflict); err != nil {
 			return err
 		}
-		if !bytes.Equal(remote, encoded) {
-			return ErrPipelineConflict
-		}
+		bytes := pipelineManifestBytes(manifest)
 		result, err := tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_state SET cursor_ms=$4 WHERE project_id=$1 AND pipeline_id=$2 AND cursor_ms=$3`,
 			w.pipeline.ProjectID, w.pipeline.ID, w.start, w.end)
 		if err = pipelineCheckpoint(result, err); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE hosted_s3_pipeline_runs SET state='succeeded',lease_until=NULL,manifest='',secret=NULL,
-completed_at_ms=$2,row_count=$3,byte_count=$4 WHERE id=$1`, w.id, s.clock().UnixMilli(), manifest.Rows, pipelineManifestBytes(manifest)); err != nil {
+completed_at_ms=$2,row_count=$3,byte_count=$4 WHERE id=$1`, w.id, s.clock().UnixMilli(), manifest.Rows, bytes); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM hosted_s3_pipeline_files WHERE run_id=$1`, w.id); err != nil {
@@ -267,7 +228,7 @@ completed_at_ms=$2,row_count=$3,byte_count=$4 WHERE id=$1`, w.id, s.clock().Unix
 		if err = s.pg.effects.charge(ctx, tx, b, b.Demand, -1); err != nil {
 			return err
 		}
-		return s.RecordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, pipelineManifestBytes(manifest))
+		return s.RecordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, bytes)
 	})
 }
 

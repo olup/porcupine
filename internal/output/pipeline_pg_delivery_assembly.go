@@ -38,7 +38,7 @@ type PipelineFragment struct {
 const pipelineFragmentFields = `j.source_id,j.project_id,j.catalog_id,j.stream_id,j.tenant_id,j.id,j.incarnation,j.generation,j.version,
  j.pipeline_id,j.rule_revision,j.destination_revision,j.creator_id,j.body_key,j.body_version,j.body_sha,j.body_bytes,j.sequence,j.next_member,j.refs,j.fragment_spec,j.needs_recompose,j.send_cut IS NOT NULL`
 
-func scanPipelineFragment(row pipelineRunScanner) (PipelineFragment, error) {
+func scanPipelineFragment(row rowScanner) (PipelineFragment, error) {
 	var f PipelineFragment
 	c, t, r := &f.Claim, &f.Target, &f.Body
 	var spec string

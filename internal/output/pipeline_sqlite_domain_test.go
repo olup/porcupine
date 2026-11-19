@@ -228,7 +228,7 @@ func TestWebhookDeletePreservesOtherBatchMembersAndAttemptIdentity(t *testing.T)
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.getWebhookPipelineRun(context.Background(), p, pipeline, originalID)
+	run, err := s.getPipelineRun(context.Background(), storedPipeline{Pipeline: Pipeline{ProjectID: p, ID: pipeline, Kind: "webhook"}}, originalID)
 	if err != nil || run.EventCount != 2 || run.State != "queued" {
 		t.Fatal(run, err)
 	}

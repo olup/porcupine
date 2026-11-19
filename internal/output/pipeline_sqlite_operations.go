@@ -40,7 +40,7 @@ type PipelineRunPage struct {
 
 const pipelineColumns = `id,project_id,actor_id,kind,name,state,config,secret,created_at_ms`
 
-func scanPipeline(row interface{ Scan(...any) error }) (storedPipeline, error) {
+func scanPipeline(row rowScanner) (storedPipeline, error) {
 	var p storedPipeline
 	var config string
 	err := row.Scan(&p.ID, &p.ProjectID, &p.ActorID, &p.Kind, &p.Name, &p.State, &config, &p.Secret, &p.CreatedAtMS)
@@ -440,15 +440,6 @@ func (s *PipelineJobs) Replace(ctx context.Context, project, id string, change P
 	return &public, nil
 }
 
-func (s *PipelineJobs) pipelineRunPage(ctx context.Context, p storedPipeline, limit, offset int) ([]PipelineRun, error) {
-	if p.Kind == "s3" {
-		return s.s3PipelineRunPage(ctx, p.ProjectID, p.ID, limit, offset)
-	}
-	if s.pg != nil {
-		return s.pgWebhookRunPage(ctx, p.ProjectID, p.ID, limit, offset)
-	}
-	return s.webhookPipelineRunPage(ctx, p.ProjectID, p.ID, limit, offset)
-}
 func (s *PipelineJobs) Runs(ctx context.Context, project, id string, limit, offset int) (*PipelineRunPage, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, apierr.New(400, "invalid pipeline pagination")
@@ -478,14 +469,7 @@ func (s *PipelineJobs) Run(ctx context.Context, project, id, runID string) (*Pip
 	if err != nil {
 		return nil, pipelineLookupError(err)
 	}
-	var run PipelineRun
-	if p.Kind == "s3" {
-		run, err = s.getS3PipelineRun(ctx, p.ProjectID, p.ID, runID)
-	} else if s.pg != nil {
-		run, err = s.pgWebhookRun(ctx, p.ProjectID, p.ID, runID)
-	} else {
-		run, err = s.getWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)
-	}
+	run, err := s.getPipelineRun(ctx, p, runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apierr.New(404, "pipeline run not found")
 	}
@@ -512,7 +496,7 @@ func (s *PipelineJobs) Retry(ctx context.Context, project, id, runID string) (bo
 	} else if s.pg != nil {
 		requeued, err = s.pgRetryWebhookRun(ctx, p.ProjectID, p.ID, runID)
 	} else {
-		requeued, err = s.retryWebhookPipelineRun(ctx, p.ProjectID, p.ID, runID)
+		requeued, err = s.webhooks.Retry(ctx, p.ProjectID, p.ID, runID)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, apierr.New(404, "pipeline run not found")

@@ -18,8 +18,6 @@ coalesce((SELECT tenant_id FROM export_external_authority a WHERE a.job_id=expor
 coalesce((SELECT issuer FROM export_external_authority a WHERE a.job_id=export_jobs.id),''),
 coalesce((SELECT expires_at_ms FROM export_external_authority a WHERE a.job_id=export_jobs.id),0)`
 
-type exportScanner interface{ Scan(...any) error }
-
 func (s *ExportJobs) exportColumns() string {
 	windowColumns := "event_watermark,mutation_watermark"
 	if s.retained != nil {
@@ -28,7 +26,7 @@ func (s *ExportJobs) exportColumns() string {
 	return exportJobPrefix + windowColumns + exportJobSuffix
 }
 
-func (s *ExportJobs) scanExport(row exportScanner) (storedExport, error) {
+func (s *ExportJobs) scanExport(row rowScanner) (storedExport, error) {
 	var job storedExport
 	var parameters, columns string
 	var first, second any = &job.EventWatermark, &job.MutationWatermark

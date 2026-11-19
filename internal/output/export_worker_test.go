@@ -348,7 +348,7 @@ func TestExportJobsIsolatedSuccessTransactionRollbackAndReplay(t *testing.T) {
 		t.Fatal("winning output metered incorrectly", bytes, current.Bytes, err)
 	}
 	// A repeated publication must lose the same state predicate before AddTx.
-	sink := &exportSink{compressed: current.Bytes}
+	sink := &exportSink{outputSink: &outputSink{compressed: current.Bytes}}
 	if err := s.publishExport(ctx, current, lakeapi.ExportStreamResult{}, sink); !errors.Is(err, errExportCanceled) {
 		t.Fatal("terminal publication replay won", err)
 	}

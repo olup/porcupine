@@ -16,12 +16,8 @@ import (
 
 const HostedDeletionScheduled = "scheduled-s3"
 
-type hostedScheduledFile struct {
-	key, upload string
-}
-
 func (w *hostedScheduledWork) ownsFile(key string) bool {
-	prefix := fmt.Sprintf("%s/%d/%s/part-", w.pipeline.ID, w.start, w.attemptID)
+	prefix := scheduledAttemptPrefix(w.pipeline.ID, w.start, w.attemptID) + "part-"
 	suffix := "." + w.spec.Format + ".gz"
 	if w.attemptID == "" || !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) || len(key) != len(prefix)+6+len(suffix) {
 		return false
@@ -31,24 +27,9 @@ func (w *hostedScheduledWork) ownsFile(key string) bool {
 		key[len(prefix):len(prefix)+6] == fmt.Sprintf("%06d", part)
 }
 
-func listHostedScheduledFiles(ctx context.Context, tx *sql.Tx, id string) ([]hostedScheduledFile, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT object_key,upload_id FROM hosted_s3_pipeline_files WHERE run_id=$1 ORDER BY object_key`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var files []hostedScheduledFile
-	for rows.Next() {
-		var f hostedScheduledFile
-		if err = rows.Scan(&f.key, &f.upload); err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
-	return files, rows.Err()
-}
+const hostedScheduledFilesSelect = `SELECT object_key,upload_id FROM hosted_s3_pipeline_files WHERE run_id=$1 ORDER BY object_key`
 
-func exactScheduledFileArtifacts(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store, f hostedScheduledFile) ([]s3client.Artifact, error) {
+func exactScheduledFileArtifacts(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store, f scheduledFileCheckpoint) ([]s3client.Artifact, error) {
 	if !w.ownsFile(f.key) {
 		return nil, errHostedOutputOwnership
 	}
@@ -75,7 +56,7 @@ func exactScheduledFileArtifacts(ctx context.Context, w *hostedScheduledWork, st
 // unfinished attempt. An absent current marker with older versions cannot
 // authorize reclamation of a checkpointed attempt.
 func scheduledManifestPublished(ctx context.Context, w *hostedScheduledWork, store *exportstore.Store) (bool, error) {
-	key := pipelineManifestKey(&w.s3PipelineWork)
+	key := pipelineManifestKey(w.pipeline.ID, w.start)
 	remote, err := store.ReadManifest(ctx, key)
 	switch {
 	case err == nil:
@@ -119,7 +100,7 @@ JOIN pipeline_effect_definitions d ON (d.project_id,d.id)=(r.project_id,r.pipeli
 JOIN hosted_pipeline_configs c ON (c.project_id,c.id,c.tenant_id)=(d.project_id,d.id,d.tenant_id)
 WHERE r.project_id=$1 AND c.tenant_id=$2 AND c.kind='s3' AND r.attempt_id<>'' AND r.state<>'succeeded'`
 
-func scanScheduledDeletionRun(row interface{ Scan(...any) error }, w *hostedScheduledWork) error {
+func scanScheduledDeletionRun(row rowScanner, w *hostedScheduledWork) error {
 	var config string
 	err := row.Scan(&w.id, &w.pipeline.ID, &w.start, &w.end, &w.attemptID, &w.previousRevision, &w.previousSecret, &w.manifest, &w.incarnation, &config)
 	if err != nil {
@@ -167,14 +148,15 @@ func (s *PipelineJobs) HostedScheduledDeletionInventory(ctx context.Context, tx 
 }
 
 func (s *PipelineJobs) inventoryHostedScheduledRun(ctx context.Context, tx *sql.Tx, w *hostedScheduledWork) ([]HostedDeletionArtifact, int64, error) {
-	files, err := listHostedScheduledFiles(ctx, tx, w.id)
+	files, err := listScheduledFiles(ctx, tx, hostedScheduledFilesSelect, w.id)
 	if err != nil {
 		return nil, 0, err
 	}
 	var manifest pipelineS3Manifest
 	if w.manifest != "" {
-		manifest, err = readHostedScheduledManifest(w)
-		if err != nil || len(manifest.Files) != len(files) {
+		var ok bool
+		manifest, ok = decodePipelineManifest(&w.s3PipelineWork, []byte(w.manifest))
+		if !ok || len(manifest.Files) != len(files) {
 			return nil, 0, errHostedOutputOwnership
 		}
 		for i, f := range files {

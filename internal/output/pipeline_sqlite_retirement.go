@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
@@ -102,7 +101,7 @@ func (s *PipelineJobs) cleanupRetired(ctx context.Context, project, pipeline str
 		return false, err
 	}
 	defer store.Close()
-	remote, err := store.ReadManifest(ctx, fmt.Sprintf("%s/%d/manifest.json", p.ID, start))
+	remote, err := store.ReadManifest(ctx, pipelineManifestKey(p.ID, start))
 	published := err == nil
 	if published && (manifest == "" || !bytes.Equal(remote, []byte(manifest))) {
 		return false, errors.New("retired manifest requires review")
@@ -111,45 +110,18 @@ func (s *PipelineJobs) cleanupRetired(ctx context.Context, project, pipeline str
 		return false, err
 	}
 	if !published {
-		rows, err := s.db.QueryContext(ctx, `SELECT object_key,upload_id FROM pipeline_retired_files WHERE destination_id=$1`, id)
+		files, err := listScheduledFiles(ctx, s.db, `SELECT object_key,upload_id FROM pipeline_retired_files WHERE destination_id=$1`, id)
 		if err != nil {
 			return false, err
 		}
-		type file struct{ key, upload string }
-		var files []file
-		for rows.Next() {
-			var f file
-			if err = rows.Scan(&f.key, &f.upload); err != nil {
-				rows.Close()
-				return false, err
-			}
-			files = append(files, f)
-		}
-		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-			return false, err
-		}
 		for _, f := range files {
-			if err = retainArtifactOwnership(ctx, s.control, p.ProjectID, "pipeline_unpublished", store, f.key, f.upload); err != nil {
-				return false, err
-			}
-			if f.upload != "" {
-				err = store.Abort(ctx, f.key, f.upload)
-			} else {
-				err = store.AbortKeyUploads(ctx, f.key)
-			}
-			if err != nil {
-				return false, err
-			}
-			if err = store.Delete(ctx, f.key); err != nil {
+			if err := s.removeUnpublishedScheduledFile(ctx, store, p.ProjectID, f); err != nil {
 				return false, err
 			}
 		}
 		if attemptID != "" {
-			prefix := fmt.Sprintf("%s/%d/%s/", p.ID, start, attemptID)
-			if err = retainArtifactOwnership(ctx, s.control, p.ProjectID, "pipeline_unpublished", store, prefix, ""); err != nil {
-				return false, err
-			}
-			if err = store.AbortAttemptUploads(ctx, prefix); err != nil {
+			prefix := scheduledAttemptPrefix(p.ID, start, attemptID)
+			if err := s.removeUnpublishedScheduledUploads(ctx, store, p.ProjectID, prefix); err != nil {
 				return false, err
 			}
 		}
