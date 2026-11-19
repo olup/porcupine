@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	"github.com/olup/porcupine/internal/observability"
@@ -287,6 +288,11 @@ func TestBufferedAcceptanceSplitsAtRequestBoundaries(t *testing.T) {
 					t.Errorf("split reused batch ID %q", batch.ID)
 				}
 				ids[batch.ID] = true
+				raw, prefixed := strings.CutPrefix(batch.ID, "live-")
+				id, err := uuid.Parse(raw)
+				if !prefixed || err != nil || id.Version() != 7 {
+					t.Errorf("batch ID %q must have a live- prefix and a UUIDv7", batch.ID)
+				}
 				attempts = append(attempts, len(batch.Events))
 				if len(batch.Events) > 3 && batch.CanSplit() {
 					return ErrBatchTooLarge
