@@ -246,6 +246,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		}
 	}
 	putParser([]byte(`{"tampered":true}`))
+	expireHostedRecovery(t, a.service.control, project)
 	if versioned {
 		if original.Import.Next.Parser.VersionID == "" {
 			t.Fatal("missing actual checkpoint version pin")
@@ -270,6 +271,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 			t.Fatal("tamper moved common cursor", seq, e)
 		}
 		putParser(parserBody)
+		expireHostedRecovery(t, a.service.control, project)
 		if err = fb.recoverProject(t.Context(), key); err != nil {
 			t.Fatal("restored original checkpoint", err)
 		}
