@@ -4,7 +4,7 @@
 
 - Interactive event queries accept an optional `time_range` through HTTP, CLI, and MCP. The range applies to every `events` reference and includes `from` while excluding `to`. Both bounds are RFC3339 occurrence timestamps. (#152) [Query reference](https://github.com/olup/porcupine/blob/v0.19.0/docs/reference/analytics.md#sql-request-and-result)
 - Creating OAuth clients and general access keys now requires an instance administrator. Tenant administrators with `management:write` and `events:write` can still issue single-project ingestion keys for their tenant and use team service accounts for private access. (#149)
-- A failed scheduled hosted recovery attempt delays the next attempt for that project by 30 seconds across workers. New recovery work clears the delay. (#145)
+- A failed scheduled hosted recovery attempt delays the next attempt for that project by 30 seconds across workers. A new recovery signal clears the delay. (#145)
 - Hosted workers verify newly appended DuckLake commit proofs when they can reuse a prior audit. New live batch IDs let DuckLake skip older proof files during lookup, and existing proofs remain readable. (#147, #150)
 - Shared output writing and scheduled pipeline operations across storage profiles. Removed the superseded hosted webhook claim path. (#146, #151)
 - Documented browser ingestion key limits and how to replace a key. (#148)
