@@ -1,6 +1,6 @@
 # Static credentials for service accounts
 
-Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. Each key has one audience, project IDs, and permissions. In builtin mode, configure `PORCUPINE_OAUTH_ISSUER`. In [external mode](external-auth.md#native-machine-accounts-and-deferred-work), machine accounts use static API or MCP keys.
+Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. A team service account is tied to one project. Each key can use one audience and a subset of the account's permissions for that project. In builtin mode, configure `PORCUPINE_OAUTH_ISSUER`. In [external mode](external-auth.md#native-machine-accounts-and-deferred-work), machine accounts use static API or MCP keys.
 
 <a id="create-a-team-service-account-unreleased"></a>
 
@@ -22,7 +22,7 @@ porcupine create-tenant-service-api-key --tenant-id TENANT_ID --id CLIENT_ID --b
 
 Store the one-time `token` privately. Send it as `Authorization: Bearer <token>` to the API, or load it into `PORCUPINE_API_KEY` for the CLI. For a client that accepts MCP bearer headers, choose `"audience":"mcp"` and use that key only on `/mcp`.
 
-Tenant service accounts and keys use explicit projects from their tenant. They cannot request deployment-wide `*`, `tenant:admin`, or `instance:admin`. Each key's permissions and projects must fit inside its parent account's current grants. Tenant administrators cannot provision an account in another tenant.
+For both the account and its keys, send `projects` as an array containing one explicit project ID. The project must belong to the tenant and match the account when you issue a key. Choose project permissions such as `events:read`. The permissions `tenant:admin` and `instance:admin` are unavailable on team credentials.
 
 List accounts and their keys without exposing secrets:
 
@@ -31,7 +31,7 @@ porcupine list-tenant-service-accounts --tenant-id TENANT_ID --limit 20 --offset
 porcupine list-tenant-service-api-keys --tenant-id TENANT_ID --id CLIENT_ID --limit 20 --offset 0
 ```
 
-Use `update-tenant-service-account` to replace an account's name, permissions, and projects. For example:
+Use `update-tenant-service-account` to change an account's name or permissions. Repeat the original project ID in the request. Create a separate account to give the integration access to another project. For example:
 
 ```sh
 porcupine update-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID --body '{"name":"Dashboard backend","permissions":["events:read","management:read"],"projects":["PROJECT_ID"]}'
@@ -39,13 +39,15 @@ porcupine update-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID --b
 
 An optional `source_id` on account creation binds an ingestion producer and requires `events:write` on one project. An update can omit it or repeat the same value; it cannot change it.
 
-To rotate a key, issue a replacement, switch the integration, then revoke the old key:
+An account can have several active keys for the same project. To rotate a key, issue a replacement, switch the integration, then revoke the old key:
 
 ```sh
 porcupine revoke-tenant-service-api-key --tenant-id TENANT_ID --id CLIENT_ID --key-id KEY_ID
 ```
 
-Use `revoke-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID` to revoke the account and all its keys. A repeated deletion of an already revoked account or key returns success while it still belongs to that tenant. Changing the parent account's grants revokes existing child keys; issue replacements with the new grants. Removing the human creator's membership does not revoke this independent team account.
+Use `revoke-tenant-service-account --tenant-id TENANT_ID --id CLIENT_ID` to revoke the account and all its keys. A repeated deletion of an already revoked account or key returns success while it still belongs to that tenant. Changing the parent account's permissions revokes its existing keys. Issue replacements with the new permissions. Removing the human creator's membership does not revoke this independent team account.
+
+Older team accounts and keys with multiple projects can still be listed and revoked. Use a separate account and new credentials for each project the integration needs. A multi-project account cannot be updated or used to issue new keys, and its existing keys and OAuth tokens no longer authenticate. Multi-project keys and previously issued multi-project OAuth tokens also stop authenticating when their account has one project.
 
 The operation IDs are also the CLI commands. MCP uses `porcupine_docs` to inspect their contracts and `porcupine_call` to call them. HTTP clients use `/api/v1/tenants/{tenant_id}/service-accounts`, with `/{id}/api-keys` for keys. Account updates use `PUT`; revocations use `DELETE`. The running `/openapi.json` describes every field and permission check.
 

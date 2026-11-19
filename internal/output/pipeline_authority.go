@@ -34,5 +34,8 @@ func (PipelineNativeCredentialAuthority) ResolveCreatorTx(ctx context.Context, t
 	if e = json.Unmarshal([]byte(projects), &principal.Projects); e != nil {
 		return false, e
 	}
+	if len(principal.Projects) != 1 || principal.Projects[0] != project {
+		return false, nil
+	}
 	return auth.Authorize(principal, "pipelines:write", project) && auth.Authorize(principal, "events:read", project), nil
 }

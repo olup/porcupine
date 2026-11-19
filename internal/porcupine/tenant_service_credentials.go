@@ -20,8 +20,8 @@ import (
 type TenantServiceAccountSpec struct {
 	Name        string   `json:"name" minLength:"1" maxLength:"200"`
 	Permissions []string `json:"permissions" minItems:"1" maxItems:"32" doc:"Fixed project permissions; administration scopes are not available to machine accounts."`
-	Projects    []string `json:"projects" minItems:"1" maxItems:"64" doc:"Explicit projects belonging to this tenant. No wildcard."`
-	SourceID    string   `json:"source_id,omitempty" maxLength:"128" doc:"Optional producer source, requiring events:write and exactly one project. Immutable after creation."`
+	Projects    []string `json:"projects" minItems:"1" maxItems:"1" doc:"The single project belonging to this tenant. Immutable after creation."`
+	SourceID    string   `json:"source_id,omitempty" maxLength:"128" doc:"Optional producer source, requiring events:write. Immutable after creation."`
 }
 
 type TenantServiceAccountCreateInput struct {
@@ -56,7 +56,14 @@ type TenantServiceAccountListOutput struct {
 type TenantServiceKeyCreateInput struct {
 	TenantID string `path:"tenant_id"`
 	ID       string `path:"id"`
-	Body     ServiceKeySpec
+	Body     TenantServiceKeySpec
+}
+
+type TenantServiceKeySpec struct {
+	Name        string   `json:"name" minLength:"1" maxLength:"200"`
+	Audience    string   `json:"audience" enum:"api,mcp" doc:"Use the key with this resource only."`
+	Permissions []string `json:"permissions" minItems:"1" maxItems:"32" doc:"Subset of the service account's permissions."`
+	Projects    []string `json:"projects" minItems:"1" maxItems:"1" doc:"The single project of the service account."`
 }
 
 type TenantServiceKeyListInput struct {
@@ -91,7 +98,7 @@ func (s *Service) registerTenantServiceCredentials(api huma.API, op func(string,
 	}
 	huma.Register(api, op("create-tenant-service-account", "POST", base, createSummary, access, 201), s.createTenantServiceAccount)
 	huma.Register(api, op("list-tenant-service-accounts", "GET", base, "List this tenant's team machine accounts without secrets", access, 200), s.listTenantServiceAccounts)
-	huma.Register(api, op("update-tenant-service-account", "PUT", base+"/{id}", "Replace a team machine account's name and project grants; grant changes revoke its existing keys", access, 200), s.updateTenantServiceAccount)
+	huma.Register(api, op("update-tenant-service-account", "PUT", base+"/{id}", "Replace a team machine account's name and permissions; permission changes revoke its existing keys", access, 200), s.updateTenantServiceAccount)
 	huma.Register(api, op("revoke-tenant-service-account", "DELETE", base+"/{id}", "Revoke this tenant's machine account and all its tokens and keys", access, 204), s.revokeTenantServiceAccount)
 	huma.Register(api, op("create-tenant-service-api-key", "POST", base+"/{id}/api-keys", "Issue a separate API or MCP key within this tenant's machine account grants", access, 201), s.createTenantServiceKey)
 	huma.Register(api, op("list-tenant-service-api-keys", "GET", base+"/{id}/api-keys", "List a team machine account's API and MCP key metadata without secrets", access, 200), s.listTenantServiceKeys)
@@ -110,7 +117,7 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 	if err := requireTenantActive(ctx, query, tenant); err != nil {
 		return auth.Principal{}, err
 	}
-	if a.Admin() || slices.Contains(a.Permissions, "tenant:admin") || len(a.Permissions) == 0 || len(a.Projects) == 0 || slices.Contains(a.Projects, "*") {
+	if a.Admin() || slices.Contains(a.Permissions, "tenant:admin") || len(a.Permissions) == 0 || len(a.Projects) != 1 || a.Projects[0] == "" || a.Projects[0] == "*" {
 		return auth.Principal{}, errors.New("invalid tenant machine authority")
 	}
 	for _, permission := range a.Permissions {
@@ -118,15 +125,14 @@ func constrainTenantCredentialActor(ctx context.Context, query oauthQueryer, a a
 			return auth.Principal{}, errors.New("invalid tenant machine permission")
 		}
 	}
-	for _, project := range a.Projects {
-		var owner string
-		err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return auth.Principal{}, auth.ErrUnavailable
-		}
-		if err != nil || owner != tenant {
-			return auth.Principal{}, errors.New("tenant machine project is unavailable")
-		}
+	var owner string
+	err = query.QueryRowContext(ctx, `SELECT p.tenant_id FROM projects p WHERE p.id=$1
+AND NOT EXISTS(SELECT 1 FROM project_deletions d WHERE d.project_id=p.id)`, a.Projects[0]).Scan(&owner)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return auth.Principal{}, auth.ErrUnavailable
+	}
+	if err != nil || owner != tenant {
+		return auth.Principal{}, errors.New("tenant machine project is unavailable")
 	}
 	a.TenantIDs = []string{tenant}
 	return a, nil
@@ -177,27 +183,28 @@ func (s *Service) requireTenantAdminCurrent(ctx context.Context, query oauthQuer
 
 func tenantMachineGrant(ctx context.Context, query oauthQueryer, tenant string, spec TenantServiceAccountSpec) (TenantServiceAccountSpec, error) {
 	spec.Name = strings.TrimSpace(spec.Name)
-	if spec.Name == "" || len(spec.Name) > 200 || len(spec.Permissions) == 0 || len(spec.Permissions) > 32 || len(spec.Projects) == 0 || len(spec.Projects) > 64 {
-		return spec, apierr.New(400, "name, project permissions and explicit projects are required")
+	if spec.Name == "" || len(spec.Name) > 200 || len(spec.Permissions) == 0 || len(spec.Permissions) > 32 {
+		return spec, apierr.New(400, "name and project permissions are required")
 	}
-	spec.Permissions, spec.Projects = sortedGrants(spec.Permissions), sortedGrants(spec.Projects)
+	spec.Permissions = sortedGrants(spec.Permissions)
 	for _, permission := range spec.Permissions {
 		if !slices.Contains(auth.ProjectPermissions(), permission) {
 			return spec, apierr.New(400, "machine accounts require project permissions without administration scopes")
 		}
 	}
-	for _, project := range spec.Projects {
-		if project == "" || project == "*" {
-			return spec, apierr.New(400, "tenant machines require explicit project IDs")
-		}
-		var owner string
-		err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, project).Scan(&owner)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && owner != tenant {
-			return spec, apierr.New(403, "project is outside this tenant")
-		}
-		if err != nil {
-			return spec, apierr.New(503, "project ownership unavailable")
-		}
+	if len(spec.Projects) != 1 || spec.Projects[0] == "" || spec.Projects[0] == "*" {
+		return spec, apierr.New(400, "tenant machines require exactly one explicit project ID")
+	}
+	var owner string
+	err := query.QueryRowContext(ctx, `SELECT tenant_id FROM projects WHERE id=$1`, spec.Projects[0]).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && owner != tenant {
+		return spec, apierr.New(403, "project is outside this tenant")
+	}
+	if err != nil {
+		return spec, apierr.New(503, "project ownership unavailable")
+	}
+	if err := requireActiveProjectSet(ctx, query, spec.Projects); err != nil {
+		return spec, err
 	}
 	if err := validateCredentialSource(spec.SourceID, spec.Permissions, spec.Projects); err != nil {
 		return spec, err
@@ -326,10 +333,12 @@ func (s *Service) updateTenantServiceAccount(ctx context.Context, input *TenantS
 	if err != nil {
 		return nil, err
 	}
+	if !slices.Equal(spec.Projects, client.Projects) {
+		return nil, apierr.New(400, "service account project is immutable")
+	}
 	permissions, _ := json.Marshal(spec.Permissions)
-	projects, _ := json.Marshal(spec.Projects)
 	var created string
-	if err := tx.QueryRowContext(ctx, `UPDATE access_keys SET name=$1,permissions=$2,projects=$3 WHERE id=$4 AND revoked_at IS NULL RETURNING created_at`, spec.Name, string(permissions), string(projects), input.ID).Scan(&created); err != nil {
+	if err := tx.QueryRowContext(ctx, `UPDATE access_keys SET name=$1,permissions=$2 WHERE id=$3 AND revoked_at IS NULL RETURNING created_at`, spec.Name, string(permissions), input.ID).Scan(&created); err != nil {
 		return nil, apierr.New(503, "team credential storage unavailable")
 	}
 	if err := tx.Commit(); err != nil {
@@ -378,11 +387,9 @@ func (s *Service) createTenantServiceKey(ctx context.Context, input *TenantServi
 	if err != nil {
 		return nil, err
 	}
-	for _, project := range spec.Projects {
-		for _, permission := range spec.Permissions {
-			if !auth.Authorize(parent.Principal, permission, project) {
-				return nil, apierr.New(403, "key grants exceed its service account")
-			}
+	for _, permission := range spec.Permissions {
+		if !auth.Authorize(parent.Principal, permission, spec.Projects[0]) {
+			return nil, apierr.New(403, "key grants exceed its service account")
 		}
 	}
 	secret, err := auth.RandomSecret(serviceKeyPrefix)

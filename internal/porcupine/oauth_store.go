@@ -319,6 +319,9 @@ func (s *Service) authenticateOAuthToken(ctx context.Context, raw, resource stri
 		}
 		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
 	}
+	if stored.grantID == "" && len(current.TenantIDs) == 1 && !slices.Equal(stored.projects, current.Projects) {
+		return auth.Principal{}, oautherrors.ErrInvalidAccessToken
+	}
 	if stored.grantID != "" && tenantAdminConsent(strings.Fields(info.GetScope())) && len(current.TenantAdmins) == 1 {
 		return current, nil
 	}
