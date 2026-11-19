@@ -33,7 +33,7 @@
       "id": "browser.capture-cors",
       "required": true,
       "status": "implemented",
-      "scope": "Headless Chromium real cross-origin capture, local session/distinct IDs, Unicode, nested properties, timestamp, UUID and SDK metadata",
+      "scope": "Headless Chromium cross-origin capture with default server configuration, local session/distinct IDs, Unicode, nested properties, timestamp, UUID and SDK metadata",
       "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
     },
     {
@@ -134,7 +134,11 @@
     },
     {
       "test": "TestIngestionCORS",
-      "scope": "Allowed and denied origins and preflight"
+      "scope": "Configured allowlist, denied origins, and preflight"
+    },
+    {
+      "test": "TestIngestionCORSDefault",
+      "scope": "Credentialless CORS for native, PostHog, and Segment capture by default"
     },
     {
       "test": "TestAllowedOriginValidation",

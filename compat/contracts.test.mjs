@@ -67,7 +67,7 @@ async function sdkSend(tab, name, operation, argument) {
   const value = await tab.evaluate(operation, argument);
   const response = await pending;
   assert.equal(response.status(), 200);
-  assert.equal(await response.headerValue('access-control-allow-origin'), origin);
+  assert.equal(await response.headerValue('access-control-allow-origin'), '*');
   assert.equal(await response.finished(), null);
   assert.equal(response.request().failure(), null);
   const payload = decodeWire({ headers: response.request().headers(), body: response.request().postDataBuffer() });
@@ -130,7 +130,7 @@ before(async () => {
   const portReservation = createServer();
   api = await listen(portReservation);
   await close(portReservation);
-  child = spawn(binary, [], { cwd: directory, env: serverEnv({ PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: admin, PORCUPINE_ALLOWED_ORIGINS: origin }), stdio: 'ignore' });
+  child = spawn(binary, [], { cwd: directory, env: serverEnv({ PORCUPINE_ADDR: new URL(api).host, PORCUPINE_DB: join(directory, 'events.db'), PORCUPINE_BOOTSTRAP_TOKEN: admin }), stdio: 'ignore' });
   for (let attempt = 0; attempt < 200; attempt++) {
     try { if ((await fetch(api + '/readyz')).ok) break; } catch {}
     if (attempt === 199) throw new Error('Go server did not become ready');
@@ -232,7 +232,7 @@ contract('browser.capture-cors', async () => {
   });
   const response = await responsePromise;
   assert.equal(response.status(), 200);
-  assert.equal(await response.headerValue('access-control-allow-origin'), origin);
+  assert.equal(await response.headerValue('access-control-allow-origin'), '*');
   assert.equal(await response.finished(), null, 'Chromium completes SDK fetch response');
   assert.equal(response.request().failure(), null);
   const [saved] = await event('browser custom');
@@ -303,7 +303,7 @@ contract('browser.cookieless-no-storage', async () => {
     assert.equal(clientID, '$posthog_cookieless', 'SDK never receives a durable visitor ID');
     const response = await responsePromise;
     assert.equal(response.status(), 200, 'cookieless capture succeeds');
-    assert.equal(await response.headerValue('access-control-allow-origin'), origin);
+    assert.equal(await response.headerValue('access-control-allow-origin'), '*');
     assert.equal(await response.finished(), null, 'Chromium completes the CORS fetch');
     assert.equal(response.request().failure(), null);
     assert.deepEqual(await response.json(), { status: 1, durability: 'durable', accepted: 1, duplicates: 0, identity_ignored: 0 });

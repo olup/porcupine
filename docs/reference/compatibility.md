@@ -4,7 +4,7 @@ The supported SDK test matrix pins `posthog-js` 1.447.3 and `posthog-node` 5.63.
 
 ## Configure browser capture
 
-Install `posthog-js@1.447.3` in your application. Create a `mixed` project and use its public ingestion key in the browser. Add the application’s exact origin to `PORCUPINE_ALLOWED_ORIGINS` on the server. Copy the [profile definitions](../../compat/profiles.mjs) into your application and choose the mode you need.
+Install `posthog-js@1.447.3` in your application. Create a `mixed` project and use its public ingestion key in the browser. Copy the [profile definitions](../../compat/profiles.mjs) into your application and choose the mode you need. Browser ingestion accepts any origin by default. [Restrict browser origins](configuration.md#browser-ingestion)
 
 ```js
 import posthog from 'posthog-js'

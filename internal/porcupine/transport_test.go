@@ -190,9 +190,73 @@ func TestIngestionCORS(t *testing.T) {
 	if eventCount(t, s) != 1 {
 		t.Fatal("OPTIONS or disallowed origin persisted events")
 	}
-	off := service(t, 10)
-	transportRequest(t, off, "OPTIONS", "/capture/", nil, allowed, 403)
 }
+
+func TestIngestionCORSDefault(t *testing.T) {
+	t.Parallel()
+	s := service(t, 10)
+	_, ingest := project(t, s)
+	const site = "https://app.example.test"
+	checkCORS := func(t *testing.T, response *httptest.ResponseRecorder) {
+		t.Helper()
+		if got := response.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want *", got)
+		}
+		if response.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatal("ingestion granted credentialed CORS")
+		}
+	}
+	for _, route := range []struct{ path, headers string }{
+		{"/capture/", "Content-Type, Content-Encoding"},
+		{"/batch/", "Content-Type, Content-Encoding"},
+		{"/i/v0/e/", "Content-Type, Content-Encoding"},
+		{"/e/", "Content-Type, Content-Encoding"},
+		{"/ingest/v1/events", "Content-Type, X-Porcupine-Key"},
+		{"/v1/track", "Content-Type, Authorization"},
+		{"/v1/page", "Content-Type, Authorization"},
+		{"/v1/identify", "Content-Type, Authorization"},
+		{"/v1/batch", "Content-Type, Authorization"},
+	} {
+		t.Run(route.path, func(t *testing.T) {
+			response := transportRequest(t, s, "OPTIONS", route.path, nil, map[string]string{
+				"Origin": site, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": route.headers,
+			}, 204)
+			checkCORS(t, response)
+			if response.Body.Len() != 0 || response.Header().Get("Access-Control-Allow-Methods") != "POST" {
+				t.Fatal("invalid ingestion preflight response")
+			}
+			for _, header := range strings.Split(route.headers, ", ") {
+				if !strings.Contains(response.Header().Get("Access-Control-Allow-Headers"), header) {
+					t.Fatalf("preflight did not allow %s", header)
+				}
+			}
+		})
+	}
+
+	posthogBody := []byte(captureBody(ingest, "browser-cors"))
+	checkCORS(t, transportRequest(t, s, "POST", "/e/", posthogBody, map[string]string{"Origin": site}, 200))
+	nativeBody := []byte(`{"type":"track","name":"Browser track","actor_id":"browser-1"}`)
+	checkCORS(t, transportRequest(t, s, "POST", "/ingest/v1/events", nativeBody, map[string]string{
+		"Origin": site, "Content-Type": "application/json", "X-Porcupine-Key": ingest,
+	}, 200))
+	checkCORS(t, transportRequest(t, s, "POST", "/ingest/v1/events", nativeBody, map[string]string{
+		"Origin": site, "Content-Type": "application/json",
+	}, 401))
+	segment := segmentHeaders(ingest)
+	segment["Origin"] = "http://localhost:3020"
+	checkCORS(t, transportRequest(t, s, "POST", "/v1/track", []byte(`{"event":"Browser track","anonymousId":"browser-2"}`), segment, 200))
+	if count := eventCount(t, s); count != 3 {
+		t.Fatalf("stored %d events after three authenticated browser requests", count)
+	}
+
+	transportRequest(t, s, "OPTIONS", "/capture/", nil, map[string]string{"Origin": site, "Access-Control-Request-Method": "DELETE"}, 403)
+	transportRequest(t, s, "OPTIONS", "/capture/", nil, map[string]string{"Origin": site, "Access-Control-Request-Headers": "Authorization"}, 403)
+	management := transportRequest(t, s, "OPTIONS", "/api/v1/projects", nil, map[string]string{"Origin": site}, 405)
+	if management.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatal("management endpoint exposed through CORS")
+	}
+}
+
 func TestAllowedOriginValidation(t *testing.T) {
 	t.Parallel()
 	for _, origin := range []string{"*", "https://*.example.test", "null", "https://app.example.test/", "https://user:pass@app.example.test", "https://app.example.test?x=1", "https://app.example.test#x"} {

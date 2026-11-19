@@ -42,6 +42,12 @@ In standalone the generated control path is the journal path plus `.control`. Se
 
 `ducklake.s3`, `backup.s3`, and `export.s3` have distinct destinations. Common fields are `bucket`, `prefix`, `region`, `endpoint`, `path_style`, `access_key_id`, `secret_access_key`, and `session_token`. Empty explicit credentials use the configured AWS credential chain. Analytical and backup S3 also support `ca_cert_file` and `request_timeout_seconds`. A query destination does not configure analytical storage or backups.
 
+## Browser ingestion
+
+Native, PostHog, and Segment capture accept cross-origin browser requests from any origin by default. Browsers can call these endpoints without including cookies. Use a `mixed` project's public ingestion key. Project authentication applies to every write.
+
+To restrict browser capture across the instance, set `allowed_origins` to an array of exact HTTP or HTTPS origins, such as `["https://app.example.com", "http://localhost:3000"]`. The environment override `PORCUPINE_ALLOWED_ORIGINS` takes a comma-separated list. Omit the setting or use an empty array for the default. The setting applies only to capture endpoints.
+
 ## Secrets and container paths
 
 A `_file` setting refers to a file readable by the server process. In Docker it is a container path; mount the secret explicitly. The image runs as UID 65532. Choose a value or its file variant, not both.
