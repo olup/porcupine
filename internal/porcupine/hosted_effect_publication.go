@@ -124,6 +124,9 @@ type reservingHostedStager struct {
 	fence            lakeapi.ProjectWriteFence
 	plan             output.PipelinePlan
 	routing          frozenLiveOutputPlan
+	canSplit         bool
+	refusedReason    string
+	refused          map[string]uint64
 	uploadedManifest lakeapi.ImmutableObjectRef
 	binding          output.PipelineBinding
 }
@@ -132,16 +135,16 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	p := s.publisher
 	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
 	s.binding = output.PipelineBinding{}
+	s.refusedReason, s.refused = "", nil
 	stager, err := newHostedImmutableEffects(p.objects, s.fence, s.routing)
 	if err != nil {
 		return lakeapi.StagedLiveEffects{}, err
 	}
-	stager.planID = s.plan.ID
 	objects := []hostedPreparedObject{}
 	var preparedBytes int64
 	stager.put = func(_ context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
 		if int64(len(raw)) > lakeapi.MaxImmutableEffectObjectBytes || int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
-			return lakeapi.ImmutableObjectRef{}, errors.Join(acceptance.ErrBatchTooLarge, output.ErrPipelineCapacity)
+			return lakeapi.ImmutableObjectRef{}, output.ErrPipelineCapacity
 		}
 		ref, _, e := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, raw)
 		if e == nil {
@@ -150,95 +153,83 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		}
 		return ref, e
 	}
-	staged, err := stager.StageLiveEffects(ctx, selected)
-	if errors.Is(err, delivery.ErrWebhookCapacity) {
-		return staged, errors.Join(acceptance.ErrBatchTooLarge, err)
-	}
-	if err != nil {
-		return staged, err
-	}
-	var manifest immutableLiveEffectManifest
-	if staged.OutputCount > 0 {
-		if err = decodeHostedJSON(objects[len(objects)-1].body, &manifest); err != nil {
-			return staged, err
-		}
-		objects = objects[:len(objects)-1] // Replace the stager-only manifest with the digest-bound operational metadata.
-	}
-	prepared := []output.PipelineOutput{}
-	for _, o := range manifest.Outputs {
-		var body []byte
-		for _, obj := range objects {
-			if obj.ref == o.Body {
-				body = obj.body
-				break
-			}
-		}
-		var payload delivery.WebhookPayload
-		if err = decodeHostedJSON(body, &payload); err != nil {
-			return staged, err
-		}
-		raw, e := delivery.EncodeJSON(payload.Event)
-		if e != nil {
-			return staged, e
-		}
-		prepared = append(prepared, output.PipelineOutput{ID: o.DeliveryID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "delivery", Body: pipelineRef(o.Body), Members: []output.PipelineMember{{UUID: o.EventUUIDs[0], Bytes: int64(len(raw))}}, Charge: output.PipelineDemand{References: 1, QueuedBytes: o.Body.Bytes, MetadataRows: 2, ArtifactBytes: o.Body.Bytes}})
-	}
-	for _, o := range manifest.BatchFragments {
-		members := make([]output.PipelineMember, len(o.EventUUIDs))
-		var queued int64
-		for i, id := range o.EventUUIDs {
-			members[i] = output.PipelineMember{UUID: id, Bytes: o.EventBytes[i]}
-			queued += o.EventBytes[i] + 1024
-		}
-		prepared = append(prepared, output.PipelineOutput{ID: o.FragmentID, PipelineID: o.Target.PipelineID, Incarnation: o.Target.PipelineIncarnation, RuleRevision: o.Target.RuleRevision, DestinationRevision: o.Target.DestinationRevision, Generation: s.fence.AcquisitionID, Kind: "fragment", Fragment: &output.PipelineFragmentSpec{WindowStartMS: o.WindowStartMS, WindowEndMS: o.WindowEndMS, Rule: o.Target.Rule}, Body: pipelineRef(o.Body), Members: members, Charge: output.PipelineDemand{References: int64(len(members)), QueuedBytes: max(queued, o.Body.Bytes), MetadataRows: int64(1 + len(members)), ArtifactBytes: o.Body.Bytes}})
+	prepared, err := stager.prepare(ctx, selected)
+	reason := ""
+	switch {
+	case errors.Is(err, delivery.ErrWebhookCapacity), errors.Is(err, output.ErrPipelineCapacity):
+		reason = "preparation_limit"
+	case err != nil:
+		return lakeapi.StagedLiveEffects{}, err
 	}
 	planRaw, err := json.Marshal(s.plan)
 	if err != nil {
-		return staged, err
+		return lakeapi.StagedLiveEffects{}, err
 	}
 	planRef, prefix, err := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, planRaw)
 	if err != nil {
-		return staged, err
+		return lakeapi.StagedLiveEffects{}, err
 	}
-	binding := output.PipelineBinding{Scope: pipelineScope(selected.Scope), TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: output.PipelinePreparedSHA256(prepared), AcquisitionID: s.fence.AcquisitionID, ArtifactPrefix: prefix, Epoch: s.fence.Epoch, PlanRef: pipelineRef(planRef), Demand: output.PipelineDemand{MetadataRows: int64(3 + len(s.plan.Targets)), ArtifactBytes: planRef.Bytes, ProofSlots: 1}}
-	if len(prepared) == 0 {
-		binding.PlanRef = output.PipelineRef{}
-		binding.Demand.ArtifactBytes = 0
-	}
-
-	staged.Manifest = lakeapi.ImmutableObjectRef{}
+	empty := []output.PipelineOutput{}
+	staged := lakeapi.StagedLiveEffects{PlanID: s.plan.ID}
+	noOutput := output.PipelineBinding{Scope: pipelineScope(selected.Scope), TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: output.PipelinePreparedSHA256(empty), AcquisitionID: s.fence.AcquisitionID, ArtifactPrefix: prefix, Epoch: s.fence.Epoch, Demand: output.PipelineDemand{MetadataRows: int64(3 + len(s.plan.Targets)), ProofSlots: 1}}
+	binding := noOutput
+	manifest := hostedPublicationManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, AcquisitionID: s.fence.AcquisitionID, Epoch: s.fence.Epoch, Sequence: selected.Sequence, Outputs: prepared, PlanRef: pipelineRef(planRef)}
 	if len(prepared) > 0 {
+		binding.PlanRef = manifest.PlanRef
+		binding.PreparedSHA256 = output.PipelinePreparedSHA256(prepared)
 		binding.ManifestBytesLimit = lakeapi.MaxImmutableEffectObjectBytes
-	}
-	for _, o := range prepared {
-		binding.Demand.References += o.Charge.References
-		binding.Demand.QueuedBytes += o.Charge.QueuedBytes
-		binding.Demand.MetadataRows += o.Charge.MetadataRows
-		binding.Demand.ArtifactBytes += o.Charge.ArtifactBytes
-	}
-	binding.Demand.ArtifactBytes += binding.ManifestBytesLimit
-	// Bound the largest version-bearing manifest before uploading any object.
-	// Each optional version pin is capped at 1024 bytes by the metadata contract.
-	if len(prepared) > 0 {
-		preview, _ := json.Marshal(hostedPublicationManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: binding.PreparedSHA256, AcquisitionID: s.fence.AcquisitionID, Epoch: s.fence.Epoch, Sequence: selected.Sequence, Outputs: prepared, PlanRef: pipelineRef(planRef)})
+		binding.Demand.ArtifactBytes = planRef.Bytes + binding.ManifestBytesLimit
+		for _, o := range prepared {
+			binding.Demand.References += o.Charge.References
+			binding.Demand.QueuedBytes += o.Charge.QueuedBytes
+			binding.Demand.MetadataRows += o.Charge.MetadataRows
+			binding.Demand.ArtifactBytes += o.Charge.ArtifactBytes
+		}
+		manifest.PreparedSHA256 = binding.PreparedSHA256
+		// Each optional version pin is capped at 1024 bytes. A JSON escape
+		// can encode each of those bytes as up to six bytes.
+		preview, _ := json.Marshal(manifest)
 		if int64(len(preview))+int64(len(prepared)+1)*6144 > binding.ManifestBytesLimit {
-			return staged, errors.Join(acceptance.ErrBatchTooLarge, output.ErrPipelineCapacity)
+			reason = "manifest_limit"
 		}
 	}
 
-	// Recheck the saved creator, lifecycle and every revision in the transaction
-	// which acquires capacity. Commit the reservation before any S3 PUT so a
-	// successor can account for abandoned objects and settle a retained native
-	// proof after a crash. Publication waits for that proof.
-	err = s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
-	})
-	if errors.Is(err, output.ErrPipelineDemandTooLarge) {
-		return staged, errors.Join(acceptance.ErrBatchTooLarge, err)
+	// The reservation rechecks authority and must commit before any S3 PUT.
+	reserve := func() error {
+		return s.session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			return p.effects.ReserveCurrentEffectsTx(ctx, tx, binding, prepared)
+		})
 	}
-	if err != nil {
-		return staged, err
+	if reason == "" {
+		err = reserve()
+		if errors.Is(err, output.ErrPipelineDemandTooLarge) {
+			reason = "reservation_limit"
+		} else if err != nil {
+			return staged, err
+		}
 	}
+	if reason != "" {
+		if s.canSplit {
+			return staged, acceptance.ErrBatchTooLarge
+		}
+		prepared, objects, binding = empty, nil, noOutput
+		s.refusedReason, s.refused = reason, make(map[string]uint64)
+		for _, target := range stager.plan.Targets {
+			for _, e := range selected.Events {
+				_, matches, err := target.match(e)
+				if err != nil {
+					return staged, err
+				}
+				if matches {
+					s.refused[target.PipelineID]++
+				}
+			}
+		}
+		if err := reserve(); err != nil {
+			return staged, err
+		}
+	}
+	staged.OutputCount = int64(len(prepared))
 	if len(prepared) > 0 {
 		objects = append(objects, hostedPreparedObject{ref: planRef, body: planRaw})
 	}
@@ -262,8 +253,8 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 		}
 	}
 	if len(prepared) > 0 {
-		m := hostedPublicationManifest{Version: 1, Scope: selected.Scope, TenantID: selected.TenantID, BatchID: selected.BatchID, PlanID: s.plan.ID, PreparedSHA256: binding.PreparedSHA256, AcquisitionID: s.fence.AcquisitionID, Epoch: s.fence.Epoch, Sequence: selected.Sequence, Outputs: prepared, PlanRef: pipelineRef(planRef)}
-		raw, e := json.Marshal(m)
+		manifest.PlanRef = pipelineRef(planRef)
+		raw, e := json.Marshal(manifest)
 		if e != nil {
 			return staged, e
 		}

@@ -3,7 +3,6 @@ package acceptance
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +23,7 @@ import (
 // pending input for that project. The writer must not retain or mutate the batch.
 type FlushFunc func(context.Context, FlushBatch) error
 
-// ErrBatchTooLarge proves the batch cannot fit and never reached native commit.
+// ErrBatchTooLarge requests a split and proves the batch never reached native commit.
 var ErrBatchTooLarge = errors.New("hosted live batch exceeds output limits")
 
 // ErrProjectFenced marks a durable deletion fence for hosted writes.
@@ -40,6 +39,15 @@ type FlushBatch struct {
 	Events        []BufferedEvent
 	oldest        time.Time
 	bytes         int64
+}
+
+func (b FlushBatch) CanSplit() bool {
+	for _, event := range b.Events[:max(0, len(b.Events)-1)] {
+		if event.requestEnd {
+			return true
+		}
+	}
+	return false
 }
 
 // DailyKeyFunc resolves durable shared daily keys. The buffer does not retain
@@ -89,21 +97,20 @@ type BufferSnapshot struct {
 	DroppedRequests, DroppedEvents uint64
 }
 type Buffer struct {
-	mu                             sync.Mutex
-	config                         BufferConfig
-	writer                         FlushFunc
-	keys                           DailyKeyFunc
-	lockAdmission                  func(context.Context, string) (func(), error)
-	projects                       map[string]*bufferedProject
-	bytes                          int64
-	events, running                int
-	droppedRequests, droppedEvents uint64
-	draining                       bool
-	stopped                        bool
-	notify                         chan struct{}
-	completed                      chan flushCompletion
-	done                           chan struct{}
-	ctx                            context.Context
+	mu              sync.Mutex
+	config          BufferConfig
+	writer          FlushFunc
+	keys            DailyKeyFunc
+	lockAdmission   func(context.Context, string) (func(), error)
+	projects        map[string]*bufferedProject
+	bytes           int64
+	events, running int
+	draining        bool
+	stopped         bool
+	notify          chan struct{}
+	completed       chan flushCompletion
+	done            chan struct{}
+	ctx             context.Context
 }
 type flushCompletion struct {
 	project string
@@ -287,7 +294,7 @@ func (b *Buffer) Snapshot() BufferSnapshot {
 	defer b.mu.Unlock()
 	s := BufferSnapshot{
 		Bytes: b.bytes, Events: b.events, projects: len(b.projects), Inflight: b.running,
-		Stopped: b.stopped, DroppedRequests: b.droppedRequests, DroppedEvents: b.droppedEvents,
+		Stopped:        b.stopped,
 		draining:       b.draining,
 		CapacityEvents: b.config.MaxEvents, CapacityBytes: b.config.MaxBytes,
 	}
@@ -436,15 +443,8 @@ func (b *Buffer) complete(result flushCompletion) {
 			p.retryAt = time.Time{}
 			return
 		}
-		count := len(p.ready[0].Events)
-		b.droppedRequests++
-		b.droppedEvents += uint64(count)
-		observe("dropped")
-		if m := b.config.Metrics; m != nil {
-			m.Add("porcupine_flush_dropped_events_total", uint64(count), observability.Label{Name: "reason", Value: "oversized"})
-		}
-		slog.Warn("hosted ingestion dropped an oversized request", "project_id", result.project, "batch_id", result.id, "events", count)
-	} else if result.err != nil {
+	}
+	if result.err != nil {
 		if b.ctx.Err() != nil {
 			observe("cancelled")
 		} else {

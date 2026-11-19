@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -98,7 +100,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 			return e
 		}
 		if !recovery {
-			e = f.commitLiveBatch(ctx, session, fence, batch)
+			e = f.commitLiveBatch(ctx, session, fence, batch, b.CanSplit())
 			if !errors.Is(e, lakeapi.ErrNativeEffectsPending) {
 				return e
 			}
@@ -112,7 +114,7 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
 			return e
 		}
-		return f.commitLiveBatch(ctx, session, fence, batch)
+		return f.commitLiveBatch(ctx, session, fence, batch, b.CanSplit())
 	})
 }
 
@@ -127,7 +129,7 @@ func (f *hostedLiveFlusher) needsLiveRecovery(ctx context.Context, scope lakeapi
 	return err == nil, err
 }
 
-func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch) error {
+func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeapi.ProjectWriteSession, fence lakeapi.ProjectWriteFence, batch lakeapi.LiveCommitBatch, canSplit bool) error {
 	seq, hash, err := f.publisher.checkpoint(ctx, batch.Scope, batch.TenantID)
 	if err != nil {
 		return err
@@ -143,7 +145,7 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 			if err != nil {
 				return lakeapi.StagedLiveEffects{}, err
 			}
-			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing}
+			stager = &reservingHostedStager{publisher: f.publisher, session: session, fence: fence, plan: plan, routing: routing, canSplit: canSplit}
 		}
 		return stager.StageLiveEffects(ctx, selected)
 	})
@@ -158,8 +160,18 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 	case lakeapi.DuplicateLiveBatch:
 		return nil
 	case lakeapi.CommittedLiveBatch:
-		if v.Fresh && f.metrics != nil {
-			f.metrics.observeIngestionEvents(acceptance.Buffered, "native_committed", uint64(v.Evidence.AcceptedLive))
+		if v.Fresh {
+			var refused uint64
+			for pipeline, count := range stager.refused {
+				slog.WarnContext(ctx, "hosted webhook output refused", "project_id", batch.Scope.Key.ProjectID, "batch_id", batch.ID, "pipeline_id", pipeline, "reason", stager.refusedReason, "references", count)
+				refused += count
+			}
+			if f.metrics != nil {
+				f.metrics.observeIngestionEvents(acceptance.Buffered, "native_committed", uint64(v.Evidence.AcceptedLive))
+				if refused > 0 {
+					f.metrics.Add("porcupine_webhook_refused_references_total", refused, observability.Label{Name: "reason", Value: stager.refusedReason})
+				}
+			}
 		}
 		if v.Evidence.Sequence <= seq {
 			return nil

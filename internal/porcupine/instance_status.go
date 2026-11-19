@@ -40,8 +40,8 @@ type InstanceConfiguration struct {
 }
 
 type HostedIngestionStatus struct {
-	DroppedRequests uint64 `json:"dropped_requests" doc:"Accepted live requests discarded because their outputs could not fit in one commit, on this worker since startup."`
-	DroppedEvents   uint64 `json:"dropped_events" doc:"Events in discarded requests, on this worker since startup."`
+	DroppedRequests uint64 `json:"dropped_requests" doc:"Legacy count of live requests discarded due to output capacity. Always zero."`
+	DroppedEvents   uint64 `json:"dropped_events" doc:"Legacy count of live events discarded due to output capacity. Always zero."`
 }
 
 type InstanceStatus struct {

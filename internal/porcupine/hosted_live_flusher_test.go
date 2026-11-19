@@ -267,8 +267,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	// A real 100-target plan can exceed its preparation memory bound before the
-	// numeric reservation. Refuse it before any PUT, with no native growth or
-	// unresolved reservation, rather than encoding all fanout then rejecting.
+	// numeric reservation. Commit the event without preparing webhook artifacts.
 	generous := output.PipelineDemand{References: 1000, QueuedBytes: 256 << 20, MetadataRows: 10000, ArtifactBytes: 256 << 20, ProofSlots: 10}
 	if err = fa.publisher.transaction(t.Context(), func(tx *sql.Tx) error {
 		for _, v := range [][2]string{{"tenant", defaultTenantID}, {"project", project}} {
@@ -302,11 +301,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	oversized := batch("prepared-byte-cap")
 	oversized.Events[0].Input.Event.Properties = json.RawMessage(`{"value":"` + strings.Repeat("x", 900000) + `"}`)
 	putsBefore := effectPuts.Load()
-	if err = fa.FlushLive(t.Context(), oversized); !errors.Is(err, output.ErrPipelineCapacity) || !errors.Is(err, acceptance.ErrBatchTooLarge) {
-		t.Fatal("oversized preparation did not report a permanent pre-commit capacity error", err)
+	if err = fa.FlushLive(t.Context(), oversized); err != nil {
+		t.Fatal("oversized preparation blocked native commit", err)
 	}
 	if effectPuts.Load() != putsBefore {
-		t.Fatal("preparation bound uploaded an object before refusal")
+		t.Fatal("preparation overflow uploaded an effect object")
 	}
 	if _, err = fa.publisher.reservation(t.Context(), scope); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("preparation overflow retained a reservation", err)
@@ -475,7 +474,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 5 {
 		t.Fatal("wrong atomic usage", n, err)
 	}
 	assertAccepted := func(want int64) {
@@ -486,7 +485,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 			t.Fatalf("monthly acceptance ledger = %d, want %d: %v", accepted, want, err)
 		}
 	}
-	assertAccepted(4)
+	assertAccepted(5)
 	// A restored cursor must match the original retained native proof even when
 	// the cursor already equals high-water and there are no pending effects.
 	_, originalHash, er := fa.publisher.checkpoint(t.Context(), scope, defaultTenantID)
@@ -534,13 +533,13 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("outputs escaped rollback", n, err)
 	}
 	seq, _, err := fa.publisher.checkpoint(t.Context(), scope, defaultTenantID)
-	if err != nil || seq != 2 {
+	if err != nil || seq != 3 {
 		t.Fatal("cursor escaped rollback", seq, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 4 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 5 {
 		t.Fatal("usage escaped rollback", n, err)
 	}
-	assertAccepted(4)
+	assertAccepted(5)
 	binding, er := fa.publisher.reservation(t.Context(), scope)
 	if er != nil {
 		t.Fatal(er)
@@ -555,7 +554,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		if e := sb.AdvanceRecoveryFence(ctx, fence); e != nil {
 			return e
 		}
-		page, e := sb.PendingNativeEffects(ctx, scope, 2, 1)
+		page, e := sb.PendingNativeEffects(ctx, scope, seq, 1)
 		if e != nil {
 			return e
 		}
@@ -633,10 +632,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
 		t.Fatal("fragment/direct publication", n, err)
 	}
-	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 5 {
+	if err = a.service.control.QueryRow(`SELECT sum(live_events) FROM usage_rollups WHERE project_id=$1 AND source_id=$2`, project, scope.StreamID).Scan(&n); err != nil || n != 6 {
 		t.Fatal("recovery double charged", n, err)
 	}
-	assertAccepted(5)
+	assertAccepted(6)
 
 	// Capacity failure rolls native sequence/data/usage back before any body PUT.
 	_, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project)
@@ -653,9 +652,10 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=1 WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
 		t.Fatal(err)
 	}
-	if err = fa.FlushLive(t.Context(), blocked); !errors.Is(err, output.ErrPipelineDemandTooLarge) || !errors.Is(err, acceptance.ErrBatchTooLarge) {
-		t.Fatal("oversized reservation did not report a permanent pre-commit capacity error", err)
+	if err = fa.FlushLive(t.Context(), blocked); err != nil {
+		t.Fatal("oversized reservation blocked native commit", err)
 	}
+	assertAccepted(7)
 	if _, err = a.service.control.Exec(`UPDATE pipeline_capacity SET limit_refs=greatest(used_refs,1) WHERE scope_kind='project' AND scope_id=$1`, project); err != nil {
 		t.Fatal(err)
 	}

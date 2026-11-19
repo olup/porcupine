@@ -1653,13 +1653,13 @@
         "additionalProperties": false,
         "properties": {
           "dropped_events": {
-            "description": "Events in discarded requests, on this worker since startup.",
+            "description": "Legacy count of live events discarded due to output capacity. Always zero.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
           "dropped_requests": {
-            "description": "Accepted live requests discarded because their outputs could not fit in one commit, on this worker since startup.",
+            "description": "Legacy count of live requests discarded due to output capacity. Always zero.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
