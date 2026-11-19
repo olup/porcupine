@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/olup/porcupine/internal/apierr"
-	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	"github.com/olup/porcupine/internal/observability"
@@ -43,6 +43,12 @@ type FlushBatch struct {
 	Events        []BufferedEvent
 	oldest        time.Time
 	bytes         int64
+}
+
+// Keep live IDs above historical UUIDs and import IDs so DuckLake can skip
+// older proof files by operation_id, including files with legacy IDs.
+func newLiveBatchID() string {
+	return "live-" + uuid.Must(uuid.NewV7()).String()
 }
 
 func (b FlushBatch) CanSplit() bool {
@@ -367,7 +373,7 @@ func (b *Buffer) run() {
 			if len(p.ready) == 0 && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.FlushInterval)
 				if b.draining || p.pendingBytes >= b.config.FlushBytes || !now.Before(due) {
-					p.ready = []*FlushBatch{{ID: eventapi.NewID(), ProjectID: project, Events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}}
+					p.ready = []*FlushBatch{{ID: newLiveBatchID(), ProjectID: project, Events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}}
 					p.pending = nil
 					p.pendingBytes = 0
 					p.oldest = time.Time{}
@@ -524,7 +530,7 @@ func splitBufferedLiveBatch(batch FlushBatch) (left, right *FlushBatch, ok bool)
 	}
 
 	first, second := batch, batch
-	first.ID, second.ID = eventapi.NewID(), eventapi.NewID()
+	first.ID, second.ID = newLiveBatchID(), newLiveBatchID()
 	first.Events = batch.Events[:cut:cut]
 	// The right child must not keep references to payloads released with the left.
 	second.Events = append([]BufferedEvent(nil), batch.Events[cut:]...)
