@@ -37,6 +37,9 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		}
 		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
+	if limits.TimeRange != nil {
+		canonical = withEventTimeRange(canonical, *limits.TimeRange)
+	}
 	start := time.Now()
 	conn, err := p.DB.Conn(ctx)
 	if err != nil {
@@ -117,6 +120,36 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	result.Rows = uint64(len(result.Data))
 	result.Statistics.Elapsed = time.Since(start).Seconds()
 	return result, nil
+}
+
+// The SQL policy reserves the unqualified events name. This statement-local
+// CTE supplies that relation to every user query node without changing the
+// project view or the connection. Keep it inline so scans can push filters down.
+func withEventTimeRange(canonical string, window QueryTimeRange) string {
+	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE " +
+		eventTimeBound(window.From, true) + " AND " + eventTimeBound(window.To, false) +
+		") SELECT * FROM (" + canonical + ") AS _pc_ranged_query"
+}
+
+func eventTimeBound(bound time.Time, inclusive bool) string {
+	microseconds := bound.UnixMicro()
+	instant := "make_timestamptz(" + strconv.FormatInt(microseconds, 10) + ")"
+	if bound.Nanosecond()%1000 == 0 {
+		if inclusive {
+			return "event_time >= " + instant
+		}
+		return "event_time < " + instant
+	}
+
+	// TIMESTAMPTZ stores microseconds. For rows in the endpoint microsecond,
+	// compare the original UTC timestamp's fractional seconds at full precision.
+	fraction := "rpad(rtrim(substr(timestamp, 21), 'Z'), 9, '0')"
+	nanoseconds := LakeLiteral(bound.Format(".000000000")[1:])
+	if inclusive {
+		return "event_time >= " + instant + " AND (event_time > " + instant + " OR " + fraction + " >= " + nanoseconds + ")"
+	}
+	next := "make_timestamptz(" + strconv.FormatInt(microseconds+1, 10) + ")"
+	return "event_time < " + next + " AND (event_time < " + instant + " OR " + fraction + " < " + nanoseconds + ")"
 }
 
 func duckLakeValidationError(ctx context.Context, err error) error {

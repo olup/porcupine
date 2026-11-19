@@ -72,3 +72,36 @@ func TestAnalyticsScalarParameterBudgets(t *testing.T) {
 		t.Fatal("valid bound scalar rejected", err)
 	}
 }
+
+func TestAnalyticsQueryTimeRangeRequests(t *testing.T) {
+	t.Parallel()
+	s := service(t, 20)
+	id, _ := project(t, s)
+	_, token := key(t, s, []string{"events:read"}, []string{id})
+	path := "/api/v1/projects/" + id + "/query"
+	for _, tc := range []struct {
+		name, rangeJSON string
+		status          int
+	}{
+		{"both bounds required", `{}`, 422},
+		{"missing end", `{"from":"2026-11-01T00:00:00Z"}`, 422},
+		{"missing start", `{"to":"2026-11-02T00:00:00Z"}`, 422},
+		{"malformed bound", `{"from":"yesterday","to":"2026-11-02T00:00:00Z"}`, 422},
+		{"bad type", `[]`, 422},
+		{"null range", `null`, 422},
+		{"null bound", `{"from":null,"to":"2026-11-02T00:00:00Z"}`, 422},
+		{"empty range", `{"from":"2026-11-01T01:00:00+01:00","to":"2026-11-01T00:00:00Z"}`, 400},
+		{"reversed range", `{"from":"2026-11-02T00:00:00Z","to":"2026-11-01T00:00:00Z"}`, 400},
+		{"valid range reaches storage", `{"from":"2026-11-01T00:00:00Z","to":"2026-11-02T00:00:00Z"}`, 503},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"sql":"SELECT count(*) FROM events","time_range":` + tc.rangeJSON + `}`
+			response := request(t, s, "POST", path, token, body, tc.status)
+			if tc.status == 400 && response["code"] != "invalid_time_range" {
+				t.Fatal(response)
+			}
+		})
+	}
+	request(t, s, "POST", path, token, `{"sql":"SELECT count(*) FROM events"}`, 503)
+}

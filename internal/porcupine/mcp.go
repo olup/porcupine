@@ -66,9 +66,10 @@ type mcpCallOutput struct {
 }
 
 type mcpQueryInput struct {
-	ProjectID  string            `json:"project_id,omitempty" jsonschema:"Project ID; may be omitted when the credential grants exactly one project"`
-	SQL        string            `json:"sql" jsonschema:"One read-only DuckDB SELECT against the events table, at most 16384 bytes; use $name placeholders for values"`
-	Parameters map[string]string `json:"parameters,omitempty" jsonschema:"Bound string values for $name placeholders; at most 32 identifier keys"`
+	ProjectID  string                   `json:"project_id,omitempty" jsonschema:"Project ID; may be omitted when the credential grants exactly one project"`
+	SQL        string                   `json:"sql" jsonschema:"One read-only DuckDB SELECT against the events table, at most 16384 bytes; use $name placeholders for values"`
+	Parameters map[string]string        `json:"parameters,omitempty" jsonschema:"Bound string values for $name placeholders; at most 32 identifier keys"`
+	TimeRange  *AnalyticsQueryTimeRange `json:"time_range,omitempty" jsonschema:"Optional event occurrence time bounds. From is inclusive and to is exclusive, in RFC3339"`
 }
 
 type mcpSchemaInput struct {
@@ -209,6 +210,9 @@ func (s *Service) mcpHandler(doc *huma.OpenAPI, native http.Handler) http.Handle
 		body := map[string]any{"sql": input.SQL}
 		if len(input.Parameters) > 0 {
 			body["parameters"] = input.Parameters
+		}
+		if input.TimeRange != nil {
+			body["time_range"] = input.TimeRange
 		}
 		return mcpCall(ctx, native, operations, credential, mcpCallInput{OperationID: "query-events", Path: map[string]string{"id": project}, Body: body})
 	}))

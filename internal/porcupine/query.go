@@ -3,7 +3,9 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"regexp"
+	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -62,9 +64,38 @@ type AnalyticsSQL struct {
 type AnalyticsQueryInput struct {
 	ID   string `path:"id" doc:"Project identifier"`
 	Body struct {
-		SQL        string            `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden."`
-		Parameters map[string]string `json:"parameters,omitempty" doc:"Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
+		SQL        string                  `json:"sql" minLength:"1" maxLength:"16384" doc:"One SELECT against the project-scoped events table. Writes, external sources, table functions and private tables are forbidden."`
+		Parameters map[string]string       `json:"parameters,omitempty" doc:"Bound DuckDB scalar parameters such as $event. Up to 32 identifier keys of at most 64 ASCII characters, each with a value up to 4096 bytes."`
+		TimeRange  AnalyticsQueryTimeRange `json:"time_range,omitzero" required:"false" doc:"Restrict every events reference to this event occurrence time range. Omit for all time."`
 	}
+}
+
+type AnalyticsQueryTimeRange struct {
+	From    time.Time `json:"from" doc:"Inclusive event occurrence time in RFC3339."`
+	To      time.Time `json:"to" doc:"Exclusive event occurrence time in RFC3339."`
+	present bool
+}
+
+func (r *AnalyticsQueryTimeRange) UnmarshalJSON(data []byte) error {
+	type bounds AnalyticsQueryTimeRange
+	if string(data) == "null" {
+		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[AnalyticsQueryTimeRange]()}
+	}
+	if err := json.Unmarshal(data, (*bounds)(r)); err != nil {
+		return err
+	}
+	r.present = true
+	return nil
+}
+
+func (r AnalyticsQueryTimeRange) queryRange() (*lakeapi.QueryTimeRange, error) {
+	if r == (AnalyticsQueryTimeRange{}) {
+		return nil, nil
+	}
+	if !r.From.Before(r.To) {
+		return nil, apierr.Detailed(400, "invalid_time_range", "Query time range start must be before its end", "Supply both RFC3339 bounds, with from earlier than to, or omit time_range.", "time_range")
+	}
+	return &lakeapi.QueryTimeRange{From: r.From, To: r.To}, nil
 }
 
 type AnalyticsQuery struct {
@@ -152,10 +183,14 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	if err := validateQueryParameters(input.Body.Parameters); err != nil {
 		return nil, err
 	}
+	timeRange, err := input.Body.TimeRange.queryRange()
+	if err != nil {
+		return nil, err
+	}
 	if s.lake == nil {
 		return nil, apierr.New(503, "analytics storage is not configured")
 	}
-	result, bounds, err := s.queries.SQL(ctx, s.interactiveReader(), input.ID, input.Body.SQL, input.Body.Parameters)
+	result, bounds, err := s.queries.SQL(ctx, s.interactiveReader(), input.ID, input.Body.SQL, input.Body.Parameters, timeRange)
 	if err != nil {
 		return nil, err
 	}

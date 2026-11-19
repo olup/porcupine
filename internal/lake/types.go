@@ -23,10 +23,17 @@ type AnalyticsResult struct {
 	Statistics AnalyticsStatistics          `json:"statistics"`
 }
 
+// QueryTimeRange bounds event occurrence time, including From and excluding To.
+type QueryTimeRange struct {
+	From time.Time
+	To   time.Time
+}
+
 type QueryExecutionLimits struct {
 	Timeout        time.Duration
 	MaxRows        int
 	MaxResultBytes int
+	TimeRange      *QueryTimeRange
 }
 
 func DefaultQueryExecutionLimits() QueryExecutionLimits {

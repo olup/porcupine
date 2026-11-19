@@ -19,9 +19,11 @@ type HostedReader interface {
 	ListEvents(context.Context, string, int, int) ([]event.Event, error)
 }
 
-func (r *Runtime) SQL(ctx context.Context, reader Reader, project, sql string, params map[string]string) (result lake.AnalyticsResult, bounds ResponseBounds, err error) {
+func (r *Runtime) SQL(ctx context.Context, reader Reader, project, sql string, params map[string]string, timeRange *lake.QueryTimeRange) (result lake.AnalyticsResult, bounds ResponseBounds, err error) {
 	bounds, err = r.run(ctx, project, opSQL, func(ctx context.Context, limits InteractiveQueryConfig) error {
-		result, err = reader.Query(ctx, project, sql, params, limits.executionLimits())
+		execution := limits.executionLimits()
+		execution.TimeRange = timeRange
+		result, err = reader.Query(ctx, project, sql, params, execution)
 		return err
 	})
 	return
