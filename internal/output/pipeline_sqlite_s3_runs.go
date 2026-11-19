@@ -6,46 +6,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/olup/porcupine/internal/apierr"
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
 )
 
-func (s *PipelineJobs) s3PipelineRunPage(ctx context.Context, project, pipeline string, limit, offset int) ([]PipelineRun, error) {
-	where := ` FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2`
-	if s.pg != nil {
-		where = hostedScheduledRunWhere
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+s3RunColumns+where+` ORDER BY r.window_start_ms DESC,r.id LIMIT $3 OFFSET $4`, project, pipeline, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []PipelineRun{}
-	for rows.Next() {
-		var r PipelineRun
-		if err = rows.Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-const s3RunColumns = `r.id,r.pipeline_id,r.state,r.attempts,r.created_at_ms,r.completed_at_ms,r.error_code,r.window_start_ms,r.window_end_ms,r.row_count,r.byte_count`
-const hostedScheduledRunWhere = ` FROM hosted_s3_pipeline_runs r WHERE r.project_id=$1 AND r.pipeline_id=$2`
-
-func (s *PipelineJobs) getS3PipelineRun(ctx context.Context, project, pipeline, id string) (PipelineRun, error) {
-	var r PipelineRun
-	where := ` FROM pipeline_s3_runs r JOIN pipelines p ON p.id=r.pipeline_id WHERE p.project_id=$1 AND p.id=$2`
-	if s.pg != nil {
-		where = hostedScheduledRunWhere
-	}
-	err := s.db.QueryRowContext(ctx, `SELECT `+s3RunColumns+where+` AND r.id=$3`, project, pipeline, id).Scan(&r.ID, &r.PipelineID, &r.State, &r.Attempts, &r.CreatedAtMS, &r.CompletedAtMS, &r.Error, &r.WindowStartMS, &r.WindowEndMS, &r.Rows, &r.Bytes)
-	return r, err
-}
 func (s *PipelineJobs) retryS3PipelineRun(ctx context.Context, project, pipeline, id string) (bool, error) {
 	if s.pg != nil {
 		return s.retryHostedScheduledRun(ctx, project, pipeline, id)
@@ -55,9 +21,6 @@ func (s *PipelineJobs) retryS3PipelineRun(ctx context.Context, project, pipeline
 		return false, err
 	}
 	n, err := result.RowsAffected()
-	if n == 1 {
-		s.Wake()
-	}
 	return n == 1, err
 }
 func (s *PipelineJobs) pipelineS3Store(ctx context.Context, p storedPipeline, spec S3PipelineSpec) (*exportstore.Store, error) {
@@ -88,22 +51,7 @@ func (s *PipelineJobs) cleanupPipelineS3Run(ctx context.Context, store *exportst
 			return errors.New("attempt_conflict")
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT object_key,upload_id FROM pipeline_s3_files WHERE run_id=$1`, id)
-	if err != nil {
-		return err
-	}
-	type artifact struct{ key, upload string }
-	var files []artifact
-	for rows.Next() {
-		var f artifact
-		if err = rows.Scan(&f.key, &f.upload); err != nil {
-			rows.Close()
-			return err
-		}
-		files = append(files, f)
-	}
-	err = rows.Err()
-	rows.Close()
+	files, err := listScheduledFiles(ctx, s.db, `SELECT object_key,upload_id FROM pipeline_s3_files WHERE run_id=$1`, id)
 	if err != nil {
 		return err
 	}
@@ -114,20 +62,7 @@ func (s *PipelineJobs) cleanupPipelineS3Run(ctx context.Context, store *exportst
 		}
 	}
 	for _, f := range files {
-		if err := retainArtifactOwnership(ctx, s.control, project, "pipeline_unpublished", store, f.key, f.upload); err != nil {
-			return err
-		}
-		if f.upload == "" {
-			if err = store.AbortKeyUploads(ctx, f.key); err != nil {
-				return err
-			}
-		}
-		if f.upload != "" {
-			if err = store.Abort(ctx, f.key, f.upload); err != nil {
-				return err
-			}
-		}
-		if err = store.Delete(ctx, f.key); err != nil {
+		if err := s.removeUnpublishedScheduledFile(ctx, store, project, f); err != nil {
 			return err
 		}
 		result, err := s.db.ExecContext(ctx, `DELETE FROM pipeline_s3_files WHERE run_id=$1 AND object_key=$2 AND ($3='' OR EXISTS(SELECT 1 FROM pipeline_s3_runs WHERE id=$1 AND state='running' AND claim_id=$3))`, id, f.key, claim)
@@ -198,7 +133,7 @@ func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string)
 		}
 		defer store.Close()
 		for _, run := range ids {
-			remote, readErr := store.ReadManifest(ctx, fmt.Sprintf("%s/%d/manifest.json", id, run.start))
+			remote, readErr := store.ReadManifest(ctx, pipelineManifestKey(id, run.start))
 			if readErr == nil {
 				if run.manifest == "" || !bytes.Equal(remote, []byte(run.manifest)) {
 					return apierr.New(503, "pipeline manifest requires review")
@@ -212,8 +147,8 @@ func (s *PipelineJobs) deleteS3Pipeline(ctx context.Context, project, id string)
 				return apierr.New(503, "pipeline cleanup incomplete")
 			}
 			if run.attemptID != "" {
-				prefix := fmt.Sprintf("%s/%d/%s/", id, run.start, run.attemptID)
-				if retainArtifactOwnership(ctx, s.control, project, "pipeline_unpublished", store, prefix, "") != nil || store.AbortAttemptUploads(ctx, prefix) != nil {
+				prefix := scheduledAttemptPrefix(id, run.start, run.attemptID)
+				if s.removeUnpublishedScheduledUploads(ctx, store, project, prefix) != nil {
 					return apierr.New(503, "pipeline prefix cleanup pending; retry deletion cleanup")
 				}
 			}

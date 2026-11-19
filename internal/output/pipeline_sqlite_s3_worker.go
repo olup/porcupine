@@ -1,22 +1,14 @@
 package output
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/exportstore"
-	lakeapi "github.com/olup/porcupine/internal/lake"
-	"github.com/olup/porcupine/internal/usage"
 )
 
-func pipelineManifestKey(w *s3PipelineWork) string {
-	return fmt.Sprintf("%s/%d/manifest.json", w.pipeline.ID, w.start)
-}
 func (s *PipelineJobs) pipelineS3Admission(ctx context.Context, w *s3PipelineWork) (bool, error) {
 	var barrier, pending, failed int64
 	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM events WHERE project_id=$1 AND id<=$2 AND is_imported=0)+(SELECT count(*) FROM mutation_outbox WHERE project_id=$3 AND seq<=$4),(SELECT count(*) FROM events)+(SELECT count(*) FROM mutation_outbox),(SELECT count(*) FROM metadata WHERE key='last_delivery_error')`, w.pipeline.ProjectID, w.eventWatermark, w.pipeline.ProjectID, w.mutationWatermark).Scan(&barrier, &pending, &failed)
@@ -40,22 +32,7 @@ func (s *PipelineJobs) pipelineS3CanContinue(ctx context.Context, w *s3PipelineW
 	}
 	return nil
 }
-func (s *PipelineJobs) RunS3(ctx context.Context) (bool, error) {
-	if s != nil && s.pg != nil {
-		return s.runHostedScheduled(ctx)
-	}
-	if !s.s3StepMu.TryLock() {
-		return false, nil
-	}
-	defer s.s3StepMu.Unlock()
-	if !s.Enabled() || s.lake == nil {
-		return false, nil
-	}
-	release, ok := s.acquire(ctx)
-	if !ok {
-		return false, nil
-	}
-	defer release()
+func (s *PipelineJobs) runSQLiteScheduled(ctx context.Context) (bool, error) {
 	w, err := s.nextPipelineS3(ctx)
 	if err != nil || w == nil {
 		return false, err
@@ -111,20 +88,9 @@ func (s *PipelineJobs) RunS3(ctx context.Context) (bool, error) {
 		// validated manifest and its objects for read-back recovery on the next try.
 		recordCtx, recordCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer recordCancel()
-		state := "queued"
-		code := "attempt_failed"
-		if w.attempts >= 3 {
-			state = "failed"
-			code = "attempts_exhausted"
-		}
-		if ctx.Err() != nil {
-			code = "interrupted"
-		}
+		state, code := scheduledFailure(ctx, w.attempts, false)
 		_, recordErr := s.db.ExecContext(recordCtx, `UPDATE pipeline_s3_runs SET state=$1,error_code=$2,next_attempt_ms=$3,completed_at_ms=CASE WHEN $4='failed' THEN $5 ELSE 0 END WHERE id=$6 AND state='running' AND claim_id=$7`, state, code, s.clock().Add(time.Duration(1<<min(w.attempts, 6))*time.Second).UnixMilli(), state, s.clock().UnixMilli(), w.id, w.claimID)
-		if recordErr != nil {
-			return true, recordErr
-		}
-		return true, nil
+		return true, recordErr
 	}
 	return true, nil
 }
@@ -150,7 +116,7 @@ func (s *PipelineJobs) executePipelineS3(ctx context.Context, w *s3PipelineWork)
 	}
 	// Read before deleting any data: an externally committed marker is never
 	// silently overwritten, even after a crash or an unexpected destination edit.
-	_, err = store.ReadManifest(ctx, pipelineManifestKey(w))
+	_, err = store.ReadManifest(ctx, pipelineManifestKey(w.pipeline.ID, w.start))
 	if err == nil {
 		return errors.New("unexpected_existing_manifest")
 	}
@@ -186,21 +152,15 @@ func (s *PipelineJobs) executePipelineS3(ctx context.Context, w *s3PipelineWork)
 		cancelRun()
 		<-monitorDone
 	}()
-	sink := newPipelineS3Sink(runCtx, s, w, store)
-	callbacks := lakeapi.ExportStreamCallbacks{Columns: sink.columns, Row: sink.row}
-	_, err = s.lake.Export(runCtx, w.pipeline.ProjectID, w.spec.SQL, w.spec.Parameters, &lakeapi.AnalyticalWindow{StartMS: w.start, EndMS: w.end}, s.config.ExportLimits.MaxRowBytes, callbacks)
-	if err != nil {
-		return err
-	}
-	manifest, err := sink.finish()
+	manifest, err := s.buildScheduledManifest(runCtx, w, nil, store)
 	if err != nil {
 		return err
 	}
 	if err = s.pipelineS3CanContinue(ctx, w); err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(manifest)
-	if err != nil || len(encoded) > exportstore.MaxManifestBytes {
+	encoded, err := encodePipelineManifest(manifest)
+	if err != nil {
 		return errors.New("manifest_limit")
 	}
 	checkpoint, err := s.db.ExecContext(ctx, `UPDATE pipeline_s3_runs SET manifest=$1 WHERE id=$2 AND state='running' AND claim_id=$3`, string(encoded), w.id, w.claimID)
@@ -214,28 +174,17 @@ func (s *PipelineJobs) executePipelineS3(ctx context.Context, w *s3PipelineWork)
 	return s.publishPipelineS3(ctx, w, store, encoded)
 }
 func (s *PipelineJobs) publishPipelineS3(ctx context.Context, w *s3PipelineWork, store *exportstore.Store, encoded []byte) error {
-	var manifest pipelineS3Manifest
-	if json.Unmarshal(encoded, &manifest) != nil || manifest.RunID != w.id || manifest.PipelineID != w.pipeline.ID || manifest.ProjectID != w.pipeline.ProjectID || manifest.WindowStartMS != w.start || manifest.WindowEndMS != w.end {
+	manifest, ok := decodePipelineManifest(w, encoded)
+	if !ok {
 		return errors.New("invalid_commit_checkpoint")
 	}
 	if err := s.pipelineS3CanContinue(ctx, w); err != nil {
 		return err
 	}
-	remote, err := store.ReadManifest(ctx, pipelineManifestKey(w))
-	if errors.Is(err, exportstore.ErrNotFound) {
-		err = store.CommitManifest(ctx, pipelineManifestKey(w), encoded)
-		if err != nil && !errors.Is(err, exportstore.ErrExists) {
-			return err
-		}
-		remote, err = store.ReadManifest(ctx, pipelineManifestKey(w))
-	}
-	if err != nil {
+	if err := commitPipelineManifest(ctx, store, pipelineManifestKey(w.pipeline.ID, w.start), encoded, errors.New("manifest_conflict")); err != nil {
 		return err
 	}
-	if !bytes.Equal(remote, encoded) {
-		return errors.New("manifest_conflict")
-	}
-	if err = s.pipelineS3CanContinue(ctx, w); err != nil {
+	if err := s.pipelineS3CanContinue(ctx, w); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -243,7 +192,8 @@ func (s *PipelineJobs) publishPipelineS3(ctx context.Context, w *s3PipelineWork,
 		return err
 	}
 	defer tx.Rollback()
-	won, err := tx.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='succeeded',error_code='',completed_at_ms=$1,manifest='',row_count=$2,byte_count=$3 WHERE id=$4 AND pipeline_id=$5 AND state='running' AND claim_id=$6 AND EXISTS(SELECT 1 FROM pipelines WHERE id=$5 AND project_id=$7 AND state='active' AND secret=$8)`, s.clock().UnixMilli(), manifest.Rows, pipelineManifestBytes(manifest), w.id, w.pipeline.ID, w.claimID, w.pipeline.ProjectID, w.pipeline.Secret)
+	bytes := pipelineManifestBytes(manifest)
+	won, err := tx.ExecContext(ctx, `UPDATE pipeline_s3_runs SET state='succeeded',error_code='',completed_at_ms=$1,manifest='',row_count=$2,byte_count=$3 WHERE id=$4 AND pipeline_id=$5 AND state='running' AND claim_id=$6 AND EXISTS(SELECT 1 FROM pipelines WHERE id=$5 AND project_id=$7 AND state='active' AND secret=$8)`, s.clock().UnixMilli(), manifest.Rows, bytes, w.id, w.pipeline.ID, w.claimID, w.pipeline.ProjectID, w.pipeline.Secret)
 	if err != nil {
 		return err
 	}
@@ -265,17 +215,8 @@ func (s *PipelineJobs) publishPipelineS3(ctx context.Context, w *s3PipelineWork,
 	if _, err = tx.ExecContext(ctx, `DELETE FROM pipeline_s3_runs WHERE pipeline_id=$1 AND state='succeeded' AND id NOT IN (SELECT id FROM pipeline_s3_runs WHERE pipeline_id=$2 AND state='succeeded' ORDER BY window_start_ms DESC LIMIT 1000)`, w.pipeline.ID, w.pipeline.ID); err != nil {
 		return err
 	}
-	if s.usage != nil {
-		if err = s.usage.AddTx(ctx, tx, w.pipeline.ProjectID, s.clock(), usage.Counters{PipelineBytes: pipelineManifestBytes(manifest)}, 0); err != nil {
-			return err
-		}
+	if err = s.RecordHostedScheduledUsageTx(ctx, tx, w.pipeline.ProjectID, bytes); err != nil {
+		return err
 	}
 	return tx.Commit()
-}
-func pipelineManifestBytes(m pipelineS3Manifest) int64 {
-	var n int64
-	for _, f := range m.Files {
-		n += f.Bytes
-	}
-	return n
 }

@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	hostedScheduledRulePrefix  = "scheduled-query/"
-	hostedScheduledMaxBytes    = 64 << 20
-	hostedScheduledMaxFiles    = 128
-	hostedScheduledMaxAttempts = 3
+	hostedScheduledRulePrefix = "scheduled-query/"
+	hostedScheduledMaxBytes   = 64 << 20
+	hostedScheduledMaxFiles   = 128
+	scheduledMaxAttempts      = 3
 )
 
 type HostedScheduledReader interface {
@@ -149,7 +149,7 @@ FROM hosted_s3_pipeline_runs WHERE id=$1 AND project_id=$2 AND pipeline_id=$3 AN
 		if err != nil {
 			return err
 		}
-		if !authorized || w.attempts >= hostedScheduledMaxAttempts {
+		if !authorized || w.attempts >= scheduledMaxAttempts {
 			code := "attempts_exhausted"
 			if !authorized {
 				code = "creator_unauthorized"
@@ -204,23 +204,6 @@ FROM hosted_s3_pipeline_runs WHERE id=$1 AND project_id=$2 AND pipeline_id=$3 AN
 }
 
 func (s *PipelineJobs) runHostedScheduled(ctx context.Context) (bool, error) {
-	if !s.Enabled() || !s.pg.scheduled.ready() || !s.s3StepMu.TryLock() {
-		return false, nil
-	}
-	defer s.s3StepMu.Unlock()
-	if s.beginActivity != nil {
-		work, finish, active := s.beginActivity(ctx, "")
-		if !active {
-			return false, nil
-		}
-		defer finish()
-		ctx = work
-	}
-	release, ok := s.acquire(ctx)
-	if !ok {
-		return false, nil
-	}
-	defer release()
 	candidates, err := s.hostedScheduledCandidates(ctx)
 	if err != nil {
 		return false, err

@@ -35,7 +35,7 @@ func (w *pipelineS3Sink) beginHostedUpload(key string) (*exportstore.Upload, err
 }
 
 func (s *PipelineJobs) cleanupHostedScheduledFiles(ctx context.Context, tx *sql.Tx, w *hostedScheduledWork, store *exportstore.Store) error {
-	files, err := listHostedScheduledFiles(ctx, tx, w.id)
+	files, err := listScheduledFiles(ctx, tx, hostedScheduledFilesSelect, w.id)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (s *PipelineJobs) retireHostedScheduledTx(ctx context.Context, tx *sql.Tx, 
 	return nil
 }
 
-func scanHostedScheduledArtifacts(row interface{ Scan(...any) error }, w *hostedScheduledWork, live *bool) error {
+func scanHostedScheduledArtifacts(row rowScanner, w *hostedScheduledWork, live *bool) error {
 	return row.Scan(&w.id, &w.start, &w.attemptID, &w.previousRevision, &w.previousSecret, &w.manifest, &w.reservedBytes, &w.incarnation, live)
 }
 

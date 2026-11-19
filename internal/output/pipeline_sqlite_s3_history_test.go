@@ -95,7 +95,7 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 	if err = s.publishPipelineS3(t.Context(), &stale, store, committed); err == nil {
 		t.Fatal("stale claim published")
 	}
-	if err = newPipelineS3Sink(t.Context(), s, &stale, store).beginFile(); err == nil {
+	if err = newPipelineS3Sink(t.Context(), s, &stale, nil, store).beginFile(); err == nil {
 		t.Fatal("stale claim created a multipart checkpoint")
 	}
 	if err = s.publishPipelineS3(context.Background(), w, store, committed); err != nil {
@@ -118,7 +118,7 @@ func TestPipelineS3SuccessfulHistoryBound(t *testing.T) {
 	if s.db.QueryRow(`SELECT length(manifest) FROM pipeline_s3_runs WHERE id=?`, run).Scan(&manifestBytes) != nil || manifestBytes != 0 {
 		t.Fatal("committed full manifest retained")
 	}
-	got, err := s.getS3PipelineRun(context.Background(), projectID, id, run)
+	got, err := s.getPipelineRun(context.Background(), p, run)
 	if err != nil || got.Rows != 3 || got.Bytes != 20 || got.WindowStartMS != w.start || got.WindowEndMS != w.end {
 		t.Fatal("compact committed summary lost")
 	}
