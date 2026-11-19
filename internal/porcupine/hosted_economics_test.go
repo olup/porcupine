@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -41,6 +42,18 @@ type economicsS3Traffic struct {
 type economicsS3Body struct {
 	io.ReadCloser
 	bytes *atomic.Int64
+}
+
+func (s *economicsS3Traffic) puts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	puts := 0
+	for request, count := range s.calls {
+		if strings.HasPrefix(request, "PUT/") || strings.HasPrefix(request, "UPLOAD_PART/") {
+			puts += count
+		}
+	}
+	return puts
 }
 
 func (b economicsS3Body) Read(p []byte) (int, error) {
@@ -170,22 +183,17 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	ctx := t.Context()
 	fixture := nativeS3Fixture(t)
 	traffic := economicsS3Proxy(t, &fixture)
-	a, b := sharedNativeJourneyPair(t, fixture)
+	a, b := sharedNativeJourneyPair(t, fixture, func(c *Config) {
+		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+		c.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
+	})
 	nodes := []*sharedJourneyNode{a, b}
 	var flushers []*hostedLiveFlusher
 	for _, node := range nodes {
+		node.service.pipelines.Stop()
 		node.service.usage.cancel()
 		<-node.service.usage.done
-		store := node.service.lake.(*lakeapi.DuckLakeStore)
-		coordinator, err := lakeapi.NewPostgresProjectCoordinator(node.service.control, lakeapi.DefaultProjectCoordinatorConfig())
-		if err != nil {
-			t.Fatal(err)
-		}
-		flusher, err := newHostedLiveFlusherFixture(node.service.control, store, coordinator, node.service.usage.store)
-		if err != nil {
-			t.Fatal(err)
-		}
-		flushers = append(flushers, flusher)
+		flushers = append(flushers, node.service.hosted.flusher)
 	}
 	store := a.service.lake.(*lakeapi.DuckLakeStore)
 	reader := b.service.lake.(*lakeapi.DuckLakeStore)
@@ -206,13 +214,23 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	noisyTenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"noisy"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
 	noisyProject, _ := sharedJourneyProject(t, a.host.URL, noisyTenant, "noisy")
 	noisyKey := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: noisyProject}
-	if _, err := store.InitializeHostedProject(ctx, noisyKey); err != nil {
-		t.Fatal(err)
-	}
+	webhookProject, _ := sharedJourneyProject(t, a.host.URL, noisyTenant, "noisy webhook")
+	permissions := []string{"pipelines:write", "events:read"}
+	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "economics webhook", Projects: []string{webhookProject}, Permissions: permissions})
+	accounts := "/api/v1/tenants/" + noisyTenant + "/service-accounts"
+	account := sharedJourneyHTTP(t, a.host.URL, "POST", accounts, adminToken, accountBody, nil, 201)
+	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "economics webhook key", Audience: "api", Projects: []string{webhookProject}, Permissions: permissions})
+	creator := sharedJourneyHTTP(t, a.host.URL, "POST", accounts+"/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["token"].(string)
+	webhookBody, _ := json.Marshal(PipelineCreateBody{Name: "all events", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{
+		Endpoint: "https://example.test/unused", DeliveryMode: "batch", IntervalSeconds: 60,
+		StartAt: time.Now().UTC().Add(-time.Hour).Truncate(time.Minute).Format(time.RFC3339),
+	}})
+	webhookID := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/projects/"+webhookProject+"/pipelines", creator, webhookBody, nil, 201)["id"].(string)
+	const noisyEventsPerWindow = 500
 	publisher := flushers[0].publisher
 	if err := publisher.transaction(ctx, func(tx *sql.Tx) error {
-		limits := output.PipelineDemand{References: 100, QueuedBytes: 1 << 20, MetadataRows: 1000, ArtifactBytes: 128 << 20, ProofSlots: 4}
-		scopes := [][2]string{{"tenant", defaultTenantID}, {"tenant", noisyTenant}, {"project", noisyProject}}
+		limits := output.PipelineDemand{References: 10_000, QueuedBytes: 32 << 20, MetadataRows: 20_000, ArtifactBytes: 1 << 30, ProofSlots: 4}
+		scopes := [][2]string{{"tenant", defaultTenantID}, {"tenant", noisyTenant}, {"project", noisyProject}, {"project", webhookProject}}
 		for _, cohort := range projects {
 			for _, project := range cohort {
 				scopes = append(scopes, [2]string{"project", project})
@@ -227,12 +245,13 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reportHostedEconomics(t, fixture, traffic, "setup", quietProjects*2+1, 0, 0, started, runtime.GOOS+"/"+runtime.GOARCH)
+	const totalProjects = quietProjects*2 + 2
+	reportHostedEconomics(t, fixture, traffic, "setup", totalProjects, 0, 0, started, runtime.GOOS+"/"+runtime.GOARCH)
 
 	snapshotCount := func() int64 {
 		t.Helper()
 		var total int64
-		for _, cohort := range append(projects, []string{noisyProject}) {
+		for _, cohort := range append(projects, []string{noisyProject, webhookProject}) {
 			for _, project := range cohort {
 				schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(store.Config.SharedSourceID, project))
 				var id int64
@@ -259,16 +278,9 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 		<-node.service.hosted.recoveryDone
 	}
 	snapshots := snapshotCount() - before
-	traffic.mu.Lock()
-	puts := 0
-	for request, count := range traffic.calls {
-		if strings.HasPrefix(request, "PUT/") || strings.HasPrefix(request, "UPLOAD_PART/") {
-			puts += count
-		}
-	}
-	traffic.mu.Unlock()
+	puts := traffic.puts()
 	hours := time.Since(started).Hours()
-	reportHostedEconomics(t, fixture, traffic, "idle_recovery", quietProjects*2+1, 0, 0, started,
+	reportHostedEconomics(t, fixture, traffic, "idle_recovery", totalProjects, 0, 0, started,
 		map[string]any{"write_commits": snapshots, "snapshots": snapshots, "s3_puts": puts,
 			"write_commits_per_hour": float64(snapshots) / hours, "snapshots_per_hour": float64(snapshots) / hours, "s3_puts_per_hour": float64(puts) / hours})
 	defer func() {
@@ -280,7 +292,7 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 		node.service.startHostedRecovery(2 * time.Second)
 	}
 
-	epoch := time.Now().UTC().Add(-windows * time.Minute)
+	epoch := time.Now().UTC().Truncate(time.Minute).Add(-windows * time.Minute)
 	var flushLatencies []float64
 	flush := func(flusher *hostedLiveFlusher, project string, window, count int, span, step time.Duration) {
 		t.Helper()
@@ -319,23 +331,64 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 				flush(flushers[(window+i)%len(flushers)], project, window, scenario.eventsPerWindow, time.Duration(scenario.spanSeconds)*time.Second, time.Second)
 			}
 		}
+		if cohort == len(projects)-1 {
+			for _, node := range nodes {
+				node.service.hosted.stopRecovery()
+				<-node.service.hosted.recoveryDone
+			}
+		}
 		reportHostedEconomics(t, fixture, traffic, scenario.phase,
 			quietProjects, quietProjects*windows*scenario.eventsPerWindow, quietProjects*windows, started,
 			map[string]int{"modeled_seconds": windows * scenario.spanSeconds, "modeled_flush_window_seconds": flushWindowSeconds})
 	}
 
-	const noisyEventsPerWindow = 500
-	started = time.Now()
-	for window := range windows {
-		flush(flushers[0], noisyProject, window, noisyEventsPerWindow, flushWindowSeconds*time.Second, flushWindowSeconds*time.Second/noisyEventsPerWindow)
-	}
-	reportHostedEconomics(t, fixture, traffic, "noisy_flush", 1, windows*noisyEventsPerWindow, windows, started, nil)
-	for _, node := range nodes {
-		node.service.hosted.stopRecovery()
-		<-node.service.hosted.recoveryDone
-	}
 	slices.Sort(flushLatencies)
 	t.Logf("hosted-economics concurrent recovery, %d flushes, p95 %.2f ms", len(flushLatencies), flushLatencies[(95*len(flushLatencies)+99)/100-1])
+
+	for _, scenario := range []struct{ phase, project string }{
+		{"noisy_flush", noisyProject}, {"noisy_flush_webhook", webhookProject},
+	} {
+		key := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: scenario.project}
+		schema := lakeapi.SharedNativeSchema(lakeapi.SharedNativeCatalogID(key.SourceID, key.ProjectID))
+		var startSnapshot int64
+		if err := store.SharedCatalog.QueryRowContext(ctx, "SELECT max(snapshot_id) FROM "+schema+".ducklake_snapshot").Scan(&startSnapshot); err != nil {
+			t.Fatal(err)
+		}
+		started = time.Now()
+		for window := range windows {
+			flush(flushers[0], key.ProjectID, window, noisyEventsPerWindow, flushWindowSeconds*time.Second, flushWindowSeconds*time.Second/noisyEventsPerWindow)
+			// Run the normal recovery selection after each modeled tick to make
+			// the cost independent of how long the fixture takes to flush.
+			pending, err := hostedRecoveryProjects(ctx, b.service.control, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(pending, key.ProjectID) {
+				if err := flushers[1].recoverProject(ctx, key); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		var commits, snapshots int
+		if err := store.SharedCatalog.QueryRowContext(ctx,
+			"SELECT count(DISTINCT xmin::text),count(*) FROM "+schema+".ducklake_snapshot WHERE snapshot_id>$1", startSnapshot).Scan(&commits, &snapshots); err != nil {
+			t.Fatal(err)
+		}
+		puts := traffic.puts()
+		minutes := float64(windows*flushWindowSeconds) / 60
+		reportHostedEconomics(t, fixture, traffic, scenario.phase, 1, windows*noisyEventsPerWindow, windows, started,
+			map[string]any{"write_commits": commits, "snapshots": snapshots, "s3_puts": puts,
+				"modeled_seconds": windows * flushWindowSeconds, "write_commits_per_minute": float64(commits) / minutes,
+				"snapshots_per_minute": float64(snapshots) / minutes, "s3_puts_per_minute": float64(puts) / minutes})
+		if snapshots != windows || commits != windows {
+			t.Errorf("%s wrote %d DuckLake commits and %d snapshots for %d flushes", scenario.phase, commits, snapshots, windows)
+		}
+	}
+	var webhookEvents int
+	if err := a.service.control.QueryRowContext(ctx, `SELECT coalesce(sum(refs),0) FROM pipeline_effect_jobs WHERE project_id=$1 AND pipeline_id=$2`,
+		webhookProject, webhookID).Scan(&webhookEvents); err != nil || webhookEvents != windows*noisyEventsPerWindow {
+		t.Fatalf("webhook queued %d event references, want %d: %v", webhookEvents, windows*noisyEventsPerWindow, err)
+	}
 
 	query := func(project string, want int) (float64, error) {
 		start := time.Now()

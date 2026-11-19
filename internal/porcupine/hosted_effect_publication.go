@@ -361,11 +361,7 @@ func nativeUsageReports(e lakeapi.NativeCommitEvidence) ([]usage.SourceTotals, e
 	return reports, nil
 }
 func (p *hostedEffectPublisher) publish(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence) error {
-	return p.publishOn(ctx, b, e, nil)
-}
-
-func (p *hostedEffectPublisher) publishOn(ctx context.Context, b output.PipelineBinding, e lakeapi.NativeCommitEvidence, session *lakeapi.ProjectWriteSession) error {
-	return p.publishEvidence(ctx, b, e, session, false, lakeapi.ImmutableObjectRef{})
+	return p.publishEvidence(ctx, b, e, nil, false, lakeapi.ImmutableObjectRef{})
 }
 
 // publishEvidence can settle existing durable proofs after a deletion fence.
