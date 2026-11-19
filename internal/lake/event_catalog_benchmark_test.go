@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,7 +87,8 @@ func TestDuckLakeS3SharedPostgresEventCatalogPerformance(t *testing.T) {
 			}
 			if count == 10_000_000 {
 				withCatalogBenchmarkReader(t, config, key, func(_ *HostedReader, p *ProjectLake) {
-					explainEventCatalogBenchmark(t, p)
+					detailQuery, ids := measureEventCatalogBenchmarkStages(t, p, requests, getBytes)
+					explainEventCatalogBenchmark(t, p, detailQuery, ids)
 				})
 			}
 		})
@@ -275,7 +277,43 @@ func catalogBenchmarkRows(t *testing.T, q interface {
 	return result
 }
 
-func explainEventCatalogBenchmark(t *testing.T, p *ProjectLake) {
+const catalogBenchmarkAggregateSQL = duckLakeCatalogAggregateSQL + " GROUP BY event ORDER BY max(id) DESC LIMIT ? OFFSET ?"
+
+func measureEventCatalogBenchmarkStages(t *testing.T, p *ProjectLake, requests, getBytes *atomic.Int64) (string, []any) {
+	t.Helper()
+	tx, err := p.DB.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	measure := func(stage, query string, args ...any) [][]string {
+		t.Helper()
+		beforeRequests, beforeBytes := requests.Load(), getBytes.Load()
+		start := time.Now()
+		rows := catalogBenchmarkRows(t, tx, query, args...)
+		t.Logf("catalog_bench_stage op=%s elapsed_us=%d s3_requests=%d s3_get_response_bytes=%d",
+			stage, time.Since(start).Microseconds(), requests.Load()-beforeRequests, getBytes.Load()-beforeBytes)
+		return rows
+	}
+	var ids []any
+	for _, row := range measure("catalog_after_aggregate", catalogBenchmarkAggregateSQL, 21, 0) {
+		for _, raw := range row[2:] {
+			id, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, id)
+		}
+	}
+	detailQuery := duckLakeCatalogDetailsSQL + strings.Repeat(",?", len(ids)-1) + ") GROUP BY event"
+	measure("catalog_after_details", detailQuery, ids...)
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return detailQuery, ids
+}
+
+func explainEventCatalogBenchmark(t *testing.T, p *ProjectLake, detailQuery string, ids []any) {
 	t.Helper()
 	explain := func(name, query string, args ...any) {
 		t.Helper()
@@ -285,19 +323,8 @@ func explainEventCatalogBenchmark(t *testing.T, p *ProjectLake) {
 	}
 	explain("catalog_before", `SELECT event,CAST(count(*) AS VARCHAR),arg_min(received_at,id),arg_max(received_at,id),
  arg_max(uuid,id),arg_max(timestamp,id) FROM events GROUP BY event ORDER BY max(id) DESC LIMIT ? OFFSET ?`, 21, 0)
-	aggregate := duckLakeCatalogAggregateSQL + " GROUP BY event ORDER BY max(id) DESC LIMIT ? OFFSET ?"
-	explain("catalog_after_aggregate", aggregate, 21, 0)
-	var ids []any
-	for _, row := range catalogBenchmarkRows(t, p.DB, aggregate, 21, 0) {
-		for _, raw := range row[2:] {
-			id, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ids = append(ids, id)
-		}
-	}
-	explain("catalog_after_details", duckLakeCatalogDetailsSQL+strings.Repeat(",?", len(ids)-1)+") GROUP BY event", ids...)
+	explain("catalog_after_aggregate", catalogBenchmarkAggregateSQL, 21, 0)
+	explain("catalog_after_details", detailQuery, ids...)
 	explain("catalog_event_before_sample", `SELECT uuid,received_at,properties FROM events WHERE event=? ORDER BY id DESC LIMIT 1000`, catalogBenchEvent)
 	explain("catalog_event_after_ids", duckLakeCatalogSampleBoundsSQL, catalogBenchEvent)
 	var low, high int64
