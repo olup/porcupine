@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -39,16 +40,17 @@ type DuckLakeStore struct {
 }
 
 type ProjectLake struct {
-	DB          *sql.DB
-	write       syncx.ContextMutex
-	maintenance syncx.ContextMutex
-	directory   string
-	catalogInfo os.FileInfo
-	leases      map[*projectLease]struct{}
-	lastUsed    time.Time
-	shared      bool
-	sharedStore *DuckLakeStore
-	projectID   string
+	nativeProofHistory atomic.Pointer[nativeProofHistoryMark]
+	DB                 *sql.DB
+	write              syncx.ContextMutex
+	maintenance        syncx.ContextMutex
+	directory          string
+	catalogInfo        os.FileInfo
+	leases             map[*projectLease]struct{}
+	lastUsed           time.Time
+	shared             bool
+	sharedStore        *DuckLakeStore
+	projectID          string
 }
 
 type projectLease struct{ started time.Time }

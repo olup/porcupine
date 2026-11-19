@@ -452,8 +452,8 @@ func applyNativeHistoricalDecision(ctx context.Context, tx *sql.Tx, e event.Even
 	return e, err
 }
 
-// FindImportChunk validates the full retained stream before returning the exact
-// original outcome. Sealed recovery does not require allocating candidate IDs.
+// FindImportChunk checks retained proof continuity and returns the original
+// outcome. Sealed recovery does not require allocating candidate IDs.
 func (s *DuckLakeStore) FindImportChunk(ctx context.Context, fence ProjectWriteFence, input ImportChunkInput) (NativeCommitEvidence, bool, error) {
 	fingerprint, err := validateImportInput(fence, input, EventIDReservation{fence: fence, batchID: input.Key.ID(), ids: make([]int64, len(input.Candidates))})
 	if err != nil {
@@ -480,7 +480,7 @@ func (s *DuckLakeStore) FindImportChunk(ctx context.Context, fence ProjectWriteF
 	if err = tx.QueryRowContext(ctx, `SELECT CAST(next_effect_seq AS BIGINT) FROM lake.hosted_write_guard WHERE id=1`).Scan(&high); err != nil {
 		return NativeCommitEvidence{}, false, err
 	}
-	if err = validateNativeEffectHistory(ctx, tx, high); err != nil {
+	if err = p.validateNativeEffectHistory(ctx, tx, high); err != nil {
 		return NativeCommitEvidence{}, false, err
 	}
 	e, found, err := readNativeCommitProof(ctx, tx, scope, input.Key.ID())
