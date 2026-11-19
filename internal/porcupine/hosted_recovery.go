@@ -62,8 +62,10 @@ func hostedRecoveryProjects(ctx context.Context, db *sql.DB, after string) ([]st
 	if err := reclaimExpiredHostedIncarnations(ctx, db); err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT r.project_id FROM hosted_recovery_pending r JOIN projects p ON p.id=r.project_id
-WHERE r.project_id>$1 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=r.project_id)
+	rows, err := db.QueryContext(ctx, `SELECT r.project_id FROM (
+SELECT project_id FROM hosted_recovery_pending WHERE project_id>$1
+UNION SELECT project_id FROM pipeline_effect_reservations WHERE project_id>$1
+) r JOIN projects p ON p.id=r.project_id WHERE NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=r.project_id)
 AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=p.tenant_id) ORDER BY r.project_id LIMIT 32`, after)
 	if err != nil {
 		return nil, err
@@ -124,8 +126,9 @@ func (f *hostedLiveFlusher) recoverProject(ctx context.Context, key lakeapi.Proj
 	defer session.Release()
 	var generation int64
 	var tenant string
-	if err := f.publisher.control.QueryRowContext(ctx, `SELECT p.tenant_id,r.generation FROM hosted_recovery_pending r
-JOIN projects p ON p.id=r.project_id WHERE r.project_id=$1`, key.ProjectID).Scan(&tenant, &generation); err != nil {
+	if err := f.publisher.control.QueryRowContext(ctx, `SELECT p.tenant_id,coalesce(r.generation,0)
+FROM projects p LEFT JOIN hosted_recovery_pending r ON r.project_id=p.id WHERE p.id=$1
+AND (r.project_id IS NOT NULL OR EXISTS(SELECT 1 FROM pipeline_effect_reservations WHERE project_id=$1))`, key.ProjectID).Scan(&tenant, &generation); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -147,8 +150,8 @@ func (f *hostedLiveFlusher) recoverProjectHeld(ctx context.Context, session *lak
 		if err := f.reconcileAndSettle(ctx, session, scope, fence, tenant); err != nil {
 			return err
 		}
-		// Reclaim can enqueue another ticket during recovery. The generation
-		// preserves that work, and the lock-owning transaction excludes a stale executor.
+		// Reservation-only work reads generation zero. A concurrent enqueue
+		// creates or advances a positive generation that stays queued.
 		return session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `DELETE FROM hosted_recovery_pending WHERE project_id=$1 AND generation=$2`, key.ProjectID, generation)
 			return err

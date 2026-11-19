@@ -353,10 +353,8 @@ func (f *hostedLiveFlusher) reconcileEvidence(ctx context.Context, session *lake
 		default:
 			return output.ErrPipelineConflict
 		}
-		if deleting {
-			err = f.publisher.publishEvidence(ctx, binding, evidence, session, true, lakeapi.ImmutableObjectRef{})
-		} else if evidence.Kind == lakeapi.NativeCommitMutation {
-			err = f.publisher.publishOn(ctx, binding, evidence, session)
+		if deleting || evidence.Kind == lakeapi.NativeCommitMutation {
+			err = f.publisher.publishEvidence(ctx, binding, evidence, session, deleting, lakeapi.ImmutableObjectRef{})
 		} else {
 			err = f.publisher.publish(ctx, binding, evidence)
 		}

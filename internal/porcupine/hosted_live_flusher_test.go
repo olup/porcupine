@@ -797,8 +797,15 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if loseNative.Load() {
 		t.Fatal("native commit-loss boundary not exercised")
 	}
-	if err = fb.RecoverProject(t.Context(), key); err != nil {
+	projects, err := hostedRecoveryProjects(t.Context(), b.service.control, "")
+	if err != nil || !slices.Contains(projects, project) {
+		t.Fatalf("unpublished native outcome did not queue recovery: %v, %v", projects, err)
+	}
+	if err = fb.recoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold lost-native recovery", err)
+	}
+	if _, err = fb.publisher.reservation(t.Context(), scope); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("cold recovery left a live reservation: %v", err)
 	}
 	if err = fa.FlushLive(t.Context(), nativeLost); err != nil {
 		t.Fatal("native lost-response replay", err)
@@ -807,6 +814,13 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	failACK.Store(true)
 	if err = fa.FlushLive(t.Context(), ackLost); err != nil || !failACK.Load() {
 		t.Fatalf("live flush attempted standalone native ACK: %v", err)
+	}
+	if err = fa.recoverProject(t.Context(), key); err != nil || !failACK.Load() {
+		t.Fatalf("published live flush queued a standalone native ACK: %v", err)
+	}
+	// Independent work can still require a native ACK, even after live publication.
+	if _, err = a.service.control.Exec(`INSERT INTO hosted_recovery_pending(project_id) VALUES($1) `+hostedRecoveryConflict, project); err != nil {
+		t.Fatal(err)
 	}
 	if err = fa.recoverProject(t.Context(), key); !errors.Is(err, errHostedACKPending) || failACK.Load() {
 		t.Fatalf("recovery did not retain its pending ACK: %v", err)
