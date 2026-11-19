@@ -143,8 +143,10 @@ func seedEventCatalogBenchmark(t *testing.T, config DuckLakeConfig, key ProjectW
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO lake.identity_profiles SELECT 'person-' || i,1,'{"plan":"standard"}' FROM range(25000) d(i)`)
-	exec(`INSERT INTO lake.identity_links SELECT 'anon-' || i,'person-' || i,1 FROM range(25000) d(i)`)
+	exec(`INSERT INTO lake.identity_profiles (identified_id,version,traits,is_identified)
+ SELECT 'person-' || i,1,'{"plan":"standard"}',true FROM range(25000) d(i)`)
+	exec(`INSERT INTO lake.identity_links (anonymous_id,identified_id,version)
+ SELECT 'anon-' || i,'person-' || i,1 FROM range(25000) d(i)`)
 	// Each batch spans a disjoint arrival-ID range. A few old imports write to
 	// older occurrence-month partitions and keep event time distinct from ID order.
 	const batch = 250_000
