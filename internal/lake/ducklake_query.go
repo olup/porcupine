@@ -37,8 +37,9 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		}
 		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
+	prefix := ""
 	if limits.TimeRange != nil {
-		canonical = withEventTimeRange(canonical, *limits.TimeRange)
+		prefix = eventTimeRangeCTE(*limits.TimeRange)
 	}
 	start := time.Now()
 	conn, err := p.DB.Conn(ctx)
@@ -46,7 +47,7 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
 	defer conn.Close()
-	columns, types, err := duckLakeResultColumns(ctx, conn, canonical, args)
+	columns, types, err := duckLakeResultColumns(ctx, conn, prefix, canonical, args)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
@@ -70,7 +71,7 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	if bytes > limits.MaxResultBytes {
 		return AnalyticsResult{}, apierr.Detailed(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 	}
-	rows, err := conn.QueryContext(ctx, "SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
+	rows, err := conn.QueryContext(ctx, prefix+"SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
@@ -125,10 +126,10 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 // The SQL policy reserves the unqualified events name. This statement-local
 // CTE supplies that relation to every user query node without changing the
 // project view or the connection. Keep it inline so scans can push filters down.
-func withEventTimeRange(canonical string, window QueryTimeRange) string {
+func eventTimeRangeCTE(window QueryTimeRange) string {
 	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE " +
 		eventTimeBound(window.From, true) + " AND " + eventTimeBound(window.To, false) +
-		") SELECT * FROM (" + canonical + ") AS _pc_ranged_query"
+		") "
 }
 
 func eventTimeBound(bound time.Time, inclusive bool) string {

@@ -228,6 +228,14 @@ func TestDuckLakeQueryTimeRange(t *testing.T) {
 			}
 		})
 	}
+	ordered, err := store.Query(t.Context(), "ranged", `WITH cte AS (SELECT uuid, id FROM events)
+		SELECT uuid AS "Event name", id AS "Event number" FROM cte ORDER BY id DESC LIMIT 2`, nil, limits)
+	if err != nil || ordered.Rows != 2 ||
+		ordered.Meta[0].Name != "Event name" || ordered.Meta[1].Name != "Event number" ||
+		string(ordered.Data[0]["Event name"]) != `"inside"` || string(ordered.Data[0]["Event number"]) != `"3"` ||
+		string(ordered.Data[1]["Event name"]) != `"from"` || string(ordered.Data[1]["Event number"]) != `"2"` {
+		t.Fatalf("ranged query changed ordering or projected columns: %+v (%v)", ordered, err)
+	}
 	result, err := store.Query(t.Context(), "ranged", "SELECT count(*) AS result FROM events", nil, DefaultQueryExecutionLimits())
 	if err != nil || result.Rows != 1 || string(result.Data[0]["result"]) != `"5"` {
 		t.Fatalf("all-time query returned %+v (%v)", result, err)

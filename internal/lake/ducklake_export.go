@@ -121,7 +121,7 @@ func (s *DuckLakeStore) export(ctx context.Context, project, raw string, paramet
 			}
 		}()
 	}
-	columns, types, err := duckLakeResultColumns(ctx, conn, canonical, args)
+	columns, types, err := duckLakeResultColumns(ctx, conn, "", canonical, args)
 	if err != nil {
 		return result, err
 	}
@@ -182,7 +182,7 @@ func (s *DuckLakeStore) export(ctx context.Context, project, raw string, paramet
 	return result, err
 }
 
-func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, canonical string, args []any) ([]AnalyticsResultColumn, []duckdb.TypeInfo, error) {
+func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, prefix, canonical string, args []any) ([]AnalyticsResultColumn, []duckdb.TypeInfo, error) {
 	var columns []AnalyticsResultColumn
 	var types []duckdb.TypeInfo
 	err := conn.Raw(func(raw any) error {
@@ -190,7 +190,7 @@ func duckLakeResultColumns(ctx context.Context, conn *sql.Conn, canonical string
 		if !ok {
 			return ErrExportStreamInvalid
 		}
-		prepared, err := native.PrepareContext(ctx, "SELECT * FROM ("+canonical+") AS _pc_export_schema LIMIT 0")
+		prepared, err := native.PrepareContext(ctx, prefix+"SELECT * FROM ("+canonical+") AS _pc_export_schema LIMIT 0")
 		if err != nil {
 			return err
 		}
