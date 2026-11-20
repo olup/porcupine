@@ -295,6 +295,9 @@ func (s *Service) observeAcceptance(ctx context.Context, result acceptance.Resul
 			outcome = "cancelled"
 		case errors.As(err, &failure) && failure.Pressure:
 			outcome = "pressure"
+			if errors.Is(err, errProjectQueueFull) {
+				m.Add("porcupine_ingestion_project_queue_rejections_total", 1)
+			}
 		case errors.As(err, &budget), errors.As(err, &rejected) && rejected.GetStatus() < 500:
 			outcome = "rejected"
 		default:

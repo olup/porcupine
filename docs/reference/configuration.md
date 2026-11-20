@@ -18,7 +18,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
 | `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
-| `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
+| `queue` | `max_events`, `max_bytes`, standalone `project_max_events` and `project_max_bytes`, and `receipt_retention`. Use `"0"` to keep local receipts (the default) or a duration such as `"720h"` for optional pruning. [Queue limits](reliability.md#acceptance-and-queue-limits) |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `usage` | `retention_days` (365), `max_snapshots` (16), `max_snapshot_bytes` (134217728): [numerical history and report capacity](usage.md) |
 | `oauth` | `issuer`, `token_lifetime_seconds`, `allow_legacy_keys`, `restore_identity_bootstrap` |

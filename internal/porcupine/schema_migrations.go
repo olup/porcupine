@@ -22,6 +22,9 @@ import (
 //go:embed journal_schema.sql
 var journalSchemaV1 string
 
+//go:embed journal_project_queue_v10.sql
+var journalProjectQueueSchemaV10 string
+
 //go:embed local_control_schema.sql
 var localControlSchemaV1 string
 
@@ -60,6 +63,8 @@ PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 	output.PipelineSQLiteRetirementSchemaV1,
 	// 9: retire the old owner-routed admission cache.
 	`DROP TABLE shared_tenant_cache`,
+	// 10: per-project usage of pending payloads in the local journal.
+	journalProjectQueueSchemaV10,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}

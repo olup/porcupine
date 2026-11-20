@@ -165,6 +165,20 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
+	var queueProjectMax int
+	if raw := s.get("PORCUPINE_QUEUE_PROJECT_MAX_EVENTS"); raw != "" {
+		queueProjectMax, err = strconv.Atoi(raw)
+		if err != nil || queueProjectMax < 0 {
+			return "", porcupine.Config{}, errors.New("PORCUPINE_QUEUE_PROJECT_MAX_EVENTS must be a nonnegative integer")
+		}
+	}
+	var queueProjectMaxBytes int64
+	if raw := s.get("PORCUPINE_QUEUE_PROJECT_MAX_BYTES"); raw != "" {
+		queueProjectMaxBytes, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || queueProjectMaxBytes < 0 {
+			return "", porcupine.Config{}, errors.New("PORCUPINE_QUEUE_PROJECT_MAX_BYTES must be a nonnegative integer")
+		}
+	}
 	var allowedOrigins []string
 	if raw := s.get("PORCUPINE_ALLOWED_ORIGINS"); raw != "" {
 		allowedOrigins = strings.Split(raw, ",")
@@ -220,7 +234,7 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
-	return addr, porcupine.Config{Profile: porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")), AcceptanceMode: porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")), Usage: usageConfig, ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, GeoIPDatabase: s.get("PORCUPINE_GEOIP_DATABASE"), DuckLake: duckLake, HostedRecoveryFloor: recoveryFloor, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, Auth: authConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+	return addr, porcupine.Config{Profile: porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")), AcceptanceMode: porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")), Usage: usageConfig, ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, QueueProjectMaxEvents: queueProjectMax, QueueProjectMaxBytes: queueProjectMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, GeoIPDatabase: s.get("PORCUPINE_GEOIP_DATABASE"), DuckLake: duckLake, HostedRecoveryFloor: recoveryFloor, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, Auth: authConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
 }
 
 func (s settings) receiptRetention() (time.Duration, error) {

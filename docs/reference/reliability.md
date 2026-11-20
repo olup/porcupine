@@ -6,6 +6,30 @@ In standalone, the server accepts events into SQLite, then projects them into Du
 
 SQLite uses WAL mode and `synchronous=FULL`. The server acknowledges capture after the acceptance transaction commits. A batch validates and commits atomically. The standalone queue defaults to 100,000 pending original events and 256 MiB of charged payload. Queue budgets are separate from the request-size limit and total disk space. A full queue rejects new capture and preserves accepted work.
 
+For standalone instances that serve several projects, set `queue.project_max_events`
+and `queue.project_max_bytes` to cap what any single project can have pending
+when it submits new live events. This example sets both project limits to
+half of the default instance limits.
+
+```json
+{
+  "queue": {
+    "project_max_events": 50000,
+    "project_max_bytes": 134217728
+  }
+}
+```
+
+The environment equivalents are `PORCUPINE_QUEUE_PROJECT_MAX_EVENTS` and
+`PORCUPINE_QUEUE_PROJECT_MAX_BYTES`. Each defaults to zero, which uses only
+the instance limit for that dimension. Size both settings for the largest
+live batch you expect to accept. A full project queue returns `503` with
+`Retry-After: 1` for fresh work and rolls back the whole batch. Duplicate
+retries consume no capacity. Work already accepted remains queued through a
+restart, including after you lower the limit. Pending historical imports
+count toward the next live admission. Uploading an import chunk still uses
+the instance queue limits.
+
 Retries need a stable PostHog UUID or native/Segment producer message ID in the same project and source. A repeat returns the original event ID and preserves the original accepted payload. Without a stable producer ID, separate submissions can create separate events. [Receipt contract](native-and-segment-ingestion.md#receipts-and-logical-sources)
 
 A control-storage failure while validating a credential returns retryable `503` with `Retry-After`, before acceptance writes. API, MCP, native ingestion, PostHog, and Segment preserve that distinction. A genuinely invalid, expired, or revoked credential returns `401`. Retry the same stable-ID batch after service recovery; do not replace its IDs.

@@ -28,6 +28,9 @@ type eventRules struct {
 	queueMax          int
 	queueMaxBytes     int64
 	prepareAcceptance func(context.Context, string) error
+
+	queueProjectMaxEvents int
+	queueProjectMaxBytes  int64
 	// receiptRetention bounds local receipts; knownEvents finds older events.
 	receiptRetention time.Duration
 	knownEvents      func(context.Context, string, []string) (map[string]int64, error)
@@ -150,8 +153,8 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	acceptedAt := a.rules.clock().UTC()
-	var pending, pendingBytes int64
-	if err = tx.QueryRow(`SELECT pending_count,pending_bytes FROM queue_usage WHERE id=1`).Scan(&pending, &pendingBytes); err != nil {
+	room, err := a.rules.loadLiveQueueRoom(ctx, tx, batch.ProjectID)
+	if err != nil {
 		return nil, &acceptance.Failure{Message: "storage unavailable"}
 	}
 	var cookielessID string
@@ -198,9 +201,6 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 			duplicates++
 			continue
 		}
-		if pending+int64(accepted) >= int64(a.rules.queueMax) {
-			return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
-		}
 		if e.DistinctID == ingestfmt.CookielessSentinel && !identityapi.IsControl(e.Event) {
 			e = acceptance.ResolveCookieless(e, cookielessID, day)
 		}
@@ -215,8 +215,8 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 			e.DistinctID, e.Properties = "", json.RawMessage(`{}`)
 		}
 		size := queueEventBytes(e)
-		if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-			return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
+		if err := room.check(int64(accepted)+1, acceptedBytes+size); err != nil {
+			return nil, err
 		}
 		e.ID, err = insertAcceptedEvent(ctx, tx, e)
 		if err != nil {
@@ -233,8 +233,8 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 				identityIgnored++
 			}
 			size = queueEventBytes(e)
-			if size > a.rules.queueMaxBytes-pendingBytes-acceptedBytes {
-				return nil, &acceptance.Failure{Message: "queue is full", Retry: true, Pressure: true}
+			if err := room.check(int64(accepted)+1, acceptedBytes+size); err != nil {
+				return nil, err
 			}
 		}
 		if !identityapi.IsControl(e.Event) {
