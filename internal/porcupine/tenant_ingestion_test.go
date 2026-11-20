@@ -306,7 +306,7 @@ func TestTenantIngestionAcceptanceClockAndNoProjectRefund(t *testing.T) {
 	p, token := project(t, s)
 	before := time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC)
 	s.clock = func() time.Time { return before.Add(time.Second) }
-	prepared, err := prepareLiveBatch(p, "", eventBatch{{UUID: "waited-for-lock", Event: "queued", DistinctID: "u"}}, before)
+	prepared, err := prepareLiveBatch(p, "", eventBatch{{UUID: "waited-for-lock", Event: "queued", DistinctID: "u"}}, before, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

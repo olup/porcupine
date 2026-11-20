@@ -28,7 +28,7 @@ func testBufferBatch(t testing.TB, project string, n int) acceptance.Batch {
 	for i := range inputs {
 		inputs[i] = normalizedTrack("native", "stable-message")
 	}
-	batch, err := prepareLiveBatch(project, "source", inputs, time.Now().UTC())
+	batch, err := prepareLiveBatch(project, "source", inputs, time.Now().UTC(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

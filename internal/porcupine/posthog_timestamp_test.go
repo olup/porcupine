@@ -1,6 +1,7 @@
 package porcupine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
+	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 )
 
@@ -134,4 +137,93 @@ FROM events WHERE project_id=? AND uuid=?`, projectID, tc.name).Scan(&stamp, &ac
 	requireMetric(t, metrics, `porcupine_ingestion_timestamp_adjusted_total{profile="standalone",reason="sent_at"} 11`)
 	requireMetric(t, metrics, `porcupine_ingestion_timestamp_adjusted_total{profile="standalone",reason="offset"} 3`)
 	requireMetric(t, metrics, `porcupine_ingestion_timestamp_adjusted_total{profile="standalone",reason="future_clamped"} 2`)
+}
+
+func TestLiveNativeClockOptInPreservesExplicitAndImportedTimes(t *testing.T) {
+	t.Parallel()
+	receipt := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	s, err := Open(Config{
+		DBPath: filepath.Join(t.TempDir(), "journal.db"), BootstrapToken: adminToken,
+		Clock: func() time.Time { return receipt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	projectID, key := project(t, s)
+	const producer = "2026-11-22T12:00:00+00:00"
+	const sent = "2026-11-22T12:05:00Z"
+	epoch := strconv.FormatInt(receipt.Add(48*time.Hour+5*time.Minute).UnixMilli(), 10)
+	for _, tc := range []struct{ id, query, want, rawSent string }{
+		{"explicit", "", "2026-11-22T12:00:00Z", ""},
+		{"invalid-hint", "?sent_at=unreadable&_=" + epoch, "2026-11-22T12:00:00Z", ""},
+		{"iso", "?sent_at=" + url.QueryEscape(sent), "2026-11-20T11:55:00Z", sent},
+		{"epoch", "?sent_at=" + epoch, "2026-11-20T11:55:00Z", epoch},
+	} {
+		body := fmt.Sprintf(`{"type":"track","name":"order","message_id":%q,"timestamp":%q,"context":{"locale":"fr-FR"}}`, tc.id, producer)
+		transportRequest(t, s, "POST", "/ingest/v1/events"+tc.query, []byte(body), map[string]string{"X-Porcupine-Key": key}, 200)
+		stored := segmentEvent(t, s, projectID, tc.id)
+		var context map[string]any
+		if err := json.Unmarshal(stored.Context, &context); err != nil {
+			t.Fatal(err)
+		}
+		if stored.Timestamp != tc.want || context["locale"] != "fr-FR" {
+			t.Fatalf("%s: timestamp=%q context=%v", tc.id, stored.Timestamp, context)
+		}
+		if tc.rawSent != "" && (context["client_timestamp"] != producer || context["sent_at"] != tc.rawSent) {
+			t.Fatalf("%s: clock provenance missing from context: %v", tc.id, context)
+		}
+		if tc.rawSent == "" && (context["client_timestamp"] != nil || context["sent_at"] != nil) {
+			t.Fatalf("%s: clock provenance added without a valid hint: %v", tc.id, context)
+		}
+	}
+
+	body := fmt.Sprintf(`{"uuid":"historic","event":"order","distinct_id":"visitor","timestamp":%q,"sent_at":%q,"properties":{}}`, producer, sent)
+	result := importRowsForTest(t, s, projectID, "events", body)[0]
+	var stamp string
+	if err := s.db.QueryRowContext(t.Context(), `SELECT timestamp FROM events WHERE uuid='historic'`).Scan(&stamp); err != nil || result.Accepted != 1 || stamp != "2026-11-22T12:00:00Z" {
+		t.Fatalf("historical event time changed: %q, result=%+v, err=%v", stamp, result, err)
+	}
+}
+
+func TestPostHogClockCorrectionAgreesAcrossAcceptanceProfiles(t *testing.T) {
+	t.Parallel()
+	receipt := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	s, err := Open(Config{
+		DBPath: filepath.Join(t.TempDir(), "journal.db"), BootstrapToken: adminToken,
+		Clock: func() time.Time { return receipt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	projectID, key := project(t, s)
+	body := fmt.Sprintf(`{"api_key":%q,"uuid":"same-input","event":"view","distinct_id":"visitor","timestamp":"2026-11-20T14:01:00Z","sent_at":"2026-11-20T14:04:00Z"}`, key)
+	request(t, s, "POST", "/capture/", "", body, 200)
+	result := request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", adminToken, "", 200)
+	standalone := result["events"].([]any)[0].(map[string]any)
+	s.deletionCancel()
+	<-s.deletionDone
+	s.stopUsage()
+	flush := make(chan eventapi.Event, 1)
+	config := testBufferConfig()
+	config.FlushBytes = 1
+	config.Clock = func() time.Time { return receipt }
+	buffer := newTestBuffer(t, config, func(_ context.Context, batch acceptance.FlushBatch) error {
+		flush <- batch.Events[0].Input.Event
+		return nil
+	})
+	s.hosted = &hostedRuntime{buffer: buffer, flusher: &hostedLiveFlusher{policy: hostedIngestionPolicy{db: s.control}}}
+	s.acceptance = buffer
+	t.Cleanup(func() { s.hosted = nil })
+
+	request(t, s, "POST", "/capture/", "", body, 200)
+	select {
+	case hosted := <-flush:
+		if hosted.Timestamp != "2026-11-20T11:57:00Z" || hosted.Timestamp != standalone["timestamp"] || hosted.ReceivedAt != standalone["received_at"] {
+			t.Fatalf("standalone and hosted timestamps differ: %v; %+v", standalone, hosted)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hosted batch did not reach the writer")
+	}
 }

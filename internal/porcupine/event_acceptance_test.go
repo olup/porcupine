@@ -41,7 +41,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 			prepared, err := prepareLiveBatch(projectID, "", eventBatch{
 				{UUID: "identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "browser", "$set": map[string]any{"plan": "new"}}},
 				{UUID: "page", Event: "$pageview", DistinctID: ingestfmt.CookielessSentinel, Properties: map[string]any{"$current_url": "https://example.test"}},
-			}, now)
+			}, now, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

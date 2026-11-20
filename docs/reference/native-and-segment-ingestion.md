@@ -51,6 +51,14 @@ Save the following as `journey.json`. A timestamp can be supplied in RFC 3339 fo
 
 The pageview and purchase become two queryable rows. The identify operation updates the profile and links the earlier visit. Subsequent trait updates can omit `anonymous_id`. A conflicting link is ignored. In standalone mode it contributes to the response's `identity_ignored` count. See the [identity rules](../data-and-identity.md). Native ordinary messages may omit `actor_id`. An inventory update can therefore contribute to event totals without creating a user. Use `count(DISTINCT person_id) FILTER (WHERE person_id != '')` when counting known or pseudonymous actors.
 
+To correct clock skew on live native requests, include `?sent_at=` with the
+producer's send time in RFC 3339 or Unix epoch milliseconds. URL-encode an
+RFC 3339 value that includes a `+` timezone offset. Porcupine applies the same
+correction as [PostHog live capture](compatibility.md#event-timestamps) and records
+the original client and send times in `context.client_timestamp` and
+`context.sent_at`. Without a valid `sent_at`, Porcupine uses the supplied
+timestamp, or the receipt time when the timestamp is absent.
+
 ### Receipts and logical sources
 
 Native receipts follow input order. In standalone, `durability: "durable"` confirms the SQLite commit. Each receipt includes `message_id`, the decimal-string `event_id`, the `uuid` used in event management routes, and `duplicate`. In hosted, `durability: "buffered"` confirms admission to memory. Each receipt includes `message_id` and `uuid` only. See the [acknowledgment contract](native-event-contract.md#acknowledgment-metadata).

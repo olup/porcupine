@@ -113,6 +113,11 @@ The native count includes only commits observed by the worker. Replays
 do not increment it. Commits whose response was lost can be missing from
 this operational count.
 
+`porcupine_ingestion_timestamp_adjusted_total` counts live timestamp
+adjustments before admission, including retry attempts. The `reason` is
+`sent_at` for clock skew correction, `offset` for a relative event age, or
+`future_clamped` when Porcupine replaces a timestamp with receipt time.
+
 `porcupine_flush_quarantined_projects_total` counts transitions into project
 quarantine on a worker, with a `reason` such as `native_evidence_gap`.
 Quarantine retains buffered copies. `porcupine_flush_dropped_events_total`

@@ -317,3 +317,7 @@ func (m *operationalMetrics) observeIngestionEvents(durability acceptance.Durabi
 		observability.Label{Name: "durability", Value: string(durability)},
 		observability.Label{Name: "outcome", Value: outcome})
 }
+
+func (m *operationalMetrics) observeTimestampAdjustment(reason string) {
+	m.Add("porcupine_ingestion_timestamp_adjusted_total", 1, observability.Label{Name: "reason", Value: reason})
+}
