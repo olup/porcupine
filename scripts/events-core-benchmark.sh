@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 baseline=${1:-ff63be0}
 benchmark_dir=$(mktemp -d)
-trap 'git worktree remove --force "$benchmark_dir/base" && rm -rf "$benchmark_dir"' EXIT
-git worktree add --detach "$benchmark_dir/base" "$baseline"
+trap 'rm -rf -- "$benchmark_dir"' EXIT
+mkdir "$benchmark_dir/base"
+git archive "$baseline" | tar -x -C "$benchmark_dir/base"
 
 for file in event_catalog_benchmark_test.go events_core_benchmark_test.go; do
   cp "internal/lake/$file" "$benchmark_dir/base/internal/lake/$file"
