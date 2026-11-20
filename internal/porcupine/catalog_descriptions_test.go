@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/catalog"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -53,7 +54,7 @@ func TestCatalogDescriptionPersistenceAndProjectIsolation(t *testing.T) {
 			Events:     []lakeapi.EventCatalogEvent{{Event: "purchase"}, {Event: "Purchase"}},
 			Properties: []lakeapi.EventCatalogProperty{{Key: ""}},
 		}
-		if err := s.describeCatalogPage(t.Context(), id, "purchase", &page); err != nil {
+		if err := catalog.DescribePage(t.Context(), s.control, id, "purchase", &page, s.clock); err != nil {
 			t.Fatal(err)
 		}
 		return page
@@ -110,7 +111,7 @@ func TestCatalogDocumentationReview(t *testing.T) {
 		for _, key := range keys {
 			profile.Properties = append(profile.Properties, lakeapi.EventProfileProperty{Key: key})
 		}
-		if err := s.describeEventProfile(t.Context(), id, &profile); err != nil {
+		if err := catalog.DescribeProfile(t.Context(), s.control, id, &profile, s.clock); err != nil {
 			t.Fatal(err)
 		}
 		return profile
@@ -251,7 +252,7 @@ func TestSharedCatalogDescriptionsVisibleFromAnotherWorker(t *testing.T) {
 	read := func(node *sharedJourneyNode) *lakeapi.CatalogDescription {
 		t.Helper()
 		page := lakeapi.EventCatalog{Properties: []lakeapi.EventCatalogProperty{{Key: "currency"}}}
-		if err := node.service.describeCatalogPage(t.Context(), project, "purchase", &page); err != nil {
+		if err := catalog.DescribePage(t.Context(), node.service.control, project, "purchase", &page, node.service.clock); err != nil {
 			t.Fatal(err)
 		}
 		return page.Properties[0].Description
