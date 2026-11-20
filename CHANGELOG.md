@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.4
+
+- Event-name catalogs can reuse a project summary. The first refresh builds it. Later refreshes read only new events when DuckLake can verify the changes. Use `refresh-event-catalog` to check for updates before the next scheduled refresh. Event profiles and property samples still read DuckLake on demand. (#176) [Refresh the event list](https://github.com/olup/porcupine/blob/v0.19.4/docs/reference/event-discovery.md#refresh-the-event-list)
+- Catalog and event profile results report whether custom event and property descriptions are missing, current, or stale. Project editors can confirm a stale description that still matches the stored text. (#176) [Review catalog documentation](https://github.com/olup/porcupine/blob/v0.19.4/docs/reference/event-discovery.md#review-catalog-documentation)
+
+Startup applies SQLite control migration 10 in standalone mode and PostgreSQL control migration 27 in hosted mode. Take a complete recovery point before upgrading. [Upgrade from v0.19.3](https://github.com/olup/porcupine/blob/v0.19.4/docs/hosting.md#upgrade-from-v0193)
+
 ## 0.19.3
 
 - Standalone instances can enforce per-project limits on pending events and payload bytes when admitting live capture. Each limit is optional and defaults to zero. If one project reaches its limit, other projects can still accept work while instance capacity is available. (#169) [Queue limits](https://github.com/olup/porcupine/blob/v0.19.3/docs/reference/reliability.md#acceptance-and-queue-limits)

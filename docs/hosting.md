@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.3). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.4). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a><!-- Legacy URL fragment. -->
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,18 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.19.3
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and check for shutdown errors. Investigate a failed drain before continuing because acknowledged events can still be in worker memory.
+2. Stop all v0.19.3 server processes. Keep the v0.19.3 image and private configuration.
+3. Take a complete recovery point. For standalone, capture both SQLite databases and the DuckLake storage, including any analytical objects in S3, together. For hosted, coordinate PostgreSQL recovery with S3 object versions. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+4. Start v0.19.4 with the existing configuration and storage.
+5. Update the CLI. Check readiness and verify that a new test event becomes queryable before resuming producers.
+
+Startup adds the catalog summary tables to the control database. Standalone SQLite control advances to version 10, and hosted PostgreSQL control advances to version 27. The standalone journal and DuckLake schemas stay at their existing versions.
+
+v0.19.3 refuses the newer control schema in both profiles. To roll back, restore the complete pre-upgrade recovery point before starting v0.19.3. Reconcile writes accepted after cutover before resuming producers.
 
 ### Upgrade from v0.19.2
 

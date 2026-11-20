@@ -26,8 +26,9 @@ operations through `porcupine_call`, then use `porcupine_schema` to read the lis
 The summary is initialized when a project first requests a refresh. It catches up
 from the last checkpoint when DuckLake can verify the changes. Porcupine uses
 the live read while a correction, deletion, or expired checkpoint makes the
-summary unavailable. Event profiles and sampled properties read DuckLake on
-demand.
+summary unavailable. Projects with more than 20,000 distinct event names use the
+live read when a refresh exceeds that limit. Event profiles and sampled
+properties read DuckLake on demand.
 
 ## Request a profile
 
