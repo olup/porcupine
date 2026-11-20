@@ -51,6 +51,9 @@ func validateConfig(c *Config) error {
 	if c.QueueMaxBytes < 0 {
 		return errors.New("queue byte limit must be nonnegative")
 	}
+	if c.QueueProjectMaxEvents < 0 || c.QueueProjectMaxBytes < 0 {
+		return errors.New("project queue limits must be nonnegative")
+	}
 	if c.Shared == nil {
 		if c.DBPath == "" {
 			c.DBPath = "./data/porcupine.db"

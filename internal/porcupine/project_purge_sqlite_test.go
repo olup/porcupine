@@ -86,7 +86,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 		t.Fatal("partial purge after rollback")
 	}
 	runProjectPurge(t, s, remove, true)
-	for _, table := range []string{"projects", "events", "event_receipts", "delivery_quarantine", "identity_profiles", "identity_links", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
+	for _, table := range []string{"projects", "events", "event_receipts", "project_queue_usage", "delivery_quarantine", "identity_profiles", "identity_links", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
 		var n int
 		if err := s.db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("%s count = %d err %v", table, n, err)
@@ -94,6 +94,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 	}
 	for _, q := range []string{
 		"SELECT pending_count FROM queue_usage",
+		"SELECT pending_count FROM project_queue_usage WHERE project_id=?",
 		"SELECT count FROM webhook_queue_usage WHERE scope='instance'",
 		"SELECT count(*) FROM webhook_queue_usage WHERE scope='project:' || ?",
 		"SELECT count(*) FROM metadata WHERE key='last_delivery_success:' || ?",

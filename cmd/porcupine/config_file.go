@@ -36,6 +36,8 @@ type FileConfig struct {
 	Queue struct {
 		MaxEvents        *int   `json:"max_events,omitempty" env:"PORCUPINE_QUEUE_MAX_EVENTS"`
 		MaxBytes         *int64 `json:"max_bytes,omitempty" env:"PORCUPINE_QUEUE_MAX_BYTES"`
+		ProjectMaxEvents *int   `json:"project_max_events,omitempty" env:"PORCUPINE_QUEUE_PROJECT_MAX_EVENTS"`
+		ProjectMaxBytes  *int64 `json:"project_max_bytes,omitempty" env:"PORCUPINE_QUEUE_PROJECT_MAX_BYTES"`
 		ReceiptRetention string `json:"receipt_retention,omitempty" env:"PORCUPINE_RECEIPT_RETENTION"`
 	} `json:"queue"`
 	Query struct {

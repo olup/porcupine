@@ -46,6 +46,10 @@ type Config struct {
 	QueueMaxEvents int
 	QueueMaxBytes  int64
 	AcceptanceMode AcceptanceMode
+
+	// Standalone live admission limits. Zero leaves that dimension global-only.
+	QueueProjectMaxEvents int
+	QueueProjectMaxBytes  int64
 	// ReceiptRetention bounds local retry receipts when DuckLake is configured.
 	// Zero, the default, keeps every receipt.
 	ReceiptRetention    time.Duration
@@ -149,7 +153,11 @@ func newServiceRuntime(c Config, interactiveConfig query.InteractiveQueryConfig)
 	if err != nil {
 		slog.Warn("GeoIP enrichment disabled", "error", err)
 	}
-	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
+	s := &Service{eventRules: &eventRules{
+		queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes,
+		queueProjectMaxEvents: c.QueueProjectMaxEvents, queueProjectMaxBytes: c.QueueProjectMaxBytes,
+		clock: c.Clock, receiptRetention: c.ReceiptRetention,
+	}, allowedOrigins: origins, trustedProxies: proxies,
 		oauth: oauth, resources: resources, geoIPCountry: geoIPCountry}
 	var registry *observability.Registry
 	if c.MetricsEnabled {
