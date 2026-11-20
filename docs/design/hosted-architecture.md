@@ -146,6 +146,7 @@ The inventory maps versioned standalone journal tables to their hosted equivalen
 | `pipelines` | PostgreSQL | Exactly once | Definitions, creator, encrypted destination secrets. |
 | `posthog_import_person_state` | DuckLake | Exactly once | Mappings commit with profiles and snapshots. |
 | `project_deletions` | PostgreSQL | Exactly once | Durable project fence. |
+| `project_queue_usage` | Removed | Best effort | Hosted worker buffer tracks pending events and bytes per project. Standalone journal table added after v0.19.2. |
 | `projects` | PostgreSQL | Exactly once | Authoritative ownership. |
 | `queue_usage` | Removed | Best effort | Worker buffer accounting. |
 | `tenant_usage` | PostgreSQL | Exactly once | Durable allowance, no refund. |
