@@ -418,10 +418,25 @@ WHERE source_id=$2 AND project_id=$3 RETURNING pg_backend_pid()`, at.Add(time.Mi
 				t.Fatal("claim overwrote a schedule advanced after its snapshot", err)
 			}
 		}
+		// The client can return from cancellation before PostgreSQL releases
+		// the project lock. Wait for it before reading the schedule or retrying.
+		var project string
+		if err := db.QueryRowContext(ctx, `SELECT project_id FROM pc_native_projects
+WHERE source_id=$1 AND project_id=$2 FOR UPDATE`, r.source, first.ProjectID).Scan(&project); err != nil {
+			t.Fatal("waiting for the claim to release the project row", err)
+		}
+		wantNext := at.UnixMilli()
+		if !interrupted {
+			wantNext = at.Add(time.Minute).UnixMilli()
+		}
 		var attempt string
-		if err := db.QueryRowContext(ctx, `SELECT attempt_id FROM pc_native_compaction
-WHERE source_id=$1 AND project_id=$2 FOR UPDATE`, r.source, first.ProjectID).Scan(&attempt); err != nil || attempt != first.ID {
-			t.Fatal("unclaimed work acquired a different attempt", attempt, err)
+		var nextAttempt int64
+		if err := db.QueryRowContext(ctx, `SELECT attempt_id,next_attempt FROM pc_native_compaction
+WHERE source_id=$1 AND project_id=$2`, r.source, first.ProjectID).Scan(&attempt, &nextAttempt); err != nil {
+			t.Fatal(err)
+		}
+		if attempt != first.ID || nextAttempt != wantNext {
+			t.Fatalf("schedule changed to attempt %s due at %d, want %s due at %d", attempt, nextAttempt, first.ID, wantNext)
 		}
 	}
 	if retry, err := claim(ctx, at); err != nil || retry.ProjectID != first.ProjectID || retry.ID == first.ID {
