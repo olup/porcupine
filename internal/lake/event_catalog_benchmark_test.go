@@ -33,7 +33,7 @@ func TestDuckLakeS3SharedPostgresEventCatalogPerformance(t *testing.T) {
 	for _, count := range []int{1_000_000, 10_000_000} {
 		t.Run(fmt.Sprintf("events_%d", count), func(t *testing.T) {
 			key := ProjectWriteKey{config.SharedSourceID, fmt.Sprintf("event-catalog-bench-%d", count)}
-			files, parquetBytes := seedEventCatalogBenchmark(t, config, key, count)
+			files, parquetBytes := seedEventCatalogBenchmark(t, config, key, count, false)
 			t.Logf("catalog_bench_fixture events=%d names=80 parquet_files=%d parquet_bytes=%d threads=%d memory_mib=%d",
 				count, files, parquetBytes, config.Threads, config.MemoryLimitMB)
 
@@ -128,7 +128,7 @@ func withCatalogBenchmarkReader(t *testing.T, config DuckLakeConfig, key Project
 	run(reader, p)
 }
 
-func seedEventCatalogBenchmark(t *testing.T, config DuckLakeConfig, key ProjectWriteKey, count int) (int, int64) {
+func seedEventCatalogBenchmark(t *testing.T, config DuckLakeConfig, key ProjectWriteKey, count int, realisticIdentity bool) (int, int64) {
 	t.Helper()
 	ctx := t.Context()
 	store := openEventCatalogBenchmark(t, config)
@@ -147,10 +147,26 @@ func seedEventCatalogBenchmark(t *testing.T, config DuckLakeConfig, key ProjectW
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO lake.identity_profiles (identified_id,version,traits,is_identified)
+	distinctID := `'anon-' || (id%50000)`
+	secondsPerID := 1
+	if realisticIdentity {
+		exec(`INSERT INTO lake.identity_profiles (identified_id,version,traits,is_identified)
+ SELECT 'person-' || i,1,to_json(struct_pack(plan:=if(i%5=0,'pro','standard'),
+  locale:=if(i%3=0,'fr','en'),account:=md5('account-' || (i%10000)))),true FROM range(300000) d(i)`)
+		exec(`INSERT INTO lake.identity_links (anonymous_id,identified_id,version)
+ SELECT 'anon-' || i,'person-' || if(i<300000,i,hash(i)%300000),1 FROM range(1000000) d(i)`)
+		// Include anonymous devices, already identified users and visitors without a link.
+		distinctID = `CASE WHEN hash(id,73)%100<75 THEN 'anon-' || (hash(id,37)%` + strconv.Itoa(min(count/4, 1_000_000)) + `)
+  WHEN hash(id,73)%100<90 THEN 'person-' || (hash(id,37)%300000)
+  ELSE 'visitor-' || (hash(id,37)%100000) END`
+		// Both volumes span the same four months, with a comparable fraction in the last 30 days.
+		secondsPerID = 10_000_000 / count
+	} else {
+		exec(`INSERT INTO lake.identity_profiles (identified_id,version,traits,is_identified)
  SELECT 'person-' || i,1,'{"plan":"standard"}',true FROM range(25000) d(i)`)
-	exec(`INSERT INTO lake.identity_links (anonymous_id,identified_id,version)
+		exec(`INSERT INTO lake.identity_links (anonymous_id,identified_id,version)
  SELECT 'anon-' || i,'person-' || i,1 FROM range(25000) d(i)`)
+	}
 	// Each batch spans a disjoint arrival-ID range. A few old imports write to
 	// older occurrence-month partitions and keep event time distinct from ID order.
 	const batch = 250_000
@@ -159,7 +175,7 @@ func seedEventCatalogBenchmark(t *testing.T, config DuckLakeConfig, key ProjectW
  received_at,received_at_ms,revision,source_id,message_id,event_type,context,is_imported,identity_snapshot,original_snapshot)
 WITH seeded AS (
  SELECT id, hash(id)%100 AS popularity, hash(id,42)%78 AS rare,
-  TIMESTAMPTZ '2026-01-01T00:00:00Z' + id * INTERVAL '1 second' AS receipt,
+  TIMESTAMPTZ '2026-01-01T00:00:00Z' + id * ?::BIGINT * INTERVAL '1 second' AS receipt,
   id%997=0 AS imported
  FROM range(?::BIGINT,?::BIGINT) d(id)
 ), events_with_times AS (
@@ -167,13 +183,13 @@ WITH seeded AS (
  FROM seeded
 )
 SELECT id,?,CAST(uuid() AS VARCHAR),CASE WHEN popularity<45 THEN 'event_00' WHEN popularity<65 THEN 'event_01' ELSE printf('event_%02d',2+rare) END,
- 'anon-' || (id%50000),CAST(to_json(struct_pack(plan:=if(id%5=0,'pro','standard'),amount:=id%10000/100.0,
+ `+distinctID+`,CAST(to_json(struct_pack(plan:=if(id%5=0,'pro','standard'),amount:=id%10000/100.0,
  quantity:=1+id%10,new_customer:=id%13=0,session_id:=md5(id::VARCHAR),screen:=if(id%3=0,'checkout','product'))) AS VARCHAR),
  strftime(occurrence,'%Y-%m-%dT%H:%M:%SZ'),epoch_ms(occurrence),occurrence,
  strftime(receipt,'%Y-%m-%dT%H:%M:%SZ'),epoch_ms(receipt),0,'benchmark-source','','track',
  CAST(to_json(struct_pack(request_id:=md5('request-' || id),user_agent:=if(id%3=0,'mobile','desktop'),campaign:=id%1111)) AS VARCHAR),
  imported::UTINYINT,CASE WHEN id%1009=0 THEN '{}' ELSE '' END,''
-FROM events_with_times ORDER BY id`, start, min(start+batch, count+1), key.ProjectID)
+FROM events_with_times ORDER BY id`, secondsPerID, start, min(start+batch, count+1), key.ProjectID)
 	}
 	var files int
 	var parquetBytes int64

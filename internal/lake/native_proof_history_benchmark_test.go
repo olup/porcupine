@@ -126,7 +126,13 @@ func TestDuckLakeS3SharedPostgresNativeProofHistoryPerformance(t *testing.T) {
 func countedNativeProofS3(t *testing.T) (duckLakeS3Fixture, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
 	fixture := nativeS3Fixture(t)
-	target, err := url.Parse(fixture.storage.Endpoint)
+	requests, getBytes := countBenchmarkS3(t, &fixture.storage)
+	return fixture, requests, getBytes
+}
+
+func countBenchmarkS3(t *testing.T, storage *DuckLakeS3Config) (*atomic.Int64, *atomic.Int64) {
+	t.Helper()
+	target, err := url.Parse(storage.Endpoint)
 	if err != nil || target.Scheme != "http" {
 		t.Fatalf("expected the loopback HTTP Silo fixture: %v", err)
 	}
@@ -143,8 +149,8 @@ func countedNativeProofS3(t *testing.T) (duckLakeS3Fixture, *atomic.Int64, *atom
 		proxy.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
-	fixture.storage.Endpoint = server.URL
-	return fixture, &requests, &getBytes
+	storage.Endpoint = server.URL
+	return &requests, &getBytes
 }
 
 func seedNativeProofHistory(t *testing.T, p *ProjectLake, scope HostedProjectScope, fence ProjectWriteFence, tenant string, at time.Time, count, perFile int64) {
