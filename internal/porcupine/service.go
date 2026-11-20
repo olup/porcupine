@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -623,9 +624,12 @@ type eventInput struct {
 	DistinctID string          `json:"distinct_id"`
 	Properties map[string]any  `json:"properties"`
 	Timestamp  string          `json:"timestamp"`
+	SentAt     json.RawMessage `json:"sent_at"`
+	Offset     json.RawMessage `json:"offset"`
 	Set        json.RawMessage `json:"$set,omitempty"`
 	SetOnce    json.RawMessage `json:"$set_once,omitempty"`
 	ingestion  *ingestfmt.Metadata
+	sentAt     clientSentAt
 }
 type ingestInput struct {
 	eventInput
@@ -664,6 +668,15 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 	if decoder.Decode(new(json.RawMessage)) != io.EOF {
 		problem(w, 400, "unexpected data after event JSON")
 		return
+	}
+	query := r.URL.Query()
+	epoch := query.Get("_")
+	if _, err := strconv.ParseInt(epoch, 10, 64); err != nil {
+		epoch = ""
+	}
+	rootSentAt, querySentAt := sentAtString(input.SentAt), query.Get("sent_at")
+	for i := range min(len(batch), maxCaptureEvents) {
+		batch[i].sentAt = parseClientSentAt(sentAtString(batch[i].SentAt), rootSentAt, querySentAt, epoch)
 	}
 	s.captureNormalized(w, r, input.eventInput, batch)
 }
@@ -790,7 +803,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	}
 	receiptTime, releaseReceiptTime := s.pipelines.BeginReceipt(projectID)
 	defer releaseReceiptTime()
-	prepared, err := prepareLiveBatch(projectID, a.SourceID, batch, receiptTime)
+	prepared, err := prepareLiveBatch(projectID, a.SourceID, batch, receiptTime, s.metrics)
 	if err != nil {
 		ingestionProblem(w, "invalid_event", err.Error())
 		return

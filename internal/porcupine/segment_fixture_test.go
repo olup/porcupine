@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Captured from pinned @segment/analytics-node 3.1.0 over real local HTTP.
@@ -151,6 +152,7 @@ func TestSegmentRecordedAnalyticsNode310Batch(t *testing.T) {
 	if before.DistinctID != "anonymous-device" || !strings.Contains(string(before.Properties), `"token":"business-token"`) {
 		t.Fatal("SDK ordinary event changed")
 	}
+	assertSegmentOccurrence(t, before, 877*time.Millisecond)
 	traits, identified, _ := storedIdentityProfile(t, s, projectID, "account-7")
 	if !identified || traits["campaign"] != "docs" || traits["plan"] != "pro" {
 		t.Fatal("SDK traits did not link")

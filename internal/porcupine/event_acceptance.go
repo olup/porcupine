@@ -14,7 +14,6 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -42,7 +41,7 @@ type durableAcceptance struct {
 	enqueueWebhooks func(context.Context, *sql.Tx, []eventapi.Event) error
 }
 
-func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time) (acceptance.Batch, error) {
+func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time, metrics *operationalMetrics) (acceptance.Batch, error) {
 	received := receiptTime.Format(time.RFC3339Nano)
 	events := make([]acceptance.Input, 0, len(batch))
 	cookieless := false
@@ -67,14 +66,9 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		if e.ingestion == nil && len(e.UUID) > 128 {
 			return acceptance.Batch{}, errors.New("uuid exceeds 128 characters")
 		}
-		if e.Timestamp == "" {
-			e.Timestamp = received
-		} else {
-			t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
-			if err != nil {
-				return acceptance.Batch{}, errors.New("timestamp must be RFC3339")
-			}
-			e.Timestamp = t.UTC().Format(time.RFC3339Nano)
+		timestamp, adjustment, err := normalizeLiveTimestamp(e, receiptTime)
+		if err != nil {
+			return acceptance.Batch{}, errors.New("timestamp must be RFC3339")
 		}
 		if e.Properties == nil {
 			e.Properties = map[string]any{}
@@ -99,20 +93,16 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 		if err != nil {
 			return acceptance.Batch{}, errors.New("invalid properties")
 		}
-		prepared := eventapi.Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: e.Timestamp, ReceivedAt: received}
-		metadata := e.ingestion
-		if metadata == nil && source != "" {
-			enriched := lakeapi.EventWithMetadata(prepared)
-			metadata = &ingestfmt.Metadata{MessageID: e.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
-		}
-		if metadata != nil {
-			if err := prepareIngestionMetadata(&prepared, metadata, source); err != nil {
-				return acceptance.Batch{}, err
-			}
+		prepared := eventapi.Event{ProjectID: projectID, UUID: e.UUID, Event: e.Event, DistinctID: e.DistinctID, Properties: props, Timestamp: timestamp, ReceivedAt: received}
+		if err := prepareLiveMetadata(&prepared, e, source); err != nil {
+			return acceptance.Batch{}, err
 		}
 		input, err := acceptance.ValidateInput(prepared)
 		if err != nil {
 			return acceptance.Batch{}, err
+		}
+		if metrics != nil && adjustment != "" {
+			metrics.observeTimestampAdjustment(adjustment)
 		}
 		events = append(events, input)
 	}

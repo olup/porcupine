@@ -17,6 +17,9 @@ porcupine get-event-catalog --id "$PROJECT_ID"
 
 Pick an event from the catalog. Use `person_id` to count resolved people. For retention queries, see [identity and sessions](data-and-identity.md).
 
+`timestamp` is the event time after any [live clock correction](reference/compatibility.md#event-timestamps).
+`received_at` is the server receipt time.
+
 This example counts one event by UTC day. Save it as `query.json` and replace the event name.
 
 ```json

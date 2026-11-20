@@ -14,7 +14,7 @@ func TestHistoricalAdaptersKeepOriginalTimeAndSourceIdentity(t *testing.T) {
 	t.Parallel()
 	inputs := map[string]string{
 		"native":  `{"type":"track","message_id":"stable","name":"stock_updated","timestamp":"2020-01-01T23:15:00.123456789-02:00","properties":{"quantity":9007199254740993,"token":"business"}}`,
-		"segment": `{"type":"track","messageId":"stable","event":"stock_updated","userId":"actor","timestamp":"2020-01-01T23:15:00.123456789-02:00","properties":{"quantity":9007199254740993,"token":"business"}}`,
+		"segment": `{"type":"track","messageId":"stable","event":"stock_updated","userId":"actor","timestamp":"2020-01-01T23:15:00.123456789-02:00","originalTimestamp":"2020-01-01T22:00:00Z","sentAt":"2020-01-02T02:00:00Z","properties":{"quantity":9007199254740993,"token":"business"}}`,
 		"posthog": `{"uuid":"stable","event":"stock_updated","distinct_id":"actor","timestamp":"2020-01-01T23:15:00.123456789-02:00","properties":{"quantity":9007199254740993,"token":"credential"}}`,
 	}
 	for format, raw := range inputs {

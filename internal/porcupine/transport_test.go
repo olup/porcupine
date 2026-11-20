@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func transportRequest(t *testing.T, s *Service, method, path string, body []byte, headers map[string]string, want int) *httptest.ResponseRecorder {
@@ -391,6 +392,19 @@ func TestRecordedSDKFixtures(t *testing.T) {
 			if err := json.Unmarshal(fixture.Payload, &original); err != nil {
 				t.Fatal(err)
 			}
+			parseTime := func(value any) time.Time {
+				t.Helper()
+				text, ok := value.(string)
+				if !ok {
+					t.Fatalf("expected a timestamp string, got %v", value)
+				}
+				stamp, err := time.Parse(time.RFC3339Nano, text)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return stamp
+			}
+			sentAt := parseTime(original["sent_at"])
 			expectedBatch := original["batch"].([]any)
 			if len(events) != len(expectedBatch) {
 				t.Fatalf("SDK fixture retry stored %d events, want %d", len(events), len(expectedBatch))
@@ -406,8 +420,16 @@ func TestRecordedSDKFixtures(t *testing.T) {
 				if event == nil {
 					t.Fatal("SDK event UUID changed")
 				}
-				if event["project_id"] != projectID || event["timestamp"] != expected["timestamp"] {
-					t.Fatal("SDK scope/timestamp changed")
+				if event["project_id"] != projectID {
+					t.Fatal("SDK project changed")
+				}
+				wantTimestamp := parseTime(event["received_at"]).Add(parseTime(expected["timestamp"]).Sub(sentAt))
+				if got := parseTime(event["timestamp"]); !got.Equal(wantTimestamp) {
+					t.Fatalf("corrected timestamp = %s, want %s", got, wantTimestamp)
+				}
+				context, ok := event["context"].(map[string]any)
+				if !ok || context["client_timestamp"] != expected["timestamp"] || context["sent_at"] != original["sent_at"] {
+					t.Fatalf("SDK timestamps missing from context: %+v", event["context"])
 				}
 				expectedProps := expected["properties"].(map[string]any)
 				delete(expectedProps, "token")

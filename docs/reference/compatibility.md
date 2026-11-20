@@ -52,9 +52,33 @@ fields. Deterministic Go tests cover next-day rotation, restart stability,
 midnight transaction ordering, clock rollback, trusted proxies and atomic failure.
 See the [identity design](../data-and-identity.md#cookieless-by-default).
 
+## Event timestamps
+
+PostHog live capture uses the first valid `sent_at` from the event, the batch
+envelope, the `sent_at` query parameter, or the `_` query parameter, in that order.
+The browser and Node SDKs send an RFC 3339 string in the batch envelope. Query
+parameters can carry Unix epoch milliseconds. Use epoch milliseconds for `_`.
+
+When both `timestamp` and `sent_at` are valid, Porcupine adds their difference
+(`timestamp - sent_at`) to the server receipt time. Otherwise, a nonnegative
+integer `offset` subtracts that many milliseconds from receipt time. If neither
+hint applies, Porcupine uses the event timestamp when present or receipt time
+when absent. Set `properties.$ignore_sent_at` to `true` to use the client timestamp
+directly. If the result is more than 23 hours ahead of receipt time, Porcupine
+uses receipt time.
+
+For queryable events, `context.client_timestamp` holds the original client
+timestamp and `context.sent_at` holds the selected send time as supplied. If all
+send times are unreadable, Porcupine keeps the first supplied text value up to
+128 bytes. The same limit applies to the original client timestamp.
+Cookieless events retain both fields. Read the client timestamp with
+`json_extract_string(context, '$.client_timestamp')`. Retries with the same UUID
+keep the first accepted timestamp and context. Historical imports retain their
+original event timestamps.
+
 ## Test coverage and limitations
 
-The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, and page-leave beacon delivery in Chromium. Browser retry behavior, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
+The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, page-leave beacon delivery, clock correction, and offline queuing in Chromium. Browser retries after HTTP errors, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
 
 With `capture_pageleave` and `request_batching` enabled, `posthog-js` sends
 `$pageleave` and pending events through `navigator.sendBeacon` on page exit.

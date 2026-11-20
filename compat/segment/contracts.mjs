@@ -63,6 +63,8 @@ try {
   assert.equal(Buffer.from(wire.headers.authorization.slice(6), 'base64').toString(), key.token + ':');
   assert.equal(wire.payload.writeKey, key.token);
   assert.deepEqual(wire.payload.batch.map(event => event.type), ['identify', 'track', 'identify', 'page', 'track']);
+  const sentAt = Date.parse(wire.payload.sentAt);
+  assert(Number.isFinite(sentAt));
   const response = await fetch(api + wire.path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: wire.headers.authorization }, body: JSON.stringify(wire.payload) });
   assert.equal(response.status, 200);
   const replay = await response.json();
@@ -70,7 +72,7 @@ try {
   phase = 'durable canonical events and identity';
   let events;
   for (let attempt = 0; attempt < 100; attempt++) {
-    const result = await management('/api/v1/projects/' + project.project.id + '/query', { sql: 'SELECT id,uuid,event,distinct_id,properties,timestamp,source_id,message_id,event_type,context,person_properties FROM events ORDER BY id' });
+    const result = await management('/api/v1/projects/' + project.project.id + '/query', { sql: 'SELECT id,uuid,event,distinct_id,properties,timestamp,received_at,source_id,message_id,event_type,context,person_properties FROM events ORDER BY id' });
     events = result.result.data.map(row => ({ ...row, properties: JSON.parse(row.properties), context: JSON.parse(row.context), person_properties: JSON.parse(row.person_properties) }));
     if (events.length === 3 && result.delivery.pending === 0) break;
     if (attempt === 99) throw new Error('analytical delivery deadline');
@@ -86,7 +88,14 @@ try {
   assert.equal(page.event, '$pageview'); assert.equal(page.properties.name, 'business-name');
   assert.equal(page.context.page.name, 'Pricing'); assert.equal(page.context.page.category, 'Docs');
   assert.equal(page.context.page.url, 'https://example.test/pricing');
-  for (const event of events) { assert.equal(event.source_id, 'segment-sdk'); assert.equal(event.timestamp, timestamp.toISOString()); assert.equal(JSON.stringify(event).includes('synthetic-vendor-secret'), false); assert.equal(JSON.stringify(event).includes(key.token), false); }
+  for (const event of events) {
+    assert.equal(event.source_id, 'segment-sdk');
+    assert.equal(Date.parse(event.timestamp) - Date.parse(event.received_at), timestamp.getTime() - sentAt);
+    assert.equal(event.context.client_timestamp, timestamp.toISOString());
+    assert.equal(event.context.sent_at, wire.payload.sentAt);
+    assert.equal(JSON.stringify(event).includes('synthetic-vendor-secret'), false);
+    assert.equal(JSON.stringify(event).includes(key.token), false);
+  }
   const snapshot = probe(project.project.id);
   const person = snapshot.identity_profiles.find(row => row.identified_id === 'account-7');
   assert.deepEqual(person.traits, { campaign: 'docs', plan: 'pro' });

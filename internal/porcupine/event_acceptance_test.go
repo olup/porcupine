@@ -41,7 +41,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 			prepared, err := prepareLiveBatch(projectID, "", eventBatch{
 				{UUID: "identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "browser", "$set": map[string]any{"plan": "new"}}},
 				{UUID: "page", Event: "$pageview", DistinctID: ingestfmt.CookielessSentinel, Properties: map[string]any{"$current_url": "https://example.test"}},
-			}, now)
+			}, now, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,7 +197,7 @@ func sharedIdentityBatch(t *testing.T, project, prefix string) acceptance.Batch 
 	batch, err := prepareLiveBatch(project, "", eventBatch{
 		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},
 		{UUID: prefix + "-page", Event: "visited", DistinctID: "visitor", Properties: map[string]any{}},
-	}, time.Now())
+	}, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

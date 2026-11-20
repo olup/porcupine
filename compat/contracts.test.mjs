@@ -57,6 +57,15 @@ async function event(name, count = 1, projectID = project.project.id) {
   }
   throw new Error(`persisted event missing: ${name}`);
 }
+function assertTimestamp(saved, payload, sent) {
+  assert.equal(typeof payload.sent_at, 'string', 'SDK sends sent_at at the batch root');
+  assert.equal(sent.sent_at, undefined);
+  assert.equal(saved.context.client_timestamp, sent.timestamp);
+  assert.equal(saved.context.sent_at, payload.sent_at);
+  const clientDelta = Date.parse(sent.timestamp) - Date.parse(payload.sent_at);
+  const storedDelta = Date.parse(saved.timestamp) - Date.parse(saved.received_at);
+  assert.equal(storedDelta, clientDelta, 'stored timestamp keeps the gap between capture and send');
+}
 const identities = id => {
   const target = [project, otherProject, ...identifiedProjects].find(item => item?.project.id === id);
   const controls = new Map();
@@ -81,6 +90,14 @@ async function sdkSend(tab, name, operation, argument) {
   return { value, payload, sent: payload.batch.find(item => item.event === name) };
 }
 const sdkCapture = (tab, name) => sdkSend(tab, name, name => ({ distinct: posthog.get_distinct_id(), uuid: posthog.capture(name, { synthetic: true }, { send_instantly: true }).uuid }), name);
+async function routeBrowser(route) {
+  const request = route.request();
+  const url = new URL(request.url());
+  if (![api, origin].includes(url.origin)) { blocked.push('browser external request'); await route.abort(); return; }
+  if (url.origin === api && !['/i/v0/e/', '/e/', '/capture/'].includes(url.pathname)) { unexpected.push(`browser ${url.pathname}`); await route.abort(); return; }
+  if (url.origin === api && request.method() === 'POST') browserWires.push({ path: url.pathname, headers: request.headers(), body: request.postDataBuffer(), query: Object.fromEntries(url.searchParams) });
+  await route.continue();
+}
 async function identifiedBrowser(run, batched = false) {
   const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Identified SDK contract' } });
   identifiedProjects.push(scoped);
@@ -108,8 +125,8 @@ async function identifiedBrowser(run, batched = false) {
 }
 function contract(id, run) {
   assert.ok(matrix.cases.some(item => item.id === id), `test ${id} is declared in matrix`);
-  test(id, { timeout: 20000 }, async () => {
-    try { await run(); report.results.push({ id, status: 'passed' }); }
+  test(id, { timeout: 20000 }, async t => {
+    try { await run(t); report.results.push({ id, status: 'passed' }); }
     catch (error) { report.results.push({ id, status: 'failed' }); throw error; }
   });
 }
@@ -176,13 +193,7 @@ before(async () => {
   browser = await chromium.launch({ headless: true });
   report.browser = { name: "chromium", version: browser.version() };
   context = await browser.newContext({ serviceWorkers: 'block' });
-  await context.route('**/*', async route => {
-    const url = new URL(route.request().url());
-    if (![api, origin].includes(url.origin)) { blocked.push('browser external request'); await route.abort(); return; }
-    if (url.origin === api && !['/i/v0/e/', '/e/', '/capture/'].includes(url.pathname)) { unexpected.push(`browser ${url.pathname}`); await route.abort(); return; }
-    if (url.origin === api && route.request().method() === 'POST') browserWires.push({ path: url.pathname, headers: route.request().headers(), body: route.request().postDataBuffer(), query: url.searchParams.has('compression') ? { compression: url.searchParams.get('compression') } : {} });
-    await route.continue();
-  });
+  await context.route('**/*', routeBrowser);
   page = await context.newPage();
   page.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
   await page.goto(origin);
@@ -210,13 +221,39 @@ contract('node.capture-flush', async () => {
     await client.flush();
     const [saved] = await event('node custom');
     assert.equal(saved.distinct_id, 'node-user-é');
-    assert.equal(saved.timestamp, '2025-02-03T04:05:06.789Z');
+    const payload = decodeWire(wires[0]);
+    assert.equal(payload.batch[0].timestamp, '2025-02-03T04:05:06.789Z');
+    assertTimestamp(saved, payload, payload.batch[0]);
     assert.deepEqual(saved.properties.nested, { unicode: '東京 🦔', list: [1, true, null] });
     assert.equal(saved.properties.number, 42);
     assert.equal(saved.properties.$lib, 'posthog-node');
     assert.equal(saved.properties.$lib_version, versions['posthog-node']);
     assert.ok(saved.uuid);
   } finally { await client.shutdown(); }
+});
+contract('node.clock-skew', async t => {
+  const name = 'node clock skew';
+  const start = wires.length;
+  const clientTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const client = new PostHog(project.ingest_token, { ...nodeProfile, host: proxyURL, fetch: safeFetch });
+  t.mock.timers.enable({ apis: ['Date'], now: clientTime });
+  try {
+    client.capture({ distinctId: 'clock-user', event: name });
+    await client.flush();
+  } finally {
+    t.mock.timers.reset();
+    await client.shutdown();
+  }
+  const wire = wires[start];
+  assert.equal(wire.query.sent_at, undefined);
+  assert.equal(wire.query._, undefined);
+  const payload = decodeWire(wire);
+  const sent = payload.batch.find(item => item.event === name);
+  const [saved] = await event(name);
+  assert.equal(sent.timestamp, clientTime.toISOString());
+  assert.equal(payload.sent_at, clientTime.toISOString());
+  assertTimestamp(saved, payload, sent);
+  assert.ok(Math.abs(Date.parse(saved.timestamp) - Date.parse(saved.received_at)) < 3000);
 });
 contract('node.shutdown-batch', async () => {
   const client = new PostHog(project.ingest_token, { ...nodeProfile, host: proxyURL, fetch: safeFetch });
@@ -262,7 +299,11 @@ contract('browser.capture-cors', async () => {
   assert.equal(new URL(api).origin === origin, false, 'capture uses a different browser origin');
   assert.equal(saved.uuid, result.uuid);
   assert.equal(saved.distinct_id, result.distinct);
-  assert.equal(saved.timestamp, '2025-03-04T05:06:07.123Z');
+  const request = response.request();
+  const payload = decodeWire({ headers: request.headers(), body: request.postDataBuffer() });
+  const sent = payload.batch.find(item => item.uuid === result.uuid);
+  assert.equal(sent.timestamp, '2025-03-04T05:06:07.123Z');
+  assertTimestamp(saved, payload, sent);
   assert.equal(saved.properties.$session_id, result.session);
   assert.deepEqual(saved.properties.nested, { unicode: 'café 東京 🦔', list: [false, 3, null] });
   assert.equal(saved.properties.number, 7);
@@ -357,6 +398,64 @@ contract('browser.persistence-reset', async () => {
   assert.notEqual(reset.distinct, first.distinct); assert.notEqual(reset.session, first.session);
   const [saved] = await event('browser after reset');
   assert.equal(saved.distinct_id, reset.distinct); assert.equal(saved.properties.$session_id, reset.session);
+});
+async function initClockBrowser(tab) {
+  await tab.evaluate(({ host, token, profile }) => window.posthog.init(token, { ...profile, api_host: host }), { host: api, token: project.ingest_token, profile: cookielessProfile });
+}
+contract('browser.clock-skew', async () => {
+  for (const hours of [2, -3]) {
+    const tab = await context.newPage();
+    try {
+      await tab.goto(origin);
+      const clientTime = new Date(Date.now() + hours * 60 * 60 * 1000);
+      await tab.clock.setFixedTime(clientTime);
+      await initClockBrowser(tab);
+      const name = `browser clock skew ${hours}`;
+      const start = browserWires.length;
+      const { sent, payload } = await sdkCapture(tab, name);
+      assert.equal(browserWires[start].query.sent_at, undefined);
+      assert.equal(browserWires[start].query._, undefined);
+      const [saved] = await event(name);
+      assert.equal(sent.timestamp, clientTime.toISOString());
+      assert.equal(payload.sent_at, clientTime.toISOString());
+      assert.match(saved.distinct_id, /^cookieless_/);
+      assertTimestamp(saved, payload, sent);
+      assert.ok(Math.abs(Date.parse(saved.timestamp) - Date.parse(saved.received_at)) < 3000);
+    } finally { await tab.close(); }
+  }
+});
+contract('browser.offline-queue', async () => {
+  const name = 'browser offline queue';
+  const interval = 10 * 60 * 1000;
+  const isolated = await browser.newContext({ serviceWorkers: 'block' });
+  await isolated.route('**/*', routeBrowser);
+  const tab = await isolated.newPage();
+  try {
+    await tab.clock.install({ time: new Date() });
+    await tab.goto(origin);
+    await initClockBrowser(tab);
+    await isolated.setOffline(true);
+    assert.equal(await tab.evaluate(() => navigator.onLine), false);
+    const isCapture = request => new URL(request.url()).origin === api && request.method() === 'POST';
+    const failed = tab.waitForEvent('requestfailed', { predicate: isCapture });
+    const captured = await tab.evaluate(name => posthog.capture(name).timestamp.toISOString(), name);
+    assert.equal((await failed).failure().errorText, 'net::ERR_INTERNET_DISCONNECTED');
+    await tab.clock.fastForward(interval);
+    const delivered = tab.waitForResponse(response => isCapture(response.request()));
+    await isolated.setOffline(false);
+    const response = await delivered;
+    assert.equal(response.status(), 200);
+    assert.equal(new URL(response.url()).searchParams.get('retry_count'), '1');
+    const request = response.request();
+    const payload = decodeWire({ headers: request.headers(), body: request.postDataBuffer() });
+    const sent = payload.batch.find(item => item.event === name);
+    const [saved] = await event(name);
+    assert.equal(sent.timestamp, captured);
+    assert.ok(Math.abs(Date.parse(payload.sent_at) - Date.parse(captured) - interval) < 3000);
+    assertTimestamp(saved, payload, sent);
+    // Only the browser clock advances. Preserve the queue age on the server's clock.
+    assert.ok(Math.abs(Date.parse(saved.received_at) - Date.parse(saved.timestamp) - interval) < 3000);
+  } finally { await isolated.close(); }
 });
 contract('browser.cookieless-no-storage', async () => {
   const userAgent = 'Porcupine compatibility browser cookieless contract';

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	eventapi "github.com/olup/porcupine/internal/event"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
@@ -24,7 +25,7 @@ func segmentEvent(t *testing.T, s *Service, project, messageID string) eventapi.
 	t.Helper()
 	var event eventapi.Event
 	var metadata, properties string
-	if err := s.db.QueryRow(`SELECT id,uuid,event,distinct_id,properties,timestamp,ingestion_metadata FROM events WHERE project_id=? AND json_extract(ingestion_metadata,'$.message_id')=?`, project, messageID).Scan(&event.ID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &metadata); err != nil {
+	if err := s.db.QueryRow(`SELECT id,uuid,event,distinct_id,properties,timestamp,received_at,ingestion_metadata FROM events WHERE project_id=? AND json_extract(ingestion_metadata,'$.message_id')=?`, project, messageID).Scan(&event.ID, &event.UUID, &event.Event, &event.DistinctID, &properties, &event.Timestamp, &event.ReceivedAt, &metadata); err != nil {
 		t.Fatal(err)
 	}
 	event.Properties = json.RawMessage(properties)
@@ -33,6 +34,39 @@ func segmentEvent(t *testing.T, s *Service, project, messageID string) eventapi.
 	}
 	return event
 }
+
+func assertSegmentOccurrence(t *testing.T, event eventapi.Event, delay time.Duration) {
+	t.Helper()
+	received, err := time.Parse(time.RFC3339Nano, event.ReceivedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := received.Add(-delay).Format(time.RFC3339Nano); event.Timestamp != want {
+		t.Fatalf("%s occurrence was %s, want %s", event.MessageID, event.Timestamp, want)
+	}
+}
+
+func TestSegmentClockHintsAndForwardedTimestamp(t *testing.T) {
+	t.Parallel()
+	s := service(t, 20)
+	projectID, key := project(t, s)
+	transportRequest(t, s, "POST", "/v1/batch", []byte(`{
+		"sentAt":"2025-03-04T07:06:08Z",
+		"batch":[
+			{"type":"track","messageId":"row-send","userId":"user","event":"queued","timestamp":"2025-03-04T00:00:00Z","originalTimestamp":"2025-03-04T04:56:08Z","sentAt":"2025-03-04T05:06:08Z"},
+			{"type":"track","messageId":"batch-send","userId":"user","event":"queued","timestamp":"2025-03-04T07:05:08Z","sentAt":"invalid","receivedAt":"invalid"},
+			{"type":"track","messageId":"forwarded","userId":"user","event":"queued","timestamp":"2025-03-04T05:05:08Z","originalTimestamp":"2025-03-04T07:05:08Z","receivedAt":"2025-03-04T05:06:08Z"}
+		]
+	}`), segmentHeaders(key), 200)
+	row := segmentEvent(t, s, projectID, "row-send")
+	assertSegmentOccurrence(t, row, 10*time.Minute)
+	assertSegmentOccurrence(t, segmentEvent(t, s, projectID, "batch-send"), time.Minute)
+	forwarded := segmentEvent(t, s, projectID, "forwarded")
+	if forwarded.Timestamp != "2025-03-04T05:05:08Z" || forwarded.ReceivedAt != row.ReceivedAt {
+		t.Fatalf("forwarded event changed occurrence or selected its own receipt: %+v", forwarded)
+	}
+}
+
 func TestSegmentTrackAndPagePreserveBusinessValues(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)

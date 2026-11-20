@@ -9,14 +9,15 @@ import (
 	"strings"
 
 	eventapi "github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 type storedIngestionMetadata struct {
-	SourceID  string          `json:"source_id"`
-	MessageID string          `json:"message_id"`
-	EventType string          `json:"event_type"`
+	SourceID  string          `json:"source_id,omitempty"`
+	MessageID string          `json:"message_id,omitempty"`
+	EventType string          `json:"event_type,omitempty"`
 	Context   json.RawMessage `json:"context"`
 }
 
@@ -67,8 +68,46 @@ func prepareIngestionMetadata(event *eventapi.Event, input *ingestfmt.Metadata, 
 	return nil
 }
 
+func prepareLiveMetadata(event *eventapi.Event, input eventInput, source string) error {
+	metadata := input.ingestion
+	keepClock := !identity.IsControl(event.Event) &&
+		(metadata == nil || input.sentAt.valid) && (input.Timestamp != "" || input.sentAt.raw != "")
+	if metadata == nil {
+		if source == "" && !keepClock {
+			return nil
+		}
+		enriched := lakeapi.EventWithMetadata(*event)
+		metadata = &ingestfmt.Metadata{MessageID: input.UUID, EventType: enriched.EventType, Context: enriched.Context, Protocol: "posthog"}
+	}
+	if keepClock {
+		withClock := *metadata
+		withClock.Context = clockContext(metadata.Context, input.Timestamp, input.sentAt.raw)
+		metadata = &withClock
+	}
+	if input.ingestion == nil && source == "" {
+		event.Context = metadata.Context
+		return nil
+	}
+	return prepareIngestionMetadata(event, metadata, source)
+}
+
+func clockContext(raw json.RawMessage, timestamp, sentAt string) json.RawMessage {
+	object := map[string]json.RawMessage{}
+	if len(raw) != 0 && (json.Unmarshal(raw, &object) != nil || object == nil) {
+		return raw
+	}
+	if timestamp != "" && len(timestamp) <= 128 {
+		object["client_timestamp"], _ = json.Marshal(timestamp)
+	}
+	if sentAt != "" {
+		object["sent_at"], _ = json.Marshal(sentAt)
+	}
+	encoded, _ := json.Marshal(object)
+	return encoded
+}
+
 func encodeIngestionMetadata(event eventapi.Event) string {
-	if event.SourceID == "" {
+	if event.SourceID == "" && len(event.Context) == 0 {
 		return ""
 	}
 	raw, _ := json.Marshal(storedIngestionMetadata{event.SourceID, event.MessageID, event.EventType, event.Context})

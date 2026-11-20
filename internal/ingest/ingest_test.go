@@ -17,7 +17,7 @@ func TestLiveAdaptersNormalizeSameRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := TranslateSegment(object, "/v1/track", "")
+	segment, err := TranslateSegment(object, "/v1/track", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}

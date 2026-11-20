@@ -16,6 +16,13 @@
       "configuration": "nodeProfile"
     },
     {
+      "id": "node.clock-skew",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real SDK batch sent_at corrects a two-hour clock skew and preserves the original timestamp in context",
+      "configuration": "nodeProfile"
+    },
+    {
       "id": "node.shutdown-batch",
       "required": true,
       "status": "implemented",
@@ -56,6 +63,20 @@
       "status": "implemented",
       "scope": "SDK local IDs persist after reload, reset changes IDs, next event contains new local IDs; no identity projection claim",
       "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
+    },
+    {
+      "id": "browser.clock-skew",
+      "required": true,
+      "status": "implemented",
+      "scope": "Chromium clocks two hours ahead and three hours behind are corrected, with the original timestamps still queryable in cookieless mode",
+      "configuration": "cookielessProfile"
+    },
+    {
+      "id": "browser.offline-queue",
+      "required": true,
+      "status": "implemented",
+      "scope": "Real SDK retries after a simulated ten-minute Chromium network outage and preserves the original time of capture",
+      "configuration": "cookielessProfile"
     },
     {
       "id": "isolation-and-network",
@@ -118,7 +139,7 @@
   ],
   "gaps": [
     "Additional SDK versions",
-    "Browser SDK retry behavior",
+    "Browser SDK retries for HTTP failures",
     "Independent new-tab session behavior",
     "Browser XHR transport",
     "Firefox and WebKit beacon coverage"
@@ -126,7 +147,7 @@
   "go_contracts": [
     {
       "test": "TestRecordedSDKFixtures",
-      "scope": "Sanitized real Node/browser JSON, gzip and form-base64 payload replay"
+      "scope": "Sanitized real Node and browser JSON, gzip and Base64 form replays verify corrected and original timestamps"
     },
     {
       "test": "TestTransportFixturesAndStableRetries",

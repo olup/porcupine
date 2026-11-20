@@ -58,7 +58,7 @@ func (s *Service) captureSegment(w http.ResponseWriter, r *http.Request) {
 		r.Header = r.Header.Clone()
 		r.Header.Del("Authorization")
 	}
-	messages, err := ingestfmt.TranslateSegment(envelope, r.URL.Path, writeKey)
+	messages, err := ingestfmt.TranslateSegment(envelope, r.URL.Path, writeKey, true)
 	if err != nil {
 		ingestionProblem(w, "invalid_event", err.Error())
 		return

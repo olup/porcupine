@@ -118,10 +118,10 @@ func TestDuckLakeS3SharedPostgresHostedQuarantineInvalidProjection(t *testing.T)
 	var good []string
 	for i := range 10 {
 		if i == 5 {
-			// Normalizing the offset yields year 10000, which the native
-			// projection cannot parse back from RFC3339.
-			payload := fmt.Sprintf(`{"api_key":%q,"uuid":"bad","event":"page","distinct_id":"visitor","timestamp":"9999-12-31T23:59:59-01:00"}`, ingest)
-			rejection := sharedJourneyHTTP(t, a.host.URL, "POST", "/capture/", "", []byte(payload), nil, 400)
+			// Without a clock hint, normalizing the native event's offset
+			// yields year 10000, which the projection cannot parse as RFC3339.
+			payload := `{"type":"track","message_id":"bad","name":"page","actor_id":"visitor","timestamp":"9999-12-31T23:59:59-01:00"}`
+			rejection := sharedJourneyNative(t, a.host.URL, ingest, payload, 400)
 			if rejection["code"] != "invalid_live_projection" {
 				t.Fatal("unexpected projection error", rejection)
 			}
