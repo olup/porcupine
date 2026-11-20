@@ -179,6 +179,9 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 	if err := tx.Commit(); err != nil {
 		return apierr.New(503, "import checkpoint unavailable")
 	}
+	if work.file.Counts.Accepted > original.Counts.Accepted && m.wakeDelivery != nil {
+		m.wakeDelivery()
+	}
 	return nil
 }
 

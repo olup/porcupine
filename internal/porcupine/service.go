@@ -101,6 +101,9 @@ type Service struct {
 	lakeMaintenanceDone   chan struct{}
 	deliveryCancel        context.CancelFunc
 	deliveryDone          chan struct{}
+	deliveryWake          chan struct{}
+	deliveryResultMu      sync.Mutex
+	deliveryFailed        *bool
 	deliveryMaxEvents     int
 	deliveryMaxBytes      int
 	queries               *query.Runtime
@@ -262,9 +265,9 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	s.db, s.control, s.backups = db, control, backups
 	s.queries.Bind(control, "", 0)
 	s.eventRules.knownEvents = s.knownEventsForAcceptance
-	durable := &durableAcceptance{db: db, rules: s.eventRules}
+	durable := &durableAcceptance{db: db, rules: s.eventRules, wakeDelivery: s.wakeDelivery}
 	s.acceptance = durable
-	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil}
+	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil, wakeDelivery: s.wakeDelivery}
 	fail := func(err error) (*Service, error) {
 		if s.lake != nil {
 			s.lake.Close()

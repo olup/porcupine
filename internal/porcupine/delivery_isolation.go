@@ -84,6 +84,9 @@ func (s *Service) retryQuarantinedDelivery(ctx context.Context, project string, 
 		return false, errors.New("cannot retry quarantined event")
 	}
 	n, err := result.RowsAffected()
+	if err == nil && n > 0 {
+		s.wakeDelivery()
+	}
 	return n > 0, err
 }
 
