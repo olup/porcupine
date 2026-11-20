@@ -178,37 +178,56 @@ func (r *postgresNativeRegistry) claimCleanup(ctx context.Context, at, next time
 }
 
 // table is one of the registry-owned schedule tables, never a request input.
+func nativeDueProjects(table string) string {
+	return `FROM pc_native_projects c
+LEFT JOIN ` + table + ` p ON p.source_id=c.source_id AND p.project_id=c.project_id
+WHERE c.source_id=$1 AND c.ready=1 AND c.deleted=0 AND (p.next_attempt IS NULL OR p.next_attempt<=$2)`
+}
+
+func (r *postgresNativeRegistry) hostedMaintenanceDue(ctx context.Context, table string, at time.Time) (bool, error) {
+	ctx, cancel := r.metadataContext(ctx)
+	defer cancel()
+	var fingerprint string
+	var due bool
+	err := r.db.QueryRowContext(ctx, `SELECT fingerprint,EXISTS(SELECT 1 `+nativeDueProjects(table)+`)
+FROM pc_native_sources WHERE source_id=$1`, r.source, at.UnixMilli()).Scan(&fingerprint, &due)
+	if err != nil {
+		return false, err
+	}
+	if r.source == "" || fingerprint != r.fingerprint {
+		return false, errors.New("shared analytical storage configuration changed")
+	}
+	return due, nil
+}
+
 func (r *postgresNativeRegistry) claimDue(ctx context.Context, table string, at, next time.Time) (nativeCleanupAttempt, error) {
 	ctx, cancel := r.metadataContext(ctx)
 	defer cancel()
 	a := nativeCleanupAttempt{ID: event.NewID()}
+	// A cancelled client query can return while PostgreSQL is still waiting
+	// on a schedule row. Commit only after the claim returns within the deadline.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return a, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT c.project_id FROM pc_native_projects c
-LEFT JOIN `+table+` p ON p.source_id=c.source_id AND p.project_id=c.project_id
-WHERE c.source_id=$1 AND c.ready=1 AND c.deleted=0 AND (p.next_attempt IS NULL OR p.next_attempt<=$2)
-ORDER BY coalesce(p.last_attempt,0),c.project_id FOR UPDATE OF c SKIP LOCKED LIMIT 1`, r.source, at.UnixMilli()).Scan(&a.ProjectID)
-	if err != nil {
-		return a, err
-	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(source_id,project_id,attempt_id,next_attempt,last_attempt,state)
-VALUES($1,$2,$3,$4,$5,'running') ON CONFLICT(source_id,project_id) DO UPDATE
+	// The project row may become lockable after a concurrent claim commits.
+	// Recheck the actual conflict row even if the candidate snapshot was stale.
+	err = tx.QueryRowContext(ctx, `WITH candidate AS (
+SELECT c.source_id,c.project_id `+nativeDueProjects(table)+`
+ORDER BY coalesce(p.last_attempt,0),c.project_id FOR UPDATE OF c SKIP LOCKED LIMIT 1
+)
+INSERT INTO `+table+`(source_id,project_id,attempt_id,next_attempt,last_attempt,state)
+SELECT source_id,project_id,$3,$4,$2,'running' FROM candidate
+ON CONFLICT(source_id,project_id) DO UPDATE
 SET attempt_id=excluded.attempt_id,next_attempt=excluded.next_attempt,last_attempt=excluded.last_attempt,state='running'
-WHERE `+table+`.next_attempt<=$5`, r.source, a.ProjectID, a.ID, next.UnixMilli(), at.UnixMilli())
+WHERE `+table+`.next_attempt<=$2
+RETURNING project_id`, r.source, at.UnixMilli(), a.ID, next.UnixMilli()).Scan(&a.ProjectID)
 	if err != nil {
 		return a, err
 	}
-	// A statement snapshot may precede another claim's commit even when its
-	// project row becomes lockable later. Recheck the actual conflict row.
-	count, err := result.RowsAffected()
-	if err != nil {
-		return a, err
-	}
-	if count != 1 {
-		return a, sql.ErrNoRows
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return a, context.DeadlineExceeded
 	}
 	return a, tx.Commit()
 }
