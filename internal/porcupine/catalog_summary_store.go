@@ -273,7 +273,7 @@ func catalogTextFits(text string, maxBytes int) bool {
 	return len(text) <= maxBytes && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
 }
 
-func (s catalogSummaryStore) fail(ctx context.Context, claim catalogRefreshClaim, now time.Time) error {
+func (s catalogSummaryStore) fail(ctx context.Context, claim catalogRefreshClaim, now time.Time, discard bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -283,8 +283,16 @@ func (s catalogSummaryStore) fail(ctx context.Context, claim catalogRefreshClaim
 		return err
 	}
 	delay := min(time.Minute<<min(claim.failures, 6), catalogRefreshInterval)
-	result, err := tx.ExecContext(ctx, `UPDATE catalog_refresh_state SET lease_token='',eligible_at_ms=$6,failures=$7
-WHERE `+catalogClaimPredicate, append(claim.args(now), now.Add(delay).UnixMilli(), min(claim.failures+1, 6))...)
+	failures := min(claim.failures+1, 6)
+	checkpoint := ""
+	if discard {
+		// The old rows stay hidden until a complete rebuild fits or the project
+		// is deleted. Back off so a large catalog does not rebuild in a loop.
+		checkpoint = `,catalog_id='',snapshot_version=-1,refreshed_at_ms=0`
+		delay, failures = catalogRefreshInterval, 6
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE catalog_refresh_state SET lease_token='',eligible_at_ms=$6,failures=$7`+
+		checkpoint+` WHERE `+catalogClaimPredicate, append(claim.args(now), now.Add(delay).UnixMilli(), failures)...)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,8 +122,8 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 		t.Fatalf("unbuilt summary: %+v %+v", page, state)
 	}
 
-	// Two workers cannot run the same job, including immediately after a
-	// simultaneous manual request. A second connection can recover it later.
+	// Two workers cannot run the same job. A manual request coalesces with the
+	// running job, and a second connection can recover it later.
 	firstClaim := raceCatalogClaims(t, first, second, at, lease)
 	request(second, "p", true, "running")
 	idle(second)
@@ -200,7 +201,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 		t.Fatalf("invalidated rows remained visible: %+v %+v", p, s)
 	}
 	failed := claim(first)
-	if err := first.fail(ctx, failed, at); err != nil {
+	if err := first.fail(ctx, failed, at, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, s := read(second, "p", 1, 0); s.Status != "retrying" {
@@ -215,6 +216,24 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	if p, s := read(first, "p", 5, 0); s.Snapshot != replacement.Snapshot || len(p.Events) != 1 || p.Events[0] != replacement.Rows[0].Event {
 		t.Fatalf("rebuilt catalog: %+v %+v", p, s)
 	}
+	request(first, "p", true, "queued")
+	oversized := claim(first)
+	tooLarge := lakeapi.CatalogSnapshotRead{Snapshot: lakeapi.ExportSnapshot{CatalogID: "restored", Version: 1}, Rows: []lakeapi.CatalogAggregate{
+		catalogAggregate(strings.Repeat("x", 501), "1", 2, 2),
+	}}
+	if err := first.complete(ctx, oversized, tooLarge, at); !errors.Is(err, lakeapi.ErrCatalogSummaryTooLarge) {
+		t.Fatalf("oversized catalog result: %v", err)
+	}
+	if err := first.fail(ctx, oversized, at, true); err != nil {
+		t.Fatal(err)
+	}
+	if p, s := read(second, "p", 1, 0); s.Snapshot.CatalogID != "" || !s.RefreshedAt.IsZero() || s.Status != "retrying" || len(p.Events) != 0 {
+		t.Fatalf("oversized catalog kept a partial or stale summary: %+v %+v", p, s)
+	}
+	at = at.Add(catalogRefreshInterval - time.Millisecond)
+	idle(second)
+	at = at.Add(time.Millisecond)
+	complete(second, claim(second), replacement)
 
 	request(first, "p", true, "queued")
 	deleting := claim(first)
