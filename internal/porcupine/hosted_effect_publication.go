@@ -26,6 +26,7 @@ type hostedEffectPublisher struct {
 	objects               *lakeapi.DuckLakeObjectStore
 	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
 	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+	wakeWebhook           func()
 	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
 	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 }
@@ -419,8 +420,8 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 	if err != nil {
 		return err
 	}
+	var advanced bool
 	publishTx := func(ctx context.Context, tx *sql.Tx) error {
-		var advanced bool
 		switch e.Kind {
 		case lakeapi.NativeCommitLive:
 			var err error
@@ -481,22 +482,24 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 	} else {
 		err = p.transaction(ctx, func(tx *sql.Tx) error { return publishTx(ctx, tx) })
 	}
-	if err == nil {
-		return nil
-	}
-	// Commit may have succeeded despite a lost response. Only a new committed
-	// checkpoint read can release the volatile batch in that case.
-	seq, hash, readErr := p.checkpoint(ctx, e.Scope, e.TenantID)
-	if readErr == nil && seq == e.Sequence && hash == e.ProofFingerprint {
-		if e.Kind != lakeapi.NativeCommitMutation {
-			return nil
+	if err != nil {
+		// Commit may have succeeded despite a lost response. Only a new committed
+		// checkpoint read can release the volatile batch in that case.
+		seq, hash, readErr := p.checkpoint(ctx, e.Scope, e.TenantID)
+		if readErr != nil || seq != e.Sequence || hash != e.ProofFingerprint {
+			return fmt.Errorf("effect publication not confirmed: %w", err)
 		}
-		receipt, readErr := hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
-		if readErr == nil && receipt.settledBy(e) {
-			return nil
+		if e.Kind == lakeapi.NativeCommitMutation {
+			receipt, readErr := hostedMutationBy(ctx, p.control, e.Scope, e.TenantID, "mutation_id", e.OperationID)
+			if readErr != nil || !receipt.settledBy(e) {
+				return fmt.Errorf("effect publication not confirmed: %w", err)
+			}
 		}
 	}
-	return fmt.Errorf("effect publication not confirmed: %w", err)
+	if advanced && p.wakeWebhook != nil && (len(v.Outputs) > 0 || mutationUUID != "") {
+		p.wakeWebhook()
+	}
+	return nil
 }
 func (p *hostedEffectPublisher) checkpoint(ctx context.Context, scope lakeapi.HostedProjectScope, tenant string) (int64, string, error) {
 	var seq int64

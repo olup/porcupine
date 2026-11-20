@@ -236,6 +236,8 @@ func (s *PipelineJobs) Wake() {
 	signalPipelineWorker(s.s3Wake)
 }
 
+const pipelinePollInterval = time.Second
+
 func (s *PipelineJobs) Start() {
 	rt := s
 	if !s.Enabled() {
@@ -243,21 +245,21 @@ func (s *PipelineJobs) Start() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.cancel = cancel
-	start := func(destination string, wake chan struct{}, step func(context.Context) (bool, error)) {
+	start := func(destination string, wake chan struct{}, poll func(context.Context) (time.Duration, error)) {
 		rt.workers.Add(1)
 		go func() {
 			defer rt.workers.Done()
 			var lastWarning time.Time
 			for ctx.Err() == nil {
-				progress, err := step(ctx)
+				delay, err := poll(ctx)
 				if err != nil && ctx.Err() == nil && time.Since(lastWarning) >= time.Minute {
 					slog.Warn("pipeline worker could not advance; retrying", "destination_type", destination)
 					lastWarning = time.Now()
 				}
-				if progress && err == nil {
+				if delay == 0 {
 					continue
 				}
-				timer := time.NewTimer(time.Second)
+				timer := time.NewTimer(delay)
 				select {
 				case <-ctx.Done():
 					timer.Stop()
@@ -269,21 +271,33 @@ func (s *PipelineJobs) Start() {
 			}
 		}()
 	}
+	startFixed := func(destination string, wake chan struct{}, step func(context.Context) (bool, error)) {
+		start(destination, wake, func(ctx context.Context) (time.Duration, error) {
+			return pipelineStepDelay(step(ctx))
+		})
+	}
 	if s.pg != nil {
 		if s.pg.step != nil {
-			start("webhook", rt.webhookWake, s.RunWebhook)
+			start("webhook", rt.webhookWake, s.hostedWebhookPoll())
 		}
 		if s.pg.scheduled.ready() {
-			start("s3", rt.s3Wake, s.RunS3)
-			start("retired-s3", make(chan struct{}, 1), s.cleanHostedScheduledRetirement)
+			startFixed("s3", rt.s3Wake, s.RunS3)
+			startFixed("retired-s3", make(chan struct{}, 1), s.cleanHostedScheduledRetirement)
 		}
 		return
 	}
-	start("webhook", rt.webhookWake, s.RunWebhook)
-	start("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "", "") })
+	startFixed("webhook", rt.webhookWake, s.RunWebhook)
+	startFixed("retired-s3", make(chan struct{}, 1), func(ctx context.Context) (bool, error) { return s.cleanupRetired(ctx, "", "") })
 	if s.lake != nil {
-		start("s3", rt.s3Wake, s.RunS3)
+		startFixed("s3", rt.s3Wake, s.RunS3)
 	}
+}
+
+func pipelineStepDelay(progress bool, err error) (time.Duration, error) {
+	if progress && err == nil {
+		return 0, nil
+	}
+	return pipelinePollInterval, err
 }
 
 func (s *PipelineJobs) Stop() {

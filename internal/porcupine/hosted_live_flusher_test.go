@@ -358,6 +358,14 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	body.Events = append(body.Events, acceptance.BufferedEvent{Input: retryIdentityInput, AdmittedAt: body.Events[0].AdmittedAt})
+	var aWakes atomic.Int64
+	fa.publisher.wakeWebhook = func() {
+		var count int
+		if err := a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1 AND batch_id=$2`, project, body.ID).Scan(&count); err != nil || count != 1 {
+			t.Error("webhook woke before live job committed", count, err)
+		}
+		aWakes.Add(1)
+	}
 	rejectEffects.Store(true)
 	if err = fa.FlushLive(t.Context(), body); err == nil {
 		t.Fatal("failed precommit upload acknowledged input")
@@ -426,6 +434,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 	if err = <-completed; err != nil {
 		t.Fatal("native retry lost its staged plan or admission after budget reduction", err)
+	}
+	if got := aWakes.Load(); got != 1 {
+		t.Fatalf("confirmed publication woke webhook %d times, want 1", got)
 	}
 	if reads := reservationReads.Load() - readsBeforePublication; reads != 0 {
 		t.Fatalf("fresh publication reread the reservation %d times", reads)
@@ -529,6 +540,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), crash); err == nil {
 		t.Fatal("usage failure acknowledged volatile input")
 	}
+	if got := aWakes.Load(); got != 1 {
+		t.Fatalf("rolled-back publication woke webhook, total wakes %d", got)
+	}
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 1 {
 		t.Fatal("outputs escaped rollback", n, err)
 	}
@@ -619,6 +633,14 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if _, err = a.service.control.Exec(`DROP TRIGGER reject_hosted_usage ON usage_rollups; DROP FUNCTION reject_hosted_usage()`); err != nil {
 		t.Fatal(err)
 	}
+	var bWakes int
+	fb.publisher.wakeWebhook = func() {
+		var count int
+		if err := b.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1 AND batch_id=$2`, project, crash.ID).Scan(&count); err != nil || count != 2 {
+			t.Error("webhook woke before recovered jobs committed", count, err)
+		}
+		bWakes++
+	}
 	getsBeforeRecovery := effectGets.Load()
 	if err = fb.RecoverProject(t.Context(), key); err != nil {
 		t.Fatal("cold publication", err)
@@ -626,9 +648,16 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if got := effectGets.Load() - getsBeforeRecovery; got != 4 {
 		t.Fatalf("cold publication made %d effect GETs, want 4 (manifest, plan, delivery, fragment)", got)
 	}
+	if bWakes != 1 {
+		t.Fatalf("recovery woke webhook %d times, want 1", bWakes)
+	}
 	if err = fa.FlushLive(t.Context(), crash); err != nil {
 		t.Fatal("original native proof replay", err)
 	}
+	if got := aWakes.Load(); got != 1 {
+		t.Fatalf("already-published replay woke webhook, total wakes %d", got)
+	}
+	fa.publisher.wakeWebhook, fb.publisher.wakeWebhook = nil, nil
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_jobs WHERE project_id=$1`, project).Scan(&n); err != nil || n != 3 {
 		t.Fatal("fragment/direct publication", n, err)
 	}

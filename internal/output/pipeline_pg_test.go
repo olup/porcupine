@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
@@ -174,5 +175,43 @@ VALUES('source','project','catalog','stream','tenant','run','batch',$1,$2,$3,$4,
 	}
 	if _, err = first.Get(ctx, "project", created.ID); err == nil {
 		t.Fatal("deleted definition remains visible")
+	}
+}
+
+func TestSharedHostedWebhookPollBacksOffWithoutActiveDestinations(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	db, _ := pipelineFixture(t)
+	jobs, err := newPipelineRuntime(&PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs.db = db
+	jobs.pg = &hostedPipelineRuntime{}
+	var calls int
+	jobs.SetHostedWebhookWorker(func(context.Context) (bool, error) {
+		calls++
+		return calls == 2, nil
+	})
+	if _, err := db.Exec(`INSERT INTO pipeline_effect_definitions
+		(project_id,tenant_id,id,incarnation,rule_revision,destination_revision,creator_id,state,rule_key,rule_version,rule_sha,rule_bytes)
+		VALUES ('project','tenant','webhook','inc','rule','destination','creator','paused','webhook-rule','','sha',1),
+		('project','tenant','scheduled','inc','rule','destination','creator','active',$1,'','sha',1)`, hostedScheduledRulePrefix+"s3-rule"); err != nil {
+		t.Fatal(err)
+	}
+	poll := jobs.hostedWebhookPoll()
+	for _, seconds := range []int{1, 2, 4, 8, 10, 10} {
+		if delay, err := poll(ctx); delay != time.Duration(seconds)*time.Second || err != nil || calls != 0 {
+			t.Fatalf("idle poll: delay %s, calls %d, err %v, want %ds and no webhook step", delay, calls, err, seconds)
+		}
+	}
+	if _, err := db.Exec(`UPDATE pipeline_effect_definitions SET state='active' WHERE id='webhook'`); err != nil {
+		t.Fatal(err)
+	}
+	if delay, err := poll(ctx); delay != time.Second || err != nil || calls != 1 {
+		t.Fatalf("active destination poll: delay %s, calls %d, err %v", delay, calls, err)
+	}
+	if delay, err := poll(ctx); delay != 0 || err != nil || calls != 2 {
+		t.Fatalf("progress poll: delay %s, calls %d, err %v", delay, calls, err)
 	}
 }
