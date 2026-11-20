@@ -70,7 +70,7 @@ func TestReceiptAndHeadNumericIDRemainAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.recordReceipt(context.Background(), tx, projectID, uuid, id); err != nil {
+	if err = s.receipts.Record(context.Background(), tx, projectID, uuid, id); err != nil {
 		t.Fatal(err)
 	}
 	tx.Rollback()

@@ -1,5 +1,5 @@
-// Package acceptance owns validated live input, acknowledgment types, and hosted
-// memory admission. Storage adapters own durability and side effects.
+// Package acceptance owns validated live input, acknowledgment types, hosted
+// memory admission, and standalone receipt policy.
 package acceptance
 
 import (
@@ -78,11 +78,4 @@ func ValidateInput(e eventapi.Event) (Input, error) {
 		}
 	}
 	return input, nil
-}
-func (b Batch) EventValues() []eventapi.Event {
-	events := make([]eventapi.Event, len(b.Events))
-	for i, input := range b.Events {
-		events[i] = input.Event
-	}
-	return events
 }

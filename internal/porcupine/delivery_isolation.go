@@ -101,7 +101,7 @@ func (s *Service) acknowledgeSupersededQuarantine(ctx context.Context, tx *sql.T
 		return err
 	}
 	if queued {
-		if err := s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID); err != nil {
+		if err := s.receipts.Record(ctx, tx, projection.ProjectID, projection.UUID, projection.ID); err != nil {
 			return err
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -58,13 +59,13 @@ func saveImportedPerson(ctx context.Context, tx *sql.Tx, project, distinct strin
 // The upload owner checkpoints the source file cursor in the same
 // transaction as local receipt checks and historical row acceptance.
 // No network work or outbound destination enqueueing occurs here.
-// known holds events found in DuckLake by coldKnown before the transaction.
+// known holds events found in DuckLake by receipt admission before the transaction.
 func (rules *eventRules) AcceptHistoricalTx(ctx context.Context, tx *sql.Tx, project string, row importer.Row, known map[string]int64) (ImportRowResult, error) {
 	var result ImportRowResult
 	if row.Kind != "events" && row.Kind != "persons" {
 		return result, importer.ErrRow
 	}
-	duplicate, err := localReceipt(ctx, tx, project, row.Event.UUID)
+	duplicate, err := acceptance.HasLocalReceipt(ctx, tx, project, row.Event.UUID)
 	if err != nil {
 		return result, err
 	}

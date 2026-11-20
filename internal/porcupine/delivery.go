@@ -211,7 +211,7 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []eventapi.Eve
 	defer tx.Rollback()
 	projects := map[string]bool{}
 	for _, event := range batch {
-		if err := s.recordReceipt(ctx, tx, event.ProjectID, event.UUID, event.ID); err != nil {
+		if err := s.receipts.Record(ctx, tx, event.ProjectID, event.UUID, event.ID); err != nil {
 			return errors.New("cannot save delivery receipt")
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id=$1`, event.ID); err != nil {

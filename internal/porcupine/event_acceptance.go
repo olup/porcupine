@@ -14,7 +14,6 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
-	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
 
@@ -22,8 +21,7 @@ import (
 // and budgets have one owner even when several entry points write the journal.
 type eventRules struct {
 	usage             *usage.Recorder
-	receiptGates      receiptProjectGates
-	admission         *syncx.ContextMutex
+	receipts          *acceptance.SQLiteReceipts
 	clock             func() time.Time
 	queueMax          int
 	queueMaxBytes     int64
@@ -31,9 +29,6 @@ type eventRules struct {
 
 	queueProjectMaxEvents int
 	queueProjectMaxBytes  int64
-	// receiptRetention bounds local receipts; knownEvents finds older events.
-	receiptRetention time.Duration
-	knownEvents      func(context.Context, string, []string) (map[string]int64, error)
 }
 
 // durableAcceptance owns the live commit. Destinations can join its transaction,
@@ -116,25 +111,18 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 func (*durableAcceptance) Durability() acceptance.Durability { return acceptance.Durable }
 
 func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, peer acceptance.Peer, withReceipts bool) (acceptance.Result, error) {
-	// Project exclusion covers the lookup through commit, including the first
-	// receipt prune. Only local policy and the transaction take the global lock.
-	release, err := a.rules.receiptGates.lock(ctx, batch.ProjectID)
+	uuids := make([]string, 0, len(batch.Events))
+	for _, input := range batch.Events {
+		uuids = append(uuids, input.Event.UUID)
+	}
+	known, release, err := a.rules.receipts.BeginAdmission(ctx, batch.ProjectID, uuids)
+	if errors.Is(err, acceptance.ErrReceiptLookup) {
+		return nil, &acceptance.Failure{Message: "storage unavailable", Retry: true}
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
-	known, err := a.rules.coldKnown(lookup, batch.ProjectID, batch.EventValues())
-	cancel()
-	if err != nil {
-		return nil, &acceptance.Failure{Message: "storage unavailable", Retry: true}
-	}
-	if a.rules.admission != nil {
-		if err := a.rules.admission.Lock(ctx); err != nil {
-			return nil, err
-		}
-		defer a.rules.admission.Unlock()
-	}
 	if a.rules.prepareAcceptance != nil {
 		if err := a.rules.prepareAcceptance(ctx, batch.ProjectID); err != nil {
 			var managed *apierr.Error
@@ -176,7 +164,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 	var webhookEvents []eventapi.Event
 	for _, input := range batch.Events {
 		e := input.Event
-		exists, lookupErr := localReceipt(ctx, tx, batch.ProjectID, e.UUID)
+		exists, lookupErr := acceptance.HasLocalReceipt(ctx, tx, batch.ProjectID, e.UUID)
 		if lookupErr != nil {
 			return nil, &acceptance.Failure{Message: "storage unavailable"}
 		}
@@ -190,7 +178,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 		}
 		if exists {
 			if withReceipts {
-				id, idErr := localReceiptEventID(ctx, tx, batch.ProjectID, e.UUID)
+				id, idErr := acceptance.LocalReceiptEventID(ctx, tx, batch.ProjectID, e.UUID)
 				if idErr != nil {
 					return nil, &acceptance.Failure{Message: "receipt event ID unavailable"}
 				}

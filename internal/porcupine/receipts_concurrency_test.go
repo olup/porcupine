@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/acceptance"
 )
 
 type blockedReceiptLookup struct {
@@ -74,7 +76,7 @@ func TestReceiptLookupsDoNotBlockOtherProjectsOrRaceFirstPrune(t *testing.T) {
 			if phase == "first-prune" {
 				// Shared control uses project gates and SQLite transactions without
 				// a global local-policy mutex. Exercise that same exclusion path.
-				s.eventRules.admission = nil
+				s.eventRules.receipts = acceptance.NewSQLiteReceipts(s.db, nil, s.clock, s.receiptHistory)
 			}
 			a, writerA := project(t, s)
 			b, writerB := project(t, s)
@@ -83,7 +85,7 @@ func TestReceiptLookupsDoNotBlockOtherProjectsOrRaceFirstPrune(t *testing.T) {
 			duckLakeJourneyDrain(t, s)
 			clock.Add((72 * time.Hour).Milliseconds())
 			if phase == "capture-after-prune" {
-				if err := s.pruneReceipts(context.Background()); err != nil {
+				if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -98,7 +100,7 @@ func TestReceiptLookupsDoNotBlockOtherProjectsOrRaceFirstPrune(t *testing.T) {
 			var retry <-chan *httptest.ResponseRecorder
 			if phase == "first-prune" {
 				pruned = make(chan error, 1)
-				go func() { pruned <- s.pruneReceipts(ctx) }()
+				go func() { pruned <- s.receipts.Prune(ctx, s.receiptRetention) }()
 			} else {
 				retry = asyncReceiptCapture(ctx, s, writerA, `{"type":"track","message_id":"stable","name":"changed"}`)
 			}
@@ -136,12 +138,6 @@ func TestReceiptLookupsDoNotBlockOtherProjectsOrRaceFirstPrune(t *testing.T) {
 			if err := s.db.QueryRow("SELECT count(*) FROM events WHERE project_id=?", a).Scan(&pendingA); err != nil || pendingA != 0 {
 				t.Fatal("retry entered the queue", pendingA, err)
 			}
-			s.eventRules.receiptGates.mutex.Lock()
-			gates := len(s.eventRules.receiptGates.projects)
-			s.eventRules.receiptGates.mutex.Unlock()
-			if gates != 0 {
-				t.Fatal("completed requests retained project gates", gates)
-			}
 		})
 	}
 }
@@ -160,7 +156,7 @@ func TestReceiptPruningCanceledLookupKeepsReceiptAndMarker(t *testing.T) {
 	s.receiptLookup = blocked.KnownEvents
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
-	go func() { finished <- s.pruneReceipts(ctx) }()
+	go func() { finished <- s.receipts.Prune(ctx, s.receiptRetention) }()
 	select {
 	case <-blocked.entered:
 	case <-time.After(2 * time.Second):
@@ -197,7 +193,7 @@ func TestReceiptPruningRechecksCandidatesAfterRemoteLookup(t *testing.T) {
 	blocked := &blockedReceiptLookup{lookup: s.lake.KnownEvents, project: a, entered: make(chan struct{}), resume: resume}
 	s.receiptLookup = blocked.KnownEvents
 	finished := make(chan error, 1)
-	go func() { finished <- s.pruneReceipts(context.Background()) }()
+	go func() { finished <- s.receipts.Prune(context.Background(), s.receiptRetention) }()
 	select {
 	case <-blocked.entered:
 	case <-time.After(2 * time.Second):
@@ -215,23 +211,5 @@ func TestReceiptPruningRechecksCandidatesAfterRemoteLookup(t *testing.T) {
 	var marker bool
 	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='receipts_pruned:' || ?)", a).Scan(&marker); err != nil || marker || receiptCount(t, s) != 1 {
 		t.Fatal("stale candidate changed retention state", marker, err)
-	}
-}
-
-func TestReceiptProjectGateCancellationReleasesReferences(t *testing.T) {
-	t.Parallel()
-	var gates receiptProjectGates
-	release, err := gates.lock(context.Background(), "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := gates.lock(canceled, "a"); err == nil {
-		t.Fatal("canceled waiter acquired project gate")
-	}
-	release()
-	if len(gates.projects) != 0 {
-		t.Fatal("canceled waiter leaked an idle project gate")
 	}
 }

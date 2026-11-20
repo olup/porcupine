@@ -37,7 +37,7 @@ func TestLiveAcceptanceParticipantFailureRollsBackAllState(t *testing.T) {
 				}
 			}
 			now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-			rules := &eventRules{clock: func() time.Time { return now }, queueMax: 20, queueMaxBytes: DefaultQueueMaxBytes}
+			rules := &eventRules{receipts: s.receipts, clock: func() time.Time { return now }, queueMax: 20, queueMaxBytes: DefaultQueueMaxBytes}
 			prepared, err := prepareLiveBatch(projectID, "", eventBatch{
 				{UUID: "identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "browser", "$set": map[string]any{"plan": "new"}}},
 				{UUID: "page", Event: "$pageview", DistinctID: ingestfmt.CookielessSentinel, Properties: map[string]any{"$current_url": "https://example.test"}},

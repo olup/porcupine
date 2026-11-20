@@ -402,7 +402,7 @@ func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventPr
 	if err == nil && operation == "delete" {
 		err = output.CancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID, s.clock)
 		if err == nil {
-			err = s.recordReceipt(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
+			err = s.receipts.Record(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
 		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=$1 AND uuid=$2`, projection.ProjectID, projection.UUID)

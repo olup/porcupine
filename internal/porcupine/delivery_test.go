@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"testing"
+
+	"github.com/olup/porcupine/internal/acceptance"
 )
 
 func receiptCount(t *testing.T, s *Service) int {
@@ -82,7 +84,7 @@ func TestDeliveryLostAcknowledgmentRetryCleanupAndRestart(t *testing.T) {
 	if eventCount(t, s) != 0 || receiptCount(t, s) != 1 {
 		t.Fatal("native retry did not replace payload with permanent receipt")
 	}
-	stored, err := localReceiptEventID(context.Background(), s.db, projectID, "original")
+	stored, err := acceptance.LocalReceiptEventID(context.Background(), s.db, projectID, "original")
 	if err != nil || stored != id {
 		t.Fatal("receipt changed acceptance ID", stored, err)
 	}

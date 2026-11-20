@@ -23,7 +23,7 @@ func TestDefaultReceiptRetentionAcceptsDuringLakeOutage(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE event_receipts SET recorded_at_ms=0`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.pruneReceipts(context.Background()); err != nil || receiptCount(t, s) != 3 {
+	if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil || receiptCount(t, s) != 3 {
 		t.Fatal("default pruned durable retry IDs", err)
 	}
 	store := s.lake
