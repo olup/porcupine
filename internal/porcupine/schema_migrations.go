@@ -92,6 +92,22 @@ event_name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('event','property'))
 property_key TEXT NOT NULL, description TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL,
 PRIMARY KEY(project_id,event_name,kind,property_key));`
 
+const catalogSummarySchema = `CREATE TABLE catalog_refresh_state (
+project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+catalog_id TEXT NOT NULL DEFAULT '', snapshot_version BIGINT NOT NULL DEFAULT -1,
+refreshed_at_ms BIGINT NOT NULL DEFAULT 0, eligible_at_ms BIGINT NOT NULL,
+lease_token TEXT NOT NULL DEFAULT '', failures BIGINT NOT NULL DEFAULT 0,
+summary_rows BIGINT NOT NULL DEFAULT 0 CHECK(summary_rows BETWEEN 0 AND 20000));
+CREATE INDEX catalog_refresh_due ON catalog_refresh_state(eligible_at_ms,project_id);
+CREATE TABLE catalog_summary (
+project_id TEXT NOT NULL REFERENCES catalog_refresh_state(project_id) ON DELETE CASCADE,
+event_name TEXT NOT NULL, first_id BIGINT NOT NULL, last_id BIGINT NOT NULL,
+event_count BIGINT NOT NULL CHECK(event_count BETWEEN 1 AND 9223372036854775807),
+first_received_at TEXT NOT NULL, last_received_at TEXT NOT NULL,
+latest_event_uuid TEXT NOT NULL, latest_event_timestamp TEXT NOT NULL,
+PRIMARY KEY(project_id,event_name));
+CREATE INDEX catalog_summary_page ON catalog_summary(project_id,last_id DESC,event_name);`
+
 // Keep cleanup ownership separate from tenant machine authorization.
 const credentialOwnerSchema = `ALTER TABLE access_keys ADD COLUMN owner_tenant_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX access_keys_owner_tenant ON access_keys(owner_tenant_id) WHERE owner_tenant_id<>'';`
@@ -107,7 +123,8 @@ WHERE kind='client_ingestion' AND revoked_at IS NULL;`
 // 7: project catalog descriptions.
 // 8: tenant ownership of operator credentials.
 // 9: explicit public client ingestion credentials.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 10: durable event catalog summaries and refresh claims.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalogSummarySchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -130,6 +147,7 @@ var hostedImportSchema string
 // 24: discover unpublished live reservations directly.
 // 25: explicit public client ingestion credentials.
 // 26: shared retry deadline for scheduled hosted recovery.
+// 27: durable event catalog summaries and refresh claims.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -170,6 +188,7 @@ BEGIN
 END $$;
 CREATE TRIGGER hosted_recovery_reset_retry BEFORE UPDATE OF generation ON hosted_recovery_pending
 FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCTION reset_hosted_recovery_retry();`,
+	catalogSummarySchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
