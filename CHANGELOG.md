@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.5
+
+- The CLI and agent guides explain how to find missing or stale event and property descriptions and confirm descriptions that still apply. (#178) [Review catalog documentation](https://github.com/olup/porcupine/blob/v0.19.5/docs/reference/event-discovery.md#review-catalog-documentation)
+- Event catalog refresh, summary storage, and description handling now live in the same internal package. (#179, #180)
+
+v0.19.5 uses the v0.19.4 storage schemas. [Upgrade from v0.19.4](https://github.com/olup/porcupine/blob/v0.19.5/docs/hosting.md#upgrade-from-v0194)
+
 ## 0.19.4
 
 - Event-name catalogs can reuse a project summary. The first refresh builds it. Later refreshes read only new events when DuckLake can verify the changes. Use `refresh-event-catalog` to check for updates before the next scheduled refresh. Event profiles and property samples still read DuckLake on demand. (#176) [Refresh the event list](https://github.com/olup/porcupine/blob/v0.19.4/docs/reference/event-discovery.md#refresh-the-event-list)
