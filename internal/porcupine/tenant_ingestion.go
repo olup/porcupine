@@ -79,6 +79,7 @@ func writeTenantIngestionError(w http.ResponseWriter, _ *http.Request, err error
 	if !errors.As(err, &failure) {
 		return false
 	}
+	markIngestionRejection(w, "unavailable")
 	if !nativeResponse {
 		write(w, http.StatusOK, map[string]any{"status": 1, "accepted": 0, "duplicates": 0, "identity_ignored": 0,
 			"quota_limited": []string{"events"}, "code": failure.code, "error": failure.message})

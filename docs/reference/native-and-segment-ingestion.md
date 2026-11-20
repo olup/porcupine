@@ -61,9 +61,17 @@ For a named source, set `source_id` on the single-project writer when [provision
 
 Unbound native and Segment credentials use `native` and `segment` as their respective sources. Unbound PostHog clients keep their existing UUIDs and use the reserved source `posthog`. An explicitly source-bound PostHog writer uses the same source-scoped ID scheme as the other adapters. Switching an existing writer from an unbound to a bound source changes its deduplication namespace, so finish outstanding retries first. [Credential API](management-api.md)
 
+### Send an event when a page closes
+
+To track page exit from a native browser integration, send a small `track` event named `pageleave` on `pagehide`. Use `fetch` with `keepalive: true` and the usual `X-Porcupine-Key` header. A browser's `sendBeacon` API cannot set this header. Preserve the same `message_id` if you retry. Segment producers can send the same event name through their usual track call.
+
+### Base64 form encoding
+
+All three live inputs accept the same form transport. Set `compression=base64` in the URL and send the usual JSON as the standard Base64 value of a single form field named `data`. Use `Content-Type: application/x-www-form-urlencoded`. Credentials and message schemas follow the selected endpoint. The encoded request and decoded JSON must satisfy their normal size limits.
+
 ## Point a Segment producer at Porcupine
 
-Set the SDK's tracking host to the Porcupine origin. A Segment Node SDK configured with the project write key can use its standard HTTP batch transport. The supported routes are `POST /v1/page`, `/v1/track`, `/v1/identify`, and `/v1/batch`. Use HTTP Basic auth with the project write key as username and an empty password, or supply `writeKey` in the JSON envelope. The source requires JSON. Individual messages are limited to 32 KiB and batches to 500 KiB. A batch may mix the three supported call types. Unsupported call types reject the batch before anything is accepted. [Segment HTTP Tracking API](https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/http-api)
+Set the SDK's tracking host to the Porcupine origin. A Segment Node SDK configured with the project write key can use its standard HTTP batch transport. The supported routes are `POST /v1/page`, `/v1/track`, `/v1/identify`, and `/v1/batch`. Use HTTP Basic auth with the project write key as username and an empty password, or supply `writeKey` in the JSON envelope. Individual messages are limited to 32 KiB and batches to 500 KiB after decoding. A batch may mix the three supported call types. Unsupported call types reject the batch before anything is accepted. [Segment HTTP Tracking API](https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/http-api)
 
 The compatibility suite runs the official `@segment/analytics-node` 3.1.0 client. For a backend using a mixed project's write key:
 

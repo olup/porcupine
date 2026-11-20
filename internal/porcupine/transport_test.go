@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -339,7 +341,7 @@ func TestExactBodyLimit(t *testing.T) {
 
 func TestRecordedSDKFixtures(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"node-batch.json", "browser-capture.json", "browser-batch-gzip.json"} {
+	for _, name := range []string{"node-batch.json", "browser-capture.json", "browser-batch-gzip.json", "browser-pageleave-beacon.json"} {
 		t.Run(name, func(t *testing.T) {
 			// These fixtures carry SDK/version and wire metadata from the real SDK suite.
 			raw, err := os.ReadFile(filepath.Join("..", "..", "compat", "fixtures", name))
@@ -351,6 +353,7 @@ func TestRecordedSDKFixtures(t *testing.T) {
 					SDK             string `json:"sdk"`
 					Version         string `json:"version"`
 					Path            string `json:"path"`
+					Query           string `json:"query"`
 					ContentType     string `json:"content_type"`
 					ContentEncoding string `json:"content_encoding"`
 					BodyFormat      string `json:"body_format"`
@@ -368,13 +371,19 @@ func TestRecordedSDKFixtures(t *testing.T) {
 			payload := bytes.ReplaceAll(fixture.Payload, []byte("FIXTURE_INGEST_TOKEN"), []byte(ingest))
 			if fixture.Provenance.BodyFormat == "gzip" || fixture.Provenance.ContentEncoding == "gzip" {
 				payload = compressed(t, payload)
+			} else if fixture.Provenance.BodyFormat == "form-base64" {
+				payload = []byte(url.Values{"data": {base64.StdEncoding.EncodeToString(payload)}}.Encode())
+			}
+			target := fixture.Provenance.Path
+			if fixture.Provenance.Query != "" {
+				target += "?" + fixture.Provenance.Query
 			}
 			headers := map[string]string{"Content-Type": fixture.Provenance.ContentType}
 			if fixture.Provenance.ContentEncoding != "identity" {
 				headers["Content-Encoding"] = fixture.Provenance.ContentEncoding
 			}
 			for i := 0; i < 2; i++ {
-				transportRequest(t, s, "POST", fixture.Provenance.Path, payload, headers, 200)
+				transportRequest(t, s, "POST", target, payload, headers, 200)
 			}
 			result := request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", adminToken, "", 200)
 			events := result["events"].([]any)

@@ -90,6 +90,21 @@ consumption and storage measurements in the authenticated [usage report](usage.m
 | Visibility slows or times out | Check ingestion, flushing, and queries in the same time window. If the probe crosses workers, confirm that both endpoints share the same deployment. |
 
 HTTP ingestion traffic includes validation and authentication failures.
+The counter `porcupine_ingestion_rejected_total{route,reason}` counts rejected
+POST requests to the live PostHog, native, and Segment ingestion endpoints.
+`route` uses the endpoint path without URL parameters. Each rejection
+increments the counter once.
+
+| Reason | Request outcome |
+| --- | --- |
+| `unsupported_encoding` | HTTP 415 for an unsupported compression or media type. |
+| `invalid_body` | HTTP 400 for an unreadable body or invalid payload structure. |
+| `body_too_large` | HTTP 413 for a wire or decoded size limit. |
+| `invalid_credential` | HTTP 401 or a credential validation error, such as mismatched keys. |
+| `forbidden` | HTTP 403 for access or origin restrictions. |
+| `invalid_event` | HTTP 400 for an event that fails validation after decoding. |
+| `unavailable` | HTTP 404 for an unavailable project, HTTP 429, server errors, or a quota rejection carried in a PostHog HTTP 200 response. |
+
 Admission counters begin after validation. A durable batch can succeed with
 only duplicates. The identity-ignored event count is a subset of accepted
 durable events. Hosted event throughput distinguishes memory admissions

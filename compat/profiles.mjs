@@ -18,6 +18,12 @@ export const browserProfile = Object.freeze({
   request_batching: false,
   api_transport: 'fetch',
 });
+// Opt-in contract profile for the SDK's unload queue.
+export const browserBeaconProfile = Object.freeze({
+  ...browserProfile,
+  capture_pageleave: true,
+  request_batching: true,
+});
 // Product profile: the SDK sends its shared sentinel without browser persistence.
 const { persistence: _identifiedPersistence, ...analyticsOptions } = browserProfile;
 export const cookielessProfile = Object.freeze({

@@ -12,11 +12,12 @@ import (
 // https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/http-api.
 func (s *Service) captureSegment(w http.ResponseWriter, r *http.Request) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	base64Form := media == "application/x-www-form-urlencoded" && r.URL.Query().Get("compression") == "base64"
+	if err != nil || media != "application/json" && !base64Form {
 		problem(w, 415, "Segment requests require application/json")
 		return
 	}
-	raw, ok := readBody(w, r, true)
+	raw, ok := readBody(w, r)
 	if !ok {
 		return
 	}
@@ -35,7 +36,7 @@ func (s *Service) captureSegment(w http.ResponseWriter, r *http.Request) {
 	}
 	writeKey, err := ingestfmt.SegmentString(envelope, "writeKey", false)
 	if err != nil {
-		problem(w, 400, err.Error())
+		ingestionProblem(w, "invalid_credential", err.Error())
 		return
 	}
 	if len(r.Header.Values("Authorization")) > 1 {
@@ -49,7 +50,7 @@ func (s *Service) captureSegment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if writeKey != "" && writeKey != key {
-			problem(w, 400, "Segment credentials must match")
+			ingestionProblem(w, "invalid_credential", "Segment credentials must match")
 			return
 		}
 		writeKey = key
@@ -59,7 +60,7 @@ func (s *Service) captureSegment(w http.ResponseWriter, r *http.Request) {
 	}
 	messages, err := ingestfmt.TranslateSegment(envelope, r.URL.Path, writeKey)
 	if err != nil {
-		problem(w, 400, err.Error())
+		ingestionProblem(w, "invalid_event", err.Error())
 		return
 	}
 	s.acceptMessages(w, r, writeKey, messages, "segment")
