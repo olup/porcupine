@@ -193,10 +193,12 @@ func TestSharedHostedWebhookPollBacksOffWithoutActiveDestinations(t *testing.T) 
 		calls++
 		return calls == 2, nil
 	})
+	if _, err := db.Exec(`UPDATE pipeline_effect_definitions SET state='paused' WHERE id='pipeline'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO pipeline_effect_definitions
 		(project_id,tenant_id,id,incarnation,rule_revision,destination_revision,creator_id,state,rule_key,rule_version,rule_sha,rule_bytes)
-		VALUES ('project','tenant','webhook','inc','rule','destination','creator','paused','webhook-rule','','sha',1),
-		('project','tenant','scheduled','inc','rule','destination','creator','active',$1,'','sha',1)`, hostedScheduledRulePrefix+"s3-rule"); err != nil {
+		VALUES ('project','tenant','scheduled','inc','rule','destination','creator','active',$1,'','sha',1)`, hostedScheduledRulePrefix+"s3-rule"); err != nil {
 		t.Fatal(err)
 	}
 	poll := jobs.hostedWebhookPoll()
@@ -205,7 +207,7 @@ func TestSharedHostedWebhookPollBacksOffWithoutActiveDestinations(t *testing.T) 
 			t.Fatalf("idle poll: delay %s, calls %d, err %v, want %ds and no webhook step", delay, calls, err, seconds)
 		}
 	}
-	if _, err := db.Exec(`UPDATE pipeline_effect_definitions SET state='active' WHERE id='webhook'`); err != nil {
+	if _, err := db.Exec(`UPDATE pipeline_effect_definitions SET state='active' WHERE id='pipeline'`); err != nil {
 		t.Fatal(err)
 	}
 	if delay, err := poll(ctx); delay != time.Second || err != nil || calls != 1 {
