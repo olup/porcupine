@@ -114,11 +114,15 @@ func parseAllowedOrigins(values []string) (map[string]bool, error) {
 	origins := map[string]bool{}
 	for _, origin := range values {
 		origin = strings.TrimSpace(origin)
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(origin, "*") || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		if !validIngestionOrigin(origin) {
 			return nil, errors.New("allowed origins must be exact http(s) origins without paths or wildcards")
 		}
 		origins[origin] = true
 	}
 	return origins, nil
+}
+
+func validIngestionOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && !strings.Contains(origin, "*") && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
