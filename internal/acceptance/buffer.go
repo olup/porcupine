@@ -353,6 +353,8 @@ func (b *Buffer) Drain(ctx context.Context) error {
 }
 func (b *Buffer) run() {
 	defer func() { b.mu.Lock(); b.stopped = true; b.mu.Unlock(); close(b.done) }()
+	// Leave room for new requests while a batch commits, including when a request crosses the trigger.
+	flushEvents := max(1, b.config.ProjectMaxEvents/3)
 	for {
 		b.mu.Lock()
 		stopping := b.ctx.Err() != nil
@@ -372,7 +374,7 @@ func (b *Buffer) run() {
 			}
 			if len(p.ready) == 0 && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.FlushInterval)
-				if b.draining || p.pendingBytes >= b.config.FlushBytes || !now.Before(due) {
+				if b.draining || p.pendingBytes >= b.config.FlushBytes || len(p.pending) >= flushEvents || !now.Before(due) {
 					p.ready = []*FlushBatch{{ID: newLiveBatchID(), ProjectID: project, Events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}}
 					p.pending = nil
 					p.pendingBytes = 0

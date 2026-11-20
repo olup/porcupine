@@ -3,6 +3,7 @@ package porcupine
 import (
 	"errors"
 	"net/url"
+	"time"
 )
 
 type DeploymentProfile string
@@ -15,6 +16,9 @@ const (
 func validateDeploymentProfile(c Config) error {
 	switch c.Profile {
 	case "", ProfileStandalone:
+		if c.HostedFlushInterval != 0 {
+			return errors.New("acceptance.flush_interval requires the hosted profile")
+		}
 		if c.Shared != nil || c.DuckLake != nil && c.DuckLake.PostgresURL != "" {
 			return errors.New("PostgreSQL control and DuckLake metadata require the hosted profile")
 		}
@@ -22,6 +26,9 @@ func validateDeploymentProfile(c Config) error {
 	case ProfileHosted:
 		if c.AcceptanceMode != AcceptanceModeBuffered {
 			return errors.New("hosted profile requires acceptance.mode buffered")
+		}
+		if c.HostedFlushInterval != 0 && (c.HostedFlushInterval < time.Second || c.HostedFlushInterval > 30*time.Second) {
+			return errors.New("acceptance.flush_interval must be between 1s and 30s")
 		}
 		if c.DBPath != "" || c.ControlDBPath != "" || c.NativeBackup != nil || c.ReceiptRetention != 0 {
 			return errors.New("hosted profile cannot use journal paths, local control, native backups or receipt retention")

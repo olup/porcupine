@@ -17,7 +17,8 @@ import (
 type FileConfig struct {
 	Profile    string `json:"profile,omitempty" env:"PORCUPINE_PROFILE"`
 	Acceptance struct {
-		Mode string `json:"mode,omitempty" env:"PORCUPINE_ACCEPTANCE_MODE"`
+		Mode          string `json:"mode,omitempty" env:"PORCUPINE_ACCEPTANCE_MODE"`
+		FlushInterval string `json:"flush_interval,omitempty" env:"PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL"`
 	} `json:"acceptance"`
 	Metrics struct {
 		Enabled *bool  `json:"enabled,omitempty" env:"PORCUPINE_METRICS_ENABLED"`

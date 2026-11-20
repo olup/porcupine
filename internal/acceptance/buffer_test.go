@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -152,7 +153,7 @@ func TestBufferedAcceptanceConcurrentGlobalAndProjectBounds(t *testing.T) {
 	c.MaxEvents = 21
 	c.ProjectMaxEvents = 11
 	c.MaxProjects = 2
-	b := newTestBuffer(t, c, FlushFunc(func(context.Context, FlushBatch) error { return nil }))
+	b := newTestBuffer(t, c, blockingTestWriter(make(chan FlushBatch, 2), nil))
 	var wg sync.WaitGroup
 	var admitted atomic.Int64
 	for i := range 100 {
@@ -424,13 +425,87 @@ func TestBufferedAcceptanceTimerAndConcurrentFlushLimit(t *testing.T) {
 	}
 }
 
+func TestBufferedAcceptanceCountTriggerLeavesRoomForAnotherRequest(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := testBufferConfig()
+		c.FlushInterval = 30 * time.Second
+		c.ProjectMaxEvents = 9
+		calls, results := make(chan FlushBatch, 2), make(chan error)
+		b := newTestBuffer(t, c, blockingTestWriter(calls, results))
+		batch := testBufferBatch("p", 2)
+		admit := func() {
+			t.Helper()
+			if result, err := b.Accept(t.Context(), batch, Peer{}, false); err != nil || result.(BufferedResult).Received != 2 {
+				t.Fatal("expected whole request to be admitted", result, err)
+			}
+		}
+		assertWaiting := func() {
+			t.Helper()
+			synctest.Wait()
+			if len(calls) != 0 {
+				t.Fatal("flushed before either the count or timer was reached")
+			}
+		}
+		admit()
+		assertWaiting()
+		admit()
+		if first := nextFlush(t, calls); len(first.Events) != 4 || !first.Events[1].requestEnd || !first.Events[3].requestEnd {
+			t.Fatal("count trigger failed to flush both requests intact", first.Events)
+		}
+		admit()
+		if _, err := b.Accept(t.Context(), testBufferBatch("p", 4), Peer{}, false); err == nil {
+			t.Fatal("admission ignored the events in flight")
+		}
+		if status := b.Snapshot(); status.Events != 6 || status.Inflight != 1 {
+			t.Fatal("project capacity accounting changed", status)
+		}
+		results <- nil
+		assertWaiting()
+		time.Sleep(c.FlushInterval - time.Nanosecond)
+		assertWaiting()
+		time.Sleep(time.Nanosecond)
+		if last := nextFlush(t, calls); len(last.Events) != 2 {
+			t.Fatal("the timer did not flush the remaining whole request", last.Events)
+		}
+		results <- nil
+		if err := b.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestBufferedAcceptanceCountTriggerPrecedesDefaultByteTrigger(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := DefaultBufferConfig()
+		c.FlushInterval = 30 * time.Second
+		calls := make(chan FlushBatch, 1)
+		b := newTestBuffer(t, c, func(_ context.Context, batch FlushBatch) error {
+			calls <- batch
+			return nil
+		})
+		for _, count := range []int{1000, 1000, 1000, 333} {
+			if _, err := b.Accept(t.Context(), testBufferBatch("p", count), Peer{}, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if batch := nextFlush(t, calls); len(batch.Events) != 3333 || batch.bytes >= c.FlushBytes {
+			t.Fatalf("expected the event count to trigger a flush first, got %d events and %d bytes", len(batch.Events), batch.bytes)
+		}
+		if err := b.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestBufferedAcceptanceProjectCountAndWholeBatchRejection(t *testing.T) {
 	t.Parallel()
 	c := testBufferConfig()
 	c.MaxProjects = 2
 	c.MaxEvents = 3
 	c.ProjectMaxEvents = 3
-	b := newTestBuffer(t, c, FlushFunc(func(context.Context, FlushBatch) error { return nil }))
+	b := newTestBuffer(t, c, blockingTestWriter(make(chan FlushBatch, 2), nil))
 	if _, err := b.Accept(t.Context(), testBufferBatch("a", 2), Peer{}, false); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +520,7 @@ func TestBufferedAcceptanceProjectCountAndWholeBatchRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A separate roomy row budget isolates the active-project limit.
-	c.MaxEvents = 100
+	c.MaxEvents, c.ProjectMaxEvents = 100, 100
 	countBuffer := newTestBuffer(t, c, FlushFunc(func(context.Context, FlushBatch) error { return nil }))
 	for _, project := range []string{"a", "b"} {
 		if _, err := countBuffer.Accept(t.Context(), testBufferBatch(project, 1), Peer{}, false); err != nil {
@@ -552,11 +627,12 @@ func TestBufferedCookielessUnavailablePrecheckSkipsProvider(t *testing.T) {
 			}
 			var calls atomic.Int64
 			keys := DailyKeyFunc(func(context.Context, string) ([]byte, error) { calls.Add(1); return bytes.Repeat([]byte("k"), 32), nil })
-			writer := FlushFunc(func(context.Context, FlushBatch) error {
+			writer := FlushFunc(func(ctx context.Context, _ FlushBatch) error {
 				if state == "failed" {
 					return errors.New("storage offline")
 				}
-				return nil
+				<-ctx.Done()
+				return ctx.Err()
 			})
 			b, err := NewBuffer(t.Context(), c, writer, nil, keys)
 			if err != nil {
@@ -609,7 +685,7 @@ func TestBufferedCookielessKeyBoundaryAndFinalCapacityRecheck(t *testing.T) {
 	c := testBufferConfig()
 	c.MaxEvents = 1
 	c.ProjectMaxEvents = 1
-	b, err := NewBuffer(t.Context(), c, FlushFunc(func(context.Context, FlushBatch) error { return nil }), nil, keys)
+	b, err := NewBuffer(t.Context(), c, blockingTestWriter(make(chan FlushBatch, 1), nil), nil, keys)
 	if err != nil {
 		t.Fatal(err)
 	}

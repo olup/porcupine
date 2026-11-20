@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/olup/porcupine/internal/porcupine"
 )
@@ -34,9 +35,55 @@ func TestAcceptanceConfigurationContract(t *testing.T) {
 	}
 }
 
+const hostedConfigurationJSON = `{"profile":"hosted","acceptance":{"mode":"buffered"},"shared":{"control_database_url":"postgres://fixture@127.0.0.1/porcupine?sslmode=disable"},"ducklake":{"s3":{"bucket":"profile-fixture","prefix":"scratch","region":"us-east-1"},"cleanup_grace":"240h","restore_window":"168h","restore_max_reader_time":"20m","restore_safety_margin":"1h"}}`
+
+func TestHostedFlushIntervalConfiguration(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"1s", time.Second},
+		{"10s", 10 * time.Second},
+		{"30s", 30 * time.Second},
+		{"0", 0},
+		{"999ms", 0},
+		{"30s1ns", 0},
+		{"invalid", 0},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			t.Parallel()
+			raw := strings.Replace(hostedConfigurationJSON, `"mode":"buffered"`, `"mode":"buffered","flush_interval":"`+test.value+`"`, 1)
+			s, err := readSettings(strings.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, config, err := s.serviceConfig()
+			if err == nil {
+				err = porcupine.ValidateConfig(config)
+			}
+			if test.want == 0 {
+				if err == nil || !strings.Contains(strings.ToLower(err.Error()), "flush_interval") {
+					t.Fatal("invalid flush interval was accepted or error lacked the setting name", err)
+				}
+				return
+			}
+			if err != nil || config.HostedFlushInterval != test.want {
+				t.Fatal("hosted flush interval did not reach the service configuration", config.HostedFlushInterval, err)
+			}
+		})
+	}
+	for _, profile := range []porcupine.DeploymentProfile{"", porcupine.ProfileStandalone} {
+		config := porcupine.Config{Profile: profile, HostedFlushInterval: 10 * time.Second}
+		if err := porcupine.ValidateConfig(config); err == nil || !strings.Contains(err.Error(), "acceptance.flush_interval requires the hosted profile") {
+			t.Fatal("flush interval was accepted outside the hosted profile", profile, err)
+		}
+	}
+}
+
 func TestHostedConfigurationRefusesUnsafeInputs(t *testing.T) {
 	t.Parallel()
-	const candidate = `{"profile":"hosted","acceptance":{"mode":"buffered"},"shared":{"control_database_url":"postgres://fixture@127.0.0.1/porcupine?sslmode=disable"},"ducklake":{"s3":{"bucket":"profile-fixture","prefix":"scratch","region":"us-east-1"},"cleanup_grace":"240h","restore_window":"168h","restore_max_reader_time":"20m","restore_safety_margin":"1h"}}`
+	const candidate = hostedConfigurationJSON
 	parse := func(raw string) porcupine.Config {
 		t.Helper()
 		s, err := readSettings(strings.NewReader(raw))

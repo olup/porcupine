@@ -119,7 +119,10 @@ func TestBufferedHTTPBackpressureAndNoAcknowledgment(t *testing.T) {
 	c := testBufferConfig()
 	c.MaxEvents = 1
 	c.ProjectMaxEvents = 1
-	b := newTestBuffer(t, c, func(context.Context, acceptance.FlushBatch) error { return nil })
+	b := newTestBuffer(t, c, func(ctx context.Context, _ acceptance.FlushBatch) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
 	s.acceptance = b
 	nativeRequest(t, s, key, `{"type":"pageview","message_id":"one"}`, 200)
 	req := httptest.NewRequest("POST", "/ingest/v1/events", strings.NewReader(`{"type":"pageview","message_id":"two"}`))

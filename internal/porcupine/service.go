@@ -67,6 +67,7 @@ type Config struct {
 	Shared              *SharedConfig
 	Usage               *usage.Config
 	HostedRecoveryFloor HostedRecoveryFloor
+	HostedFlushInterval time.Duration // Zero leaves the hosted batch timer at its default.
 	MetricsEnabled      bool
 }
 
@@ -214,6 +215,9 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 		return nil, err
 	}
 	if c.Profile == ProfileHosted {
+		if c.HostedFlushInterval != 0 {
+			buffer.FlushInterval = c.HostedFlushInterval
+		}
 		return openHostedProfile(c, buffer)
 	}
 	interactiveConfig, err := query.Normalize(c.InteractiveQueries)
