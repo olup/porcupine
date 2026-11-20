@@ -41,9 +41,17 @@ The worker admits or rejects each request as a unit. Live requests have a 1 MiB 
 | Per project | 8 MiB and 10,000 rows |
 | Concurrent flushes per worker | 4 |
 
-The buffer limits cover pending and in-flight work, including overhead. Size process memory for handlers, native engines, and caches too. Flush retries can keep events in memory longer than two seconds. A query can return `delivery.pending_unknown: true` because its worker cannot inspect other workers' buffers. Verify the expected events in SQL before treating a deployment as drained.
+The buffer limits cover pending and in-flight work, including overhead. Size process memory for handlers, native engines, and caches too. Flush retries can keep events in memory beyond the timer. A query can return `delivery.pending_unknown: true` because its worker cannot inspect other workers' buffers. Verify the expected events in SQL before treating a deployment as drained.
 
 If a worker loses its PostgreSQL lease, `/readyz` returns 503 and the worker pauses write admission. The worker retains pending batches in memory and retries after acquiring a fresh lease. If recovery quarantines one project, all workers reject new ingestion for that project with `project_ingestion_quarantined` and `Retry-After: 1`. A successful recovery or flush clears the quarantine. [Instance status and quarantine reasons](instance-status.md#interpret-the-response)
+
+### Tune the hosted flush timer
+
+Available on main after v0.19.2. In the hosted profile, set `acceptance.flush_interval` or `PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL` to a duration from `1s` through `30s`. For example, use `"acceptance": {"mode": "buffered", "flush_interval": "10s"}`. Omit the setting to keep the 2-second timer. A batch becomes eligible to flush when the oldest pending event reaches that age, the pending batch reaches 5 MiB, or it reaches one-third of the project event capacity (3,333 events by default). The count trigger gives the worker room to accept more events while the first batch commits. Requests stay atomic and traffic bursts can still fill the buffer.
+
+A longer timer can combine more events into each flush and reduce S3 requests. It also keeps accepted events in memory longer, delaying query visibility and increasing the time during which a worker crash can lose them. Busy flush slots, provider latency, and retries can extend that time beyond the timer.
+
+In one hosted test, each case sent 24 HTTP events to one project at one event per second. With a 10-second timer, successful S3 PUTs fell from 55 to 15 without an event webhook and from 94 to 45 with a webhook. The 95th-percentile time from acknowledgment to successful flush rose from 2.147 to 10.148 seconds without a webhook and from 2.172 to 10.172 seconds with one. The test timed flush completion. Query visibility and webhook delivery were outside the measurement. [Measurement run](https://github.com/olup/porcupine/actions/runs/44723693790)
 
 ## Drain a worker
 

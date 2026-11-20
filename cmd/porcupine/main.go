@@ -234,7 +234,14 @@ func (s settings) serviceConfig() (string, porcupine.Config, error) {
 	if err != nil {
 		return "", porcupine.Config{}, err
 	}
-	return addr, porcupine.Config{Profile: porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")), AcceptanceMode: porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")), Usage: usageConfig, ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, QueueProjectMaxEvents: queueProjectMax, QueueProjectMaxBytes: queueProjectMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, GeoIPDatabase: s.get("PORCUPINE_GEOIP_DATABASE"), DuckLake: duckLake, HostedRecoveryFloor: recoveryFloor, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, Auth: authConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
+	var flushInterval time.Duration
+	if raw := s.get("PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL"); raw != "" {
+		flushInterval, err = time.ParseDuration(raw)
+		if err != nil || flushInterval <= 0 {
+			return "", porcupine.Config{}, errors.New("PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL must be a positive duration")
+		}
+	}
+	return addr, porcupine.Config{Profile: porcupine.DeploymentProfile(s.get("PORCUPINE_PROFILE")), AcceptanceMode: porcupine.AcceptanceMode(s.get("PORCUPINE_ACCEPTANCE_MODE")), HostedFlushInterval: flushInterval, Usage: usageConfig, ReceiptRetention: retention, DBPath: s.get("PORCUPINE_DB"), ControlDBPath: s.get("PORCUPINE_CONTROL_DB"), BootstrapToken: s.get("PORCUPINE_BOOTSTRAP_TOKEN"), QueueMaxEvents: queueMax, QueueMaxBytes: queueMaxBytes, QueueProjectMaxEvents: queueProjectMax, QueueProjectMaxBytes: queueProjectMaxBytes, AllowedOrigins: allowedOrigins, TrustedProxies: trustedProxies, GeoIPDatabase: s.get("PORCUPINE_GEOIP_DATABASE"), DuckLake: duckLake, HostedRecoveryFloor: recoveryFloor, Exports: exportConfig, Pipelines: pipelineConfig, OAuth: oauthConfig, Auth: authConfig, NativeBackup: backupConfig, InteractiveQueries: interactiveConfig, Shared: sharedConfig}, nil
 }
 
 func (s settings) receiptRetention() (time.Duration, error) {

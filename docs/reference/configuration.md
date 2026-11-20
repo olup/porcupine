@@ -16,7 +16,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | --- | --- |
 | Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies`, `geoip_database` |
 | `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
-| `acceptance` | `mode` confirms the acknowledgment policy. Standalone defaults to `"durable"`. Hosted requires explicit `"buffered"`. |
+| `acceptance` | `mode` confirms the acknowledgment policy. Standalone defaults to `"durable"`. Hosted requires explicit `"buffered"` and can set [`flush_interval`](shared-deployment.md#tune-the-hosted-flush-timer) on main after v0.19.2. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, and `receipt_retention`. Use `"0"` to keep local receipts (the default) or a duration such as `"720h"` for optional pruning. On `main` after v0.19.2, standalone also supports `project_max_events` and `project_max_bytes`. [Queue limits](reliability.md#acceptance-and-queue-limits) |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
