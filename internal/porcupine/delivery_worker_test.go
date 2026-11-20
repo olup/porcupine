@@ -18,8 +18,9 @@ import (
 
 type deliveryTestLake struct {
 	lakeapi.LakeStore
-	mu      sync.Mutex
-	applied map[string]lakeapi.EventProjection
+	mu       sync.Mutex
+	applied  map[string]lakeapi.EventProjection
+	failNext error
 }
 
 func (*deliveryTestLake) SourceID(context.Context) (string, error) { return "delivery-test", nil }
@@ -28,6 +29,10 @@ func (*deliveryTestLake) Close() error                             { return nil 
 func (l *deliveryTestLake) Apply(_ context.Context, projections []lakeapi.EventProjection) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if err := l.failNext; err != nil {
+		l.failNext = nil
+		return err
+	}
 	for _, projection := range projections {
 		l.applied[projection.UUID] = projection
 	}
@@ -50,7 +55,8 @@ func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 		s := service(t, 100)
 		id, token := project(t, s)
 		_, editKey := key(t, s, []string{"events:read", "events:edit", "events:delete", "imports:write", "events:write"}, []string{id})
-		s.lake = &deliveryTestLake{applied: make(map[string]lakeapi.EventProjection)}
+		lake := &deliveryTestLake{applied: make(map[string]lakeapi.EventProjection)}
+		s.lake = lake
 		s.imports.deliveryEnabled = true
 		capture := func(uuid string) {
 			request(t, s, "POST", "/capture/", "", captureBody(token, uuid), 200)
@@ -116,7 +122,7 @@ func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 		// Simulate a durable writer without an in-process wake signal.
 		writer := *s.acceptance.(*durableAcceptance)
 		writer.wakeDelivery = nil
-		batch, err := prepareLiveBatch(id, "posthog", eventBatch{{UUID: "silent", Event: "purchase", DistinctID: "user"}}, time.Now(), nil)
+		batch, err := prepareLiveBatch(id, "", eventBatch{{UUID: "silent", Event: "purchase", DistinctID: "user"}}, time.Now(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,6 +133,19 @@ func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 		expectReceipts(6)
 		time.Sleep(deliveryMaxDelay)
 		expectReceipts(7)
+
+		waitForIdle()
+		lake.mu.Lock()
+		lake.failNext = io.ErrUnexpectedEOF
+		lake.mu.Unlock()
+		capture("retry")
+		expectReceipts(7)
+		status, err := s.deliveryStatus(t.Context(), id)
+		if err != nil || status.Error != "DuckLake delivery failed" || status.Pending != 1 {
+			t.Fatalf("failed delivery did not retain durable work and report its health: %v, %v", status, err)
+		}
+		time.Sleep(deliveryInterval)
+		expectReceipts(8)
 	})
 }
 
