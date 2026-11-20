@@ -175,7 +175,10 @@ func (w *observedResponse) FlushError() error {
 	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
-func requestGroup(path string) string {
+func requestGroup(path string, captureHeaders map[string][]string) string {
+	if _, capture := captureHeaders[path]; capture {
+		return "ingestion"
+	}
 	switch path {
 	case "/healthz", "/readyz":
 		return "health"
@@ -183,8 +186,6 @@ func requestGroup(path string) string {
 		return "mcp"
 	case "/openapi.json", "/openapi.yaml", "/openapi-3.0.json", "/openapi-3.0.yaml", "/ingest/v1/schema":
 		return "metadata"
-	case "/ingest/v1/events", "/capture/", "/batch/", "/i/v0/e/", "/e/", "/v1/track", "/v1/page", "/v1/identify", "/v1/batch":
-		return "ingestion"
 	}
 	switch {
 	case strings.HasPrefix(path, "/api/v1/"):
@@ -196,10 +197,10 @@ func requestGroup(path string) string {
 	}
 }
 
-func (s *Service) observeHTTP(next http.Handler) http.Handler {
+func (s *Service) observeHTTP(captureHeaders map[string][]string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		group := requestGroup(r.URL.Path)
+		group := requestGroup(r.URL.Path, captureHeaders)
 		observation := httpObservation{}
 		if group == "management" {
 			r = r.WithContext(context.WithValue(r.Context(), httpObservationKey{}, &observation))
