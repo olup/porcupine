@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/olup/porcupine/internal/apierr"
+	"github.com/olup/porcupine/internal/catalog"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -46,7 +47,7 @@ func (s *Service) eventCatalog(ctx context.Context, input *lakeapi.EventCatalogI
 	}
 	ctx, cancel := context.WithDeadline(ctx, bounds.Deadline)
 	defer cancel()
-	if err := s.describeCatalogPage(ctx, options.ID, options.Event, &out.Body.EventCatalog); err != nil {
+	if err := catalog.DescribePage(ctx, s.control, options.ID, options.Event, &out.Body.EventCatalog, s.clock); err != nil {
 		return nil, apierr.New(503, "catalog descriptions unavailable")
 	}
 	out.Body.Delivery, err = s.deliveryStatus(ctx, input.ID)
