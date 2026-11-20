@@ -25,6 +25,12 @@ For other operations, use `porcupine_docs` to list permitted operations and load
 
 [SQL reference](https://olup.github.io/porcupine/docs/reference/analytics.md) · [Recipes](https://olup.github.io/porcupine/docs/reference/duckdb-recipes.md) · [MCP contracts](https://olup.github.io/porcupine/docs/reference/mcp.md)
 
+## Review catalog documentation
+
+Use `porcupine_schema` in MCP or `porcupine get-event-catalog --id PROJECT_ID` in the CLI. Inspect `documentation_status` for custom events and sampled properties. Descriptions become stale more than six calendar months after the last edit or confirmed review, measured in UTC.
+
+Check the application code that emits an event or sets a property before drafting a description or confirming that it still applies. Use `set-catalog-description` to save or confirm a description. This requires project `management:write`. Follow [the catalog review steps](https://olup.github.io/porcupine/docs/reference/event-discovery.md#review-catalog-documentation).
+
 ## Collect or import
 
 For web capture into a mixed project, follow the [PostHog browser quickstart](https://olup.github.io/porcupine/docs/reference/compatibility.md#configure-browser-capture). Retrieve the project's public key with `porcupine get-client-ingestion-key --id PROJECT_ID` if your authenticated CLI has project `management:read`. Initialize the SDK with that key and the instance's API origin as `api_host`. The key selects the project. Keep private service credentials on the backend.

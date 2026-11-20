@@ -72,6 +72,8 @@ Pass JSON inline, use `--body @query.json` to read a file, or use `--body @-` to
 
 Run `porcupine get-event-profile --id PROJECT_ID --event EVENT_NAME` to inspect activity, recent examples, and sampled property coverage before writing SQL. See [event profiles](../docs/reference/event-discovery.md) for sampling and payload limits.
 
+Use `porcupine get-event-catalog --id PROJECT_ID` to find missing or stale event descriptions. See [how to review catalog documentation](../docs/reference/event-discovery.md#review-catalog-documentation) for property discovery and updates with `set-catalog-description`.
+
 `porcupine restore` is an offline operation that runs the matching native server image through Docker. It restores into a fresh volume and resets old access and delivery jobs. Builtin mode reads its recovery secret from a private file. External mode uses `--auth-mode external` without `--bootstrap-token-file`, then recovers administration through an external operator JWT. Archive and destination modes must match. See [remote backups and recovery](../docs/reference/native-backup-recovery.md). The CLI itself still has no native database dependency.
 
 ## Develop
