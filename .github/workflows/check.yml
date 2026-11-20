@@ -182,17 +182,19 @@ jobs:
         env:
           GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
         run: |
+          modules=$(go env GOMODCACHE)
+          build=$(go env GOCACHE)
           {
             echo "prefix=shared-go-${RUNNER_ARCH}-${ImageOS}-${GO_VERSION}-"
-            echo "modules=$(go env GOMODCACHE)"
-            echo "build=$(go env GOCACHE)"
+            echo "modules=${modules}"
+            echo "build=${build}"
           } >> "$GITHUB_OUTPUT"
       - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: |
             ${{ steps.go-cache.outputs.modules }}
             ${{ steps.go-cache.outputs.build }}
-          key: ${{ steps.go-cache.outputs.prefix }}${{ hashFiles('go.sum', 'Makefile', 'internal/cmd/shared-postgres-integration/main.go') }}
+          key: ${{ steps.go-cache.outputs.prefix }}${{ hashFiles('go.mod', 'go.sum', 'Makefile', 'internal/cmd/shared-postgres-integration/main.go') }}
           # Go recompiles changed inputs and reuses compatible compiled packages.
           restore-keys: ${{ steps.go-cache.outputs.prefix }}
       - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
