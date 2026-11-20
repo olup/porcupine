@@ -47,7 +47,7 @@ If a worker loses its PostgreSQL lease, `/readyz` returns 503 and the worker pau
 
 ### Tune the hosted flush timer
 
-Available on main after v0.19.2. In the hosted profile, set `acceptance.flush_interval` or `PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL` to a duration from `1s` through `30s`. For example, use `"acceptance": {"mode": "buffered", "flush_interval": "10s"}`. Omit the setting to keep the 2-second timer. A batch becomes eligible to flush when the oldest pending event reaches that age, the pending batch reaches 5 MiB, or it reaches one-third of the project event capacity (3,333 events by default). The count trigger gives the worker room to accept more events while the first batch commits. Requests stay atomic and traffic bursts can still fill the buffer.
+In the hosted profile, set `acceptance.flush_interval` or `PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL` to a duration from `1s` through `30s`. For example, use `"acceptance": {"mode": "buffered", "flush_interval": "10s"}`. Omit the setting to keep the 2-second timer. A batch becomes eligible to flush when the oldest pending event reaches that age, the pending batch reaches 5 MiB, or it reaches one-third of the project event capacity (3,333 events by default). The count trigger gives the worker room to accept more events while the first batch commits. Requests stay atomic and traffic bursts can still fill the buffer.
 
 A longer timer can combine more events into each flush and reduce S3 requests. It also keeps accepted events in memory longer, delaying query visibility and increasing the time during which a worker crash can lose them. Busy flush slots, provider latency, and retries can extend that time beyond the timer.
 

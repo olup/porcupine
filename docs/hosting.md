@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.2). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.3). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a><!-- Legacy URL fragment. -->
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,19 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.19.2
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and check for shutdown errors. Investigate a failed drain before continuing because acknowledged events can still be in worker memory.
+2. Keep the v0.19.2 image and private configuration. Take a complete recovery point before starting v0.19.3. For standalone, capture both SQLite databases and the DuckLake storage, including any analytical objects in S3, together. For hosted, coordinate PostgreSQL recovery with S3 object versions. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+3. Stop any remaining v0.19.2 processes and start v0.19.3 with the existing configuration and storage.
+4. Update the CLI. Check readiness and verify that a new test event becomes queryable before resuming producers.
+
+Standalone startup migrates the SQLite journal to version 10 and counts pending events and their charged bytes by project. The migration runs even if you leave the optional [per-project queue limits](reference/reliability.md#acceptance-and-queue-limits) unset. Hosted PostgreSQL control and DuckLake catalog schema versions stay the same.
+
+For standalone rollback, restore the complete pre-upgrade recovery point before starting v0.19.2. v0.19.2 refuses a version 10 journal. Reconcile writes accepted after cutover before resuming producers.
+
+For hosted rollback, use the v0.19.2 configuration. The optional `acceptance.flush_interval` setting requires v0.19.3.
 
 ### Upgrade from v0.19.1
 

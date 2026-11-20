@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.3
+
+- Standalone instances can enforce per-project limits on pending events and payload bytes when admitting live capture. Each limit is optional and defaults to zero. If one project reaches its limit, other projects can still accept work while instance capacity is available. (#169) [Queue limits](https://github.com/olup/porcupine/blob/v0.19.3/docs/reference/reliability.md#acceptance-and-queue-limits)
+- Standalone DuckLake delivery wakes when new work commits to the SQLite journal and checks the journal less often while idle. (#168)
+- Standalone DuckLake skips scheduled compaction passes for idle project engines after pending work clears. (#162)
+- Hosted deployments can set `acceptance.flush_interval` between `1s` and `30s`. The default is `2s`. A longer interval can reduce S3 requests at the cost of later query visibility and more time in which a worker crash can lose accepted events. (#171) [Hosted flush timer](https://github.com/olup/porcupine/blob/v0.19.3/docs/reference/shared-deployment.md#tune-the-hosted-flush-timer)
+- Hosted DuckLake maintenance checks for due cleanup or compaction before opening a claim transaction. (#172)
+- Hosted webhook workers back off when no webhook destination is active and wake locally after committed output publication. (#170)
+- Hosted scheduled S3 output and cleanup workers poll less often when no active schedule or unfinished cleanup needs attention. (#173)
+- Browser capture origin restrictions apply to legacy PostHog capture subpaths. (#163)
+- The hosting and recovery guides now cover hosted setup, worker drains, and coordinated PostgreSQL and S3 recovery. (#164) [Hosted runbook](https://github.com/olup/porcupine/blob/v0.19.3/docs/reference/shared-deployment.md)
+
+In a test with two warmed hosted workers, 24 idle projects, and no active pipelines, three 30-second windows averaged 238 PostgreSQL statements per minute across both workers and recorded zero S3 requests. [Measurement](https://github.com/olup/porcupine/actions/runs/44727564181/job/136258738791)
+
+Standalone startup migrates the SQLite journal to version 10. Back up all standalone storage together before upgrading so you can restore it if you need to downgrade. [Upgrade from v0.19.2](https://github.com/olup/porcupine/blob/v0.19.3/docs/hosting.md#upgrade-from-v0192)
+
 ## 0.19.2
 
 - Interactive event queries and snapshot exports can skip DuckLake identity joins when the SQL does not need person data. Event profile activity and hosted recent-event lists read event rows directly. (#156)
