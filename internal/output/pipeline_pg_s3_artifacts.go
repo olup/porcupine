@@ -182,6 +182,9 @@ SELECT id FROM hosted_s3_pipeline_runs WHERE project_id=$1 AND pipeline_id=$2 AN
 	return err
 }
 
+const hostedScheduledRetirementPresence = `SELECT EXISTS(SELECT 1 FROM hosted_s3_pipeline_runs
+WHERE state='canceled' AND attempt_id<>'')`
+
 func (s *PipelineJobs) cleanHostedScheduledRetirement(ctx context.Context) (bool, error) {
 	var w hostedScheduledWork
 	var config string

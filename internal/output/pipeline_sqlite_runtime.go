@@ -281,8 +281,8 @@ func (s *PipelineJobs) Start() {
 			start("webhook", rt.webhookWake, s.hostedWebhookPoll())
 		}
 		if s.pg.scheduled.ready() {
-			startFixed("s3", rt.s3Wake, s.RunS3)
-			startFixed("retired-s3", make(chan struct{}, 1), s.cleanHostedScheduledRetirement)
+			start("s3", rt.s3Wake, s.hostedPipelinePoll(hostedScheduledPresence, s.RunS3))
+			start("retired-s3", s.pg.retiredS3Wake, s.hostedPipelinePoll(hostedScheduledRetirementPresence, s.cleanHostedScheduledRetirement))
 		}
 		return
 	}
