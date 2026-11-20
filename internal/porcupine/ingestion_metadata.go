@@ -68,7 +68,7 @@ func prepareIngestionMetadata(event *eventapi.Event, input *ingestfmt.Metadata, 
 }
 
 func encodeIngestionMetadata(event eventapi.Event) string {
-	if event.SourceID == "" {
+	if event.SourceID == "" && len(event.Context) == 0 {
 		return ""
 	}
 	raw, _ := json.Marshal(storedIngestionMetadata{event.SourceID, event.MessageID, event.EventType, event.Context})

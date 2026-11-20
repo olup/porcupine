@@ -45,7 +45,7 @@ func CookielessProperties(raw json.RawMessage, id, day string) json.RawMessage {
 func ResolveCookieless(event eventapi.Event, id, day string) eventapi.Event {
 	event.DistinctID = id
 	event.Properties = CookielessProperties(event.Properties, id, day)
-	if event.SourceID != "" {
+	if len(event.Context) != 0 {
 		event.Context = ingest.ScrubContext(event.Context)
 	}
 	return event
