@@ -189,7 +189,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	nativeRequest(t, s, ingestA, `{"type":"identify","message_id":"s3-identify","anonymous_id":"browser","user_id":"person","set":{"plan":"team"}}`, 200)
 	request(t, s, "POST", "/capture/", "", captureBody(ingestB, "s3-other-project"), 200)
 	duckLakeJourneyDrain(t, s)
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	for _, id := range []string{a, b} {
 		fixture.flush(t, store, id)
 	}
@@ -240,7 +240,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	<-s.deliveryDone
 	s.lakeMaintenanceCancel()
 	<-s.lakeMaintenanceDone
-	store = s.lake.(*lakeapi.DuckLakeStore)
+	store = s.lake
 	reopened, err := store.SourceID(context.Background())
 	s3FixtureError(t, fixture, "reopened source identity", err)
 	if reopened != source {
@@ -350,17 +350,15 @@ func TestDuckLakeS3CanceledObjectReadRecovers(t *testing.T) {
 	storage.Endpoint, storage.CACertFile = proxy.URL, ""
 	storage.RequestTimeoutSeconds = 1
 	config := lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
-	lake, err := lakeapi.NewDuckLake(config)
+	store, err := lakeapi.NewDuckLake(config)
 	s3FixtureError(t, fixture, "open S3 cancellation fixture", err)
-	store := lake.(*lakeapi.DuckLakeStore)
 	defer func() { store.Close() }()
 	ctx := context.Background()
 	s3FixtureError(t, fixture, "seed S3 cancellation fixture", store.Apply(ctx, []lakeapi.EventProjection{lakeStorageProjection(t, "a", "kept", 1)}))
 	fixture.flush(t, store, "a")
 	s3FixtureError(t, fixture, "close S3 cancellation seed", store.Close())
-	lake, err = lakeapi.NewDuckLake(config)
+	store, err = lakeapi.NewDuckLake(config)
 	s3FixtureError(t, fixture, "reopen S3 cancellation fixture", err)
-	store = lake.(*lakeapi.DuckLakeStore)
 	// Opening validates catalog identity and schema through their own Parquet
 	// files. Finish that work before blocking event reads so this test measures
 	// interruption of an analytical query, not cleanup of a failed cold open.
@@ -449,9 +447,8 @@ func TestDuckLakeS3ColdOpenLeavesResidentProjectAvailable(t *testing.T) {
 	defer proxy.Close()
 	storage := fixture.storage
 	storage.Endpoint, storage.CACertFile = proxy.URL, ""
-	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
+	store, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
 	s3FixtureError(t, fixture, "open cold S3 fixture", err)
-	store := lake.(*lakeapi.DuckLakeStore)
 	defer store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -516,9 +513,8 @@ func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
 				storage.AccessKeyID, storage.SecretAccessKey = "", ""
 			}
 			config := lakeapi.DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
-			lake, err := lakeapi.NewDuckLake(config)
+			store, err := lakeapi.NewDuckLake(config)
 			s3FixtureError(t, fixture, "open untrusted S3 configuration", err)
-			store := lake.(*lakeapi.DuckLakeStore)
 			defer func() { store.Close() }()
 			ctx := context.Background()
 			original := lakeStorageProjection(t, "tls", "kept", 1)
@@ -537,9 +533,8 @@ func TestDuckLakeS3RejectsUntrustedTLSCertificate(t *testing.T) {
 			}
 			s3FixtureError(t, fixture, "close failed TLS configuration", store.Close())
 			storage.CACertFile = fixture.storage.CACertFile
-			lake, err = lakeapi.NewDuckLake(config)
+			store, err = lakeapi.NewDuckLake(config)
 			s3FixtureError(t, fixture, "reopen S3 store with the correct CA", err)
-			store = lake.(*lakeapi.DuckLakeStore)
 			s3FixtureError(t, fixture, "retry accepted event after correcting TLS", store.Apply(ctx, []lakeapi.EventProjection{original}))
 			fixture.flush(t, store, "tls")
 			rows, err := store.Query(ctx, "tls", "SELECT uuid FROM events", nil, lakeapi.DefaultQueryExecutionLimits())

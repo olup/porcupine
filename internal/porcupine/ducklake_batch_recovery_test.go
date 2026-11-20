@@ -41,7 +41,7 @@ func TestDuckLakeLargeBatchFailureRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	p, release, err := lake.LeaseProject(ctx, project)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestDuckLakeLargeMutationBatchAllocationRecovery(t *testing.T) {
 	if err != nil || len(prepared) != 100 {
 		t.Fatalf("queued mutations=%d error=%v", len(prepared), err)
 	}
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	p, release, err := lake.LeaseProject(context.Background(), project)
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestDuckLakeLargeEventBatchLimits(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			lake := s.lake.(*lakeapi.DuckLakeStore)
+			lake := s.lake
 			p, release, err := lake.LeaseProject(ctx, project)
 			if err != nil {
 				t.Fatal(err)

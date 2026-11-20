@@ -61,7 +61,6 @@ func TestUsageAcceptanceImportRetryIsolationAndPermissions(t *testing.T) {
 }
 
 type usageFailingLake struct {
-	lakeapi.LakeStore
 	s     *Service
 	t     *testing.T
 	calls int
@@ -85,13 +84,12 @@ func (l *usageFailingLake) Catalog(context.Context, lakeapi.EventCatalogInput) (
 func (l *usageFailingLake) Profile(context.Context, string, lakeapi.EventProfileOptions, time.Time) (lakeapi.EventProfileRead, error) {
 	return lakeapi.EventProfileRead{}, l.before()
 }
-func (l *usageFailingLake) Close() error { return nil }
 func TestUsageQueryNativeLifecycleCountsFailuresAndOperations(t *testing.T) {
 	t.Parallel()
 	s := service(t, 20)
 	id, _ := project(t, s)
 	fake := &usageFailingLake{s: s, t: t}
-	s.lake = fake
+	s.standaloneReader = fake
 	request(t, s, "POST", "/api/v1/projects/"+id+"/query", adminToken, `{"sql":"SELECT count(*) FROM events"}`, 400)
 	if e := s.usage.synchronize(t.Context()); e != nil {
 		t.Fatal(e)

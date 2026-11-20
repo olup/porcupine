@@ -152,7 +152,7 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	if err = restored.lake.Maintain(context.Background()); err != nil {
 		t.Fatal("target-only maintenance failed", err)
 	}
-	lake := restored.lake.(*lakeapi.DuckLakeStore)
+	lake := restored.lake
 	for i := 0; i < 2; i++ {
 		if err = lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)); err != nil {
 			t.Fatal("target-only cleanup failed", err)
@@ -293,8 +293,8 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	state := lakeMaintenanceLifecycle(t, s, a, ingest, "s3-restore", true)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"second-project","actor_id":"other","name":"untouched"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	fixture.flush(t, s.lake.(*lakeapi.DuckLakeStore), a)
-	fixture.flush(t, s.lake.(*lakeapi.DuckLakeStore), b)
+	fixture.flush(t, s.lake, a)
+	fixture.flush(t, s.lake, b)
 	s.deliveryCancel()
 	<-s.deliveryDone
 	pending := `{"type":"track","message_id":"restore-pending","actor_id":"person","name":"pending"}`
@@ -390,7 +390,7 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	restored, err = Open(targetConfig)
 	s3FixtureError(t, fixture, "restart completed restored target", err)
 	s3FixtureError(t, fixture, "maintain isolated restored target", restored.lake.Maintain(context.Background()))
-	lake := restored.lake.(*lakeapi.DuckLakeStore)
+	lake := restored.lake
 	for i := 0; i < 2; i++ {
 		s3FixtureError(t, fixture, "cleanup isolated restored target", lake.CleanupDue(context.Background(), time.Now().Add(2*time.Hour)))
 	}
@@ -413,7 +413,7 @@ func TestDuckLakeNativeRestoreRefusesAbsoluteOriginalDataReference(t *testing.T)
 	if err := s.lake.Maintain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	p, release, err := lake.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)

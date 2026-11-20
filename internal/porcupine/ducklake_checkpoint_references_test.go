@@ -50,7 +50,7 @@ func TestDuckLakeCheckpointMissingCurrentFilePreservesHealthyBackup(t *testing.T
 		t.Run(kind, func(t *testing.T) {
 			service, config := nativeBackupService(t)
 			project, _ := project(t, service)
-			store := service.lake.(*lakeapi.DuckLakeStore)
+			store := service.lake
 			missing := checkpointCurrentFileFixture(t, store, project, kind)
 			ctx := context.Background()
 			if err := service.createNativeBackup(ctx); err != nil {
@@ -91,7 +91,7 @@ func TestDuckLakeS3CheckpointMissingCurrentFilePreservesHealthyBackup(t *testing
 			service.lakeMaintenanceCancel()
 			<-service.lakeMaintenanceDone
 			project, _ := project(t, service)
-			store := service.lake.(*lakeapi.DuckLakeStore)
+			store := service.lake
 			missing := checkpointCurrentFileFixture(t, store, project, kind)
 			ctx := context.Background()
 			s3FixtureError(t, fixture, "create healthy backup before source damage", service.createNativeBackup(ctx))

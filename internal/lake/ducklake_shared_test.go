@@ -42,18 +42,17 @@ func sharedNativeStores(t *testing.T) (context.Context, *DuckLakeStore, *DuckLak
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 	config := DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "first"), PostgresURL: dsn, SharedSourceID: event.NewID(), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true}
-	first, err := NewDuckLake(config)
+	a, err := NewDuckLake(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondConfig := config
 	secondConfig.Directory = filepath.Join(t.TempDir(), "second")
-	second, err := NewDuckLake(secondConfig)
+	b, err := NewDuckLake(secondConfig)
 	if err != nil {
-		first.Close()
+		a.Close()
 		t.Fatal(err)
 	}
-	a, b := first.(*DuckLakeStore), second.(*DuckLakeStore)
 	t.Cleanup(func() {
 		if err := a.Close(); err != nil {
 			t.Error(err)
@@ -107,12 +106,11 @@ func TestDuckLakeS3SharedPostgresRegistryColdDiscovery(t *testing.T) {
 	// Scratch directory replacement does not replace the source identity.
 	coldConfig := config
 	coldConfig.Directory = filepath.Join(t.TempDir(), "cold")
-	cold, err := NewDuckLake(coldConfig)
+	c, err := NewDuckLake(coldConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cold.Close() })
-	c := cold.(*DuckLakeStore)
+	t.Cleanup(func() { c.Close() })
 	if err := os.RemoveAll(c.Root); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +263,7 @@ func TestDuckLakeS3SharedPostgresIndependentEngines(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if got := lakeStorageCount(t, reopened.(*DuckLakeStore), "project-a", "events"); got != 12 {
+	if got := lakeStorageCount(t, reopened, "project-a", "events"); got != 12 {
 		t.Fatal("worker restart lost shared analytical state", got)
 	}
 	if _, err := reopened.StageCheckpoint(ctx, func(context.Context, string) error { t.Fatal("shared checkpoint started local snapshot"); return nil }); err == nil {

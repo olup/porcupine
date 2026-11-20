@@ -14,11 +14,10 @@ import (
 
 func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *DuckLakeStore {
 	t.Helper()
-	lake, err := NewDuckLake(DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
+	s, err := NewDuckLake(DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := lake.(*DuckLakeStore)
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)

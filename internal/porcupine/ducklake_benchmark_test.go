@@ -107,7 +107,7 @@ func BenchmarkDuckLakeNativeHTTPBatch100AndProjection(b *testing.B) {
 
 func BenchmarkDuckLakeWarmAggregation10000(b *testing.B) {
 	s, projectID, _ := duckLakeBenchmarkService(b)
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		b.Fatal(err)

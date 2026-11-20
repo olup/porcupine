@@ -278,7 +278,7 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 				t.Fatal("pruned import was reaccepted", retry.Counts)
 			}
 			blocked := createFormatImport(t, s, projectID, writer, format, "blocked-job", retryData)
-			store := s.lake.(*lakeapi.DuckLakeStore)
+			store := s.lake
 			if err := store.Close(); err != nil {
 				t.Fatal(err)
 			}

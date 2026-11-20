@@ -189,14 +189,14 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 }
 
 type recordingQueryLimits struct {
-	lakeapi.LakeStore
+	query.Reader
 
 	received lakeapi.QueryExecutionLimits
 }
 
 func (s *recordingQueryLimits) Query(ctx context.Context, project, sql string, parameters map[string]string, limits lakeapi.QueryExecutionLimits) (lakeapi.AnalyticsResult, error) {
 	s.received = limits
-	return s.LakeStore.Query(ctx, project, sql, parameters, limits)
+	return s.Reader.Query(ctx, project, sql, parameters, limits)
 }
 
 func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) {
@@ -205,8 +205,8 @@ func TestTenantInteractiveRaisedDeploymentBudgetsReachNativeQuery(t *testing.T) 
 	s.queries = query.New(query.InteractiveQueryConfig{MaxConcurrent: 2, TimeoutMS: 6000, MaxRows: 2000, MaxResultBytes: 4 << 20}, s.clock, nil)
 	s.queries.Bind(s.control, "", 0)
 	s.queries.SetLocalRecorder(s.usage.recorder)
-	spy := &recordingQueryLimits{LakeStore: s.lake}
-	s.lake = spy
+	spy := &recordingQueryLimits{Reader: s.lake}
+	s.standaloneReader = spy
 	id, _ := project(t, s)
 	if _, err := s.control.Exec(`UPDATE tenants SET hot_query_timeout_ms=6000,hot_query_max_rows=2000,hot_query_max_result_bytes=? WHERE id=?`, 4<<20, defaultTenantID); err != nil {
 		t.Fatal(err)

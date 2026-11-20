@@ -37,11 +37,10 @@ func TestDuckLakeS3SharedPostgresNativeProofHistoryPerformance(t *testing.T) {
 		t.Run(fmt.Sprintf("proofs_%d", rows), func(t *testing.T) {
 			ctx := t.Context()
 			config.Directory = t.TempDir()
-			lake, err := NewDuckLake(config)
+			store, err := NewDuckLake(config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := lake.(*DuckLakeStore)
 			t.Cleanup(func() {
 				if err := store.Close(); err != nil {
 					t.Error(err)

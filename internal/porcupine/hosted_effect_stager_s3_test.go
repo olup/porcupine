@@ -16,11 +16,10 @@ import (
 func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 	t.Parallel()
 	fixture := nativeS3Fixture(t)
-	runtime, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &fixture.storage, DisableCleanup: true})
+	store, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &fixture.storage, DisableCleanup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := runtime.(*lakeapi.DuckLakeStore)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)

@@ -17,9 +17,8 @@ func TestDuckLakeS3SharedPostgresHostedCompactionSchedule(t *testing.T) {
 	config := DuckLakeConfig{PostgresURL: sharedPostgresDSN(t), SharedSourceID: event.NewID(), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 2, DisableCleanup: true}
 	open := func() *DuckLakeStore {
 		config.Directory = t.TempDir()
-		store, err := NewDuckLake(config)
+		s, err := NewDuckLake(config)
 		s3FixtureError(t, fixture, "open store", err)
-		s := store.(*DuckLakeStore)
 		t.Cleanup(func() { s3FixtureError(t, fixture, "close store", s.Close()) })
 		return s
 	}

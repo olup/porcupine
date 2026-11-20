@@ -12,6 +12,7 @@ import (
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/observability"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func operationalService(t *testing.T) *Service {
@@ -126,7 +127,7 @@ func TestOperationalMetricsPrivacyAdmissionAndMCP(t *testing.T) {
 }
 
 type waitingQueryLake struct {
-	lakeapi.LakeStore
+	query.Reader
 	started, cancelled, release chan struct{}
 }
 
@@ -137,8 +138,6 @@ func (l *waitingQueryLake) Query(ctx context.Context, _, _ string, _ map[string]
 	<-l.release
 	return lakeapi.AnalyticsResult{}, lakeapi.DuckLakeQueryError(ctx, ctx.Err())
 }
-
-func (l *waitingQueryLake) Close() error { return nil }
 
 func TestOperationalQueryCancellationWaitsForBackendReturn(t *testing.T) {
 	t.Parallel()
@@ -156,7 +155,7 @@ func verifyQueryReturnsAfterCancellation(t *testing.T, timeout bool, outcome str
 	t.Helper()
 	s := operationalService(t)
 	backend := &waitingQueryLake{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
-	s.lake = backend
+	s.standaloneReader = backend
 	projectID, _ := project(t, s)
 	timeoutMS := 5000
 	if timeout {

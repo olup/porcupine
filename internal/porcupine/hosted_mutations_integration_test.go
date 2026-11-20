@@ -28,7 +28,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationRecovery(t *testing.T) {
 	for _, n := range []*sharedJourneyNode{a, b} {
 		n.service.usage.cancel()
 		<-n.service.usage.done
-		store := n.service.lake.(*lakeapi.DuckLakeStore)
+		store := n.service.lake
 		coordinator, err := lakeapi.NewPostgresProjectCoordinator(n.service.control, lakeapi.DefaultProjectCoordinatorConfig())
 		if err != nil {
 			t.Fatal(err)

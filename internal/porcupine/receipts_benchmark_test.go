@@ -105,7 +105,7 @@ func receiptLookupBenchmarkFixture(b *testing.B, history int) (*Service, string)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES(?,'default','Receipt benchmark',?,'mixed')`, project, now.Format(time.RFC3339Nano)); err != nil {
 		b.Fatal(err)
 	}
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	p, release, err := store.LeaseProject(ctx, project)
 	if err != nil {
 		b.Fatal(err)

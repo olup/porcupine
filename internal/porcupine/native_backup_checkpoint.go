@@ -37,7 +37,7 @@ func (s *Service) stageNativeCheckpoint(ctx context.Context) (checkpoint *lakeap
 		return nil, err
 	}
 	var capturedAt string
-	checkpoint, result = s.lake.StageCheckpoint(ctx, func(ctx context.Context, destination string) error {
+	checkpoint, result = s.backups.stageCheckpoint(ctx, func(ctx context.Context, destination string) error {
 		for _, item := range []struct{ source, destination string }{
 			{s.backups.databasePath, destination},
 			{s.backups.controlDatabasePath, filepath.Join(filepath.Dir(destination), "control.sqlite")},

@@ -19,9 +19,8 @@ func TestDuckLakeS3CleanupPreservesReaderThenReclaimsPayload(t *testing.T) {
 	t.Parallel()
 	fixture := nativeS3Fixture(t)
 	config := DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1}
-	lake, err := NewDuckLake(config)
+	store, err := NewDuckLake(config)
 	s3FixtureError(t, fixture, "open S3 cleanup store", err)
-	store := lake.(*DuckLakeStore)
 	defer store.Close()
 	ctx := context.Background()
 	deleted := lakeStorageProjection(t, "project", "deleted", 1)
@@ -101,9 +100,8 @@ func TestDuckLakeS3CleanupPreservesReaderThenReclaimsPayload(t *testing.T) {
 func TestDuckLakeS3SlowProjectDeletionLeavesOtherProjectsAvailable(t *testing.T) {
 	t.Parallel()
 	fixture := nativeS3Fixture(t)
-	lake, err := NewDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
+	store, err := NewDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &fixture.storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 2})
 	s3FixtureError(t, fixture, "open slow-delete fixture", err)
-	store := lake.(*DuckLakeStore)
 	defer store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -156,9 +154,8 @@ func TestDuckLakeS3CredentialChainUsesOnlyIsolatedEnvironment(t *testing.T) {
 	}
 	storage := fixture.storage
 	storage.AccessKeyID, storage.SecretAccessKey, storage.SessionToken = "", "", ""
-	lake, err := NewDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1})
+	store, err := NewDuckLake(DuckLakeConfig{Directory: t.TempDir(), S3: &storage, MemoryLimitMB: 256, Threads: 1, MaxOpenProjects: 1})
 	s3FixtureError(t, fixture, "open native credential-chain store", err)
-	store := lake.(*DuckLakeStore)
 	defer store.Close()
 	ctx := context.Background()
 	s3FixtureError(t, fixture, "ingest with the native credential chain", store.Apply(ctx, []EventProjection{lakeStorageProjection(t, "chain", "credential-chain", 1)}))

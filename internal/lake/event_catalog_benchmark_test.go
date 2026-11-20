@@ -102,7 +102,7 @@ func openEventCatalogBenchmark(t *testing.T, config DuckLakeConfig) *DuckLakeSto
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store.(*DuckLakeStore)
+	return store
 }
 
 func closeEventCatalogBenchmark(t *testing.T, store *DuckLakeStore) {

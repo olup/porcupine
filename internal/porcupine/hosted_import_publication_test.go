@@ -49,7 +49,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		<-n.service.usage.done
 	}
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "native imports")
-	sa, sb := a.service.lake.(*lakeapi.DuckLakeStore), b.service.lake.(*lakeapi.DuckLakeStore)
+	sa, sb := a.service.lake, b.service.lake
 	key := lakeapi.ProjectWriteKey{SourceID: sa.Config.SharedSourceID, ProjectID: project}
 	scope, err := sa.InitializeHostedProject(t.Context(), key)
 	if err != nil {

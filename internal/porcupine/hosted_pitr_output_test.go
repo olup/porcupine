@@ -18,7 +18,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 	t.Helper()
 	ctx := t.Context()
 	s := worker.service
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	key := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: project}
 	scope, err := store.InitializeHostedProject(ctx, key)
 	if err != nil {
@@ -86,7 +86,7 @@ func pitrReadHostedOutput(t *testing.T, worker pitrWorker, scope lakeapi.HostedP
 	if err != nil {
 		t.Fatal("read pending hosted delivery", err)
 	}
-	store := worker.service.lake.(*lakeapi.DuckLakeStore)
+	store := worker.service.lake
 	raw, err := store.Remote.ReadImmutableEffectObject(t.Context(), scope, ref)
 	if err != nil {
 		t.Fatal(err)

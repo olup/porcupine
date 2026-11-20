@@ -35,11 +35,10 @@ type assemblyS3Harness struct {
 
 func newAssemblyS3Harness(t *testing.T, config lakeapi.DuckLakeS3Config) *assemblyS3Harness {
 	t.Helper()
-	runtime, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &config, DisableCleanup: true})
+	store, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake"), S3: &config, DisableCleanup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := runtime.(*lakeapi.DuckLakeStore)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)

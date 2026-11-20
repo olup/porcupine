@@ -18,7 +18,7 @@ func TestNativeBackupRestoresDormantPreviousLakeSchema(t *testing.T) {
 	projectID, ingest := project(t, s)
 	state := lakeMaintenanceLifecycle(t, s, projectID, ingest, "dormant-schema", true)
 	duckLakeJourneyDrain(t, s)
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	p, release, err := lake.LeaseProject(ctx, projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestNativeBackupRestoresDormantPreviousLakeSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 	s.stopNativeBackups()
-	if len(s.lake.(*lakeapi.DuckLakeStore).Projects) != 0 {
+	if len(s.lake.Projects) != 0 {
 		t.Fatal("fixture unexpectedly migrated dormant project")
 	}
 	if err := s.createNativeBackup(ctx); err != nil {

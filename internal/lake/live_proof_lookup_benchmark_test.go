@@ -44,11 +44,10 @@ func TestDuckLakeS3SharedPostgresLiveProofLookupPerformance(t *testing.T) {
 					t.Helper()
 					config := config
 					config.Directory = t.TempDir()
-					lake, err := NewDuckLake(config)
+					store, err := NewDuckLake(config)
 					if err != nil {
 						t.Fatal(err)
 					}
-					store := lake.(*DuckLakeStore)
 					store.liveClock = func() time.Time { return at }
 					t.Cleanup(func() {
 						if err := store.Close(); err != nil {

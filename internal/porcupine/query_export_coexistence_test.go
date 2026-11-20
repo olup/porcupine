@@ -9,12 +9,13 @@ import (
 	"github.com/olup/porcupine/internal/exportstore"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
+	"github.com/olup/porcupine/internal/query"
 )
 
 const coexistenceQuerySQL = "SELECT uuid FROM events"
 
 type queryAdmissionHook struct {
-	lakeapi.LakeStore
+	query.Reader
 	before func(context.Context)
 }
 
@@ -22,7 +23,7 @@ func (r *queryAdmissionHook) Query(ctx context.Context, project, sql string, par
 	if sql == coexistenceQuerySQL {
 		r.before(ctx)
 	}
-	return r.LakeStore.Query(ctx, project, sql, params, limits)
+	return r.Reader.Query(ctx, project, sql, params, limits)
 }
 
 func TestStandaloneQueryAndCaptureDuringExport(t *testing.T) {
@@ -48,8 +49,8 @@ func TestStandaloneQueryAndCaptureDuringExport(t *testing.T) {
 	created := request(t, s, "POST", base+"/exports", token, `{"idempotency_key":"coexistence","sql":"SELECT uuid FROM events"}`, 202)
 	job := base + "/exports/" + created["id"].(string)
 
-	query := &queryAdmissionHook{LakeStore: s.lake}
-	s.lake = query
+	query := &queryAdmissionHook{Reader: s.lake}
+	s.standaloneReader = query
 	assertQuery := func(before func(context.Context)) {
 		t.Helper()
 		entered := false

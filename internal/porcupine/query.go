@@ -187,10 +187,11 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	if err != nil {
 		return nil, err
 	}
-	if s.lake == nil {
+	reader := s.interactiveReader()
+	if reader == nil {
 		return nil, apierr.New(503, "analytics storage is not configured")
 	}
-	result, bounds, err := s.queries.SQL(ctx, s.interactiveReader(), input.ID, input.Body.SQL, input.Body.Parameters, timeRange)
+	result, bounds, err := s.queries.SQL(ctx, reader, input.ID, input.Body.SQL, input.Body.Parameters, timeRange)
 	if err != nil {
 		return nil, err
 	}

@@ -34,6 +34,7 @@ type nativeBackupRuntime struct {
 	config              lakeapi.NativeBackupConfig
 	databasePath        string
 	controlDatabasePath string
+	stageCheckpoint     func(context.Context, func(context.Context, string) error) (*lakeapi.NativeCheckpoint, error)
 	mu                  sync.Mutex
 	status              NativeBackupStatus
 	slot                chan struct{}
@@ -128,6 +129,7 @@ func (s *Service) startNativeBackups() error {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	runtime.stageCheckpoint = s.lake.StageCheckpoint
 	runtime.cancel = cancel
 	runtime.done = make(chan struct{})
 	delay := time.Second

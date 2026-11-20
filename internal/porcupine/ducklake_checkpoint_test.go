@@ -37,7 +37,7 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	firstID := receiptFrom(t, nativeRequest(t, s, ingest, first, 200), 0)["event_id"]
 	duckLakeJourneyDrain(t, s)
 	ctx := context.Background()
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	flushCleanupProject(t, lake, a)
 	queueID := receiptFrom(t, nativeRequest(t, s, ingest, queued, 200), 0)["event_id"]
 	source, err := lake.SourceID(ctx)

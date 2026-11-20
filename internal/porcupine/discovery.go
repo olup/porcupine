@@ -18,10 +18,11 @@ func (s *Service) eventCatalog(ctx context.Context, input *lakeapi.EventCatalogI
 	if err = s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	if s.lake == nil {
+	reader := s.interactiveReader()
+	if reader == nil {
 		return nil, apierr.New(503, "analytics storage is not configured")
 	}
-	result, bounds, err := s.queries.Catalog(ctx, s.interactiveReader(), options)
+	result, bounds, err := s.queries.Catalog(ctx, reader, options)
 	if err != nil {
 		return nil, err
 	}

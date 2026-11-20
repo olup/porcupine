@@ -31,7 +31,7 @@ func (s *Service) initializeLakeSource(ctx context.Context) error {
 	return err
 }
 
-func (s *Service) startLakeMaintenance(interval time.Duration) {
+func (s *Service) startLakeMaintenance(interval time.Duration, maintain func(context.Context) error) {
 	if interval == 0 {
 		interval = 2 * time.Second
 	}
@@ -48,7 +48,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration) {
 				return
 			case <-timer.C:
 				maintenance, stop := context.WithTimeout(ctx, 30*time.Second)
-				err := s.lake.Maintain(maintenance)
+				err := maintain(maintenance)
 				stop()
 				if ctx.Err() != nil {
 					return

@@ -16,12 +16,11 @@ import (
 
 func TestNativeRegistryStandaloneDiscovery(t *testing.T) {
 	t.Parallel()
-	store, err := NewDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")})
+	s, err := NewDuckLake(DuckLakeConfig{Directory: filepath.Join(t.TempDir(), "lake")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	s := store.(*DuckLakeStore)
+	defer s.Close()
 	if _, err := s.registry.ensure(t.Context(), "a"); err != nil {
 		t.Fatal(err)
 	}

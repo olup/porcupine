@@ -16,7 +16,7 @@ func (s *Service) exportDependencies() output.ExportDependencies {
 	if s.externalAuthEnabled() {
 		issuer = s.resources.external.Config().Issuer
 	}
-	d := output.ExportDependencies{Journal: s.db, Control: s.control, Clock: func() time.Time { return s.clock() }, Reader: s.lake, Issuer: issuer,
+	d := output.ExportDependencies{Journal: s.db, Control: s.control, Clock: func() time.Time { return s.clock() }, Issuer: issuer,
 		LoadActor: func(ctx context.Context, id string) (auth.Principal, error) {
 			actor, err := s.loadCredentialActor(ctx, id)
 			if errors.Is(err, errInteractiveGrant) {
@@ -28,8 +28,11 @@ func (s *Service) exportDependencies() output.ExportDependencies {
 			return s.currentAuthority(ctx, s.control, caller)
 		},
 		RequireActive: s.requireProjectActive, BeginActivity: s.activity.begin, Acquire: s.queries.TryBackground}
-	d.ValidateSQL = func(ctx context.Context, project, raw string, parameters map[string]string) (string, error) {
-		return s.lake.ValidateExport(ctx, project, raw, parameters, false)
+	if s.lake != nil {
+		d.Reader = s.lake
+		d.ValidateSQL = func(ctx context.Context, project, raw string, parameters map[string]string) (string, error) {
+			return s.lake.ValidateExport(ctx, project, raw, parameters, false)
+		}
 	}
 	if s.usage != nil {
 		d.Usage = s.usage.recorder
@@ -51,8 +54,7 @@ func (s *Service) configureHostedExports(config *output.ExportConfig,
 	end func(context.Context, string, string) error,
 	snapshotCut output.ExportSnapshotCut,
 ) error {
-	reader, ok := s.lake.(output.RetainedExportReader)
-	if !ok {
+	if s.lake == nil {
 		return errors.New("hosted exports require a retained DuckLake reader")
 	}
 	d := s.exportDependencies()
@@ -77,7 +79,7 @@ func (s *Service) configureHostedExports(config *output.ExportConfig,
 		}
 		d.Usage = usage.NewRecorder(s.control, "exports-"+source, d.Clock)
 	}
-	exports, err := output.NewPostgresExports(d, reader, config)
+	exports, err := output.NewPostgresExports(d, s.lake, config)
 	if err != nil {
 		return err
 	}

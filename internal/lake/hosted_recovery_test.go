@@ -409,11 +409,10 @@ func TestDuckLakeS3SharedPostgresRecoveryTwoColdWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Directory = filepath.Join(t.TempDir(), "third")
-	store, err := NewDuckLake(config)
+	c, err := NewDuckLake(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := store.(*DuckLakeStore)
 	t.Cleanup(func() {
 		if err := c.Close(); err != nil {
 			t.Error(err)

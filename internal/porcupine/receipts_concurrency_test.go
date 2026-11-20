@@ -9,12 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/olup/porcupine/internal/lake"
 )
 
 type blockedReceiptLookup struct {
-	lake.LakeStore
+	lookup  func(context.Context, string, []string) (map[string]int64, error)
 	project string
 	entered chan struct{}
 	resume  <-chan struct{}
@@ -30,7 +28,7 @@ func (s *blockedReceiptLookup) KnownEvents(ctx context.Context, project string, 
 			return nil, ctx.Err()
 		}
 	}
-	return s.LakeStore.KnownEvents(ctx, project, uuids)
+	return s.lookup(ctx, project, uuids)
 }
 
 func asyncReceiptCapture(ctx context.Context, s *Service, key, body string) <-chan *httptest.ResponseRecorder {
@@ -92,8 +90,8 @@ func TestReceiptLookupsDoNotBlockOtherProjectsOrRaceFirstPrune(t *testing.T) {
 			resume := make(chan struct{})
 			var release sync.Once
 			defer release.Do(func() { close(resume) })
-			blocked := &blockedReceiptLookup{LakeStore: s.lake, project: a, entered: make(chan struct{}), resume: resume}
-			s.lake = blocked
+			blocked := &blockedReceiptLookup{lookup: s.lake.KnownEvents, project: a, entered: make(chan struct{}), resume: resume}
+			s.receiptLookup = blocked.KnownEvents
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			var pruned chan error
@@ -158,8 +156,8 @@ func TestReceiptPruningCanceledLookupKeepsReceiptAndMarker(t *testing.T) {
 	if _, err := s.db.Exec("UPDATE event_receipts SET recorded_at_ms=0 WHERE project_id=?", a); err != nil {
 		t.Fatal(err)
 	}
-	blocked := &blockedReceiptLookup{LakeStore: s.lake, project: a, entered: make(chan struct{}), resume: make(chan struct{})}
-	s.lake = blocked
+	blocked := &blockedReceiptLookup{lookup: s.lake.KnownEvents, project: a, entered: make(chan struct{}), resume: make(chan struct{})}
+	s.receiptLookup = blocked.KnownEvents
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	go func() { finished <- s.pruneReceipts(ctx) }()
@@ -196,8 +194,8 @@ func TestReceiptPruningRechecksCandidatesAfterRemoteLookup(t *testing.T) {
 	resume := make(chan struct{})
 	var release sync.Once
 	defer release.Do(func() { close(resume) })
-	blocked := &blockedReceiptLookup{LakeStore: s.lake, project: a, entered: make(chan struct{}), resume: resume}
-	s.lake = blocked
+	blocked := &blockedReceiptLookup{lookup: s.lake.KnownEvents, project: a, entered: make(chan struct{}), resume: resume}
+	s.receiptLookup = blocked.KnownEvents
 	finished := make(chan error, 1)
 	go func() { finished <- s.pruneReceipts(context.Background()) }()
 	select {
