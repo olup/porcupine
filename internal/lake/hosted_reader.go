@@ -50,6 +50,14 @@ func (r *HostedReader) lease(ctx context.Context, project string) (*ProjectLake,
 	return p, release, nil
 }
 
+const duckLakeListEventBoundsSQL = `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM (
+ SELECT id FROM lake.current_events WHERE identity_snapshot='' ORDER BY id DESC LIMIT ?
+)`
+
+const duckLakeListEventsSQL = `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,
+ source_id,message_id,event_type,context,is_imported FROM lake.current_events
+ WHERE identity_snapshot='' AND id BETWEEN ? AND ? ORDER BY id DESC LIMIT ?`
+
 // ListEvents returns a bounded view of recently retained public event rows.
 func (r *HostedReader) ListEvents(ctx context.Context, project string, maxRows, maxBytes int) ([]event.Event, error) {
 	p, release, err := r.lease(ctx, project)
@@ -57,8 +65,16 @@ func (r *HostedReader) ListEvents(ctx context.Context, project string, maxRows, 
 		return nil, DuckLakeQueryError(ctx, err)
 	}
 	defer release()
-	rows, err := p.DB.QueryContext(ctx, `SELECT id,project_id,uuid,event,distinct_id,properties,timestamp,received_at,
-source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC LIMIT ?`, maxRows)
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, DuckLakeQueryError(ctx, err)
+	}
+	defer tx.Rollback()
+	var minID, maxID int64
+	if err := tx.QueryRowContext(ctx, duckLakeListEventBoundsSQL, maxRows).Scan(&minID, &maxID); err != nil {
+		return nil, DuckLakeQueryError(ctx, err)
+	}
+	rows, err := tx.QueryContext(ctx, duckLakeListEventsSQL, minID, maxID, maxRows)
 	if err != nil {
 		return nil, DuckLakeQueryError(ctx, err)
 	}
@@ -89,6 +105,9 @@ source_id,message_id,event_type,context,is_imported FROM events ORDER BY id DESC
 		events = append(events, e)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, DuckLakeQueryError(ctx, err)
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, DuckLakeQueryError(ctx, err)
 	}
 	return events, nil

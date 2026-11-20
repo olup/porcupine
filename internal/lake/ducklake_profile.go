@@ -11,7 +11,7 @@ const duckLakeProfileActivitySQL = `SELECT CAST(count(*) AS VARCHAR),
  CAST(count(*) FILTER (WHERE timestamp_ms>=? AND timestamp_ms<?) AS VARCHAR),
  CAST(count(*) FILTER (WHERE timestamp_ms>=? AND timestamp_ms<?) AS VARCHAR),
  CAST(count(*) FILTER (WHERE timestamp_ms>=?) AS VARCHAR)
- FROM events WHERE event=?`
+ FROM lake.current_events WHERE identity_snapshot='' AND event=?`
 
 const duckLakeProfileSampleBoundsSQL = `SELECT coalesce(min(id),0),coalesce(max(id),0) FROM (
  SELECT id FROM lake.current_events WHERE identity_snapshot='' AND event=? ORDER BY timestamp_ms DESC,id DESC LIMIT ?
