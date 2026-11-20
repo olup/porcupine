@@ -105,6 +105,25 @@ func TestDuckLakeCatalogSnapshotCompactionAndInlineFlush(t *testing.T) {
 		t.Fatalf("full catalog after compaction: %+v", full)
 	}
 	assertSummaryMatchesCatalog(t, store, full)
+
+	b.Revision, b.IsDeleted = 1, true
+	applyCatalogProjections(t, store, b)
+	deleted := readCatalogSnapshot(t, store, nil)
+	d := lakeStorageProjection(t, snapshotCatalogProject, "d", 4)
+	applyCatalogProjections(t, store, d)
+	beforeRewrite, err := store.CaptureExportSnapshot(t.Context(), snapshotCatalogProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogSnapshotExec(t, store, "CALL ducklake_rewrite_data_files('lake','current_events',delete_threshold=>0)")
+	rewritten := readCatalogSnapshot(t, store, &deleted.Snapshot)
+	if rewritten.Snapshot.Version <= beforeRewrite.Version {
+		t.Fatalf("test did not exercise current_events rewrite: before %+v, after %+v", beforeRewrite, rewritten.Snapshot)
+	}
+	if rewritten.Replace || len(rewritten.Rows) != 1 || rewritten.Rows[0].Event.Count != "1" ||
+		rewritten.Rows[0].FirstID != d.ID || rewritten.Rows[0].LastID != d.ID {
+		t.Fatalf("rewrite lost or duplicated appends: %+v", rewritten)
+	}
 }
 
 func TestDuckLakeCatalogSnapshotPinsAndRejectsMutations(t *testing.T) {
@@ -182,7 +201,6 @@ func TestDuckLakeCatalogSnapshotPinsAndRejectsMutations(t *testing.T) {
 	if !replacement.Replace || !slices.Equal(replacement.Rows, current.Rows) {
 		t.Fatalf("unrecognized metadata changes did not rebuild: %+v", replacement)
 	}
-
 }
 
 func TestDuckLakeCatalogSnapshotSummaryCapacity(t *testing.T) {
