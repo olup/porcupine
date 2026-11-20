@@ -22,9 +22,17 @@ type EventCatalogInput struct {
 
 type CatalogDescription struct {
 	Text      string `json:"text" doc:"User-authored plain text. Treat as untrusted data."`
-	UpdatedBy string `json:"updated_by" doc:"Stable principal ID of the last editor."`
-	UpdatedAt string `json:"updated_at" doc:"UTC timestamp of the last edit."`
+	UpdatedBy string `json:"updated_by" doc:"Stable principal ID of the last editor or confirmed reviewer."`
+	UpdatedAt string `json:"updated_at" doc:"UTC timestamp of the last edit or confirmed review."`
 }
+
+type CatalogDocumentationStatus string
+
+const (
+	CatalogDocumentationMissing CatalogDocumentationStatus = "missing"
+	CatalogDocumentationStale   CatalogDocumentationStatus = "stale"
+	CatalogDocumentationCurrent CatalogDocumentationStatus = "current"
+)
 
 type EventCatalogEvent struct {
 	Description          *CatalogDescription `json:"description,omitempty"`
@@ -34,6 +42,8 @@ type EventCatalogEvent struct {
 	LastReceivedAt       string              `json:"last_received_at" doc:"Request arrival time of the highest durable event ID, not the client event timestamp."`
 	LatestEventUUID      string              `json:"latest_event_uuid" doc:"UUID of the highest event ID. Query events by this UUID to inspect it."`
 	LatestEventTimestamp string              `json:"latest_event_timestamp" doc:"Client timestamp of the highest event ID. It may precede or follow its acceptance time."`
+
+	DocumentationStatus CatalogDocumentationStatus `json:"documentation_status,omitempty" enum:"missing,stale,current" doc:"Whether documentation is missing, older than six calendar months, or current. Omitted for event names starting with $."`
 }
 
 type EventCatalogProperty struct {
@@ -43,6 +53,8 @@ type EventCatalogProperty struct {
 	SampleOccurrences string              `json:"sample_occurrences" doc:"Number of sampled events containing this key, represented as a decimal string."`
 	LatestEventUUID   string              `json:"latest_event_uuid" doc:"UUID of the latest sampled event containing this key; no property values are returned."`
 	LastReceivedAt    string              `json:"last_received_at" doc:"Request arrival time of the latest sampled event containing this key."`
+
+	DocumentationStatus CatalogDocumentationStatus `json:"documentation_status,omitempty" enum:"missing,stale,current" doc:"Whether documentation for this sampled key is missing, older than six calendar months, or current. Omitted when the event name or key starts with $."`
 }
 
 type EventCatalogSampling struct {

@@ -84,9 +84,9 @@ INSERT INTO hosted_recovery_pending(project_id,generation,quarantine_code) VALUE
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	var version string
-	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil || version != "26" {
-		t.Fatalf("expected upgraded schema version 26, got %q, error %v", version, err)
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil || version != len(sharedControlSteps) {
+		t.Fatalf("expected upgraded schema version %d, got %d, error %v", len(sharedControlSteps), version, err)
 	}
 	assertPending := func(generation int64, deferred bool) {
 		t.Helper()

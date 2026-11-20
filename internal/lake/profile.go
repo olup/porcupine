@@ -110,6 +110,9 @@ type EventProfileProperty struct {
 	LatestEventUUID string              `json:"latest_event_uuid"`
 	TopValues       []EventProfileValue `json:"top_values,omitempty"`
 	ValuesOmitted   bool                `json:"values_omitted" doc:"Some non-null values cannot be shown because they are complex or exceed 200 encoded bytes. Their distinct counts are retained."`
+
+	Description         *CatalogDescription        `json:"description,omitempty"`
+	DocumentationStatus CatalogDocumentationStatus `json:"documentation_status,omitempty" enum:"missing,stale,current" doc:"Whether documentation for this sampled key is missing, older than six calendar months, or current. Omitted when the event name or key starts with $."`
 }
 
 type EventProfileExample struct {
@@ -130,6 +133,9 @@ type EventProfile struct {
 	Properties []EventProfileProperty `json:"properties"`
 	Examples   []EventProfileExample  `json:"examples"`
 	Delivery   DeliveryStatus         `json:"delivery"`
+
+	Description         *CatalogDescription        `json:"description,omitempty"`
+	DocumentationStatus CatalogDocumentationStatus `json:"documentation_status,omitempty" enum:"missing,stale,current" doc:"Whether documentation is missing, older than six calendar months, or current. Omitted for event names starting with $."`
 }
 
 func NormalizeEventProfileInput(input EventProfileInput) (EventProfileOptions, error) {

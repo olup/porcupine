@@ -251,6 +251,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-event-catalog-refresh", Method: "GET", Path: "/api/v1/projects/{id}/catalog/refresh",
+		Summary: "Read the catalogue refresh status without executing an analytical query",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
 		ID: "get-event-export", Method: "GET", Path: "/api/v1/projects/{id}/exports/{export_id}",
 		Summary: "Read export status without SQL, storage keys or credentials",
 		Params: []parameter{
@@ -554,6 +561,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "refresh-event-catalog", Method: "POST", Path: "/api/v1/projects/{id}/catalog/refresh",
+		Summary: "Request an asynchronous refresh of the project's event-name catalog. Concurrent requests are coalesced. Use get-event-catalog-refresh for status.",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
 		ID: "rename-project", Method: "PATCH", Path: "/api/v1/projects/{id}",
 		Summary: "Set a project's display name, preserving its ID, data and credentials",
 		Params: []parameter{
@@ -658,12 +672,13 @@ var operations = []operation{
 	},
 	{
 		ID: "set-catalog-description", Method: "PUT", Path: "/api/v1/projects/{id}/catalog/description",
-		Summary: "Set or clear documentation for an exact event name or top-level property",
+		Summary: "Set, clear or confirm a description for an exact event name or top-level property",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 		},
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
+			"confirm_reviewed (boolean) Renew the date and author of a stale description when the supplied nonempty text matches the stored text. Current text needs no renewal. Missing or changed text returns 409.",
 			"description (string, required) Plain text. Use an empty string to clear the description.",
 			"event (string, required) Exact event name.",
 			"property (string) Exact top-level property key. Omit to document the event itself.",

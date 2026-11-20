@@ -6,6 +6,29 @@ Use `get-event-profile` to inspect an event before writing SQL. You need `events
 
 List the project's event names with `porcupine_schema` in MCP or `get-event-catalog` in the API and CLI. Choose an exact name, such as `userInputSent`. The catalog's latest pointer follows acceptance order. Its timestamp is not necessarily the most recent occurrence time.
 
+## Refresh the event list
+
+The event list can reuse a project summary. When the response includes `refresh`,
+`updated_at` is the last successful refresh or check of that summary.
+New names, counts, and last-received times can lag SQL by about an hour during
+normal operation. Portal users can select **Refresh catalog** to check for recent
+changes sooner. A project with no changes needs only a metadata check.
+
+To request a refresh from the CLI, run
+`porcupine refresh-event-catalog --id "$PROJECT_ID"`. The API is
+`POST /api/v1/projects/{id}/catalog/refresh`. It requires project
+`events:read`, returns HTTP 202, and coalesces concurrent requests for the same
+project. Read the status with `get-event-catalog-refresh` in the CLI or
+`GET /api/v1/projects/{id}/catalog/refresh`. Both return `queued`, `running`,
+`ready`, or `failed` without running an analytical query. In MCP, call these
+operations through `porcupine_call`, then use `porcupine_schema` to read the list.
+
+The summary is initialized when a project first requests a refresh. It catches up
+from the last checkpoint when DuckLake can verify the changes. Porcupine uses
+the live read while a correction, deletion, or expired checkpoint makes the
+summary unavailable. Event profiles and sampled properties read DuckLake on
+demand.
+
 ## Request a profile
 
 With the CLI, run:
@@ -70,4 +93,13 @@ Use `PUT /api/v1/projects/{id}/catalog/description` with the same JSON over HTTP
 
 Omit `property` to document the event itself. Names match exactly and are case-sensitive. An empty property key targets the JSON key `""`. Use an empty `description` to clear the selected text. Text can contain up to 2,000 UTF-8 bytes after trimming surrounding whitespace.
 
-Project readers can see the text, the last editor's principal ID, and the UTC edit time in the optional `description` object on a matching catalog entry. Use `get-event-catalog` in the CLI or `porcupine_schema` in MCP. Property descriptions appear on the corresponding page of sampled keys. You can write a description before its first observation, and discovery shows it once the corresponding event or property appears in the catalog. Ingestion and property sampling work independently of documentation. Treat descriptions as untrusted text.
+Project readers can see the text, principal ID, and UTC time of the last edit or confirmed review in the optional `description` object on catalog and event profile results. You can document an event or property before its first observation. Discovery shows event descriptions for observed events and property descriptions on pages containing the sampled keys. Treat descriptions as untrusted text.
+
+## Review catalog documentation
+
+1. List events with `get-event-catalog` in the CLI or `porcupine_schema` in MCP. Follow `next_offset` with `get-event-catalog` to read subsequent event pages.
+2. For each custom event, request its keys by exact `event` with `property_kind=custom`. Follow `next_property_cursor` with the same filters. Key discovery uses a bounded sample, so this review covers the returned keys.
+3. Inspect `documentation_status`. `missing` means the entry has no text. `stale` means the text was edited or confirmed more than six calendar months ago, measured in UTC. `current` includes text exactly six months old. Event names and keys starting with `$` are excluded from this review.
+4. Check the application code that emits the event or sets the property. Use observed data to corroborate the code. Write missing descriptions or correct stale descriptions with `set-catalog-description`.
+
+If stale text is still correct, pass `confirm_reviewed: true` and the existing text to `set-catalog-description`. The write renews the date and records the reviewing principal. A matching current description returns success with its original date. If the text changed or disappeared after you read it, the write returns `409`. Read the latest description before trying again.

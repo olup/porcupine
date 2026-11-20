@@ -230,12 +230,14 @@ func TestMCPProjectIsolationAndEscalation(t *testing.T) {
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
 	ctx, session := mcpTestSession(t, host.URL, reader, "")
-	catalog := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20}, false)
 	names := []string{}
-	for _, item := range catalog["operations"].([]any) {
-		names = append(names, item.(map[string]any)["operation_id"].(string))
+	for _, offset := range []int{0, 20} {
+		catalog := mcpTestTool(t, ctx, session, "porcupine_docs", mcpDocsInput{Limit: 20, Offset: offset}, false)
+		for _, item := range catalog["operations"].([]any) {
+			names = append(names, item.(map[string]any)["operation_id"].(string))
+		}
 	}
-	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-client-ingestion-key", "get-event", "get-event-catalog", "get-event-export", "get-event-input-contract", "get-event-mutation", "get-event-profile", "get-event-schema", "get-instance-status", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events"}) {
+	if !slices.Equal(names, []string{"cancel-event-export", "create-event-export", "get-client-ingestion-key", "get-event", "get-event-catalog", "get-event-catalog-refresh", "get-event-export", "get-event-input-contract", "get-event-mutation", "get-event-profile", "get-event-schema", "get-instance-status", "list-access-keys", "list-event-export-files", "list-event-exports", "list-oauth-clients", "list-project-events", "list-projects", "list-quarantined-events", "query-events", "refresh-event-catalog"}) {
 		t.Fatalf("discovery exceeded reader permissions: %v", names)
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "porcupine_docs", Arguments: mcpDocsInput{OperationID: "create-project"}})

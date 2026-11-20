@@ -231,9 +231,12 @@ func (s *DuckLakeStore) Catalog(ctx context.Context, input EventCatalogInput) (E
 
 // The writers keep at most one link per anonymous_id and one profile per
 // identified_id, so the catalog can skip both joins.
-const duckLakeCatalogRows = ` FROM lake.current_events WHERE identity_snapshot=''`
-const duckLakeCatalogAggregateSQL = `SELECT event, CAST(count(*) AS VARCHAR), min(id), max(id)` + duckLakeCatalogRows
-const duckLakeCatalogDetailsSQL = `SELECT event, arg_min(received_at,id), arg_max(received_at,id), arg_max(uuid,id), arg_max(timestamp,id)` + duckLakeCatalogRows + ` AND id IN (?`
+const duckLakeCatalogVisibility = ` WHERE identity_snapshot=''`
+const duckLakeCatalogRows = ` FROM lake.current_events` + duckLakeCatalogVisibility
+const duckLakeCatalogAggregateColumns = `SELECT event, CAST(count(*) AS VARCHAR), min(id), max(id)`
+const duckLakeCatalogAggregateSQL = duckLakeCatalogAggregateColumns + duckLakeCatalogRows
+const duckLakeCatalogPointerColumns = `arg_min(received_at,id), arg_max(received_at,id), arg_max(uuid,id), arg_max(timestamp,id)`
+const duckLakeCatalogDetailsSQL = `SELECT event, ` + duckLakeCatalogPointerColumns + duckLakeCatalogRows + ` AND id IN (?`
 const duckLakeCatalogSampleBoundsSQL = `SELECT coalesce(min(id),0), coalesce(max(id),0) FROM (SELECT id` + duckLakeCatalogRows + ` AND event=? ORDER BY id DESC LIMIT 1000)`
 const duckLakeCatalogSampleSQL = `SELECT uuid,received_at,properties` + duckLakeCatalogRows + ` AND event=? AND id BETWEEN ? AND ? ORDER BY id DESC LIMIT 1000`
 

@@ -152,11 +152,23 @@ func TestDuckLakeS3SharedPostgresHostedCatalogProjectIsolation(t *testing.T) {
 		live := newLiveInput(t, pair.project, pair.own, event.NewID(), "person", `{"plan":true}`)
 		batch := LiveCommitBatch{ID: "catalog-live", TenantID: "tenant-a", Scope: scope, Inputs: []LiveCommitInput{live}}
 		commitLiveFixture(t, writer, owner, batch, &liveProofStager{objects: writer.Remote, attempt: fence.AcquisitionID})
+		base, err := cold.ReadCatalogSnapshot(ctx, pair.project, nil)
+		if err != nil || !base.Replace || len(base.Rows) != 1 || base.Rows[0].Event.Count != "1" {
+			t.Fatalf("cold hosted catalog seed: %+v, %v", base, err)
+		}
 		archive := nativeImportRow(pair.project, event.NewID(), pair.own, "person")
 		archive.Event.Properties = json.RawMessage(`{"plan":"archived"}`)
 		chunk := nativeImportInput(t, writer, scope, "catalog-import", "events", ImportFileCheckpoint{}, "bytes", archive)
 		if proof := commitNativeImport(t, writer, owner, chunk); proof.AcceptedImport != 1 {
 			t.Fatalf("historical import was not accepted: %+v", proof)
+		}
+		if valid, err := cold.CatalogSnapshotValid(ctx, pair.project, base.Snapshot); err != nil || !valid {
+			t.Fatalf("hosted import invalidated an append-only summary: %t, %v", valid, err)
+		}
+		delta, err := cold.ReadCatalogSnapshot(ctx, pair.project, &base.Snapshot)
+		if err != nil || delta.Replace || len(delta.Rows) != 1 || delta.Rows[0].Event.Count != "1" ||
+			delta.Rows[0].Event.LatestEventUUID != archive.Event.UUID || delta.Rows[0].LastID <= base.Rows[0].LastID {
+			t.Fatalf("hosted historical import delta: %+v, %v", delta, err)
 		}
 		catalog := assertCatalogMatchesEventsView(t, reader.Catalog, reader.lease, EventCatalogInput{ID: pair.project, Event: pair.own})
 		if len(catalog.Events) != 1 || catalog.Events[0].Count != "2" || catalog.Events[0].LatestEventUUID != archive.Event.UUID ||
