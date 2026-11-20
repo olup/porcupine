@@ -554,6 +554,13 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "refresh-event-catalog", Method: "POST", Path: "/api/v1/projects/{id}/catalog/refresh",
+		Summary: "Request an asynchronous refresh of the project's event-name catalog. Concurrent requests are coalesced. Read the catalog for status.",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
 		ID: "rename-project", Method: "PATCH", Path: "/api/v1/projects/{id}",
 		Summary: "Set a project's display name, preserving its ID, data and credentials",
 		Params: []parameter{

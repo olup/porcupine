@@ -35,6 +35,17 @@ func (r *Runtime) Catalog(ctx context.Context, project string, read func(context
 	})
 }
 
+// RefreshCatalog shares analytical capacity and shutdown tracking without
+// recording background maintenance as an interactive customer query.
+func (r *Runtime) RefreshCatalog(ctx context.Context, project string, read func(context.Context) error) (err error) {
+	native, _, reserved, err := r.admit(ctx, project)
+	if err != nil {
+		return err
+	}
+	defer func() { err = resultError(native, reserved.finish(), err) }()
+	return read(native)
+}
+
 func (r *Runtime) Profile(ctx context.Context, reader Reader, project string, options lake.EventProfileOptions) (lake.EventProfile, ResponseBounds, error) {
 	var read lake.EventProfileRead
 	var asOf time.Time

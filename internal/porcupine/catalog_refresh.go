@@ -91,7 +91,7 @@ func (r *catalogRefresh) refreshOne(ctx context.Context) bool {
 		prior = &claim.Snapshot
 	}
 	var result lake.CatalogSnapshotRead
-	_, err = r.queries.Catalog(ctx, claim.ProjectID, func(native context.Context) error {
+	err = r.queries.RefreshCatalog(ctx, claim.ProjectID, func(native context.Context) error {
 		var readErr error
 		result, readErr = r.lake.ReadCatalogSnapshot(native, claim.ProjectID, prior)
 		return readErr
