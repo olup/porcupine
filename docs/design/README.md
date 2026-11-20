@@ -5,7 +5,7 @@ Start with the [product guides](../README.md) to use Porcupine. Measurements app
 ## Architecture decisions
 
 - [Native ownership boundaries](native-only-architecture.md)
-- [Hosted architecture and setup](hosted-architecture.md)
+- [Hosted architecture](hosted-architecture.md)
 - [Replaceable built-ins and the commercial control plane](control-plane-contracts.md)
 - [Tenant budgets](tenant-budget-design.md)
 - [Export design](export-design.md)
@@ -22,6 +22,6 @@ Start with the [product guides](../README.md) to use Porcupine. Measurements app
 ## Contributing
 
 - [Publish a release](releasing.md)
-- Local development: use `make test PKG=./internal/porcupine RUN=TestTenant` for a focused short test. `make test-core` runs pure-Go modules without CGO. `make check` is the short feedback loop; full race, SDK, S3, and restore checks remain release validation.
+- Use `make test PKG=./internal/porcupine RUN=TestTenant` for a focused short test. Use `make test-core` for pure-Go modules without CGO and `make check` for the short local suite. Pull request CI requires the race, SDK, S3, and restore jobs.
 
 The [archive](archive/README.md) holds the earlier hosted designs, verification records, and fixture results.

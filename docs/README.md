@@ -14,6 +14,7 @@
 
 ## Run an instance
 
+- [Configure hosted workers and recovery](reference/shared-deployment.md) or [find upgrade steps](hosting.md#upgrade).
 - [Manage access](access.md).
 - [Choose a storage profile](storage.md#deployment-profiles) and [configure backups](backup-and-restore.md).
 

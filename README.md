@@ -2,13 +2,13 @@
 
 # Porcupine
 
-Porcupine is a headless product analytic tool and general event store. It's compatible with pothog and segment client. 
+Porcupine is a headless product analytics tool and general event store. It supports PostHog and Segment clients.
 
-Headless means it ships no ui at all, and once installed is managed, operated or queried by an agent or a human though an mcp or a cli.
+Headless means it ships no UI. Once installed, an agent or a human can manage and query it through MCP or the CLI.
 
-It came to be because I wanted a lightweight product analytic tool to self host, and realised that no one on my team ever opens the posthog ui - its all managed and queried by our local agents. 
+It came to be because I wanted a lightweight product analytics tool to self-host, and realised that no one on my team ever opens the PostHog UI. Our local agents manage and query it.
 
-Existing option where big inspirations - posthog, openpanel, pug - but no one offered the specific blend of lightness and power I envisionned - with features like direct sql queries, outward pipelines or s3 offload.
+PostHog, OpenPanel, and Pug inspired it. I wanted a lightweight service with direct SQL queries, outbound pipelines, and S3 storage.
 
 The rest of this readme is LLM generated.
 
@@ -58,7 +58,7 @@ Send events with [native or Segment inputs](docs/reference/native-and-segment-in
 
 ```sh
 make check              # fast loop: contracts, vet, formatting and short Go tests
-make check-full         # complete local validation; CI runs the same race suite in parallel groups
+make check-full         # local lint and full race suite
 make integration        # native smoke, S3 and offline restore drills
 make integration-s3     # local HTTP/TLS S3-compatible fixtures
 make compat-install

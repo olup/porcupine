@@ -6,35 +6,13 @@ Hosted workers share PostgreSQL for control, coordination, operational jobs, and
 
 ## Configuration
 
-Run `porcupine init --hosted` and merge the following settings into the generated private configuration. Keep the bootstrap and pipeline secrets. Use a fresh PostgreSQL database and a dedicated analytical S3 prefix.
-
-```json
-{
-  "profile": "hosted",
-  "acceptance": {"mode": "buffered"},
-  "shared": {"control_database_url_file": "/run/secrets/porcupine-postgres"},
-  "ducklake": {
-    "s3": {"bucket": "example-analytics", "prefix": "porcupine", "region": "eu-west-1"},
-    "cleanup_grace": "240h",
-    "restore_window": "168h",
-    "restore_max_reader_time": "1h",
-    "restore_safety_margin": "24h",
-    "restore_floor_file": "/run/porcupine/restore-floor"
-  }
-}
-```
-
-An explicit `ducklake.postgres_url` must match the shared PostgreSQL URL. Keep configuration and the pipeline encryption key consistent across replicas. Give each worker private writable scratch space. Set `storage.ducklake` only if you need a specific disposable directory. The hosted profile rejects local journal/control paths, receipt retention, owner routing settings, and local native backups.
-
-Run `porcupine config check --config porcupine.json`, then start each worker with `porcupine --config porcupine.json`. Set the listener and HTTPS ingress for your deployment. Apply infrastructure rate limits at the gateway using verified tenant or credential identity. Exercise PostgreSQL and S3 recovery before admitting traffic. [Hosting guide](../hosting.md)
+See [Configure hosted workers](../reference/shared-deployment.md#configuration).
 
 ## Live admission and shutdown
 
 Native, PostHog, and Segment live adapters share validation, credential-bound project scope, and UUID normalization. The worker admits the entire request or rejects it. Native HTTP 200 includes `durability: "buffered"` and ordered receipts with `message_id` and `uuid`. The original event ID and duplicate outcome are unknown at admission. The native schema and authenticated input contract advertise the profile's acknowledgment. [Event contract](../reference/native-event-contract.md#acknowledgment-metadata)
 
-The buffer owns the pending event and parsed identity input. It resolves cookieless pseudonyms before enqueueing using shared daily keys and keeps raw peer data out of pending batches. The default two-second flush timer or 5 MiB project threshold triggers dispatch. The buffer accounts for pending and in-flight work against worker and project limits, including per-row and per-project overhead. Defaults are 64 MiB and 100,000 rows per worker, 8 MiB and 10,000 rows per project, 1,024 active projects, and four concurrent flushes. Process RSS also includes handlers, native memory, and caches. During an outage the oldest admitted event can remain pending beyond the flush interval. A query on another worker cannot report that buffer's state. [Hosted runtime reference](../reference/shared-deployment.md)
-
-A full or draining worker returns HTTP 503 with `Retry-After`. Live HTTP adapters enforce the 1 MiB request body limit before admission, including after decompression. The buffer also checks that the entire validated request fits its row and byte limits before acknowledging it. A temporary flush failure puts backpressure on its project, retains the batch ID, and retries with backoff.
+The buffer owns the pending event and parsed identity input. It resolves cookieless pseudonyms before enqueueing using shared daily keys and keeps raw peer data out of pending batches. It accounts for pending and in-flight work against worker and project limits, including per-row and per-project overhead. A temporary flush failure puts backpressure on its project, retains the batch ID, and retries with backoff. [Buffer limits and live delivery](../reference/shared-deployment.md#live-ingestion-and-delivery)
 
 When the matched webhooks exceed a fixed preparation, manifest, or reservation limit, the worker first splits the flush at request boundaries. If a single request still exceeds a limit, the worker commits its events, deduplication heads, identity changes, and usage. It permanently refuses the matched webhook references for that request as a set. A temporary shortage caused by queued outputs delays a flush and triggers a retry. An artifact-free reservation still protects native proof and usage publication when the webhook budget is full. At most one such reservation can be active per project.
 
@@ -50,7 +28,7 @@ If PostgreSQL is unavailable, the worker answers with HTTP 503 when it cannot va
 
 The worker keeps acknowledged batches and their IDs in memory throughout the outage. When PostgreSQL returns, the worker acquires a fresh incarnation and retries pending batches. Native proofs and effect checkpoints make retries idempotent. The outage alone does not discard the buffer. A process crash or termination before flush can still lose its pending events.
 
-Shutdown allows ten seconds for HTTP shutdown and 30 seconds for the buffer drain. The worker drains before waiting up to five seconds for canceled analytics and maintenance. If they stay active, it reports a shutdown error and leaves their native resources open until process exit. Other background jobs and in-flight flushes can still affect shutdown time. Allow termination grace for HTTP shutdown, draining, and cleanup.
+Shutdown drains the buffer before waiting for canceled analytics and maintenance. If they stay active past the deadline, the worker reports a shutdown error and leaves their native resources open until process exit. [Drain a worker](../reference/shared-deployment.md#drain-a-worker)
 
 ## Flush and publication
 
@@ -98,19 +76,13 @@ Hosted project cleanup seals the native writer, waits for conflicting activity, 
 
 Background reconciliation finds unpublished live reservations and explicit work queued by ready mutations, import preflight, and reclaimed worker tickets. It yields to a project writer that already holds the lock and rechecks for work after acquiring the lock. Successful live publication removes the reservation in the same PostgreSQL transaction as its checkpoint. A native acknowledgement can lag a durable publication. The next live commit acknowledges that checkpoint in DuckLake, and deletion sealing explicitly acknowledges the final checkpoint. Recovery settles pending work before removing its queue entry. Once recovery settles, an idle project causes no DuckLake commits or S3 writes from reconciliation. An upgrade from control schema 21 queues a one-time check of existing effect streams because those native acknowledgements were recorded only in DuckLake.
 
-Hosted recovery uses PostgreSQL point-in-time recovery (PITR) and S3. Keep control state and catalog metadata in one PostgreSQL recovery domain. Preserve the deployment configuration and pipeline encryption keys separately. Before restoring, fence old writers and keep the restored service isolated with outbound jobs paused. Verify expected objects, authority, pending jobs, and that published checkpoints match retained native proofs. Reapply revocations and deletion instructions after the target, or rotate recovered access. Rotate the usage epoch before publishing reports from restored history. A receiver can see a replay of a previously delivered job.
-
-Set `cleanup_grace` to at least `restore_window + restore_max_reader_time + restore_safety_margin`. Include exports when establishing the reader limit. Keep all referenced S3 objects readable for the supported restore window. Bucket versioning alone may leave ordinary reads returning 404 under a delete marker. Check provider lifecycle policies and test a real restore against the deployed PostgreSQL and S3 services.
-
-Set `ducklake.restore_floor_file` to an absolute path containing one operator-verified RFC3339 timestamp for the earliest supported recovery point, including secondary backups. Update it atomically across the deployment as recovery points expire. Managed project reclamation waits for both the verified floor and grace since inventory. Missing, invalid, or stale evidence keeps reclamation pending. Hosted maintenance schedules compaction and history cleanup under the project write fence. Cleanup rewrites files with deleted rows, expires eligible snapshots, and reclaims obsolete files after the committed deletion schedule passes the restore floor and configured grace. [Cleanup bounds and status](../reference/ducklake-cleanup.md#hosted-profile) [Restore drill](archive/hosted-restore-drill.md)
-
-S3 and webhook requests already accepted by a provider can outlive the local worker. Reclamation relies on their settling within the grace. An object written after reclamation may fall outside the cleanup inventory. Publication still requires a valid native proof or current output claim.
+Hosted maintenance schedules compaction and history cleanup under the project write fence. Cleanup rewrites files with deleted rows, expires eligible snapshots, and reclaims obsolete files after the committed deletion schedule passes the restore floor and configured grace. S3 and webhook requests accepted by a provider can outlive the worker. An object written after reclamation may fall outside the cleanup inventory. Publication requires a valid native proof or current output claim. [Recovery runbook](../reference/shared-deployment.md#recovery-and-retention) · [Cleanup bounds and status](../reference/ducklake-cleanup.md#hosted-profile)
 
 For earlier measurements, see the [flush cost record](archive/hosted-flush-cost.md). The [changelog](../../CHANGELOG.md) records differences between releases.
 
 ## Upgrade worker activity tickets
 
-Drain older workers before upgrading from v0.15.0. Tickets created before migration 20 have a NULL incarnation and never expire automatically. If a ticket remains, block all pre-upgrade executors from restarting and verify that provider-side uploads and deliveries have settled. A database operator can remove the verified ticket by project and activity ID with `incarnation_id IS NULL`. No public endpoint clears tickets. [Upgrade guide](../hosting.md#upgrade-from-v0150)
+Drain older workers before upgrading from v0.15.0. Tickets created before migration 20 have a NULL incarnation and never expire automatically. If a ticket remains, block all pre-upgrade executors from restarting and verify that provider-side uploads and deliveries have settled. A database operator can remove the verified ticket by project and activity ID with `incarnation_id IS NULL`. No public endpoint clears tickets. [Upgrade guide](../upgrades.md#upgrade-from-v0150)
 
 ## Standalone journal inventory
 

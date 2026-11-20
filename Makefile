@@ -33,7 +33,7 @@ lint: api-check cli-check
 	CGO_ENABLED=1 go vet ./...
 	@test -z "$$(gofmt -l cmd internal)" || (echo 'Run make fmt'; exit 1)
 
-# check is the local loop; check-full is what CI requires before merge.
+# check runs short local tests. CI runs the race suite in shards and adds integration jobs.
 check: lint test
 
 check-full: lint test-race
