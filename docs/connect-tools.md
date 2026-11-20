@@ -24,7 +24,7 @@ See [query examples](query-events.md) and the [four MCP tools](reference/mcp.md)
 
 Give the agent access to the application code that sends the events. Use this prompt with your project ID.
 
-> Review the event catalog for `PROJECT_ID`. Find missing or stale descriptions for custom events and their sampled properties. Use the application code to verify what each event and property means. Draft missing descriptions and fixes. List stale descriptions that are still correct and flag anything you couldn't verify. Show me the results before saving.
+> Review the event catalog for `PROJECT_ID`. Find missing or stale descriptions for custom events and their sampled properties. Trace the application code to find when each event fires and what each property means. Add missing descriptions and correct stale ones when you can verify them. Confirm stale descriptions that are still accurate. Report what you saved or confirmed and list anything you couldn't verify.
 
 The review needs project `events:read`. To save descriptions or confirm that stale text is still correct, the agent needs project `management:write`. See [how to review catalog documentation](reference/event-discovery.md#review-catalog-documentation).
 
