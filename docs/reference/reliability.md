@@ -6,10 +6,10 @@ In standalone, the server accepts events into SQLite, then projects them into Du
 
 SQLite uses WAL mode and `synchronous=FULL`. The server acknowledges capture after the acceptance transaction commits. A batch validates and commits atomically. The standalone queue defaults to 100,000 pending original events and 256 MiB of charged payload. Queue budgets are separate from the request-size limit and total disk space. A full queue rejects new capture and preserves accepted work.
 
-Per-project queue limits are available on `main` after v0.19.2. On a standalone
-instance, `queue.project_max_events` and `queue.project_max_bytes` cap what each
-project can have pending when it submits new live events. This example sets
-both project limits to half of the default instance limits.
+On a standalone instance, `queue.project_max_events` and
+`queue.project_max_bytes` cap what each project can have pending when it submits
+new live events. This example sets both project limits to half of the default
+instance limits.
 
 ```json
 {
