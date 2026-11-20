@@ -27,6 +27,7 @@ type FileConfig struct {
 	BootstrapToken string   `json:"bootstrap_token,omitempty" env:"PORCUPINE_BOOTSTRAP_TOKEN" secret:"true"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" env:"PORCUPINE_ALLOWED_ORIGINS"`
 	TrustedProxies []string `json:"trusted_proxies,omitempty" env:"PORCUPINE_TRUSTED_PROXIES"`
+	GeoIPDatabase  string   `json:"geoip_database,omitempty" env:"PORCUPINE_GEOIP_DATABASE"`
 	Storage        struct {
 		Journal  string `json:"journal,omitempty" env:"PORCUPINE_DB"`
 		Control  string `json:"control,omitempty" env:"PORCUPINE_CONTROL_DB"`

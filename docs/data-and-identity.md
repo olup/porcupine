@@ -117,3 +117,32 @@ addresses it uses the peer, so a misconfigured reverse proxy can merge visitors;
 verify the setup before production use. CORS origin configuration is independent.
 
 Reference: [PostHog cookieless protocol](https://posthog.com/tutorials/cookieless-tracking).
+
+
+### Optional country lookup
+
+An operator can enable country lookup for newly captured PostHog, native, and Segment
+events. A request qualifies when it authenticates with a mixed project's public
+capture key and includes an HTTP or HTTPS `Origin`. Those signals can also be sent
+by a relay. The lookup describes the network that sent the request. If a relay
+submits a batch, its events may all receive the relay's country.
+
+Porcupine uses the peer address or a validated `X-Forwarded-For` chain from a trusted
+proxy. If the request lacks a usable address or ends at a trusted proxy, Porcupine
+skips the lookup. It never uses an IP address from an event payload for country
+lookup. Porcupine discards the lookup address after processing the request and adds
+only the country code from the local database. Cookieless capture still removes
+known IP and identity fields from event data. Tokens, event IDs, and deduplication
+rules are independent of the lookup.
+
+Identity controls, imports, and requests authenticated with private credentials are
+ineligible. To skip lookup for an event, set boolean `$geoip_disable: true` or
+`$is_server: true` in its properties. Native and Segment events can also set
+`context.geoip_disable: true`. The same controls apply in cookieless mode.
+
+Use `json_extract_string(context, '$.geoip.country_code')` in SQL. The lookup adds
+the two-letter code there and leaves other context fields in place. Native and
+Segment producers can also send their own context fields. This path alone does
+not establish provenance for a producer-supplied country code. Retrying an event
+keeps the first accepted context.
+[Country lookup configuration](reference/configuration.md#country-lookup)

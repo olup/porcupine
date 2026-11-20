@@ -35,17 +35,21 @@ func TestConfigFileStrictDecoding(t *testing.T) {
 
 func TestConfigEnvironmentOverrideAndUnknownVariable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "porcupine.json")
-	if err := os.WriteFile(path, []byte(`{"listen":"127.0.0.1:7777","query":{"max_rows":900},"ducklake":{"cleanup_enabled":false}}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"listen":"127.0.0.1:7777","geoip_database":"/file-country.mmdb","query":{"max_rows":900},"ducklake":{"cleanup_enabled":false}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PORCUPINE_ADDR", "127.0.0.1:8888")
 	t.Setenv("PORCUPINE_QUERY_MAX_ROWS", "800")
+	t.Setenv("PORCUPINE_GEOIP_DATABASE", "/env-country.mmdb")
 	s, err := loadSettings(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.get("PORCUPINE_ADDR") != "127.0.0.1:8888" || s.get("PORCUPINE_QUERY_MAX_ROWS") != "800" || s.get("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED") != "false" {
 		t.Fatal("file/env precedence or bool conversion failed")
+	}
+	if _, cfg, err := s.serviceConfig(); err != nil || cfg.GeoIPDatabase != "/env-country.mmdb" {
+		t.Fatalf("GeoIP database path did not reach server configuration: %q (%v)", cfg.GeoIPDatabase, err)
 	}
 	t.Setenv("PORCUPINE_QUERY_MAX_ROWZ", "private-secret")
 	if _, err := loadSettings(path, true); err == nil || !strings.Contains(err.Error(), "PORCUPINE_QUERY_MAX_ROWZ") || strings.Contains(err.Error(), "private-secret") {

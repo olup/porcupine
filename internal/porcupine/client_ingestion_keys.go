@@ -127,5 +127,6 @@ WHERE token_hash=$1 AND kind='client_ingestion' AND revoked_at IS NULL`, hash(ra
 		return auth.Principal{}, errors.New("invalid client ingestion key scope")
 	}
 	a.Permissions = []string{"events:write"}
+	a.ClientIngestionKey = true
 	return a, nil
 }

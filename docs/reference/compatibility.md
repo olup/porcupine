@@ -76,6 +76,12 @@ Cookieless events retain both fields. Read the client timestamp with
 keep the first accepted timestamp and context. Historical imports retain their
 original event timestamps.
 
+## Optional country lookup
+
+Porcupine can derive a country for browser capture when the operator configures a local
+database. Set `$geoip_disable` to `true` on an event to skip the lookup. The country code
+is in `context.geoip.country_code`. [Eligibility and privacy](../data-and-identity.md#optional-country-lookup)
+
 ## Test coverage and limitations
 
 The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, page-leave beacon delivery, clock correction, and offline queuing in Chromium. Browser retries after HTTP errors, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.

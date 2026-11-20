@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/netip"
@@ -49,6 +50,7 @@ type Config struct {
 	ReceiptRetention    time.Duration
 	AllowedOrigins      []string
 	TrustedProxies      []string
+	GeoIPDatabase       string
 	Clock               func() time.Time
 	DuckLake            *lakeapi.DuckLakeConfig
 	Pipelines           *output.PipelineConfig
@@ -86,6 +88,7 @@ type Service struct {
 	imports               *importManager
 	allowedOrigins        map[string]bool
 	trustedProxies        []netip.Prefix
+	geoIPCountry          func(netip.Addr) string
 	lake                  lakeapi.LakeStore
 	lakeMemoryMB          int
 	lakeMaintenanceCancel context.CancelFunc
@@ -139,8 +142,12 @@ func newServiceRuntime(c Config, interactiveConfig query.InteractiveQueryConfig)
 	if err != nil {
 		return nil, err
 	}
+	geoIPCountry, err := loadGeoIPCountry(c.GeoIPDatabase)
+	if err != nil {
+		slog.Warn("GeoIP enrichment disabled", "error", err)
+	}
 	s := &Service{eventRules: &eventRules{queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes, clock: c.Clock, receiptRetention: c.ReceiptRetention}, allowedOrigins: origins, trustedProxies: proxies,
-		oauth: oauth, resources: resources}
+		oauth: oauth, resources: resources, geoIPCountry: geoIPCountry}
 	var registry *observability.Registry
 	if c.MetricsEnabled {
 		profile := c.Profile
@@ -838,6 +845,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			}
 			return
 		}
+	}
+	if s.geoIPCountry != nil && a.ClientIngestionKey {
+		s.enrichLiveGeoIP(r, prepared, batch, peer.Address)
 	}
 	result, err := s.acceptance.Accept(ctx, prepared, peer, nativeResponse)
 	s.observeAcceptance(ctx, result, err)

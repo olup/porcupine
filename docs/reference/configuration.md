@@ -14,7 +14,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 | Section | Common keys and purpose |
 | --- | --- |
-| Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies` |
+| Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies`, `geoip_database` |
 | `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
 | `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
@@ -47,6 +47,21 @@ In standalone the generated control path is the journal path plus `.control`. Se
 Native, PostHog, and Segment capture accept cross-origin browser requests from any origin by default. Browsers can call these endpoints without including cookies. Use a `mixed` project's public ingestion key. Project authentication applies to every write.
 
 To restrict browser capture across the instance, set `allowed_origins` to an array of exact HTTP or HTTPS origins, such as `["https://app.example.com", "http://localhost:3000"]`. The environment override `PORCUPINE_ALLOWED_ORIGINS` takes a comma-separated list. Omit the setting or use an empty array for the default. The setting applies only to capture endpoints.
+
+### Country lookup
+
+Set `geoip_database` (or `PORCUPINE_GEOIP_DATABASE`) to a local MMDB file, for example
+`/data/GeoLite2-Country.mmdb`. Country and City databases are supported if they provide
+`country.iso_code`. Leave the setting empty to disable country lookup. It applies to
+eligible PostHog, native, and Segment capture on that server, including cookieless events.
+[Eligibility and privacy](../data-and-identity.md#optional-country-lookup)
+
+Supply the database under its provider's license. Porcupine reads the file into memory
+at startup and performs lookups locally. For containers, mount the file read-only and
+make it readable by the server user. Put the same database on every hosted ingestion
+worker and restart the workers after updating it. If the file is missing or invalid,
+Porcupine logs a startup warning and continues accepting events without country lookup.
+[MaxMind database updates](https://dev.maxmind.com/geoip/updating-databases/)
 
 ## Secrets and container paths
 

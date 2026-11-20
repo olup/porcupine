@@ -10,6 +10,7 @@ type Principal struct {
 	TenantAdmins       []string
 	TenantIDs          []string
 	ServiceKey         bool
+	ClientIngestionKey bool
 	EmailHuman         bool // Verified durable email principal.
 	Interactive        bool // Authority derived from a human consent grant.
 	ID                 string
