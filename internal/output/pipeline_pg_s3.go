@@ -61,6 +61,10 @@ func (w *hostedScheduledWork) binding() PipelineBinding {
 		Demand: PipelineDemand{MetadataRows: hostedScheduledMaxFiles + 1, ArtifactBytes: w.reservedBytes + exportstore.MaxManifestBytes, ProofSlots: 1}}
 }
 
+const hostedScheduledPresence = `SELECT EXISTS(SELECT 1 FROM hosted_s3_pipeline_state q
+JOIN pipeline_effect_definitions d ON (d.project_id,d.id)=(q.project_id,q.pipeline_id)
+WHERE d.state='active')`
+
 type hostedScheduledCandidate struct {
 	project, pipeline, run string
 	start                  int64

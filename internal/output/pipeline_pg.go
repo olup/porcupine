@@ -33,11 +33,12 @@ type HostedPipelineDependencies struct {
 }
 
 type hostedPipelineRuntime struct {
-	effects     *PGPipelineEffects
-	scheduled   HostedScheduledDependencies
-	transaction func(context.Context, string, func(context.Context, *sql.Tx) error) error
-	step        func(context.Context) (bool, error)
-	client      *http.Client
+	effects       *PGPipelineEffects
+	scheduled     HostedScheduledDependencies
+	transaction   func(context.Context, string, func(context.Context, *sql.Tx) error) error
+	step          func(context.Context) (bool, error)
+	client        *http.Client
+	retiredS3Wake chan struct{}
 }
 
 func NewHostedPipelines(d HostedPipelineDependencies, config *PipelineConfig) (*PipelineJobs, error) {
@@ -49,7 +50,10 @@ func NewHostedPipelines(d HostedPipelineDependencies, config *PipelineConfig) (*
 	if err != nil {
 		return nil, err
 	}
-	p.pg = &hostedPipelineRuntime{effects: d.Effects, scheduled: d.Scheduled, transaction: d.ProjectTransaction, client: d.WebhookClient}
+	p.pg = &hostedPipelineRuntime{
+		effects: d.Effects, scheduled: d.Scheduled, transaction: d.ProjectTransaction,
+		client: d.WebhookClient, retiredS3Wake: make(chan struct{}, 1),
+	}
 	return p, nil
 }
 
@@ -58,32 +62,35 @@ func (s *PipelineJobs) SetHostedWebhookWorker(step func(context.Context) (bool, 
 	s.pg.step = step
 }
 
-const hostedWebhookIdlePollMax = 10 * time.Second
+const hostedPipelineIdlePollMax = 10 * time.Second
 
-// An active destination may already have a pending retry, lease expiry or
-// batch window. Keep polling for due work at the regular interval while there
-// are active webhook definitions. Cache only their presence so a local wake
-// can pick up the first destination immediately.
 func (s *PipelineJobs) hostedWebhookPoll() func(context.Context) (time.Duration, error) {
+	return s.hostedPipelinePoll(`SELECT EXISTS(SELECT 1 FROM pipeline_effect_definitions
+ WHERE state='active' AND rule_key NOT LIKE '`+hostedScheduledRulePrefix+`%')`, s.RunWebhook)
+}
+
+// The presence query must include work with future windows, retries, or lease
+// expirations. Cache only positive results so a local wake can promptly pick
+// up work after an idle poll.
+func (s *PipelineJobs) hostedPipelinePoll(presence string, step func(context.Context) (bool, error)) func(context.Context) (time.Duration, error) {
 	var checkAfter time.Time
 	idleDelay := time.Duration(0)
 	return func(ctx context.Context) (time.Duration, error) {
 		if !time.Now().Before(checkAfter) {
 			var active bool
-			err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_definitions
- WHERE state='active' AND rule_key NOT LIKE '`+hostedScheduledRulePrefix+`%')`).Scan(&active)
+			err := s.db.QueryRowContext(ctx, presence).Scan(&active)
 			if err != nil {
 				idleDelay = 0
 				return pipelinePollInterval, err
 			}
 			if !active {
-				idleDelay = min(max(pipelinePollInterval, 2*idleDelay), hostedWebhookIdlePollMax)
+				idleDelay = min(max(pipelinePollInterval, 2*idleDelay), hostedPipelineIdlePollMax)
 				return idleDelay, nil
 			}
 			idleDelay = 0
-			checkAfter = time.Now().Add(hostedWebhookIdlePollMax)
+			checkAfter = time.Now().Add(hostedPipelineIdlePollMax)
 		}
-		return pipelineStepDelay(s.RunWebhook(ctx))
+		return pipelineStepDelay(step(ctx))
 	}
 }
 
@@ -334,6 +341,9 @@ func (s *PipelineJobs) changeHostedPipeline(ctx context.Context, project, id, st
 		return nil, pipelineHostedError(err)
 	}
 	s.Wake()
+	if p.Kind == "s3" && replacement != nil {
+		signalPipelineWorker(s.pg.retiredS3Wake)
+	}
 	public, err := publicPipeline(p)
 	return &public, err
 }
