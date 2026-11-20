@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
@@ -55,6 +56,35 @@ func NewHostedPipelines(d HostedPipelineDependencies, config *PipelineConfig) (*
 // SetHostedWebhookWorker wires execution before Start.
 func (s *PipelineJobs) SetHostedWebhookWorker(step func(context.Context) (bool, error)) {
 	s.pg.step = step
+}
+
+const hostedWebhookIdlePollMax = 10 * time.Second
+
+// An active destination may already have a pending retry, lease expiry or
+// batch window. Keep polling for due work at the regular interval while there
+// are active webhook definitions. Cache only their presence so a local wake
+// can pick up the first destination immediately.
+func (s *PipelineJobs) hostedWebhookPoll() func(context.Context) (time.Duration, error) {
+	var checkAfter time.Time
+	idleDelay := time.Duration(0)
+	return func(ctx context.Context) (time.Duration, error) {
+		if !time.Now().Before(checkAfter) {
+			var active bool
+			err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_effect_definitions
+ WHERE state='active' AND rule_key NOT LIKE '`+hostedScheduledRulePrefix+`%')`).Scan(&active)
+			if err != nil {
+				idleDelay = 0
+				return pipelinePollInterval, err
+			}
+			if !active {
+				idleDelay = min(max(pipelinePollInterval, 2*idleDelay), hostedWebhookIdlePollMax)
+				return idleDelay, nil
+			}
+			idleDelay = 0
+			checkAfter = time.Now().Add(hostedWebhookIdlePollMax)
+		}
+		return pipelineStepDelay(s.RunWebhook(ctx))
+	}
 }
 
 func (s *PipelineJobs) initializeHostedPipelines(ctx context.Context) error {

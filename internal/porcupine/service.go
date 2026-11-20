@@ -916,7 +916,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		problem(w, 503, err.Error())
 		return
 	}
-	s.pipelines.WakeWebhook()
+	if s.hosted == nil {
+		s.pipelines.WakeWebhook()
+	}
 	response, err := liveAcceptanceResponse(result, nativeResponse)
 	if err != nil {
 		problem(w, 503, err.Error())
