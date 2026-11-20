@@ -27,6 +27,9 @@ type Message struct {
 	Context     map[string]any `json:"context,omitempty"`
 	Set         map[string]any `json:"set,omitempty"`
 	SetOnce     map[string]any `json:"set_once,omitempty"`
+
+	ClientTimestamp string `json:"-"`
+	SentAt          string `json:"-"`
 }
 
 // Input is a protocol-neutral producer record. It contains no project or source selector.

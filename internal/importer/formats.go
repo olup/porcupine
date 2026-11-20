@@ -40,7 +40,7 @@ func ParseRow(raw []byte, kind, format string) (Row, error) {
 		if _, exists := object["writeKey"]; exists {
 			return Row{}, ErrRow
 		}
-		messages, err := ingest.TranslateSegment(object, "/v1/"+kind, "")
+		messages, err := ingest.TranslateSegment(object, "/v1/"+kind, "", false)
 		if err != nil || len(messages) != 1 {
 			return Row{}, ErrRow
 		}

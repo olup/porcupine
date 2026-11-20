@@ -93,6 +93,10 @@ await analytics.flush({ timeout: 10000 })
 
 The adapter accepts Segment destination routing options without storing credentials from those options or dispatching to Segment destinations. Configure outbound delivery through [Porcupine pipelines](../pipelines.md).
 
+Porcupine corrects live Segment event time using its own receipt time minus the elapsed time between capture and send. It uses a valid `originalTimestamp` as capture time when supplied and otherwise uses `timestamp`. A valid event `sentAt` takes precedence over the batch `sentAt`. With no valid send time, Porcupine uses the supplied `timestamp` or defaults to receipt time. The source clock values used for correction are available in `context.client_timestamp` and `context.sent_at`. [Segment timestamp fields](https://www.twilio.com/docs/segment/connections/spec/common#timestamps)
+
+A forwarded Segment event with a valid `receivedAt` and `timestamp` keeps its already corrected `timestamp`. Porcupine records its own `received_at` for the request. Historical Segment imports preserve the supplied `timestamp`.
+
 | Segment input | Porcupine result |
 | --- | --- |
 | `page` | A `pageview`. Page URL, referrer and supplied page metadata are available in `context.page`. |

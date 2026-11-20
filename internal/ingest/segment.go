@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/olup/porcupine/internal/event"
 )
@@ -127,7 +128,7 @@ func segmentNoSelectors(object map[string]any) error {
 	}
 	return nil
 }
-func TranslateSegment(envelope map[string]any, path, writeKey string) ([]Message, error) {
+func TranslateSegment(envelope map[string]any, path, writeKey string, live bool) ([]Message, error) {
 	if err := segmentNoSelectors(envelope); err != nil {
 		return nil, err
 	}
@@ -138,8 +139,12 @@ func TranslateSegment(envelope map[string]any, path, writeKey string) ([]Message
 		return nil, errors.New("unsupported Segment endpoint")
 	}
 	batch := []any{envelope}
+	var batchSentAt string
 	var sharedContext map[string]any
 	if kind == "batch" {
+		if live {
+			batchSentAt = segmentTime(envelope["sentAt"])
+		}
 		var ok bool
 		batch, ok = envelope["batch"].([]any)
 		if !ok || len(batch) == 0 || len(batch) > MaxMessages {
@@ -182,11 +187,22 @@ func TranslateSegment(envelope map[string]any, path, writeKey string) ([]Message
 		if err != nil {
 			return nil, err
 		}
+		// A forwarded Segment message already has a canonical occurrence time.
+		if live && (segmentTime(row["receivedAt"]) == "" || segmentTime(message.Timestamp) == "") {
+			message.SentAt = segmentTime(row["sentAt"])
+			if message.SentAt == "" {
+				message.SentAt = batchSentAt
+			}
+			if message.SentAt != "" {
+				message.ClientTimestamp = segmentTime(row["originalTimestamp"])
+			}
+		}
 		encoded, err := json.Marshal(message)
-		if err != nil || len(encoded) > SegmentEventLimit {
+		messageBytes := len(encoded) + len(message.SentAt) + len(message.ClientTimestamp)
+		if err != nil || messageBytes > SegmentEventLimit {
 			return nil, errors.New("expanded Segment message exceeds 32 KiB")
 		}
-		expandedBytes += len(encoded)
+		expandedBytes += messageBytes
 		if expandedBytes > SegmentBatchLimit {
 			return nil, errors.New("expanded Segment batch exceeds 500 KiB")
 		}
@@ -194,6 +210,18 @@ func TranslateSegment(envelope map[string]any, path, writeKey string) ([]Message
 	}
 	return messages, nil
 }
+
+func segmentTime(value any) string {
+	raw, _ := value.(string)
+	if raw == "" || len(raw) > 128 {
+		return ""
+	}
+	if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
+		return ""
+	}
+	return raw
+}
+
 func segmentNativeMessage(row map[string]any, endpoint string, sharedContext map[string]any) (Message, error) {
 	message := Message{}
 	kind, err := SegmentString(row, "type", true)
