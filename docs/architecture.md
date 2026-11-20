@@ -35,6 +35,7 @@ This map follows the source checkout. See [storage profiles](storage.md) for dep
 | `internal/porcupine` | Service composition, HTTP and MCP handlers, SQLite acceptance transactions, and coordination across stores |
 | `internal/lake` | Project engines, native query execution, analytical projection, maintenance, and native backup state |
 | `internal/query` | Admission and execution lifetime for interactive SQL, catalog, profile, and hosted event-list reads. Owns hosted permit renewal and worker capacity shared with exports and scheduled S3 queries. |
+| `internal/catalog` | Materialized event catalog persistence and refresh |
 | `internal/nativequery` | SQL AST policy, allowed functions, and bindings |
 | `internal/auth` | Principals, grant/consent policy, OAuth validation, provider verification, browser OTP/OIDC sign-in, temporary sessions, and login/email admission |
 | `internal/event` | Canonical event model and IDs, independent of storage and adapters |
