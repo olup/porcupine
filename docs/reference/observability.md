@@ -105,9 +105,9 @@ increments the counter once.
 | `invalid_event` | HTTP 400 for an event that fails validation after decoding. |
 | `unavailable` | HTTP 404 for an unavailable project, HTTP 429, server errors, or a quota rejection carried in a PostHog HTTP 200 response. |
 
-`porcupine_ingestion_project_queue_rejections_total` counts standalone live
-requests rejected by a configured per-project queue limit while instance
-capacity was available for the event being evaluated. It has no project label.
+On `main` after v0.19.2, `porcupine_ingestion_project_queue_rejections_total`
+counts standalone live requests rejected by a per-project queue limit when
+instance capacity was still available for the event. It has no project label.
 [Standalone queue limits](reliability.md#acceptance-and-queue-limits)
 
 Admission counters begin after validation. A durable batch can succeed with
