@@ -140,13 +140,10 @@ func (r *catalogRefresh) page(ctx context.Context, input lake.EventCatalogInput)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return lake.EventCatalog{}, nil, false
 	}
-	if state.Status == "" {
-		state, err = r.store.request(ctx, input.ID, at, false)
-		if err == nil {
-			r.signal()
-		}
-	}
 	status := catalogRefreshStatus(state)
+	if status == nil {
+		status = &CatalogRefreshStatus{Status: "ready"}
+	}
 	if state.Snapshot.CatalogID == "" {
 		return lake.EventCatalog{}, status, false
 	}
@@ -169,7 +166,7 @@ func (s *Service) refreshEventCatalog(ctx context.Context, input *ProjectIDInput
 	if refresh == nil {
 		return nil, apierr.New(503, "event catalog refresh unavailable")
 	}
-	state, err := refresh.store.request(ctx, input.ID, refresh.clock(), true)
+	state, err := refresh.store.request(ctx, input.ID, refresh.clock())
 	if errors.Is(err, errCatalogProjectFenced) {
 		return nil, apierr.New(404, "project not found")
 	}
@@ -182,4 +179,22 @@ func (s *Service) refreshEventCatalog(ctx context.Context, input *ProjectIDInput
 	}
 	refresh.signal()
 	return &catalogRefreshOutput{Body: *status}, nil
+}
+
+func (s *Service) eventCatalogRefreshStatus(ctx context.Context, input *ProjectIDInput) (*catalogRefreshOutput, error) {
+	if err := s.analyticsProject(ctx, input.ID); err != nil {
+		return nil, err
+	}
+	refresh := s.eventCatalogRefresh
+	if refresh == nil {
+		return nil, apierr.New(503, "event catalog refresh unavailable")
+	}
+	state, err := refresh.store.status(ctx, input.ID, refresh.clock())
+	if err != nil {
+		return nil, apierr.New(503, "event catalog refresh unavailable")
+	}
+	if status := catalogRefreshStatus(state); status != nil {
+		return &catalogRefreshOutput{Body: *status}, nil
+	}
+	return &catalogRefreshOutput{Body: CatalogRefreshStatus{Status: "ready"}}, nil
 }

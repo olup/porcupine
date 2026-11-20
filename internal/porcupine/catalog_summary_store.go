@@ -146,9 +146,9 @@ func (s catalogSummaryStore) lockActiveProject(ctx context.Context, tx *sql.Tx, 
 	return err
 }
 
-// A discovery request only seeds the row. A manual request can advance the
-// next eligible time, while an unexpired claim covers concurrent requests.
-func (s catalogSummaryStore) request(ctx context.Context, project string, now time.Time, force bool) (catalogSummaryState, error) {
+// A manual request advances the next eligible time. An unexpired claim covers
+// concurrent requests.
+func (s catalogSummaryStore) request(ctx context.Context, project string, now time.Time) (catalogSummaryState, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return catalogSummaryState{}, err
@@ -159,7 +159,7 @@ func (s catalogSummaryStore) request(ctx context.Context, project string, now ti
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_refresh_state(project_id,eligible_at_ms) VALUES($1,$2)
 ON CONFLICT(project_id) DO UPDATE SET eligible_at_ms=excluded.eligible_at_ms,failures=0
-WHERE $3=1 AND catalog_refresh_state.lease_token='' AND catalog_refresh_state.eligible_at_ms>excluded.eligible_at_ms`, project, now.UnixMilli(), force); err != nil {
+WHERE catalog_refresh_state.lease_token='' AND catalog_refresh_state.eligible_at_ms>excluded.eligible_at_ms`, project, now.UnixMilli()); err != nil {
 		return catalogSummaryState{}, err
 	}
 	state, err := scanCatalogStatus(tx.QueryRowContext(ctx, `SELECT catalog_id,snapshot_version,refreshed_at_ms,eligible_at_ms,lease_token,failures

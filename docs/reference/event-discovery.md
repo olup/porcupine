@@ -18,11 +18,12 @@ To request a refresh from the CLI, run
 `porcupine refresh-event-catalog --id "$PROJECT_ID"`. The API is
 `POST /api/v1/projects/{id}/catalog/refresh`. It requires project
 `events:read`, returns HTTP 202, and coalesces concurrent requests for the same
-project. Read the catalog to see `queued`, `running`, `ready`, or `failed`.
-In MCP, call `refresh-event-catalog` through `porcupine_call`, then use
-`porcupine_schema` to read the list.
+project. Read the status with `get-event-catalog-refresh` in the CLI or
+`GET /api/v1/projects/{id}/catalog/refresh`. Both return `queued`, `running`,
+`ready`, or `failed` without running an analytical query. In MCP, call these
+operations through `porcupine_call`, then use `porcupine_schema` to read the list.
 
-The summary is initialized when a project's catalog is first used. It catches up
+The summary is initialized when a project first requests a refresh. It catches up
 from the last checkpoint when DuckLake can verify the changes. Porcupine uses
 the live read while a correction, deletion, or expired checkpoint makes the
 summary unavailable. Event profiles and sampled properties read DuckLake on

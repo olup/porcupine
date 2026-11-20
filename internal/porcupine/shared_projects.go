@@ -67,7 +67,7 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 
 func needsJournalAnchor(operation string) bool {
 	switch operation {
-	case "query-events", "get-event-catalog", "refresh-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project",
+	case "query-events", "get-event-catalog", "get-event-catalog-refresh", "refresh-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project",
 		"get-client-ingestion-key", "ensure-client-ingestion-key":
 		return false
 	default:

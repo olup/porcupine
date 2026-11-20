@@ -16,6 +16,11 @@ func TestEventCatalogRefreshJourney(t *testing.T) {
 	_, reader := key(t, s, []string{"events:read"}, []string{a})
 	path := "/api/v1/projects/" + a + "/catalog"
 	request(t, s, "POST", "/api/v1/projects/"+b+"/catalog/refresh", reader, "", 403)
+	request(t, s, "GET", "/api/v1/projects/"+b+"/catalog/refresh", reader, "", 403)
+	status := request(t, s, "GET", path+"/refresh", reader, "", 200)
+	if status["status"] != "ready" || status["updated_at"] != nil {
+		t.Fatal("uninitialized status", status)
+	}
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"first","name":"pageview","properties":{"path":"/"}}`, 200)
 	duckLakeJourneyDrain(t, s)
 	awaitCatalog := func(want int) map[string]any {
@@ -36,6 +41,11 @@ func TestEventCatalogRefreshJourney(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
+	initial := request(t, s, "GET", path, reader, "", 200)
+	if initial["refresh"].(map[string]any)["updated_at"] != nil {
+		t.Fatal("displaying the list should leave the first rebuild on demand", initial)
+	}
+	request(t, s, "POST", path+"/refresh", reader, "", 202)
 	first := awaitCatalog(1)
 	event := first["events"].([]any)[0].(map[string]any)
 	if event["event"] != "pageview" || event["count"] != "1" {
@@ -52,6 +62,10 @@ func TestEventCatalogRefreshJourney(t *testing.T) {
 	ctx, mcp := mcpTestSession(t, host.URL, reader, "2025-11-25")
 	mcpTestCall(t, ctx, mcp, mcpCallInput{OperationID: "refresh-event-catalog", Path: map[string]string{"id": a}}, 202)
 	awaitCatalog(2)
+	status = mcpTestCall(t, ctx, mcp, mcpCallInput{OperationID: "get-event-catalog-refresh", Path: map[string]string{"id": a}}, 200)
+	if status["status"] != "ready" || status["updated_at"] == nil {
+		t.Fatal("completed refresh status", status)
+	}
 	result := mcpTestTool(t, ctx, mcp, "porcupine_schema", mcpSchemaInput{ProjectID: a}, false)
 	if len(result["catalog"].(map[string]any)["events"].([]any)) != 2 {
 		t.Fatal(result)

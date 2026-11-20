@@ -100,9 +100,9 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 			t.Fatalf("expected no due refresh: %+v %v", c, err)
 		}
 	}
-	request := func(s catalogSummaryStore, project string, force bool, wantStatus string) {
+	request := func(s catalogSummaryStore, project string, wantStatus string) {
 		t.Helper()
-		if state, err := s.request(ctx, project, at, force); err != nil || state.Status != wantStatus {
+		if state, err := s.request(ctx, project, at); err != nil || state.Status != wantStatus {
 			t.Fatalf("request state: %+v, %v; want %s", state, err, wantStatus)
 		}
 	}
@@ -121,7 +121,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 		t.Fatalf("status for an unseeded project: %+v %v", state, err)
 	}
 	idle(first)
-	request(first, "p", false, "queued")
+	request(first, "p", "queued")
 	if page, state := read(second, "p", 1, 0); state.Status != "queued" || state.Snapshot.CatalogID != "" || !state.RefreshedAt.IsZero() || len(page.Events) != 0 {
 		t.Fatalf("unbuilt summary: %+v %+v", page, state)
 	}
@@ -129,7 +129,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	// Two workers cannot run the same job. A manual request coalesces with the
 	// running job, and a second connection can recover it later.
 	firstClaim := raceCatalogClaims(t, first, second, at, lease)
-	request(second, "p", true, "running")
+	request(second, "p", "running")
 	idle(second)
 	at = at.Add(lease)
 	stolen := claim(second)
@@ -158,10 +158,9 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	}
 
 	at = at.Add(time.Minute)
-	request(second, "p", false, "current")
 	idle(first)
-	request(first, "p", true, "queued")
-	request(second, "p", true, "queued")
+	request(first, "p", "queued")
+	request(second, "p", "queued")
 	incremental := claim(first)
 	idle(second)
 	v2 := lakeapi.ExportSnapshot{CatalogID: "live", Version: 2}
@@ -196,7 +195,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 		t.Fatal(err)
 	}
 	idle(second)
-	request(first, "p", true, "queued")
+	request(first, "p", "queued")
 	invalidated := claim(second)
 	if err := first.invalidate(ctx, "p", v2, at); err != nil {
 		t.Fatal(err)
@@ -223,7 +222,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	if p, s := read(first, "p", 5, 0); s.Snapshot != replacement.Snapshot || len(p.Events) != 1 || p.Events[0] != replacement.Rows[0].Event {
 		t.Fatalf("rebuilt catalog: %+v %+v", p, s)
 	}
-	request(first, "p", true, "queued")
+	request(first, "p", "queued")
 	oversized := claim(first)
 	tooLarge := lakeapi.CatalogSnapshotRead{Snapshot: lakeapi.ExportSnapshot{CatalogID: "restored", Version: 1}, Rows: []lakeapi.CatalogAggregate{
 		catalogAggregate(strings.Repeat("x", 501), "1", 2, 2),
@@ -242,13 +241,13 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	at = at.Add(time.Millisecond)
 	complete(second, claim(second), replacement)
 
-	request(first, "p", true, "queued")
+	request(first, "p", "queued")
 	deleting := claim(first)
-	request(first, "other", false, "queued")
+	request(first, "other", "queued")
 	if _, err := second.db.ExecContext(ctx, `INSERT INTO tenant_deletions(tenant_id,state,started_at,updated_at) VALUES('catalog-tenant','deleting','','')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.request(ctx, "p", at, true); !errors.Is(err, errCatalogProjectFenced) {
+	if _, err := first.request(ctx, "p", at); !errors.Is(err, errCatalogProjectFenced) {
 		t.Fatalf("request crossed deletion fence: %v", err)
 	}
 	if err := first.complete(ctx, deleting, replacement, at); !errors.Is(err, errCatalogProjectFenced) {
