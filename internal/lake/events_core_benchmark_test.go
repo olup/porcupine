@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"slices"
@@ -24,6 +26,7 @@ type eventsCoreBenchmarkInput struct {
 	Config    DuckLakeConfig
 	ProjectID string
 	Operation string
+	Counters  string
 }
 
 type eventsCoreBenchmarkResult struct {
@@ -46,7 +49,13 @@ func TestDuckLakeS3SharedPostgresEventsCorePerformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := nativeS3Fixture(t)
+	fixture, requests, getBytes := countedNativeProofS3(t)
+	// Hosted scope includes the S3 endpoint. Seed and all samples must use
+	// the same proxy. A separate endpoint exposes counters to the child.
+	counters := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(eventsCoreBenchmarkResult{Requests: requests.Load(), GetBytes: getBytes.Load()})
+	}))
+	defer counters.Close()
 	config := DuckLakeConfig{PostgresURL: sharedPostgresDSN(t), SharedSourceID: event.NewID(), S3: &fixture.storage,
 		MemoryLimitMB: 8192, Threads: 4, MaxOpenProjects: 1, DisableCleanup: true}
 	for _, count := range []int{1_000_000, 10_000_000} {
@@ -56,7 +65,7 @@ func TestDuckLakeS3SharedPostgresEventsCorePerformance(t *testing.T) {
 			t.Logf("events_core_bench_fixture events=%d links=1000000 profiles=300000 names=80 parquet_files=%d parquet_bytes=%d threads=%d memory_mib=%d",
 				count, files, parquetBytes, config.Threads, config.MemoryLimitMB)
 			for _, operation := range eventsCoreBenchmarkOperations {
-				input := eventsCoreBenchmarkInput{config, key.ProjectID, operation}
+				input := eventsCoreBenchmarkInput{config, key.ProjectID, operation, counters.URL}
 				var digest string
 				for sample := 0; sample < 4; sample++ {
 					// Give each version equal first access to the Silo disk cache.
@@ -118,17 +127,18 @@ func TestEventsCoreBenchmarkSample(t *testing.T) {
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 		t.Fatal(err)
 	}
-	requests, getBytes := countBenchmarkS3(t, input.Config.S3)
 	key := ProjectWriteKey{input.Config.SharedSourceID, input.ProjectID}
 	withCatalogBenchmarkReader(t, input.Config, key, func(reader *HostedReader, _ *ProjectLake) {
 		// Cold starts with a fresh DuckDB process, after attaching the project.
 		// Warm repeats the same operation on the same instance.
 		for range 2 {
-			beforeRequests, beforeBytes := requests.Load(), getBytes.Load()
+			before := eventsCoreBenchmarkCounters(t, input.Counters)
 			start := time.Now()
 			result := runEventsCoreBenchmarkOperation(t, reader, input)
-			measurement := eventsCoreBenchmarkResult{ElapsedUS: time.Since(start).Microseconds(),
-				Requests: requests.Load() - beforeRequests, GetBytes: getBytes.Load() - beforeBytes}
+			elapsed := time.Since(start).Microseconds()
+			after := eventsCoreBenchmarkCounters(t, input.Counters)
+			measurement := eventsCoreBenchmarkResult{ElapsedUS: elapsed,
+				Requests: after.Requests - before.Requests, GetBytes: after.GetBytes - before.GetBytes}
 			if queryResult, ok := result.(AnalyticsResult); ok {
 				queryResult.Statistics = AnalyticsStatistics{}
 				if input.Operation == "counts" {
@@ -151,6 +161,24 @@ func TestEventsCoreBenchmarkSample(t *testing.T) {
 			t.Logf("%s%s", eventsCoreBenchmarkSample, data)
 		}
 	})
+}
+
+func eventsCoreBenchmarkCounters(t *testing.T, endpoint string) eventsCoreBenchmarkResult {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var counts eventsCoreBenchmarkResult
+	if err := json.NewDecoder(response.Body).Decode(&counts); err != nil {
+		t.Fatal(err)
+	}
+	return counts
 }
 
 func runEventsCoreBenchmarkOperation(t *testing.T, reader *HostedReader, input eventsCoreBenchmarkInput) any {

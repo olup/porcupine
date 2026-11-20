@@ -7,7 +7,7 @@ benchmark_dir=$(mktemp -d)
 trap 'git worktree remove --force "$benchmark_dir/base" && rm -rf "$benchmark_dir"' EXIT
 git worktree add --detach "$benchmark_dir/base" "$baseline"
 
-for file in event_catalog_benchmark_test.go events_core_benchmark_test.go native_proof_history_benchmark_test.go; do
+for file in event_catalog_benchmark_test.go events_core_benchmark_test.go; do
   cp "internal/lake/$file" "$benchmark_dir/base/internal/lake/$file"
 done
 (
