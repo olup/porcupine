@@ -98,6 +98,8 @@ Project readers can see the text, principal ID, and UTC time of the last edit or
 
 ## Review catalog documentation
 
+In Porcupine Cloud, open the project's **Event catalog** and select **Copy documentation prompt** on a page with custom events.
+
 1. List events with `get-event-catalog` in the CLI or `porcupine_schema` in MCP. Follow `next_offset` with `get-event-catalog` to read subsequent event pages.
 2. For each custom event, request its keys by exact `event` with `property_kind=custom`. Follow `next_property_cursor` with the same filters. Key discovery uses a bounded sample, so this review covers the returned keys.
 3. Inspect `documentation_status`. `missing` means the entry has no text. `stale` means the text was edited or confirmed more than six calendar months ago, measured in UTC. `current` includes text exactly six months old. Event names and keys starting with `$` are excluded from this review.

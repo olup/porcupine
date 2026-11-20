@@ -20,6 +20,14 @@ Once connected, ask your agent:
 
 See [query examples](query-events.md) and the [four MCP tools](reference/mcp.md).
 
+## Ask an agent to review event descriptions
+
+Give the agent access to the application code that sends the events. Use this prompt with your project ID.
+
+> Review the event catalog for `PROJECT_ID`. Find missing or stale descriptions for custom events and their sampled properties. Use the application code to verify what each event and property means. Draft missing descriptions and fixes. List stale descriptions that are still correct and flag anything you couldn't verify. Show me the results before saving.
+
+The review needs project `events:read`. To save descriptions or confirm that stale text is still correct, the agent needs project `management:write`. See [how to review catalog documentation](reference/event-discovery.md#review-catalog-documentation).
+
 ## Connect the CLI
 
 Install the [standalone CLI](../cli/README.md#install) that matches your server. It connects to Porcupine Cloud by default.
