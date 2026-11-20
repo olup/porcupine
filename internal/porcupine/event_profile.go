@@ -28,6 +28,9 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	}
 	ctx, cancel := context.WithDeadline(ctx, bounds.Deadline)
 	defer cancel()
+	if err := s.describeEventProfile(ctx, input.ID, &result); err != nil {
+		return nil, apierr.New(503, "catalog descriptions unavailable")
+	}
 	result.Delivery, err = s.deliveryStatus(ctx, input.ID)
 	if err != nil {
 		return nil, apierr.New(503, "delivery status unavailable")
