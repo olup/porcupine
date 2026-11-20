@@ -1,53 +1,17 @@
 package porcupine
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"io"
 	"strconv"
-	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/importer"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 )
-
-type deliveryTestLake struct {
-	lakeapi.LakeStore
-	mu       sync.Mutex
-	applied  map[string]lakeapi.EventProjection
-	failNext error
-}
-
-func (*deliveryTestLake) SourceID(context.Context) (string, error) { return "delivery-test", nil }
-func (*deliveryTestLake) Close() error                             { return nil }
-
-func (l *deliveryTestLake) Apply(_ context.Context, projections []lakeapi.EventProjection) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.failNext; err != nil {
-		l.failNext = nil
-		return err
-	}
-	for _, projection := range projections {
-		l.applied[projection.UUID] = projection
-	}
-	return nil
-}
-
-func (l *deliveryTestLake) Load(_ context.Context, project, uuid string) (lakeapi.EventProjection, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	p, ok := l.applied[uuid]
-	if !ok || p.ProjectID != project {
-		return lakeapi.EventProjection{}, lakeapi.ErrEventNotFound
-	}
-	return p, nil
-}
 
 func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 	t.Parallel()
@@ -55,9 +19,7 @@ func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 		s := service(t, 100)
 		id, token := project(t, s)
 		_, editKey := key(t, s, []string{"events:read", "events:edit", "events:delete", "imports:write", "events:write"}, []string{id})
-		lake := &deliveryTestLake{applied: make(map[string]lakeapi.EventProjection)}
-		s.lake = lake
-		s.imports.deliveryEnabled = true
+		attachCoreLake(t, s)
 		capture := func(uuid string) {
 			request(t, s, "POST", "/capture/", "", captureBody(token, uuid), 200)
 		}
@@ -135,14 +97,18 @@ func TestStandaloneDeliveryWakesAndSweeps(t *testing.T) {
 		expectReceipts(7)
 
 		waitForIdle()
-		lake.mu.Lock()
-		lake.failNext = io.ErrUnexpectedEOF
-		lake.mu.Unlock()
+		if _, err := s.db.Exec(`CREATE TRIGGER lose_worker_delivery_ack BEFORE DELETE ON events
+			WHEN OLD.uuid='retry' BEGIN SELECT RAISE(FAIL,'simulated lost acknowledgment'); END`); err != nil {
+			t.Fatal(err)
+		}
 		capture("retry")
 		expectReceipts(7)
 		status, err := s.deliveryStatus(t.Context(), id)
 		if err != nil || status.Error != "DuckLake delivery failed" || status.Pending != 1 {
-			t.Fatalf("failed delivery did not retain durable work and report its health: %v, %v", status, err)
+			t.Fatalf("lost acknowledgment did not retain durable work and report its health: %v, %v", status, err)
+		}
+		if _, err := s.db.Exec(`DROP TRIGGER lose_worker_delivery_ack`); err != nil {
+			t.Fatal(err)
 		}
 		time.Sleep(deliveryInterval)
 		expectReceipts(8)
