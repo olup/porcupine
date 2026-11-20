@@ -77,7 +77,7 @@ original event timestamps.
 
 ## Test coverage and limitations
 
-The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, and page-leave beacon delivery in Chromium. Browser retry behavior, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
+The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, page-leave beacon delivery, clock correction, and offline queuing in Chromium. Browser retries after HTTP errors, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
 
 With `capture_pageleave` and `request_batching` enabled, `posthog-js` sends
 `$pageleave` and pending events through `navigator.sendBeacon` on page exit.

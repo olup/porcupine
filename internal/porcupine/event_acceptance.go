@@ -14,7 +14,6 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
