@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.1). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.2). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a>
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,12 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Choose the procedure for the version you are running.
+
+### Upgrade from v0.19.1
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and check for shutdown errors.
+2. Stop v0.19.1 and start v0.19.2 with the existing configuration and storage.
+3. Update the CLI and check readiness. Confirm that a new test event becomes queryable before resuming producers.
 
 ### Upgrade from v0.19.0
 

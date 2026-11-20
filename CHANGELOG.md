@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.2
+
+- Interactive event queries and snapshot exports can skip DuckLake identity joins when the SQL does not need person data. Event profile activity and hosted recent-event lists read event rows directly. (#156)
+- Live PostHog, native, and Segment endpoints accept Base64 form bodies. With page-leave capture and request batching enabled, `posthog-js` can deliver `$pageleave` and pending events through `sendBeacon`. (#157) [PostHog compatibility](https://github.com/olup/porcupine/blob/v0.19.2/docs/reference/compatibility.md#test-coverage-and-limitations)
+- Live PostHog, native, and Segment capture store occurrence times in UTC and can correct clock skew using client clock hints. Historical imports preserve source occurrence times. (#158) [Event timestamps](https://github.com/olup/porcupine/blob/v0.19.2/docs/reference/compatibility.md#event-timestamps)
+- Set `geoip_database` to a local MMDB file to add a country code to eligible live PostHog, native, and Segment events. Requests need a mixed project's public capture key and an HTTP or HTTPS origin. The lookup adds only `context.geoip.country_code` and discards the lookup address. (#159) [Country lookup](https://github.com/olup/porcupine/blob/v0.19.2/docs/data-and-identity.md#optional-country-lookup)
+
+v0.19.2 uses the v0.19.1 storage schemas. [Upgrade from v0.19.1](https://github.com/olup/porcupine/blob/v0.19.2/docs/hosting.md#upgrade-from-v0191)
+
 ## 0.19.1
 
 - Event catalogs and profiles now select event IDs before reading occurrence details and sample payloads from DuckLake. Catalog counts still cover the full delivered history. (#154)
