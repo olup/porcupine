@@ -36,5 +36,5 @@ func (s *PipelineJobs) AuthorizeCreator(ctx context.Context, id, project string)
 	if err != nil {
 		return false, err
 	}
-	return auth.Authorize(a, "pipelines:write", project) && auth.Authorize(a, "events:read", project), nil
+	return auth.CanExecutePipeline(a, project), nil
 }

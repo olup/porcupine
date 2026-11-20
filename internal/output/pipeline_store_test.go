@@ -3,10 +3,13 @@ package output
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/auth"
 )
 
 func pipelineFixture(t *testing.T) (*sql.DB, *PGPipelineEffects) {
@@ -24,7 +27,7 @@ func pipelineFixture(t *testing.T) (*sql.DB, *PGPipelineEffects) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	p, e := NewPGPipelineEffects(PipelineNativeCredentialAuthority{})
+	p, e := NewPGPipelineEffects(auth.PipelineNativeCredentialAuthority{})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -206,7 +209,7 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	ctx := context.Background()
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ConfigureCapacityTx(ctx, tx, "project", "project", b.Demand) })
 	pipelineTx(t, db, func(tx *sql.Tx) error { return p.ReserveEffectsTx(ctx, tx, b, plan, v.Outputs) })
-	cold, _ := NewPGPipelineEffects(PipelineNativeCredentialAuthority{})
+	cold, _ := NewPGPipelineEffects(auth.PipelineNativeCredentialAuthority{})
 	pipelineTx(t, db, func(tx *sql.Tx) error {
 		got, e := cold.ReservationTx(ctx, tx, b.Scope)
 		if got != b {
@@ -294,6 +297,54 @@ func TestSharedPipelineEffectsFullQueueOtherTenantAndAbsentCleanup(t *testing.T)
 	}
 
 }
+func TestSharedPipelineNativeCreatorAuthority(t *testing.T) {
+	t.Parallel()
+	db, p := pipelineFixture(t)
+	ctx := t.Context()
+	for _, tc := range []struct {
+		name, tenant, project, update string
+		allowed, corrupt              bool
+	}{
+		{name: "active", tenant: "tenant", project: "project", allowed: true},
+		{name: "other tenant", tenant: "other", project: "project"},
+		{name: "other project", tenant: "other", project: "other"},
+		{name: "wildcard project", update: `UPDATE access_keys SET projects='["*"]'`},
+		{name: "multiple projects", update: `UPDATE access_keys SET projects='["project","other"]'`},
+		{name: "missing pipeline write", update: `UPDATE access_keys SET permissions='["events:read"]'`},
+		{name: "missing event read", update: `UPDATE access_keys SET permissions='["pipelines:write"]'`},
+		{name: "malformed permissions", update: `UPDATE access_keys SET permissions='invalid'`, corrupt: true},
+		{name: "malformed projects", update: `UPDATE access_keys SET projects='invalid'`, corrupt: true},
+		{name: "project deletion", update: `INSERT INTO project_deletions VALUES('project')`},
+		{name: "tenant deletion", update: `INSERT INTO tenant_deletions VALUES('tenant')`},
+		{name: "email human", update: `INSERT INTO email_humans VALUES('creator')`},
+		{name: "interactive consent", update: `INSERT INTO oauth_interactive_grants VALUES('creator')`},
+		{name: "derived key without parent resolver", update: `INSERT INTO service_api_keys VALUES('creator')`},
+	} {
+		tenant, project := tc.tenant, tc.project
+		if tenant == "" {
+			tenant, project = "tenant", "project"
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.update != "" {
+			if _, err := tx.ExecContext(ctx, tc.update); err != nil {
+				tx.Rollback()
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+		}
+		allowed, err := p.authority.ResolveCreatorTx(ctx, tx, tenant, project, "creator")
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			t.Fatal(rollbackErr)
+		}
+		var syntax *json.SyntaxError
+		if allowed != tc.allowed || tc.corrupt != errors.As(err, &syntax) || !tc.corrupt && err != nil {
+			t.Fatalf("%s: got allowed=%t, err=%v; want allowed=%t, malformed JSON=%t", tc.name, allowed, err, tc.allowed, tc.corrupt)
+		}
+	}
+}
+
 func TestSharedPipelineEffectsCreatorRevocationAndScope(t *testing.T) {
 	t.Parallel()
 	db, p := pipelineFixture(t)

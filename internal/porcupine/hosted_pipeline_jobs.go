@@ -63,7 +63,7 @@ func (a hostedPipelineAuthority) ResolveCreatorTx(ctx context.Context, tx *sql.T
 	if err != nil {
 		return false, err
 	}
-	return auth.Authorize(actor, "pipelines:write", project) && auth.Authorize(actor, "events:read", project), nil
+	return auth.CanExecutePipeline(actor, project), nil
 }
 
 type hostedPipelineExecution struct {
