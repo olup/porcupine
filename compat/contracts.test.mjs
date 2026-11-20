@@ -453,7 +453,8 @@ contract('browser.offline-queue', async () => {
     assert.equal(sent.timestamp, captured);
     assert.ok(Math.abs(Date.parse(payload.sent_at) - Date.parse(captured) - interval) < 3000);
     assertTimestamp(saved, payload, sent);
-    assert.ok(Math.abs(Date.parse(saved.timestamp) - Date.parse(captured)) < 3000);
+    // Only the browser clock advances. Preserve the queue age on the server's clock.
+    assert.ok(Math.abs(Date.parse(saved.received_at) - Date.parse(saved.timestamp) - interval) < 3000);
   } finally { await isolated.close(); }
 });
 contract('browser.cookieless-no-storage', async () => {
