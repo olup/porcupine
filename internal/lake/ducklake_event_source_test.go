@@ -77,16 +77,18 @@ func TestDuckLakeEventSourcesMatch(t *testing.T) {
 		})
 	}
 
-	for _, sql := range []string{
-		`SELECT count(*) FROM _pc_events_core`,
-		`SELECT count(*) FROM main._pc_events_core`,
-		`SELECT identity_snapshot FROM events`,
-		`WITH "EvEnTs" AS (SELECT 1 AS id) SELECT id FROM "EvEnTs"`,
+	for _, tc := range []struct{ sql, code string }{
+		{`SELECT count(*) FROM _pc_events_core`, "unsupported_sql"},
+		{`SELECT count(*) FROM main._pc_events_core`, "unsupported_sql"},
+		{`SELECT identity_snapshot FROM events`, "unsupported_sql"},
+		{`WITH "EvEnTs" AS (SELECT 1 AS id) SELECT id FROM "EvEnTs"`, "unsupported_sql"},
+		{`SELECT main.events.event_id FROM events`, "unsupported_sql"},
+		{`SELECT main.events.* FROM events`, "invalid_sql"},
 	} {
-		_, err := store.Query(ctx, project, sql, nil, DefaultQueryExecutionLimits())
+		_, err := store.Query(ctx, project, tc.sql, nil, DefaultQueryExecutionLimits())
 		var policy *apierr.Error
-		if !errors.As(err, &policy) || policy.Code != "unsupported_sql" {
-			t.Fatalf("query %q accepted or returned the wrong error: %v", sql, err)
+		if !errors.As(err, &policy) || policy.Code != tc.code {
+			t.Fatalf("query %q accepted or returned the wrong error: %v", tc.sql, err)
 		}
 	}
 	// A schema-qualified row reference binds to the full view outside a window.

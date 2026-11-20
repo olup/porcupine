@@ -33,30 +33,23 @@ type sqlGuard struct {
 
 // Prepare returns canonical SQL and its checked parameter bindings.
 func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, error) {
-	query, err := PrepareQuery(ctx, db, raw, parameters)
-	return query.SQL, query.Args, err
-}
-
-// Prepared contains canonical SQL, its bindings, and the inspection result.
-type Prepared struct {
-	SQL  string
-	Args []any
-	Statement
+	canonical, args, _, err := PrepareQuery(ctx, db, raw, parameters)
+	return canonical, args, err
 }
 
 // PrepareQuery authorizes every source and expression using DuckDB's parsed tree.
-func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (Prepared, error) {
+func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, Statement, error) {
 	if len(raw) == 0 || len(raw) > MaxSQLBytes || len(parameters) > 32 {
-		return Prepared{}, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
+		return "", nil, Statement{}, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
 	}
 	for name, value := range parameters {
 		if !parameterName.MatchString(name) || len(value) > 4096 {
-			return Prepared{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
+			return "", nil, Statement{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
 		}
 	}
 	statement, err := Inspect(ctx, db, raw)
 	if err != nil {
-		return Prepared{}, err
+		return "", nil, Statement{}, err
 	}
 	arguments := make([]any, 0, len(parameters))
 	names := make([]string, 0, len(statement.parameters))
@@ -67,7 +60,7 @@ func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[st
 	for _, name := range names {
 		value, ok := parameters[name]
 		if !ok {
-			return Prepared{}, policyError("missing_parameter", "Missing bound query parameter", "Supply this key in parameters; use $name placeholders for DuckDB.", name)
+			return "", nil, Statement{}, policyError("missing_parameter", "Missing bound query parameter", "Supply this key in parameters; use $name placeholders for DuckDB.", name)
 		}
 		arguments = append(arguments, sql.Named(name, value))
 	}
@@ -79,19 +72,19 @@ func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[st
 	}
 	if len(names) > 0 {
 		sort.Strings(names)
-		return Prepared{}, policyError("unused_parameter", "Unused bound query parameter", "Remove this key or reference it with a $name placeholder.", names[0])
+		return "", nil, Statement{}, policyError("unused_parameter", "Unused bound query parameter", "Remove this key or reference it with a $name placeholder.", names[0])
 	}
 	var canonical string
 	if err := db.QueryRowContext(ctx, "SELECT json_deserialize_sql(?)", statement.serialized).Scan(&canonical); err != nil {
-		return Prepared{}, err
+		return "", nil, Statement{}, err
 	}
 	if err := validateSQLText(canonical); err != nil {
-		return Prepared{}, err
+		return "", nil, Statement{}, err
 	}
 	if len(canonical) == 0 || len(canonical) > MaxSQLBytes {
-		return Prepared{}, policyError("invalid_sql", "Canonical analytics query exceeds the supported size", "Use a shorter SELECT of at most 16384 bytes after formatting.", "")
+		return "", nil, Statement{}, policyError("invalid_sql", "Canonical analytics query exceeds the supported size", "Use a shorter SELECT of at most 16384 bytes after formatting.", "")
 	}
-	return Prepared{SQL: canonical, Args: arguments, Statement: statement}, nil
+	return canonical, arguments, statement, nil
 }
 
 // MaxSQLBytes is the maximum accepted analytical statement size.

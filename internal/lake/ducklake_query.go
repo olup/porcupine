@@ -31,16 +31,15 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
-	query, err := nativequery.PrepareQuery(ctx, p.DB, rawSQL, parameters)
+	canonical, args, statement, err := nativequery.PrepareQuery(ctx, p.DB, rawSQL, parameters)
 	if err != nil {
 		if ctx.Err() != nil {
 			return AnalyticsResult{}, apierr.New(429, "analytics execution time limit reached")
 		}
 		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
-	canonical, args := query.SQL, query.Args
 	prefix := ""
-	if query.UsesEvents() && !query.NeedsPerson() {
+	if statement.UsesEvents() && !statement.NeedsPerson() {
 		prefix = eventQueryCTE("_pc_events_core", limits.TimeRange)
 	} else if limits.TimeRange != nil {
 		prefix = eventQueryCTE("events", limits.TimeRange)
