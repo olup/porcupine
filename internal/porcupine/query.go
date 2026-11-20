@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/olup/porcupine/internal/apierr"
@@ -209,16 +208,12 @@ func (s *Service) analyticsQuery(ctx context.Context, input *AnalyticsQueryInput
 	return &AnalyticsQueryOutput{Body: output}, nil
 }
 
-var analyticsParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
-
 func validateQueryParameters(parameters map[string]string) error {
-	if len(parameters) > 32 {
+	if len(parameters) > nativequery.MaxParameterCount {
 		return apierr.Detailed(400, "invalid_parameter", "too many analytics query parameters", "Supply at most 32 bound scalar parameters.", "")
 	}
-	for name, value := range parameters {
-		if !analyticsParameterName.MatchString(name) || len(value) > 4096 {
-			return apierr.Detailed(400, "invalid_parameter", "invalid analytics query parameter", "Use identifier keys of at most 64 ASCII characters and string values of at most 4096 bytes.", "")
-		}
+	if !nativequery.ValidParameterEntries(parameters) {
+		return apierr.Detailed(400, "invalid_parameter", "invalid analytics query parameter", "Use identifier keys of at most 64 ASCII characters and string values of at most 4096 bytes.", "")
 	}
 	return nil
 }

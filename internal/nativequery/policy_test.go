@@ -5,11 +5,17 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestPrepareRejectsInvalidInputBeforeParsing(t *testing.T) {
+	t.Parallel()
+	tooMany := map[string]string{"unsafe-key": "secret"}
+	for i := range 32 {
+		tooMany["p"+strconv.Itoa(i)] = ""
+	}
 	for _, tc := range []struct {
 		name       string
 		sql        string
@@ -18,6 +24,8 @@ func TestPrepareRejectsInvalidInputBeforeParsing(t *testing.T) {
 	}{
 		{"empty", "", nil, "invalid_sql"},
 		{"oversized", strings.Repeat("x", MaxSQLBytes+1), nil, "invalid_sql"},
+		{"empty SQL with invalid key", "", map[string]string{"unsafe-key": "secret"}, "invalid_sql"},
+		{"too many with invalid key", "SELECT 1", tooMany, "invalid_sql"},
 		{"invalid key", "SELECT $event", map[string]string{"unsafe-key": "secret"}, "invalid_parameter"},
 		{"oversized value", "SELECT $event", map[string]string{"event": strings.Repeat("secret", 1000)}, "invalid_parameter"},
 	} {
