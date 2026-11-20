@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Service) captureNative(w http.ResponseWriter, r *http.Request) {
-	raw, ok := readBody(w, r)
+	raw, ok := readBody(w, r, false)
 	if !ok {
 		return
 	}

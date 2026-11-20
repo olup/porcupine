@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -458,7 +459,7 @@ func problem(w http.ResponseWriter, status int, message string) {
 
 const maxBodyBytes = 1 << 20
 
-func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+func readBody(w http.ResponseWriter, r *http.Request, allowUnmarkedGzip bool) ([]byte, bool) {
 	encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
 	compression := r.URL.Query().Get("compression")
 	beacon := compression == "base64"
@@ -478,7 +479,7 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	}
 	invalidBody, oversizedBody := "invalid gzip body", "decompressed body exceeds 1 MiB"
 	// posthog-js sends /e/ gzip bytes as text/plain without an encoding marker.
-	browserGzip := r.URL.Path == "/e/" && encoding == "" &&
+	browserGzip := allowUnmarkedGzip && encoding == "" &&
 		strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]), "text/plain") &&
 		bytes.HasPrefix(raw, []byte{0x1f, 0x8b})
 	if beacon {
@@ -525,25 +526,74 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	return raw, true
 }
 
-func (s *Service) ingestionCORS(next http.Handler) http.Handler {
+func (s *Service) registerCaptureRoutes(m *http.ServeMux) map[string][]string {
+	captureHeaders := make(map[string][]string)
+	register := func(path string, headers []string, handler http.HandlerFunc) {
+		admit := limitConcurrent(s.captureSlots, handler)
+		m.HandleFunc("POST "+path, func(w http.ResponseWriter, r *http.Request) {
+			// Exact paths pass the origin check before routing. ServeMux also matches legacy subpaths.
+			if r.URL.Path != path && !s.allowCaptureOrigin(w, r) {
+				return
+			}
+			admit(w, r)
+		})
+		captureHeaders[path] = headers
+	}
+	postHogHeaders := []string{"Content-Type", "Content-Encoding"}
+	producerHeaders := []string{"Content-Type", "Content-Encoding", "Authorization", "X-Porcupine-Key"}
+
+	registerPostHog := func(path string, body postHogBody) {
+		register(path, postHogHeaders, func(w http.ResponseWriter, r *http.Request) {
+			decoding := body
+			if r.URL.Path != path {
+				decoding = postHogBody{}
+			}
+			s.capturePostHog(w, r, decoding)
+		})
+	}
+	registerPostHog("/capture/", postHogBody{})
+	registerPostHog("/batch/", postHogBody{requireBatch: true})
+	registerPostHog("/i/v0/e/", postHogBody{})
+	registerPostHog("/e/", postHogBody{allowUnmarkedGzip: true})
+
+	register("/ingest/v1/events", producerHeaders, s.captureNative)
+	registerSegment := func(path string, limit int) {
+		register(path, producerHeaders, func(w http.ResponseWriter, r *http.Request) {
+			s.captureSegment(w, r, path, limit)
+		})
+	}
+	registerSegment("/v1/track", ingestfmt.SegmentEventLimit)
+	registerSegment("/v1/page", ingestfmt.SegmentEventLimit)
+	registerSegment("/v1/identify", ingestfmt.SegmentEventLimit)
+	registerSegment("/v1/batch", ingestfmt.SegmentBatchLimit)
+	return captureHeaders
+}
+
+func (s *Service) allowCaptureOrigin(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Add("Vary", "Origin")
+	origin := r.Header.Get("Origin")
+	switch {
+	case origin == "":
+	case len(s.allowedOrigins) == 0:
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	case s.allowedOrigins[origin]:
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	default:
+		problem(w, 403, "origin is not allowed")
+		return false
+	}
+	return true
+}
+
+func (s *Service) ingestionCORS(captureHeaders map[string][]string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nativeRoute := r.URL.Path == "/ingest/v1/events" || r.URL.Path == "/v1/track" || r.URL.Path == "/v1/page" || r.URL.Path == "/v1/identify" || r.URL.Path == "/v1/batch"
-		if !nativeRoute && r.URL.Path != "/capture/" && r.URL.Path != "/batch/" && r.URL.Path != "/i/v0/e/" && r.URL.Path != "/e/" {
+		allowedHeaders, capture := captureHeaders[r.URL.Path]
+		if !capture {
 			next.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Add("Vary", "Origin")
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			switch {
-			case len(s.allowedOrigins) == 0:
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			case s.allowedOrigins[origin]:
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-			default:
-				problem(w, 403, "origin is not allowed")
-				return
-			}
+		if !s.allowCaptureOrigin(w, r) {
+			return
 		}
 		if r.Method == http.MethodOptions {
 			w.Header().Add("Vary", "Access-Control-Request-Method")
@@ -554,17 +604,15 @@ func (s *Service) ingestionCORS(next http.Handler) http.Handler {
 			}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				header = strings.ToLower(strings.TrimSpace(header))
-				if header != "" && header != "content-type" && header != "content-encoding" && !(nativeRoute && (header == "authorization" || header == "x-porcupine-key")) {
+				if header != "" && !slices.ContainsFunc(allowedHeaders, func(allowed string) bool {
+					return strings.ToLower(allowed) == header
+				}) {
 					problem(w, 403, "preflight header is not allowed")
 					return
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "POST")
-			allowedHeaders := "Content-Type, Content-Encoding"
-			if nativeRoute {
-				allowedHeaders += ", Authorization, X-Porcupine-Key"
-			}
-			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+			w.Header().Set("Access-Control-Allow-Headers", strings.Join(allowedHeaders, ", "))
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -604,17 +652,9 @@ func (s *Service) Handler() http.Handler {
 	s.registerResourceMetadata(m)
 	api := s.registerManagement(m)
 	m.Handle("/mcp", s.mcpHandler(api.OpenAPI(), m))
-	capture := limitConcurrent(s.captureSlots, s.capture)
-	m.HandleFunc("POST /capture/", capture)
-	m.HandleFunc("POST /batch/", capture)
-	m.HandleFunc("POST /i/v0/e/", capture)
-	m.HandleFunc("POST /e/", capture)
-	m.HandleFunc("POST /ingest/v1/events", limitConcurrent(s.captureSlots, s.captureNative))
+	captureHeaders := s.registerCaptureRoutes(m)
 	m.HandleFunc("GET /ingest/v1/schema", s.serveNativeInputSchema)
-	for _, path := range []string{"/v1/track", "/v1/page", "/v1/identify", "/v1/batch"} {
-		m.HandleFunc("POST "+path, limitConcurrent(s.captureSlots, s.captureSegment))
-	}
-	return s.observeHTTP(s.ingestionCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.observeHTTP(captureHeaders, s.ingestionCORS(captureHeaders, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/oauth/") {
 			s.catalogMu.RLock()
 			defer s.catalogMu.RUnlock()
@@ -643,8 +683,13 @@ type ingestInput struct {
 	Batch eventBatch `json:"batch"`
 }
 
-func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
-	raw, ok := readBody(w, r)
+type postHogBody struct {
+	requireBatch      bool
+	allowUnmarkedGzip bool
+}
+
+func (s *Service) capturePostHog(w http.ResponseWriter, r *http.Request, body postHogBody) {
+	raw, ok := readBody(w, r, body.allowUnmarkedGzip)
 	if !ok {
 		return
 	}
@@ -665,7 +710,7 @@ func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
 		}
 		batch = input.Batch
 		if batch == nil {
-			if r.URL.Path == "/batch/" {
+			if body.requireBatch {
 				problem(w, 400, "batch is required")
 				return
 			}

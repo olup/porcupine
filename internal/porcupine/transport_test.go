@@ -195,6 +195,94 @@ func TestIngestionCORS(t *testing.T) {
 	}
 }
 
+func TestIngestionCORSAllowlistCoversCaptureRoutes(t *testing.T) {
+	t.Parallel()
+	const allowed = "https://app.example.test"
+	const denied = "https://other.example.test"
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, AllowedOrigins: []string{allowed}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, ingest := project(t, s)
+	const postHogHeaders = "Content-Type, Content-Encoding"
+	const producerHeaders = postHogHeaders + ", Authorization, X-Porcupine-Key"
+	segment := segmentHeaders(ingest)
+	routes := []struct {
+		path, body, allowedHeaders string
+		credentials                map[string]string
+	}{
+		{"/capture/", captureBody(ingest, "cors-capture"), postHogHeaders, nil},
+		{"/batch/", `{"batch":[` + captureBody(ingest, "cors-posthog-batch") + `]}`, postHogHeaders, nil},
+		{"/i/v0/e/", captureBody(ingest, "cors-browser"), postHogHeaders, nil},
+		{"/e/", captureBody(ingest, "cors-legacy"), postHogHeaders, nil},
+		{"/ingest/v1/events", `{"type":"track","name":"Native","actor_id":"browser","message_id":"cors-native"}`, producerHeaders, map[string]string{"X-Porcupine-Key": ingest}},
+		{"/v1/track", `{"event":"Track","anonymousId":"browser","messageId":"cors-track"}`, producerHeaders, segment},
+		{"/v1/page", `{"name":"Page","anonymousId":"browser","messageId":"cors-page"}`, producerHeaders, segment},
+		{"/v1/identify", `{"userId":"browser","messageId":"cors-identify"}`, producerHeaders, segment},
+		{"/v1/batch", `{"batch":[{"type":"track","event":"Batch","anonymousId":"browser","messageId":"cors-segment-batch"}]}`, producerHeaders, segment},
+	}
+	for i, route := range routes {
+		t.Run(route.path, func(t *testing.T) {
+			preflight := map[string]string{
+				"Origin":                         allowed,
+				"Access-Control-Request-Method":  "POST",
+				"Access-Control-Request-Headers": strings.ToLower(route.allowedHeaders),
+			}
+			response := transportRequest(t, s, "OPTIONS", route.path, nil, preflight, 204)
+			if response.Body.Len() != 0 || response.Header().Get("Access-Control-Allow-Origin") != allowed ||
+				response.Header().Get("Access-Control-Allow-Headers") != route.allowedHeaders ||
+				response.Header().Get("Access-Control-Allow-Methods") != "POST" {
+				t.Fatal("allowed preflight did not return the capture route's CORS policy")
+			}
+			preflight["Origin"] = denied
+			response = transportRequest(t, s, "OPTIONS", route.path, nil, preflight, 403)
+			if response.Header().Get("Access-Control-Allow-Origin") != "" {
+				t.Fatal("disallowed preflight received an allow-origin header")
+			}
+
+			headers := map[string]string{"Origin": denied, "Content-Type": "application/json"}
+			for key, value := range route.credentials {
+				headers[key] = value
+			}
+			response = transportRequest(t, s, "POST", route.path, []byte(route.body), headers, 403)
+			if response.Header().Get("Access-Control-Allow-Origin") != "" || !strings.Contains(response.Body.String(), "origin is not allowed") {
+				t.Fatal("capture rejected for the wrong reason")
+			}
+			if count := eventCount(t, s); count != i {
+				t.Fatalf("disallowed capture changed the event count from %d to %d", i, count)
+			}
+			headers["Origin"] = allowed
+			response = transportRequest(t, s, "POST", route.path, []byte(route.body), headers, 200)
+			if response.Header().Get("Access-Control-Allow-Origin") != allowed {
+				t.Fatal("allowed capture missing its allow-origin header")
+			}
+		})
+	}
+	if count := eventCount(t, s); count != len(routes) {
+		t.Fatalf("stored %d events, want one capture per route", count)
+	}
+}
+
+func TestLegacyCaptureSubpathChecksOrigin(t *testing.T) {
+	t.Parallel()
+	const allowed = "https://app.example.test"
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, AllowedOrigins: []string{allowed}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, ingest := project(t, s)
+	const path = "/batch/legacy"
+	body := []byte(captureBody(ingest, "legacy-subpath"))
+	transportRequest(t, s, "POST", path, body, map[string]string{"Origin": "https://other.example.test"}, 403)
+	if count := eventCount(t, s); count != 0 {
+		t.Fatalf("disallowed capture stored %d events", count)
+	}
+	transportRequest(t, s, "POST", path, body, map[string]string{"Origin": allowed}, 200)
+	transportRequest(t, s, "OPTIONS", path, nil, map[string]string{"Origin": allowed}, 405)
+}
+
 func TestIngestionCORSDefault(t *testing.T) {
 	t.Parallel()
 	s := service(t, 10)

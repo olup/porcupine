@@ -2,7 +2,6 @@ package porcupine
 
 import (
 	"bytes"
-	"github.com/danielgtaylor/huma/v2"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/olup/porcupine/internal/auth"
 )
 
@@ -87,24 +87,79 @@ func TestManagementPolicyValidationIncludesHTTPOnlyRoutes(t *testing.T) {
 	}
 }
 
+func TestProjectScopedManagementOperationsRejectOtherExistingProject(t *testing.T) {
+	t.Parallel()
+	s := service(t, 10)
+	a, ingestA := project(t, s)
+	b, ingestB := project(t, s)
+	request(t, s, "POST", "/capture/", "", captureBody(ingestA, "project-a-event"), 200)
+	request(t, s, "POST", "/capture/", "", captureBody(ingestB, "project-b-event"), 200)
+	_, scoped := key(t, s, auth.ProjectPermissions(), []string{a})
+
+	host := httptest.NewServer(s.Handler())
+	t.Cleanup(host.Close)
+	ctx, session := mcpTestSession(t, host.URL, scoped, "")
+	request(t, s, "GET", "/api/v1/projects/"+a+"/events", scoped, "", 200)
+	request(t, s, "GET", "/api/v1/projects/"+b+"/events", adminToken, "", 200)
+	mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "list-project-events", Path: map[string]string{"id": a}}, 200)
+
+	checkDenial := func(t *testing.T, body map[string]any) {
+		t.Helper()
+		if len(body) != 1 || body["error"] != "required permission and project access missing" {
+			t.Fatalf("expected only the project access error, got %v", body)
+		}
+	}
+	api := s.registerManagement(http.NewServeMux())
+	for path, item := range api.OpenAPI().Paths {
+		if !strings.HasPrefix(path, "/api/v1/projects/{id}") {
+			continue
+		}
+		for _, op := range []*huma.Operation{item.Get, item.Post, item.Put, item.Patch, item.Delete} {
+			if op == nil {
+				continue
+			}
+			t.Run(op.OperationID, func(t *testing.T) {
+				target := path
+				params := make(map[string]string)
+				for _, parameter := range op.Parameters {
+					if parameter.In != "path" {
+						continue
+					}
+					value := "policy-test-id"
+					switch parameter.Name {
+					case "id":
+						value = b
+					case "uuid":
+						value = "project-b-event"
+					}
+					params[parameter.Name] = value
+					target = strings.ReplaceAll(target, "{"+parameter.Name+"}", value)
+				}
+				checkDenial(t, request(t, s, op.Method, target, scoped, `{}`, 403))
+				input := mcpCallInput{OperationID: op.OperationID, Path: params}
+				if op.Metadata["http_only"] == true {
+					mcpTestCall(t, ctx, session, input, 404)
+					return
+				}
+				checkDenial(t, mcpTestCall(t, ctx, session, input, 403))
+			})
+		}
+	}
+}
+
 // Non-Huma endpoints use protocol-specific guards. A new registration must be
 // classified here instead of silently bypassing the management policy inventory.
 func TestRawHTTPRouteProtectionInventory(t *testing.T) {
 	t.Parallel()
 	policies := map[string]string{
-		"GET /healthz":           "public-health",
-		"GET /readyz":            "public-health",
-		"GET /ingest/v1/schema":  "public-contract",
-		"/mcp":                   "mcp-bearer",
-		"POST /capture/":         "producer-credential",
-		"POST /batch/":           "producer-credential",
-		"POST /i/v0/e/":          "producer-credential",
-		"POST /e/":               "producer-credential",
-		"POST /ingest/v1/events": "producer-credential",
-		`"POST " + path`:         "segment-producer-credential",
-		"POST /oauth/token":      "oauth-token-exchange",
-		"POST /oauth/revoke":     "oauth-token-revocation",
-		"GET /oauth/authorize":   "oauth-authorization-request",
+		"GET /healthz":          "public-health",
+		"GET /readyz":           "public-health",
+		"GET /ingest/v1/schema": "public-contract",
+		"/mcp":                  "mcp-bearer",
+		`"POST " + path`:        "producer-credential",
+		"POST /oauth/token":     "oauth-token-exchange",
+		"POST /oauth/revoke":    "oauth-token-revocation",
+		"GET /oauth/authorize":  "oauth-authorization-request",
 		"GET /.well-known/oauth-authorization-server":                "public-oauth-discovery",
 		`"GET /.well-known/oauth-protected-resource" + entry.suffix`: "public-oauth-discovery",
 		"POST /oauth/email/request":                                  "browser-session-origin-csrf",
