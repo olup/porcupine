@@ -57,16 +57,21 @@ func TestAnalyticsScalarParameterBudgets(t *testing.T) {
 	for _, parameters := range []map[string]string{
 		{"bad-name": "unsafe"}, {"name": strings.Repeat("x", 4097)}, {strings.Repeat("x", 65): "value"},
 	} {
-		if queryStatus(validateQueryParameters(parameters)) != 400 {
-			t.Fatal("invalid scalar parameters accepted")
+		err := validateQueryParameters(parameters)
+		if failure, ok := err.(*apierr.Error); !ok || failure.GetStatus() != 400 || failure.Code != "invalid_parameter" || failure.Message != "invalid analytics query parameter" {
+			t.Fatalf("unexpected scalar parameter error: %#v", err)
 		}
 	}
-	tooMany := map[string]string{}
-	for i := range 33 {
-		tooMany[fmt.Sprintf("p%d", i)] = "value"
+	parameters := map[string]string{strings.Repeat("x", 64): strings.Repeat("é", 2048)}
+	for i := range 31 {
+		parameters[fmt.Sprintf("p%d", i)] = "value"
 	}
-	if queryStatus(validateQueryParameters(tooMany)) != 400 {
-		t.Fatal("too many parameters accepted")
+	if err := validateQueryParameters(parameters); err != nil {
+		t.Fatalf("maximum count, name and value sizes should be accepted: %v", err)
+	}
+	parameters["bad-name"] = "value"
+	if err := validateQueryParameters(parameters); err == nil || err.Error() != "too many analytics query parameters" {
+		t.Fatalf("parameter count must be checked before entries: %v", err)
 	}
 	if err := validateQueryParameters(map[string]string{"unicode": "雪 ' ; DROP TABLE events", "name": strings.Repeat("x", 4096)}); err != nil {
 		t.Fatal("valid bound scalar rejected", err)

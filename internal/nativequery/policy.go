@@ -39,13 +39,11 @@ func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]
 
 // PrepareQuery authorizes every source and expression using DuckDB's parsed tree.
 func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, Statement, error) {
-	if len(raw) == 0 || len(raw) > MaxSQLBytes || len(parameters) > 32 {
+	if len(raw) == 0 || len(raw) > MaxSQLBytes || len(parameters) > MaxParameterCount {
 		return "", nil, Statement{}, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
 	}
-	for name, value := range parameters {
-		if !parameterName.MatchString(name) || len(value) > 4096 {
-			return "", nil, Statement{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
-		}
+	if !ValidParameterEntries(parameters) {
+		return "", nil, Statement{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
 	}
 	statement, err := Inspect(ctx, db, raw)
 	if err != nil {
@@ -89,6 +87,19 @@ func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[st
 
 // MaxSQLBytes is the maximum accepted analytical statement size.
 const MaxSQLBytes = 16 << 10
+
+// MaxParameterCount is the maximum number of bound scalar parameters.
+const MaxParameterCount = 32
+
+// ValidParameterEntries checks parameter names and value sizes independently of the count.
+func ValidParameterEntries(parameters map[string]string) bool {
+	for name, value := range parameters {
+		if !parameterName.MatchString(name) || len(value) > 4096 {
+			return false
+		}
+	}
+	return true
+}
 
 // Error describes a policy rejection without exposing SQL or bound values.
 // Transport adapters decide how to present it to their callers.
