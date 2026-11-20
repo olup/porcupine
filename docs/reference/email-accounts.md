@@ -2,7 +2,7 @@
 
 With [email delivery configured](email-transport.md), an instance administrator can give a person access once. The person opens **Connect** in a supported OAuth client, enters their invited email address on Porcupine, and requests a fresh verification code. After verifying the address, they select a project and approve the client's access. They can repeat this process from another client without requesting a second invitation. The instance and client must have matching OAuth registration settings.
 
-<a id="invite-a-tenant-member-unreleased"></a>
+<a id="invite-a-tenant-member-unreleased"></a><!-- Legacy URL fragment. -->
 
 ## Invite a tenant member
 

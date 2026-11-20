@@ -8,7 +8,7 @@ Each block contains a recipe name, a `parameters` string map and SQL. Send the S
 {"operation_id":"query-events","path":{"id":"PROJECT_ID"},"body":{"sql":"SELECT count(*) AS total FROM events WHERE event=$event","parameters":{"event":"page_viewed"}}}
 ```
 
-Read `body.result.data` in an MCP result. Counts and other 64-bit integers are decimal strings. Inspect `delivery.pending` and `pending_mutations` before checking recently sent data. Query larger results through [exports](../exports.md).
+Read `body.result.data` in an MCP result. Counts and other 64-bit integers are decimal strings. Inspect `delivery.pending` and `pending_mutations` before checking recently sent data. Query larger results through [exports](../query-events.md#export-a-result).
 
 ## Daily volume and people
 

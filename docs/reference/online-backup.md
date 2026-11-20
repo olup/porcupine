@@ -1,13 +1,3 @@
 # Coordinated native backups
 
-Porcupine schedules coordinated SQLite and DuckLake backups inside its existing server process. It does not need a backup sidecar or an external database backup script.
-
-For a local directory destination, follow [Configure native backups](native-backups.md). For an independent S3 destination and the standalone offline restore command, follow [Remote backups and recovery](native-backup-recovery.md).
-
-A complete `porcupine-native-v2` checkpoint includes `acceptance.sqlite` (the local journal), `control.sqlite` (accounts, projects, and policy), the DuckLake registry, every project catalog, and the data files those catalogs reference. Projection and its SQLite acknowledgment are coordinated during capture. File and reader protections remain in place while the server copies and verifies the captured state.
-
-The offline restorer keeps its incomplete marker until both databases and the reconstructed analytical state are installed. See [bundle compatibility](native-backup-recovery.md) for earlier formats. Hosted uses [PostgreSQL and S3 recovery](../design/hosted-architecture.md#recovery-and-retention).
-
-The manifest is published only after verification succeeds. A failed attempt does not replace the previous good backup. Restore uses fresh isolated storage and the matching server version; it is not an API operation over a running instance.
-
-For a manual local alternative, see the [stopped-volume procedure](restore.md). Analytical S3 requires a coordinated copy of its referenced remote objects as well as the local volume.
+See [native backup contents and consistency](native-backups.md#what-pauses-during-capture), [S3 backups and offline recovery](native-backup-recovery.md), and [hosted PostgreSQL and S3 recovery](shared-deployment.md#recovery-and-retention).

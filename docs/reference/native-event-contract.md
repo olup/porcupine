@@ -117,13 +117,13 @@ The first accepted message wins. A retry with changed properties does not edit t
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
-<a id="unreleased-acknowledgment-metadata"></a>
+<a id="unreleased-acknowledgment-metadata"></a><!-- Legacy URL fragment. -->
 
 ### Acknowledgment metadata
 
 In standalone, `durability: "durable"` confirms that the SQLite acceptance transaction committed. Readers check analytical delivery separately.
 
-The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](../design/hosted-architecture.md#configuration). It uses the same route and HTTP 200 with the following response.
+The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](shared-deployment.md#configuration). It uses the same route and HTTP 200 with the following response.
 
 ```json
 {"status":1,"durability":"buffered","received":1,"receipts":[{"message_id":"msg-001","uuid":"opaque-server-uuid"}]}

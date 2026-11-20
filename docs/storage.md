@@ -23,7 +23,7 @@ Analytical storage, [destination pipelines](pipelines.md), [one-time exports](ex
 
 Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
-<a id="unreleased-separate-control-and-journal"></a>
+<a id="unreleased-separate-control-and-journal"></a><!-- Legacy URL fragment. -->
 
 ## Separate control and journal
 
@@ -31,7 +31,7 @@ Standalone uses two SQLite databases. Control holds accounts, grants, tenants, p
 
 Startup rejects missing or mismatched database identities. See [native bundle contents](reference/native-backup-recovery.md#inspect-a-backup) and [upgrade steps for v0.14.0](hosting.md#move-from-v0140).
 
-<a id="unreleased-schema-versions"></a>
+<a id="unreleased-schema-versions"></a><!-- Legacy URL fragment. -->
 
 ## Schema versions
 

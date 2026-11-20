@@ -1,6 +1,6 @@
 # Deliver events and scheduled reports
 
-A pipeline sends project data to another system. Use a webhook for accepted events or an S3 query pipeline for recurring reports. For a single download, use an [export](exports.md).
+A pipeline sends project data to another system. Use a webhook for accepted events or an S3 query pipeline for recurring reports. For a single download, use an [export](query-events.md#export-a-result).
 
 The operator must configure a stable pipeline encryption key and permitted destinations. Your credential needs both `pipelines:write` and `events:read` on the project. Destination credentials are write-only inputs; keep them out of prompts and source control.
 

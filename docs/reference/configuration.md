@@ -16,7 +16,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | --- | --- |
 | Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies`, `geoip_database` |
 | `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
-| `acceptance` | `mode` selects journal-backed `"durable"` or hosted `"buffered"` acknowledgment. Standalone defaults to durable. |
+| `acceptance` | `mode` confirms the acknowledgment policy. Standalone defaults to `"durable"`. Hosted requires explicit `"buffered"`. |
 | `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, `receipt_retention`; retention defaults to `"0"` to keep local receipts; a positive duration such as `"720h"` enables optional pruning |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
@@ -33,7 +33,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 `PORCUPINE_PROFILE` and `PORCUPINE_ACCEPTANCE_MODE` override `profile` and
 `acceptance.mode`. Buffered acknowledgment requires both `profile: "hosted"`
-and `acceptance.mode: "buffered"`. See the [hosted configuration](../design/hosted-architecture.md#configuration)
+and `acceptance.mode: "buffered"`. See the [hosted configuration](shared-deployment.md#configuration)
 for PostgreSQL, object storage, and recovery-floor settings.
 
 In standalone the generated control path is the journal path plus `.control`. See [storage by profile](../storage.md#deployment-profiles).
@@ -73,9 +73,9 @@ The initial `email.admin_email` gives that address instance administration throu
 
 Follow the [tagged Compose quickstart](../../README.md#local-setup) to initialize the volume, validate the configuration, and start the server.
 
-The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](../design/hosted-architecture.md#configuration).
+The private configuration is `/data/porcupine.json` in `porcupine-data`. `init --docker` selects the container listener and storage paths. Preserve those values when adapting a native example. The Compose example runs standalone. For hosted workers use the [hosted runbook](shared-deployment.md#configuration).
 
-For a source build, run `docker compose build porcupine` first and omit the release overlay. For an existing v0.14.0 volume, use the [fresh-storage cutover procedure](../hosting.md#move-from-v0140).
+For a source build, run `docker compose build porcupine` first and omit the release overlay. For an existing v0.14.0 volume, use the [fresh-storage cutover procedure](../upgrades.md#move-from-v0140).
 
 ## Replace an existing configuration
 

@@ -70,7 +70,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads.
 
-<a id="unreleased-tenant-operations"></a>
+<a id="unreleased-tenant-operations"></a><!-- Legacy URL fragment. -->
 
 ### Tenant operations
 

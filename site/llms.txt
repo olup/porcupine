@@ -37,6 +37,6 @@ For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_
 
 ## Deploy
 
-Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a local instance or [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. Read the running instance's input contract for its acknowledgment mode. See [storage and acknowledgment by profile](https://olup.github.io/porcupine/docs/storage.md#deployment-profiles).
+Use the [quickstart](https://github.com/olup/porcupine#quickstart) for a local instance or [hosting](https://olup.github.io/porcupine/docs/hosting.md) for HTTPS and persistent storage. For replaceable workers, follow the [hosted setup and recovery runbook](https://olup.github.io/porcupine/docs/reference/shared-deployment.md). Read the running instance's input contract for its acknowledgment mode. See [storage and acknowledgment by profile](https://olup.github.io/porcupine/docs/storage.md#deployment-profiles).
 
 Fetch `/openapi.json` for HTTP contracts. On 401, check expiry and audience. On 403, check project grants and permissions. On 429 or 503, check limits or storage availability. Honor Retry-After and use bounded retries with stable IDs.

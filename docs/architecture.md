@@ -24,7 +24,7 @@ Standalone stores analytical data on local SSD or S3 and keeps operational state
 
 The two files have matching persistent identities and must be restored together.
 
-The opt-in [hosted profile](design/hosted-architecture.md#configuration) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
+The opt-in [hosted profile](reference/shared-deployment.md#configuration) uses PostgreSQL control and DuckLake catalogs and S3 analytical storage. Live requests acknowledge bounded memory admission. Shared upload checkpoints and mutation intents survive worker replacement. Worker crashes can lose acknowledged live data that has yet to commit.
 
 ## Boundaries in the code
 

@@ -2,7 +2,9 @@
 
 Porcupine schedules complete local backups when both the SQLite databases and DuckLake data files are local. Each bundle contains the control and journal databases, the DuckLake registry, every registered project catalog, and its managed data files.
 
-Standalone with analytical S3 requires a separate [S3 backup destination](native-backup-recovery.md). That guide also covers the bundle format and matching offline restore tools. Hosted uses [PostgreSQL and S3 recovery](../design/hosted-architecture.md#recovery-and-retention).
+Standalone with analytical S3 requires a separate [S3 backup destination](native-backup-recovery.md). That guide also covers the bundle format and matching offline restore tools. Hosted uses [PostgreSQL and S3 recovery](shared-deployment.md#recovery-and-retention).
+
+The server coordinates and verifies the checkpoint before publishing its manifest. The offline restorer retains its incomplete marker until it installs both databases and the analytical state. See [bundle formats](native-backup-recovery.md) for compatibility with earlier formats.
 
 Backups are disabled until the deployment operator sets a private destination directory. Copy completed bundles to independent off-host storage to protect against loss of the server.
 
@@ -70,4 +72,4 @@ Restore with the application stopped, into fresh storage, using the same interna
 
 A checkpoint cannot reconstruct revocations or deletions that occurred afterward. Restoring it can reactivate old credentials until you reconcile them. Keep independent recovery administration credentials available.
 
-These steps describe a manual offline recovery. No API endpoint installs a backup over a running instance. A coordinated [stopped-volume copy](restore.md) remains available as another backup method.
+These steps describe a manual offline recovery. No API endpoint installs a backup over a running instance. A coordinated [stopped-volume copy](../backup-and-restore.md#make-a-stopped-volume-copy) remains available as another backup method.

@@ -32,5 +32,5 @@ Use the running server's `/openapi.json` for its installed HTTP contract. MCP `p
 - [Operator monitoring and the visibility probe](observability.md)
 - [Numerical usage and Parquet storage sampling](usage.md)
 - [History cleanup](ducklake-cleanup.md)
-- [Local backup scheduler](native-backups.md), [S3 backups and offline restore](native-backup-recovery.md), and [Compose backup setup](backup-compose.md)
-- [Backup consistency](online-backup.md) and [stopped-volume recovery](restore.md)
+- [Local backup scheduler](native-backups.md) and [S3 backups and offline restore](native-backup-recovery.md)
+- [Choose a backup method](../backup-and-restore.md#choose-a-method) and [recover a stopped volume](../backup-and-restore.md#recover-into-isolation)
