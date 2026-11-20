@@ -135,8 +135,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted flush")
-	sa := a.service.lake.(*lakeapi.DuckLakeStore)
-	sb := b.service.lake.(*lakeapi.DuckLakeStore)
+	sa := a.service.lake
+	sb := b.service.lake
 	key := lakeapi.ProjectWriteKey{SourceID: sa.Config.SharedSourceID, ProjectID: project}
 	scope, err := sa.InitializeHostedProject(t.Context(), key)
 	if err != nil {

@@ -80,7 +80,7 @@ func (s *Service) newHostedPipelines(c *output.PipelineConfig, effects *output.P
 	d := output.HostedPipelineDependencies{
 		PipelineDependencies: output.PipelineDependencies{
 			Control: s.control, Clock: func() time.Time { return s.clock() },
-			Reader: s.lake, WebhookClient: s.pipelineClient, Acquire: s.queries.TryBackground,
+			WebhookClient: s.pipelineClient, Acquire: s.queries.TryBackground,
 			Usage: usage.NewRecorder(s.control, "pipelines-"+sourceID, s.clock),
 		},
 		Effects: effects,
@@ -94,13 +94,15 @@ func (s *Service) newHostedPipelines(c *output.PipelineConfig, effects *output.P
 			return session.RunControlTx(ctx, work)
 		},
 	}
+	if s.lake != nil {
+		d.Reader = s.lake
+	}
 	if execution.snapshotCut != nil {
 		d.BeginActivity = s.hosted.incarnation.beginOutputWork
-		reader, ok := s.lake.(output.HostedScheduledReader)
-		if !ok || execution.beginAttemptTx == nil || execution.endAttempt == nil {
+		if s.lake == nil || execution.beginAttemptTx == nil || execution.endAttempt == nil {
 			return nil, errors.New("hosted scheduled pipelines require retained analytical snapshots")
 		}
-		d.Scheduled = output.HostedScheduledDependencies{Reader: reader, SnapshotCut: execution.snapshotCut, BeginAttemptTx: execution.beginAttemptTx, EndAttempt: execution.endAttempt}
+		d.Scheduled = output.HostedScheduledDependencies{Reader: s.lake, SnapshotCut: execution.snapshotCut, BeginAttemptTx: execution.beginAttemptTx, EndAttempt: execution.endAttempt}
 	}
 	return output.NewHostedPipelines(d, c)
 }

@@ -195,8 +195,8 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 		<-node.service.usage.done
 		flushers = append(flushers, node.service.hosted.flusher)
 	}
-	store := a.service.lake.(*lakeapi.DuckLakeStore)
-	reader := b.service.lake.(*lakeapi.DuckLakeStore)
+	store := a.service.lake
+	reader := b.service.lake
 	const quietProjects, windows, flushWindowSeconds = 12, 4, 2
 
 	started := time.Now()

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDefaultReceiptRetentionAcceptsDuringLakeOutage(t *testing.T) {
@@ -28,7 +26,7 @@ func TestDefaultReceiptRetentionAcceptsDuringLakeOutage(t *testing.T) {
 	if err := s.pruneReceipts(context.Background()); err != nil || receiptCount(t, s) != 3 {
 		t.Fatal("default pruned durable retry IDs", err)
 	}
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

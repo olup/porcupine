@@ -90,7 +90,8 @@ type Service struct {
 	allowedOrigins        map[string]bool
 	trustedProxies        []netip.Prefix
 	geoIPCountry          func(netip.Addr) string
-	lake                  lakeapi.LakeStore
+	lake                  *lakeapi.DuckLakeStore
+	receiptLookup         func(context.Context, string, []string) (map[string]int64, error)
 	lakeMemoryMB          int
 	lakeMaintenanceCancel context.CancelFunc
 	lakeMaintenanceDone   chan struct{}
@@ -99,6 +100,7 @@ type Service struct {
 	deliveryMaxEvents     int
 	deliveryMaxBytes      int
 	queries               *query.Runtime
+	standaloneReader      query.Reader
 	hostedReader          query.HostedReader
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
@@ -362,9 +364,7 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	s.pipelines.Start()
 	if s.lake != nil {
 		s.startDelivery()
-	}
-	if s.lake != nil {
-		s.startLakeMaintenance(c.DuckLake.MaintenanceInterval)
+		s.startLakeMaintenance(c.DuckLake.MaintenanceInterval, s.lake.Maintain)
 	}
 	s.exports.Start()
 	if err := s.startNativeBackups(); err != nil {

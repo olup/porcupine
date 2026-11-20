@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	eventapi "github.com/olup/porcupine/internal/event"
-	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/query"
 )
 
@@ -30,7 +29,7 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 	}
 	_, reader := sharedJourneyKey(t, a.host.URL, project, []string{"events:read"})
 	_, other := sharedJourneyKey(t, a.host.URL, uninitialized, []string{"events:read"})
-	sb := b.service.lake.(*lakeapi.DuckLakeStore)
+	sb := b.service.lake
 	if _, err := control.ExecContext(ctx, `CREATE TABLE hosted_query_test_activity (project TEXT NOT NULL, id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +46,7 @@ func TestDuckLakeS3SharedPostgresHostedQueryRoutesAndMetering(t *testing.T) {
 		return err
 	}
 	for _, node := range []*sharedJourneyNode{a, b} {
-		if err := node.service.initializeHostedQueries(node.service.lake.(*lakeapi.DuckLakeStore), register, finish); err != nil {
+		if err := node.service.initializeHostedQueries(node.service.lake, register, finish); err != nil {
 			t.Fatal(err)
 		}
 	}

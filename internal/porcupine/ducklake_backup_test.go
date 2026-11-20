@@ -141,7 +141,7 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 		t.Fatal("old completed backup not pruned", err)
 	}
 	bundle := filepath.Join(config.NativeBackup.Directory, second)
-	_, release, err := s.lake.(*lakeapi.DuckLakeStore).LeaseProject(ctx, a)
+	_, release, err := s.lake.LeaseProject(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,14 +177,14 @@ func TestDuckLakeBackupFailureRetentionAndVerification(t *testing.T) {
 }
 
 type pausedCheckpointStore struct {
-	lakeapi.LakeStore
+	stage func(context.Context, func(context.Context, string) error) (*lakeapi.NativeCheckpoint, error)
 
 	captured chan struct{}
 	resume   chan struct{}
 }
 
 func (s *pausedCheckpointStore) StageCheckpoint(ctx context.Context, acceptance func(context.Context, string) error) (*lakeapi.NativeCheckpoint, error) {
-	return s.LakeStore.StageCheckpoint(ctx, func(ctx context.Context, path string) error {
+	return s.stage(ctx, func(ctx context.Context, path string) error {
 		if err := acceptance(ctx, path); err != nil {
 			return err
 		}
@@ -206,8 +206,8 @@ func TestDuckLakeBackupKeepsAcceptanceAndQueriesAvailable(t *testing.T) {
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"before-checkpoint","actor_id":"user","name":"before"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	observer := &pausedCheckpointStore{LakeStore: s.lake, captured: make(chan struct{}), resume: make(chan struct{})}
-	s.lake = observer
+	observer := &pausedCheckpointStore{stage: s.backups.stageCheckpoint, captured: make(chan struct{}), resume: make(chan struct{})}
+	s.backups.stageCheckpoint = observer.StageCheckpoint
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
@@ -279,7 +279,7 @@ func TestDuckLakeBackupReusesImmutableFilesAcrossRetention(t *testing.T) {
 	a, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"reuse-parquet","actor_id":"user","name":"kept"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	flushCleanupProject(t, s.lake.(*lakeapi.DuckLakeStore), a)
+	flushCleanupProject(t, s.lake, a)
 	ctx := context.Background()
 	if err := s.createNativeBackup(ctx); err != nil {
 		t.Fatal(err)

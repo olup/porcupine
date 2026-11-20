@@ -18,10 +18,11 @@ func (s *Service) eventProfile(ctx context.Context, input *lakeapi.EventProfileI
 	if err = s.analyticsProject(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	if s.lake == nil {
+	reader := s.interactiveReader()
+	if reader == nil {
 		return nil, apierr.New(503, "analytics storage is not configured")
 	}
-	result, bounds, err := s.queries.Profile(ctx, s.interactiveReader(), input.ID, options)
+	result, bounds, err := s.queries.Profile(ctx, reader, input.ID, options)
 	if err != nil {
 		return nil, err
 	}

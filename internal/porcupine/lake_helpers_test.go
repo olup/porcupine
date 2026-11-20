@@ -17,11 +17,10 @@ import (
 
 func openLakeStorageTest(t *testing.T, directory string, maxOpen int) *lakeapi.DuckLakeStore {
 	t.Helper()
-	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
+	s, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: directory, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: maxOpen})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := lake.(*lakeapi.DuckLakeStore)
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)
@@ -47,7 +46,7 @@ func openSharedNativeMetadataTest(t *testing.T, dsn string) *lakeapi.DuckLakeSto
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := store.(*lakeapi.DuckLakeStore)
+	s := store
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)

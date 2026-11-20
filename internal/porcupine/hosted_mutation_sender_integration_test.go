@@ -28,7 +28,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
 	})
 	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted send")
-	native := a.service.lake.(*lakeapi.DuckLakeStore)
+	native := a.service.lake
 	key := lakeapi.ProjectWriteKey{SourceID: native.Config.SharedSourceID, ProjectID: project}
 	scope, err := native.InitializeHostedProject(ctx, key)
 	if err != nil {

@@ -400,11 +400,10 @@ func hostedMaintenanceExperiment(t *testing.T) (context.Context, *DuckLakeStore,
 	config := DuckLakeConfig{Directory: t.TempDir(), PostgresURL: sharedPostgresDSN(t), SharedSourceID: event.NewID(), S3: &fixture.storage, MemoryLimitMB: 128, Threads: 1, MaxOpenProjects: 1, DisableCleanup: true}
 	open := func() *DuckLakeStore {
 		config.Directory = t.TempDir()
-		store, err := NewDuckLake(config)
+		s, err := NewDuckLake(config)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := store.(*DuckLakeStore)
 		t.Cleanup(func() {
 			if err := s.Close(); err != nil {
 				t.Error(err)

@@ -56,7 +56,7 @@ func TestDuckLakeS3BackupCompleteVerifiedInventoryAndFailure(t *testing.T) {
 	other, _ := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"offhost-copy","actor_id":"user","name":"original"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	fixture.flush(t, store, projectID)
 	fixture.flush(t, store, other)
 	// Historical, currently unreferenced files are part of the conservative source-prefix copy.
@@ -171,7 +171,7 @@ func TestDuckLakeS3BackupLocalSourceStreamsOffhost(t *testing.T) {
 	projectID, ingest := project(t, s)
 	nativeRequest(t, s, ingest, `{"type":"track","message_id":"local-offhost","actor_id":"u","name":"kept"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	flushCleanupProject(t, s.lake.(*lakeapi.DuckLakeStore), projectID)
+	flushCleanupProject(t, s.lake, projectID)
 	s.backups.config.Directory = ""
 	s.backups.config.S3 = &fixture.storage
 	s3FixtureError(t, fixture, "local source offhost backup", s.createNativeBackup(context.Background()))

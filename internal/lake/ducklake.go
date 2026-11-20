@@ -1,7 +1,6 @@
 package lake
 
 import (
-	"context"
 	"errors"
 	"time"
 )
@@ -30,23 +29,6 @@ type DuckLakeConfig struct {
 	PostgresURL            string
 	SharedSourceID         string
 	MetadataTimeoutSeconds int
-}
-
-type LakeStore interface {
-	SourceID(context.Context) (string, error)
-	Apply(context.Context, []EventProjection) error
-	Load(context.Context, string, string) (EventProjection, error)
-	KnownEvents(context.Context, string, []string) (map[string]int64, error)
-	Query(context.Context, string, string, map[string]string, QueryExecutionLimits) (AnalyticsResult, error)
-	ValidateExport(context.Context, string, string, map[string]string, bool) (string, error)
-	Export(context.Context, string, string, map[string]string, *AnalyticalWindow, int64, ExportStreamCallbacks) (ExportStreamResult, error)
-	Catalog(context.Context, EventCatalogInput) (EventCatalog, error)
-	Profile(context.Context, string, EventProfileOptions, time.Time) (EventProfileRead, error)
-	DeleteProject(context.Context, string) error
-	Maintain(context.Context) error
-	CleanupStatus(context.Context) (DuckLakeCleanupStatus, error)
-	StageCheckpoint(context.Context, func(context.Context, string) error) (*NativeCheckpoint, error)
-	Close() error
 }
 
 type AnalyticalWindow struct {

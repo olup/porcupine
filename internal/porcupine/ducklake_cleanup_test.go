@@ -104,7 +104,7 @@ func TestDuckLakeCleanupStatusAgentPermissionsAndLifecycle(t *testing.T) {
 	state := lakeMaintenanceLifecycle(t, s, a, ingest, "cleanup", true)
 	nativeRequest(t, s, otherIngest, `{"type":"track","message_id":"other","actor_id":"other","name":"Other"}`, 200)
 	duckLakeJourneyDrain(t, s)
-	lake := s.lake.(*lakeapi.DuckLakeStore)
+	lake := s.lake
 	now := time.Now().Add(10 * 24 * time.Hour)
 	for range 2 {
 		if err := lake.CleanupDue(context.Background(), now); err != nil {

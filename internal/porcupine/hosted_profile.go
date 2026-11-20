@@ -73,7 +73,7 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	if err := s.initializeDuckLake(lakeConfig); err != nil {
 		return nil, err
 	}
-	h.native = s.lake.(*lakeapi.DuckLakeStore)
+	h.native = s.lake
 	s.queries.Bind(control, s.shared.workerID, time.Duration(max(0, s.lakeS3RequestTimeoutSeconds)+max(0, s.lakeMetadataTimeoutSeconds))*time.Second)
 	if err := s.initializeOAuthClients(ctx); err != nil {
 		return nil, err

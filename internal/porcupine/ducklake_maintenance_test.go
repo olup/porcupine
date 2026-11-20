@@ -167,7 +167,7 @@ func architectureMaintenanceSoak(t *testing.T, s *Service, projectID, ingest str
 			t.Fatal("invalid soak duration")
 		}
 	}
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	p, release, err := store.LeaseProject(context.Background(), projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +411,7 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	s, a, ingest := nativeBenchmarkServiceMemory(t, 256)
 	s.deliveryMaxEvents = 1000
 	s.queueMax = 10000
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	p, release, err := store.LeaseProject(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
@@ -492,14 +492,12 @@ func TestDuckLakeMaintenanceConcurrentLifecycle(t *testing.T) {
 	architectureEmit("concurrent_lifecycle", map[string]any{"cycles": 8, "files_processed": progress, "verdict": "VERIFIED"})
 }
 
-type delayedMaintenanceStore struct {
-	lakeapi.LakeStore
-
+type delayedMaintenance struct {
 	started, finished chan time.Time
 	release           chan struct{}
 }
 
-func (s *delayedMaintenanceStore) Maintain(ctx context.Context) error {
+func (s *delayedMaintenance) Maintain(ctx context.Context) error {
 	select {
 	case s.started <- time.Now():
 	case <-ctx.Done():
@@ -521,14 +519,9 @@ func (s *delayedMaintenanceStore) Maintain(ctx context.Context) error {
 func TestDuckLakeMaintenanceWaitsBetweenCompletedPasses(t *testing.T) {
 	t.Parallel()
 	s := service(t, 100)
-	lake, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{Directory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	observed := &delayedMaintenanceStore{LakeStore: lake, started: make(chan time.Time, 4), finished: make(chan time.Time, 4), release: make(chan struct{})}
-	s.lake = observed
+	observed := &delayedMaintenance{started: make(chan time.Time, 4), finished: make(chan time.Time, 4), release: make(chan struct{})}
 	interval := 20 * time.Millisecond
-	s.startLakeMaintenance(interval)
+	s.startLakeMaintenance(interval, observed.Maintain)
 	defer func() { s.lakeMaintenanceCancel(); <-s.lakeMaintenanceDone }()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

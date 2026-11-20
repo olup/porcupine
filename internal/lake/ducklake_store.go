@@ -60,7 +60,7 @@ type projectOpening struct {
 	err  error
 }
 
-func NewDuckLake(config DuckLakeConfig) (LakeStore, error) {
+func NewDuckLake(config DuckLakeConfig) (*DuckLakeStore, error) {
 	if err := ValidateSharedNativeConfig(&config); err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func NewDuckLake(config DuckLakeConfig) (LakeStore, error) {
 		return nil, errors.New("DuckLake directory already has a writer")
 	}
 	s := &DuckLakeStore{Root: root, Config: config, owner: owner, Projects: make(map[string]*ProjectLake), opening: make(map[string]*projectOpening)}
-	fail := func(err error) (LakeStore, error) {
+	fail := func(err error) (*DuckLakeStore, error) {
 		if s.SharedCatalog != nil {
 			s.SharedCatalog.Close()
 		}

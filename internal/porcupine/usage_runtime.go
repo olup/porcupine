@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/syncx"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -18,7 +19,7 @@ type usageRuntime struct {
 	done     chan struct{}
 	flush    syncx.ContextMutex
 	clock    func() time.Time
-	sampler  parquetUsageSampler
+	sampler  *lakeapi.DuckLakeStore
 }
 
 func usageMetadata(ctx context.Context, db *sql.DB, key, value string) (string, error) {
@@ -52,8 +53,7 @@ func (s *Service) initializeUsage(ctx context.Context, c *usage.Config) error {
 	if err = recorder.Recover(ctx); err != nil {
 		return err
 	}
-	sampler, _ := s.lake.(parquetUsageSampler)
-	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, false, config, clock), config: config, clock: clock, sampler: sampler}
+	s.usage = &usageRuntime{recorder: recorder, store: usage.NewStore(s.control, false, config, clock), config: config, clock: clock, sampler: s.lake}
 	s.eventRules.usage = recorder
 	s.queries.SetLocalRecorder(recorder)
 	return nil
@@ -153,10 +153,6 @@ func (s *Service) stopUsage() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.synchronizeUsage(ctx)
-}
-
-type parquetUsageSampler interface {
-	CurrentParquetBytes(context.Context, string) (int64, error)
 }
 
 func (s *Service) sampleUsageStorage(ctx context.Context) error {

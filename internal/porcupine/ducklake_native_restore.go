@@ -162,11 +162,10 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err != nil {
 		return result, err
 	}
-	store, err := lakeapi.NewDuckLake(c.DuckLake)
+	lake, err := lakeapi.NewDuckLake(c.DuckLake)
 	if err != nil {
 		return result, err
 	}
-	lake := store.(*lakeapi.DuckLakeStore)
 	for _, catalog := range manifest.Catalogs {
 		if err = lakeapi.RestoreNativeProject(ctx, lake, reader, manifest, catalog, stage); err != nil {
 			lake.Close()

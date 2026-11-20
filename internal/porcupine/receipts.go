@@ -107,6 +107,13 @@ func (s *Service) knownEventsForAcceptance(ctx context.Context, project string, 
 	if s.lake == nil {
 		return nil, errors.New("analytical receipt history unavailable")
 	}
+	return s.lookupReceipts(ctx, project, uuids)
+}
+
+func (s *Service) lookupReceipts(ctx context.Context, project string, uuids []string) (map[string]int64, error) {
+	if s.receiptLookup != nil {
+		return s.receiptLookup(ctx, project, uuids)
+	}
 	return s.lake.KnownEvents(ctx, project, uuids)
 }
 
@@ -178,7 +185,7 @@ func (s *Service) pruneProjectReceipts(ctx context.Context, project string, cand
 	for _, r := range candidates {
 		uuids = append(uuids, r.uuid)
 	}
-	known, err := s.lake.KnownEvents(ctx, project, uuids)
+	known, err := s.lookupReceipts(ctx, project, uuids)
 	if err != nil {
 		return err
 	}

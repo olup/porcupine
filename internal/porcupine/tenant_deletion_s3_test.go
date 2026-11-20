@@ -3,8 +3,6 @@ package porcupine
 import (
 	"slices"
 	"testing"
-
-	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
 func TestDuckLakeS3TenantDeletionManagedObjectsPreserveB(t *testing.T) {
@@ -18,7 +16,7 @@ func TestDuckLakeS3TenantDeletionManagedObjectsPreserveB(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(ka, "a-s3"), 200)
 	request(t, s, "POST", "/capture/", "", captureBody(kb, "b-s3"), 200)
 	duckLakeJourneyDrain(t, s)
-	store := s.lake.(*lakeapi.DuckLakeStore)
+	store := s.lake
 	fixture.flush(t, store, pa)
 	fixture.flush(t, store, pb)
 	prefixA, prefixB := fixture.projectPrefix(t, store, pa), fixture.projectPrefix(t, store, pb)

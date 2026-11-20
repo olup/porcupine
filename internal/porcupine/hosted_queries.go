@@ -24,5 +24,11 @@ func (s *Service) interactiveReader() query.Reader {
 	if s.hostedReader != nil {
 		return s.hostedReader
 	}
+	if s.standaloneReader != nil {
+		return s.standaloneReader
+	}
+	if s.lake == nil {
+		return nil
+	}
 	return s.lake
 }
