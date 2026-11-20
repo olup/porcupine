@@ -13,14 +13,14 @@ import { gunzipSync } from 'node:zlib';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { PostHog } from 'posthog-node';
-import { browserProfile, cookielessProfile, identifiedBrowserProfile, nodeProfile } from './profiles.mjs';
+import { browserBeaconProfile, browserProfile, cookielessProfile, identifiedBrowserProfile, nodeProfile } from './profiles.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const matrix = JSON.parse(await readFile(join(here, 'matrix.json'), 'utf8'));
 const installed = async name => JSON.parse(await readFile(join(here, 'node_modules', name, 'package.json'), 'utf8')).version;
 const versions = { 'posthog-js': await installed('posthog-js'), 'posthog-node': await installed('posthog-node'), playwright: await installed('playwright') };
-const report = { schema_version: 1, mode: process.env.PORCUPINE_COMPAT_CANARY ? 'canary' : 'pinned', versions, profile: 'cookieless-default-and-opt-in-identified', configuration: { browser_cookieless: cookielessProfile, browser_identified: identifiedBrowserProfile, browser_local_id_diagnostic: browserProfile, node: nodeProfile, browser_batch_diagnostic: { ...browserProfile, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 250 } } }, results: [], unsupported: matrix.unsupported };
+const report = { schema_version: 1, mode: process.env.PORCUPINE_COMPAT_CANARY ? 'canary' : 'pinned', versions, profile: 'cookieless-default-and-opt-in-identified', configuration: { browser_cookieless: cookielessProfile, browser_identified: identifiedBrowserProfile, browser_local_id_diagnostic: browserProfile, browser_beacon_diagnostic: browserBeaconProfile, node: nodeProfile, browser_batch_diagnostic: { ...browserProfile, request_batching: true, disable_compression: false, request_queue_config: { flush_interval_ms: 250 } } }, results: [], unsupported: matrix.unsupported };
 let probe, directory, child, api, origin, browser, context, page, site, project, otherProject, proxy, proxyURL;
 const admin = randomBytes(32).toString('hex');
 const blocked = [], unexpected = [], wires = [], browserWires = [], browserFailures = [];
@@ -29,7 +29,13 @@ let failAcknowledgement = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; };
 const close = server => server ? new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) : Promise.resolve();
-const decodeWire = wire => JSON.parse((wire.headers['content-encoding'] === 'gzip' || wire.body[0] === 0x1f && wire.body[1] === 0x8b ? gunzipSync(wire.body) : wire.body).toString());
+const decodeWire = wire => {
+  if (wire.query?.compression === 'base64') {
+    const form = new URLSearchParams(wire.body.toString());
+    return JSON.parse(Buffer.from(form.get('data'), 'base64').toString());
+  }
+  return JSON.parse((wire.headers['content-encoding'] === 'gzip' || wire.body[0] === 0x1f && wire.body[1] === 0x8b ? gunzipSync(wire.body) : wire.body).toString());
+};
 const safeFetch = async (url, options) => {
   if (new URL(url).origin !== proxyURL) { blocked.push('node external request'); throw new Error('SDK request outside local capture origin'); }
   return fetch(url, options);
@@ -140,14 +146,31 @@ before(async () => {
   otherProject = await management('/api/v1/projects', { method: 'POST', body: { name: 'Other project' } });
   proxy = createServer(async (request, response) => {
     const url = new URL(request.url, api);
-    if (url.pathname !== '/batch/' || request.method !== 'POST') { unexpected.push('node route'); response.writeHead(404).end(); return; }
-    const chunks = []; for await (const chunk of request) chunks.push(chunk);
-    const body = Buffer.concat(chunks);
-    wires.push({ path: url.pathname, headers: request.headers, body });
-    const upstream = await fetch(api + request.url, { method: request.method, headers: { 'content-type': request.headers['content-type'] || 'application/json', ...(request.headers['content-encoding'] ? { 'content-encoding': request.headers['content-encoding'] } : {}) }, body });
-    const text = await upstream.text();
-    if (failAcknowledgement && upstream.ok) { failAcknowledgement = false; response.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"injected lost acknowledgement"}'); return; }
-    response.writeHead(upstream.status, { 'content-type': 'application/json' }).end(text);
+    const fromBrowser = request.headers.origin === origin;
+    if (request.method === 'GET' && url.pathname === '/') {
+      response.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html><title>SDK contract destination</title>');
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    const validPath = fromBrowser ? ['/i/v0/e/', '/e/', '/capture/', '/batch/'].includes(url.pathname) : url.pathname === '/batch/';
+    if (request.method !== 'POST' || !validPath) { unexpected.push('proxy route'); response.writeHead(404).end(); return; }
+    try {
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      const wire = { path: url.pathname, headers: request.headers, body, query: Object.fromEntries(url.searchParams) };
+      (fromBrowser ? browserWires : wires).push(wire);
+      const headers = { 'content-type': request.headers['content-type'] || 'application/json' };
+      if (request.headers['content-encoding']) headers['content-encoding'] = request.headers['content-encoding'];
+      if (fromBrowser) headers.origin = request.headers.origin;
+      const upstream = await fetch(api + request.url, { method: request.method, headers, body });
+      const text = await upstream.text();
+      wire.status = upstream.status;
+      if (!fromBrowser && failAcknowledgement && upstream.ok) { failAcknowledgement = false; response.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"injected lost acknowledgement"}'); return; }
+      response.writeHead(upstream.status, { 'content-type': 'application/json' }).end(text);
+    } catch {
+      unexpected.push('proxy forwarding failure');
+      response.writeHead(502).end();
+    }
   });
   proxyURL = await listen(proxy);
   browser = await chromium.launch({ headless: true });
@@ -256,6 +279,73 @@ contract('browser.batch-compression', async () => {
   await event('browser batch a'); await event('browser batch b');
   assert.ok(browserWires.slice(start).map(decodeWire).some(payload => payload.batch.some(item => item.event === 'browser batch a') && payload.batch.some(item => item.event === 'browser batch b')), 'both events share a real SDK batch');
   assert.ok(browserWires.slice(start).some(wire => wire.query.compression === 'gzip-js' || wire.headers['content-encoding'] === 'gzip' || wire.body[0] === 0x1f && wire.body[1] === 0x8b), 'real browser SDK used gzip transport');
+});
+contract('browser.pageleave-beacon', async () => {
+  const isolated = await browser.newContext({ serviceWorkers: 'block' });
+  await isolated.route('**/*', async route => {
+    if (![origin, proxyURL].includes(new URL(route.request().url()).origin)) {
+      blocked.push('beacon external request');
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  isolated.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
+  const pageleaveUUIDs = [];
+  const firstWire = browserWires.length;
+  try {
+    for (const phase of ['navigation', 'close']) {
+      const tab = await isolated.newPage();
+      await tab.goto(origin);
+      if (phase === 'navigation') {
+        // The virtual clock covers this context. Pause the periodic batch timer for both pages.
+        const now = new Date();
+        await tab.clock.install({ time: now });
+        await tab.clock.pauseAt(new Date(now.getTime() + 1000));
+      }
+      const names = ['a', 'b'].map(suffix => `beacon ${phase} ${suffix}`);
+      const unicode = 'café 東京 🦔';
+      const start = browserWires.length;
+      const queued = await tab.evaluate(({ host, token, profile, names, phase, unicode }) => {
+        window.posthog.init(token, { ...profile, api_host: host });
+        return names.map(name => window.posthog.capture(name, { phase, unicode }).uuid);
+      }, { host: proxyURL, token: project.ingest_token, profile: browserBeaconProfile, names, phase, unicode });
+      assert.equal(browserWires.length, start, 'ordinary captures are queued until pagehide');
+      if (phase === 'navigation') {
+        await tab.goto(proxyURL);
+        assert.notEqual(new URL(tab.url()).origin, origin, 'navigation leaves the SDK page origin');
+        await tab.close();
+      } else {
+        const closed = tab.waitForEvent('close');
+        await tab.close({ runBeforeUnload: true });
+        await closed;
+      }
+      // Native unload beacons can bypass Playwright's request interception.
+      for (let attempt = 0; attempt < 100 && browserWires[start]?.status === undefined; attempt++) await delay(50);
+      const wires = browserWires.slice(start);
+      assert.equal(wires.length, 1, `${phase} sends one SDK request`);
+      const [wire] = wires;
+      assert.equal(wire.status, 200, `${phase} beacon acknowledged by Porcupine`);
+      assert.equal(wire.headers['sec-fetch-mode'], 'no-cors');
+      assert.equal(wire.headers['content-type'], 'application/x-www-form-urlencoded');
+      assert.equal(wire.query.compression, 'base64');
+      assert.match(wire.body.toString(), /^data=[^&]+$/);
+      const { batch } = decodeWire(wire);
+      assert.deepEqual(batch.map(item => item.event), [...names, '$pageleave']);
+      const pageleave = batch.at(-1);
+      pageleaveUUIDs.push(pageleave.uuid);
+      for (const [index, name] of names.entries()) {
+        assert.equal(batch[index].uuid, queued[index]);
+        const [saved] = await event(name);
+        assert.equal(saved.uuid, queued[index]);
+        assert.equal(saved.properties.unicode, unicode);
+      }
+      const saved = await event('$pageleave', pageleaveUUIDs.length);
+      assert.deepEqual(saved.map(item => item.uuid), pageleaveUUIDs);
+      assert.equal(saved.at(-1).properties.$current_url, origin + '/');
+    }
+    assert.equal(browserWires.length - firstWire, 2, 'one beacon per page lifecycle');
+  } finally { await isolated.close(); }
 });
 contract('browser.persistence-reset', async () => {
   const first = await page.evaluate(() => ({ distinct: posthog.get_distinct_id(), session: posthog.get_session_id() }));
@@ -545,13 +635,33 @@ async function writeFixtures() {
   const normalize = value => {
     if (Array.isArray(value)) return value.map(normalize);
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, ['api_key', 'token'].includes(key) ? 'FIXTURE_INGEST_TOKEN' : ['$host', '$session_entry_host'].includes(key) ? 'browser.example' : key === '$insert_id' ? 'fixture-insert-id' : key === '$time' ? 1738555506.789 : normalize(item)]));
-    if (typeof value === 'string') return value.replaceAll(project.ingest_token, 'FIXTURE_INGEST_TOKEN').replaceAll(origin, 'http://browser.example').replaceAll(api, 'http://ingest.example').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, normalizedUUID).replace(/20\d\d-\d\d-\d\dT[0-9:.]+Z/g, '2025-02-03T04:05:06.789Z');
+    if (typeof value === 'string') return value.replaceAll(project.ingest_token, 'FIXTURE_INGEST_TOKEN').replaceAll(origin, 'http://browser.example').replaceAll(api, 'http://ingest.example').replaceAll(proxyURL, 'http://ingest.example').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, normalizedUUID).replace(/20\d\d-\d\d-\d\dT[0-9:.]+Z/g, '2025-02-03T04:05:06.789Z');
     return value;
   };
   await mkdir(join(here, 'fixtures'), { recursive: true });
-  for (const [name, wire, version] of [['node-batch', wires[0], versions['posthog-node']], ['browser-capture', browserWires[0], versions['posthog-js']], ['browser-batch-gzip', browserWires.find(wire => wire.body[0] === 0x1f && wire.body[1] === 0x8b), versions['posthog-js']]]) {
+  const records = [
+    ['node-batch', wires[0], versions['posthog-node']],
+    ['browser-capture', browserWires[0], versions['posthog-js']],
+    ['browser-batch-gzip', browserWires.find(wire => wire.body[0] === 0x1f && wire.body[1] === 0x8b), versions['posthog-js']],
+    ['browser-pageleave-beacon', browserWires.find(wire => wire.query.compression === 'base64' && wire.headers['sec-fetch-mode'] === 'no-cors'), versions['posthog-js']],
+  ];
+  for (const [name, wire, version] of records) {
     if (!wire) continue;
     const payload = decodeWire(wire);
-    await writeFile(join(here, 'fixtures', name + '.json'), JSON.stringify({ provenance: { sdk: name.startsWith('node') ? 'posthog-node' : 'posthog-js', version, profile: name === 'browser-batch-gzip' ? 'analytics-only-gzip-batch' : 'analytics-only', source: 'Observed real SDK HTTP request to temporary Go server', normalization: 'Credentials, UUIDs, timestamps, local addresses replaced; remaining SDK properties retained', path: wire.path, content_type: wire.headers['content-type'], content_encoding: wire.headers['content-encoding'] || 'identity', body_format: wire.body[0] === 0x1f && wire.body[1] === 0x8b ? 'gzip' : 'json' }, payload: normalize(payload) }, null, 2) + '\n');
+    const beacon = name === 'browser-pageleave-beacon';
+    const gzip = name === 'browser-batch-gzip';
+    const provenance = {
+      sdk: name.startsWith('node') ? 'posthog-node' : 'posthog-js',
+      version,
+      profile: beacon ? 'analytics-only-pageleave-beacon' : gzip ? 'analytics-only-gzip-batch' : 'analytics-only',
+      source: beacon ? 'Observed Chromium sendBeacon HTTP request on cross-origin navigation' : 'Observed real SDK HTTP request to temporary Go server',
+      normalization: 'Credentials, UUIDs, timestamps, local addresses replaced; remaining SDK properties retained',
+      path: wire.path,
+      query: beacon ? new URLSearchParams(wire.query).toString() : undefined,
+      content_type: wire.headers['content-type'],
+      content_encoding: wire.headers['content-encoding'] || 'identity',
+      body_format: beacon ? 'form-base64' : gzip ? 'gzip' : 'json',
+    };
+    await writeFile(join(here, 'fixtures', name + '.json'), JSON.stringify({ provenance, payload: normalize(payload) }, null, 2) + '\n');
   }
 }

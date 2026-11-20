@@ -44,6 +44,13 @@
       "configuration": "browserProfile (local-ID/session diagnostics; person_profiles never)"
     },
     {
+      "id": "browser.pageleave-beacon",
+      "required": true,
+      "status": "implemented",
+      "scope": "Native Chromium sendBeacon on cross-origin navigation and tab close. Each form-encoded base64 batch persists the queued captures and a pageleave once",
+      "configuration": "browserBeaconProfile (opt-in pageleave and batching)"
+    },
+    {
       "id": "browser.persistence-reset",
       "required": true,
       "status": "implemented",
@@ -113,12 +120,13 @@
     "Additional SDK versions",
     "Browser SDK retry behavior",
     "Independent new-tab session behavior",
-    "Browser beacon/XHR transports"
+    "Browser XHR transport",
+    "Firefox and WebKit beacon coverage"
   ],
   "go_contracts": [
     {
       "test": "TestRecordedSDKFixtures",
-      "scope": "Sanitized observed real Node/browser JSON/gzip payload replay"
+      "scope": "Sanitized real Node/browser JSON, gzip and form-base64 payload replay"
     },
     {
       "test": "TestTransportFixturesAndStableRetries",
@@ -157,6 +165,7 @@
     "fixtures/node-batch.json",
     "fixtures/browser-capture.json",
     "fixtures/browser-batch-gzip.json",
+    "fixtures/browser-pageleave-beacon.json",
     "fixtures/browser-identify.json",
     "fixtures/browser-person-set.json",
     "fixtures/browser-identity-mixed.json",
