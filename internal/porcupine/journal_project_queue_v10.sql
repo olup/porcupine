@@ -6,12 +6,16 @@ CREATE TABLE project_queue_usage (
 
 -- Use the same charged byte expression as the instance queue_usage triggers.
 -- Delivered legacy rows and receipt-only history do not occupy the pending queue.
+-- Calculate each charge before grouping so the sorter handles only IDs and sizes.
+WITH pending AS MATERIALIZED (
+ SELECT project_id,
+  64+length(CAST(project_id AS BLOB))+length(CAST(uuid AS BLOB))+length(CAST(event AS BLOB))+
+  length(CAST(distinct_id AS BLOB))+length(CAST(properties AS BLOB))+length(CAST(timestamp AS BLOB))+
+  length(CAST(received_at AS BLOB))+length(CAST(identity_snapshot AS BLOB))+length(CAST(ingestion_metadata AS BLOB)) AS charged_bytes
+ FROM events WHERE delivered=0
+)
 INSERT INTO project_queue_usage(project_id,pending_count,pending_bytes)
-SELECT project_id,count(*),sum(
- 64+length(CAST(project_id AS BLOB))+length(CAST(uuid AS BLOB))+length(CAST(event AS BLOB))+
- length(CAST(distinct_id AS BLOB))+length(CAST(properties AS BLOB))+length(CAST(timestamp AS BLOB))+
- length(CAST(received_at AS BLOB))+length(CAST(identity_snapshot AS BLOB))+length(CAST(ingestion_metadata AS BLOB))
-) FROM events WHERE delivered=0 GROUP BY project_id;
+SELECT project_id,count(*),sum(charged_bytes) FROM pending GROUP BY project_id;
 
 CREATE TRIGGER project_queue_usage_insert AFTER INSERT ON events WHEN NEW.delivered=0 BEGIN
  INSERT INTO project_queue_usage(project_id,pending_count,pending_bytes)
