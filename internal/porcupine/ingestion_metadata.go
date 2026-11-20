@@ -15,9 +15,9 @@ import (
 )
 
 type storedIngestionMetadata struct {
-	SourceID  string          `json:"source_id"`
-	MessageID string          `json:"message_id"`
-	EventType string          `json:"event_type"`
+	SourceID  string          `json:"source_id,omitempty"`
+	MessageID string          `json:"message_id,omitempty"`
+	EventType string          `json:"event_type,omitempty"`
 	Context   json.RawMessage `json:"context"`
 }
 
@@ -96,7 +96,7 @@ func clockContext(raw json.RawMessage, timestamp, sentAt string) json.RawMessage
 	if len(raw) != 0 && (json.Unmarshal(raw, &object) != nil || object == nil) {
 		return raw
 	}
-	if timestamp != "" {
+	if timestamp != "" && len(timestamp) <= 128 {
 		object["client_timestamp"], _ = json.Marshal(timestamp)
 	}
 	if sentAt != "" {

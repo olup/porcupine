@@ -22,14 +22,25 @@ func queueUsage(t *testing.T, s *Service) (count, bytes int64) {
 func storedQueueBytes(t *testing.T, s *Service) int64 {
 	t.Helper()
 	var value int64
-	if err := s.db.QueryRow(`SELECT COALESCE(SUM(64+length(CAST(project_id AS BLOB))+length(CAST(uuid AS BLOB))+length(CAST(event AS BLOB))+length(CAST(distinct_id AS BLOB))+length(CAST(properties AS BLOB))+length(CAST(timestamp AS BLOB))+length(CAST(received_at AS BLOB))),0) FROM events WHERE delivered=0`).Scan(&value); err != nil {
+	if err := s.db.QueryRow(`SELECT COALESCE(SUM(64+length(CAST(project_id AS BLOB))+length(CAST(uuid AS BLOB))+
+length(CAST(event AS BLOB))+length(CAST(distinct_id AS BLOB))+length(CAST(properties AS BLOB))+
+length(CAST(timestamp AS BLOB))+length(CAST(received_at AS BLOB))+length(CAST(identity_snapshot AS BLOB))+
+length(CAST(ingestion_metadata AS BLOB))),0) FROM events WHERE delivered=0`).Scan(&value); err != nil {
 		t.Fatal(err)
 	}
 	return value
 }
 
+const queueFixtureTimestamp = "2026-11-01T00:00:00Z"
+
+func queueFixtureBytes(project, uuid string) int64 {
+	const metadata = `{"context":{"client_timestamp":"` + queueFixtureTimestamp + `"}}`
+	return int64(64 + len(project) + len(uuid) + len("クリック") + len("訪問者") +
+		len(`{"city":"東京"}`) + 2*len(queueFixtureTimestamp) + len(metadata))
+}
+
 func queueBody(token, uuid string) string {
-	value, _ := json.Marshal(map[string]any{"api_key": token, "uuid": uuid, "event": "クリック", "distinct_id": "訪問者", "properties": map[string]any{"city": "東京"}, "timestamp": "2026-11-01T00:00:00Z"})
+	value, _ := json.Marshal(map[string]any{"api_key": token, "uuid": uuid, "event": "クリック", "distinct_id": "訪問者", "properties": map[string]any{"city": "東京"}, "timestamp": queueFixtureTimestamp})
 	return string(value)
 }
 
@@ -42,7 +53,7 @@ func TestQueueByteCapacityAndDuplicateRetry(t *testing.T) {
 	s := service(t, 100)
 	fixedQueueClock(s)
 	id, ingest := project(t, s)
-	size := int64(64 + len(id) + len("one") + len("クリック") + len("訪問者") + len(`{"city":"東京"}`) + 2*len("2026-11-01T00:00:00Z"))
+	size := queueFixtureBytes(id, "one")
 	s.queueMaxBytes = size
 	request(t, s, "POST", "/capture/", "", queueBody(ingest, "one"), 200)
 	count, bytes := queueUsage(t, s)
@@ -69,7 +80,7 @@ func TestQueueByteBatchRollbackAndGlobalScope(t *testing.T) {
 	fixedQueueClock(s)
 	a, ingestA := project(t, s)
 	_, ingestB := project(t, s)
-	single := int64(64 + len(a) + len("one") + len("クリック") + len("訪問者") + len(`{"city":"東京"}`) + 2*len("2026-11-01T00:00:00Z"))
+	single := queueFixtureBytes(a, "one")
 	s.queueMaxBytes = 2*single - 1
 	var one, two map[string]any
 	json.Unmarshal([]byte(queueBody(ingestA, "one")), &one)

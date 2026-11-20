@@ -70,7 +70,8 @@ uses receipt time.
 For queryable events, `context.client_timestamp` holds the original client
 timestamp and `context.sent_at` holds the selected send time as supplied. If all
 send times are unreadable, Porcupine keeps the first supplied text value up to
-128 bytes. Cookieless events retain both fields. Read the client timestamp with
+128 bytes. The same limit applies to the original client timestamp.
+Cookieless events retain both fields. Read the client timestamp with
 `json_extract_string(context, '$.client_timestamp')`. Retries with the same UUID
 keep the first accepted timestamp and context. Historical imports retain their
 original event timestamps.
