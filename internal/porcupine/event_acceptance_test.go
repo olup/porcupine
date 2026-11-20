@@ -197,7 +197,7 @@ func sharedIdentityBatch(t *testing.T, project, prefix string) acceptance.Batch 
 	batch, err := prepareLiveBatch(project, "", eventBatch{
 		{UUID: prefix + "-identify", Event: "$identify", DistinctID: "person", Properties: map[string]any{"$anon_distinct_id": "visitor", "$set": map[string]any{"plan": prefix}}},
 		{UUID: prefix + "-page", Event: "visited", DistinctID: "visitor", Properties: map[string]any{}},
-	}, time.Now())
+	}, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
