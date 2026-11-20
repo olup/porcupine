@@ -47,7 +47,7 @@ func testPipelineAssemblyRecomposition(t *testing.T, frozen bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fragments, err := p.AssemblyFragments(ctx, db, first, 1<<20)
+	fragments, err := p.AssemblyFragments(ctx, db, first)
 	if err != nil || len(fragments) != 2 || fragments[0].Sequence != 1 || fragments[1].Sequence != 2 {
 		t.Fatal(fragments, err)
 	}
@@ -113,7 +113,7 @@ func testPipelineAssemblyRecomposition(t *testing.T, frozen bool) {
 	if err != nil || !canceled.Recompose || canceled.Claim.ID != r.ID {
 		t.Fatal(canceled, err)
 	}
-	candidates, err := p.AssemblyFragments(ctx, db, canceled, 1<<20)
+	candidates, err := p.AssemblyFragments(ctx, db, canceled)
 	if err != nil || len(candidates) != 1 {
 		t.Fatal(candidates, err)
 	}

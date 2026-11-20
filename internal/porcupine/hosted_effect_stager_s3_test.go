@@ -11,6 +11,7 @@ import (
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/output"
 )
 
 func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
@@ -42,7 +43,7 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 	selected := lakeapi.SelectedLiveEffects{Scope: scope, TenantID: "tenant", BatchID: "batch", Sequence: 1, Events: []eventapi.Event{ordinary, excluded, second}}
 	for _, mode := range []string{"event", "batch"} {
 		t.Run(mode, func(t *testing.T) {
-			target := frozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}}
+			target := frozenWebhookTarget{FrozenWebhookTarget: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}}}
 			if mode == "batch" {
 				target.Rule.IntervalSeconds = 60
 			}

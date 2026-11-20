@@ -108,7 +108,10 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 		if e = decodeHostedJSON(raw, &rule); e != nil {
 			return plan, routing, e
 		}
-		routing.Targets = append(routing.Targets, frozenWebhookTarget{PipelineID: t.ID, PipelineIncarnation: t.Incarnation, RuleRevision: t.RuleRevision, DestinationRevision: t.DestinationRevision, Rule: rule})
+		target := output.FrozenWebhookTarget{
+			PipelineID: t.ID, PipelineIncarnation: t.Incarnation, RuleRevision: t.RuleRevision, DestinationRevision: t.DestinationRevision, Rule: rule,
+		}
+		routing.Targets = append(routing.Targets, frozenWebhookTarget{FrozenWebhookTarget: target})
 	}
 	return plan, routing, nil
 }

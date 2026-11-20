@@ -68,7 +68,7 @@ func (p *PGPipelineEffects) NextFragment(ctx context.Context, db *sql.DB, source
 
 // AssemblyFragments reads a bounded, stable window prefix. The coordinator
 // session is required while the caller verifies deletion and freezes the input.
-func (p *PGPipelineEffects) AssemblyFragments(ctx context.Context, db *sql.DB, first PipelineFragment, maxRead int64) ([]PipelineFragment, error) {
+func (p *PGPipelineEffects) AssemblyFragments(ctx context.Context, db *sql.DB, first PipelineFragment) ([]PipelineFragment, error) {
 	c, t := first.Claim, first.Target
 	if first.Recompose {
 		f, err := scanPipelineFragment(db.QueryRowContext(ctx, `SELECT `+pipelineFragmentFields+` FROM pipeline_effect_jobs j WHERE `+pipelineScopeWhere+`
@@ -90,6 +90,7 @@ func (p *PGPipelineEffects) AssemblyFragments(ctx context.Context, db *sql.DB, f
 		return nil, err
 	}
 	defer rows.Close()
+	maxRead := hostedAssemblyMaxReadBytes
 	var fragments []PipelineFragment
 	var members int
 	var metadataBytes int

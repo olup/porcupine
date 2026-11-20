@@ -1,10 +1,8 @@
-package porcupine
+package output
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,8 +20,25 @@ import (
 const hostedAssemblyMaxFragments = delivery.WebhookChunkEvents + 1
 const hostedAssemblyMaxReadBytes int64 = 32 << 20
 
-// These are private adapter values, not execution authority or a PG claim API.
-// The future job store freezes and CASes this complete input and exact result.
+// FrozenWebhookTarget is the serialized routing metadata shared by
+// live output plans and webhook assembly artifacts.
+type FrozenWebhookTarget struct {
+	PipelineID          string               `json:"pipeline_id"`
+	PipelineIncarnation string               `json:"pipeline_incarnation"`
+	RuleRevision        string               `json:"rule_revision"`
+	DestinationRevision string               `json:"destination_revision"`
+	Rule                delivery.WebhookRule `json:"rule"`
+}
+
+type immutableWebhookFragment struct {
+	FragmentID                 string                     `json:"fragment_id"`
+	Target                     FrozenWebhookTarget        `json:"target"`
+	EventUUIDs                 []string                   `json:"event_uuids"`
+	EventBytes                 []int64                    `json:"event_bytes"`
+	Body                       lakeapi.ImmutableObjectRef `json:"body"`
+	WindowStartMS, WindowEndMS int64
+}
+
 type hostedFragmentPosition struct {
 	Scope          lakeapi.HostedProjectScope
 	CommitSequence int64
@@ -42,7 +57,7 @@ type hostedAssemblyFragment struct {
 type frozenWebhookAssemblyClaim struct {
 	Scope                      lakeapi.HostedProjectScope
 	TenantID                   string
-	Target                     frozenWebhookTarget
+	Target                     FrozenWebhookTarget
 	WindowStartMS, WindowEndMS int64
 	// Generation is stable across worker takeover; AttemptID only isolates S3
 	// uploads and must be the same UUID when retrying this exact frozen claim.
@@ -64,7 +79,7 @@ type immutableWebhookAssemblyManifest struct {
 	Version                           int
 	Scope                             lakeapi.HostedProjectScope
 	TenantID                          string
-	Target                            frozenWebhookTarget
+	Target                            FrozenWebhookTarget
 	WindowStartMS, WindowEndMS        int64
 	Generation, MembershipFingerprint string
 	DeliveryID                        string
@@ -73,36 +88,27 @@ type immutableWebhookAssemblyManifest struct {
 	Next                              []hostedFragmentPosition
 }
 
-type hostedWebhookAssemblyResult struct {
-	DeliveryID     string
-	Body, Manifest lakeapi.ImmutableObjectRef
-	EventCount     int
-	Next           []hostedFragmentPosition
-}
-
 func hostedAssemblyFingerprint(fragments []hostedAssemblyFragment) (string, error) {
 	raw, err := json.Marshal(fragments)
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:]), nil
+	return sha256Hex(raw), nil
 }
 
 func validateHostedAssemblyClaim(claim frozenWebhookAssemblyClaim) error {
 	bad := errors.New("invalid frozen webhook assembly claim")
-	bounded := func(s string) bool { return len(s) > 0 && len(s) <= 200 }
 	scope := claim.Scope
-	if !bounded(scope.Key.SourceID) || !bounded(scope.Key.ProjectID) || scope.CatalogID != lakeapi.SharedNativeCatalogID(scope.Key.SourceID, scope.Key.ProjectID) || len(scope.StreamID) != 36 || !lakeapi.LakePrefixSegmentPattern.MatchString(scope.StreamID) || !bounded(claim.TenantID) || !bounded(claim.Generation) || len(claim.AttemptID) != 36 || !lakeapi.LakePrefixSegmentPattern.MatchString(claim.AttemptID) {
+	if !pipelineID(scope.Key.SourceID) || !pipelineID(scope.Key.ProjectID) || scope.CatalogID != lakeapi.SharedNativeCatalogID(scope.Key.SourceID, scope.Key.ProjectID) || len(scope.StreamID) != 36 || !lakeapi.LakePrefixSegmentPattern.MatchString(scope.StreamID) || !pipelineID(claim.TenantID) || !pipelineID(claim.Generation) || len(claim.AttemptID) != 36 || !lakeapi.LakePrefixSegmentPattern.MatchString(claim.AttemptID) {
 		return bad
 	}
 	target := claim.Target
-	if !bounded(target.PipelineID) || !bounded(target.PipelineIncarnation) || !bounded(target.RuleRevision) || !bounded(target.DestinationRevision) || target.Rule.DeliveryMode != "batch" || target.Rule.IntervalSeconds < 60 || target.Rule.IntervalSeconds > 86400 || len(target.Rule.IncludeEvents) > 100 || len(target.Rule.ExcludeEvents) > 100 || len(target.Rule.StartAt) > 50 {
+	if !pipelineID(target.PipelineID) || !pipelineID(target.PipelineIncarnation) || !pipelineID(target.RuleRevision) || !pipelineID(target.DestinationRevision) || target.Rule.DeliveryMode != "batch" || target.Rule.IntervalSeconds < 60 || target.Rule.IntervalSeconds > 86400 || len(target.Rule.IncludeEvents) > 100 || len(target.Rule.ExcludeEvents) > 100 || len(target.Rule.StartAt) > 50 {
 		return bad
 	}
 	for _, names := range [][]string{target.Rule.IncludeEvents, target.Rule.ExcludeEvents} {
 		for _, name := range names {
-			if !bounded(name) {
+			if !pipelineID(name) {
 				return bad
 			}
 		}
@@ -125,7 +131,7 @@ func validateHostedAssemblyClaim(claim frozenWebhookAssemblyClaim) error {
 	sequence := int64(0)
 	for _, input := range claim.Fragments {
 		p, f := input.Position, input.Fragment
-		if p.Scope != scope || p.CommitSequence <= 0 || p.CommitSequence < sequence || p.FragmentID != f.FragmentID || !bounded(f.FragmentID) || seen[f.FragmentID] || f.WindowStartMS != claim.WindowStartMS || f.WindowEndMS != claim.WindowEndMS || len(f.EventUUIDs) == 0 || len(f.EventUUIDs) > delivery.WebhookChunkEvents || len(f.EventBytes) != len(f.EventUUIDs) || p.NextMember < 0 || p.NextMember >= len(f.EventUUIDs) || len(input.Members) == 0 || len(input.Members) > len(f.EventUUIDs) {
+		if p.Scope != scope || p.CommitSequence <= 0 || p.CommitSequence < sequence || p.FragmentID != f.FragmentID || !pipelineID(f.FragmentID) || seen[f.FragmentID] || f.WindowStartMS != claim.WindowStartMS || f.WindowEndMS != claim.WindowEndMS || len(f.EventUUIDs) == 0 || len(f.EventUUIDs) > delivery.WebhookChunkEvents || len(f.EventBytes) != len(f.EventUUIDs) || p.NextMember < 0 || p.NextMember >= len(f.EventUUIDs) || len(input.Members) == 0 || len(input.Members) > len(f.EventUUIDs) {
 			return bad
 		}
 		sequence = p.CommitSequence
@@ -141,7 +147,7 @@ func validateHostedAssemblyClaim(claim frozenWebhookAssemblyClaim) error {
 		readBytes += ref.Bytes
 		expected := int64(2 + len(f.EventUUIDs) - 1)
 		for i, uuid := range f.EventUUIDs {
-			if !bounded(uuid) || f.EventBytes[i] <= 0 || f.EventBytes[i] > ref.Bytes-expected {
+			if !pipelineID(uuid) || f.EventBytes[i] <= 0 || f.EventBytes[i] > ref.Bytes-expected {
 				return bad
 			}
 			expected += f.EventBytes[i]
@@ -165,11 +171,147 @@ func validateHostedAssemblyClaim(claim frozenWebhookAssemblyClaim) error {
 	return nil
 }
 
+// StageWebhookAssembly stages and verifies the body and manifest for a frozen
+// assembly. The caller owns the claim, project session and publication.
+func StageWebhookAssembly(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, scope lakeapi.HostedProjectScope, a PipelineAssembly) (PipelineAssemblyResult, error) {
+	if len(a.Inputs) == 0 || a.Scope != (PipelineScope{
+		SourceID: scope.Key.SourceID, ProjectID: scope.Key.ProjectID, CatalogID: scope.CatalogID, StreamID: scope.StreamID,
+	}) {
+		return PipelineAssemblyResult{}, ErrPipelineConflict
+	}
+	anchor := a.Inputs[0].Fragment
+	if anchor.Recompose {
+		return recomposeWebhookAssembly(ctx, objects, scope, a)
+	}
+	target := FrozenWebhookTarget{PipelineID: anchor.Target.ID, PipelineIncarnation: anchor.Target.Incarnation, RuleRevision: anchor.Target.RuleRevision, DestinationRevision: anchor.Target.DestinationRevision, Rule: anchor.Spec.Rule}
+	claim := frozenWebhookAssemblyClaim{
+		Scope: scope, TenantID: a.TenantID, Target: target, WindowStartMS: anchor.Spec.WindowStartMS, WindowEndMS: anchor.Spec.WindowEndMS,
+		Generation: a.Generation, AttemptID: a.Attempt, MaxFragments: hostedAssemblyMaxFragments, MaxReadBytes: hostedAssemblyMaxReadBytes, MaxBodyBytes: lakeapi.MaxImmutableEffectObjectBytes,
+	}
+	for _, in := range a.Inputs {
+		if len(in.Eligible) == 0 {
+			continue
+		}
+		fragment := in.Fragment
+		converted := hostedAssemblyFragment{
+			Position: hostedFragmentPosition{Scope: scope, CommitSequence: fragment.Sequence, FragmentID: fragment.Claim.ID, NextMember: fragment.Next},
+			Fragment: immutableWebhookFragment{FragmentID: fragment.Claim.ID, Target: target, WindowStartMS: fragment.Spec.WindowStartMS, WindowEndMS: fragment.Spec.WindowEndMS, Body: lakeapi.ImmutableObjectRef(fragment.Body)},
+			Members:  in.Eligible,
+		}
+		for _, member := range fragment.Members {
+			converted.Fragment.EventUUIDs = append(converted.Fragment.EventUUIDs, member.UUID)
+			converted.Fragment.EventBytes = append(converted.Fragment.EventBytes, member.Bytes)
+		}
+		claim.Fragments = append(claim.Fragments, converted)
+	}
+	if len(claim.Fragments) == 0 {
+		return PipelineAssemblyResult{}, nil
+	}
+	var err error
+	claim.MembershipFingerprint, err = hostedAssemblyFingerprint(claim.Fragments)
+	if err != nil {
+		return PipelineAssemblyResult{}, err
+	}
+	return assembleHostedWebhook(ctx, objects, claim)
+}
+
+func recomposeWebhookAssembly(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, scope lakeapi.HostedProjectScope, a PipelineAssembly) (PipelineAssemblyResult, error) {
+	in := a.Inputs[0]
+	f := in.Fragment
+	var r PipelineAssemblyResult
+	if len(in.Eligible) == 0 {
+		return r, nil
+	}
+	body, err := objects.ReadImmutableEffectObject(ctx, scope, lakeapi.ImmutableObjectRef(f.Body))
+	if err != nil {
+		return r, err
+	}
+	var original delivery.WebhookPayload
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&original); err != nil {
+		return r, err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return r, errors.New("trailing immutable JSON")
+	}
+	if original.Event != nil || original.DeliveryID != f.Claim.ID || original.PipelineID != f.Target.ID || original.ProjectID != scope.Key.ProjectID ||
+		original.WindowStartMS == nil || original.WindowEndMS == nil || *original.WindowStartMS != f.Spec.WindowStartMS || *original.WindowEndMS != f.Spec.WindowEndMS || len(original.Events) != f.Count {
+		return r, ErrPipelineConflict
+	}
+	for i, event := range original.Events {
+		if event.UUID != f.Members[i].UUID || event.ProjectID != scope.Key.ProjectID {
+			return r, ErrPipelineConflict
+		}
+	}
+	identity, err := json.Marshal(struct {
+		Scope             lakeapi.HostedProjectScope
+		Prior, Generation string
+		Positions         []int
+	}{scope, f.Claim.ID, a.Generation, in.Eligible})
+	if err != nil {
+		return r, err
+	}
+	r.ID = f.Claim.ID
+	if f.Frozen {
+		r.ID = "pc_hook_" + sha256Hex(identity)
+	}
+	prefix, err := delivery.WebhookBatchPrefix(r.ID, f.Target.ID, scope.Key.ProjectID, *original.WindowStartMS, *original.WindowEndMS)
+	if err != nil {
+		return r, err
+	}
+	var events [][]byte
+	for _, i := range in.Eligible {
+		b, err := delivery.EncodeJSON(original.Events[i])
+		if err != nil {
+			return r, err
+		}
+		if int64(len(b)) != f.Members[i].Bytes {
+			return r, ErrPipelineConflict
+		}
+		events = append(events, b)
+	}
+	recomposed, err := delivery.EncodeWebhookBatch(prefix, events, lakeapi.MaxImmutableEffectObjectBytes)
+	if err != nil {
+		return r, err
+	}
+	newBody, err := objects.PutImmutableEffectObject(ctx, scope, a.Attempt, recomposed)
+	if err != nil {
+		return r, err
+	}
+	manifest, err := json.Marshal(struct {
+		ID          string
+		Prior, Body lakeapi.ImmutableObjectRef
+		Positions   []int
+	}{r.ID, lakeapi.ImmutableObjectRef(f.Body), newBody, in.Eligible})
+	if err != nil {
+		return r, err
+	}
+	newManifest, err := objects.PutImmutableEffectObject(ctx, scope, a.Attempt, manifest)
+	if err != nil {
+		return r, err
+	}
+	if err := verifyWebhookAssemblyObjects(ctx, objects, scope, newBody, newManifest); err != nil {
+		return r, err
+	}
+	r.Body, r.Manifest, r.Count = PipelineRef(newBody), PipelineRef(newManifest), len(events)
+	return r, nil
+}
+
+func verifyWebhookAssemblyObjects(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, scope lakeapi.HostedProjectScope, body, manifest lakeapi.ImmutableObjectRef) error {
+	for _, ref := range []lakeapi.ImmutableObjectRef{body, manifest} {
+		if _, err := objects.ReadImmutableEffectObject(ctx, scope, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // assembleHostedWebhook writes one immutable chunk and its manifest. It never
 // publishes a job or checkpoint. Failure can leave orphan objects, but returns
-// no partial result. The caller must CAS the exact frozen input and next cursor.
-func assembleHostedWebhook(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, claim frozenWebhookAssemblyClaim) (hostedWebhookAssemblyResult, error) {
-	var zero hostedWebhookAssemblyResult
+// no partial result. The caller must commit the result against the frozen claim.
+func assembleHostedWebhook(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, claim frozenWebhookAssemblyClaim) (PipelineAssemblyResult, error) {
+	var zero PipelineAssemblyResult
 	if err := validateHostedAssemblyClaim(claim); err != nil {
 		return zero, err
 	}
@@ -196,21 +338,10 @@ func assembleHostedWebhook(ctx context.Context, objects *lakeapi.DuckLakeObjectS
 		return zero, err
 	}
 	members := candidates[:count]
-	identity := struct {
-		Version    int
-		Scope      lakeapi.HostedProjectScope
-		TenantID   string
-		Target     frozenWebhookTarget
-		Start, End int64
-		Generation string
-		Members    []hostedAssemblyMember
-	}{1, claim.Scope, claim.TenantID, claim.Target, claim.WindowStartMS, claim.WindowEndMS, claim.Generation, members}
-	raw, err := json.Marshal(identity)
+	id, err := hostedAssemblyDeliveryID(claim, members)
 	if err != nil {
 		return zero, err
 	}
-	digest := sha256.Sum256(raw)
-	id := "pc_hook_" + hex.EncodeToString(digest[:])
 	prefix, err = delivery.WebhookBatchPrefix(id, claim.Target.PipelineID, claim.Scope.Key.ProjectID, claim.WindowStartMS, claim.WindowEndMS)
 	if err != nil {
 		return zero, err
@@ -246,7 +377,7 @@ func assembleHostedWebhook(ctx context.Context, objects *lakeapi.DuckLakeObjectS
 		return zero, err
 	}
 	manifest := immutableWebhookAssemblyManifest{1, claim.Scope, claim.TenantID, claim.Target, claim.WindowStartMS, claim.WindowEndMS, claim.Generation, claim.MembershipFingerprint, id, members, bodyRef, next}
-	raw, err = json.Marshal(manifest)
+	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return zero, err
 	}
@@ -254,7 +385,27 @@ func assembleHostedWebhook(ctx context.Context, objects *lakeapi.DuckLakeObjectS
 	if err != nil {
 		return zero, err
 	}
-	return hostedWebhookAssemblyResult{id, bodyRef, manifestRef, count, next}, nil
+	if err := verifyWebhookAssemblyObjects(ctx, objects, claim.Scope, bodyRef, manifestRef); err != nil {
+		return zero, err
+	}
+	return PipelineAssemblyResult{ID: id, Body: PipelineRef(bodyRef), Manifest: PipelineRef(manifestRef), Count: count}, nil
+}
+
+func hostedAssemblyDeliveryID(claim frozenWebhookAssemblyClaim, members []hostedAssemblyMember) (string, error) {
+	identity := struct {
+		Version    int
+		Scope      lakeapi.HostedProjectScope
+		TenantID   string
+		Target     FrozenWebhookTarget
+		Start, End int64
+		Generation string
+		Members    []hostedAssemblyMember
+	}{1, claim.Scope, claim.TenantID, claim.Target, claim.WindowStartMS, claim.WindowEndMS, claim.Generation, members}
+	raw, err := json.Marshal(identity)
+	if err != nil {
+		return "", err
+	}
+	return "pc_hook_" + sha256Hex(raw), nil
 }
 
 func readHostedAssemblyFragment(ctx context.Context, objects *lakeapi.DuckLakeObjectStore, claim frozenWebhookAssemblyClaim, fragment immutableWebhookFragment) ([][]byte, error) {

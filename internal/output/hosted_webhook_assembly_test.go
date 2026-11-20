@@ -1,4 +1,4 @@
-package porcupine
+package output
 
 import (
 	"encoding/json"
@@ -37,7 +37,7 @@ func assemblyTestClaim(t *testing.T) frozenWebhookAssemblyClaim {
 	t.Helper()
 	key := lakeapi.ProjectWriteKey{SourceID: eventapi.NewID(), ProjectID: "project"}
 	scope := lakeapi.HostedProjectScope{Key: key, CatalogID: lakeapi.SharedNativeCatalogID(key.SourceID, key.ProjectID), StreamID: eventapi.NewID()}
-	target := frozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "pipeline-v1", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60}}
+	target := FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "pipeline-v1", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60}}
 	fragment := immutableWebhookFragment{FragmentID: "fragment", Target: target, EventUUIDs: []string{"a", "b"}, EventBytes: []int64{2, 2}, Body: lakeapi.ImmutableObjectRef{Key: "key", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Bytes: 7}, WindowStartMS: 0, WindowEndMS: 60000}
 	claim := frozenWebhookAssemblyClaim{Scope: scope, TenantID: "tenant", Target: target, WindowStartMS: 0, WindowEndMS: 60000, Generation: "generation-v1", AttemptID: eventapi.NewID(), Fragments: []hostedAssemblyFragment{{Position: hostedFragmentPosition{scope, 1, fragment.FragmentID, 0}, Fragment: fragment, Members: []int{0, 1}}}, MaxFragments: hostedAssemblyMaxFragments, MaxReadBytes: hostedAssemblyMaxReadBytes, MaxBodyBytes: lakeapi.MaxImmutableEffectObjectBytes}
 	freezeAssemblyTestClaim(t, &claim)
@@ -111,5 +111,52 @@ func TestHostedWebhookAssemblyClaimBounds(t *testing.T) {
 	changed.Fragments[0].Members = []int{1}
 	if err := validateHostedAssemblyClaim(changed); err == nil {
 		t.Fatal("changed membership accepted under old fingerprint")
+	}
+}
+
+func TestHostedWebhookAssemblyWireFormat(t *testing.T) {
+	t.Parallel()
+	// Hashes of the JSON emitted by the service before moving artifact staging.
+	scope := lakeapi.HostedProjectScope{Key: lakeapi.ProjectWriteKey{SourceID: "source", ProjectID: "project"}, CatalogID: "catalog", StreamID: "stream"}
+	target := FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "pipeline-v1", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60}}
+	ref := lakeapi.ImmutableObjectRef{Key: "fragment.json", VersionID: "fragment-v1", SHA256: "fragment-sha", Bytes: 7}
+	position := hostedFragmentPosition{scope, 1, "fragment", 0}
+	fragment := immutableWebhookFragment{FragmentID: position.FragmentID, Target: target, EventUUIDs: []string{"a", "b"}, EventBytes: []int64{2, 2}, Body: ref, WindowEndMS: 60000}
+	claim := frozenWebhookAssemblyClaim{Scope: scope, Target: target, TenantID: "tenant", Generation: "generation", WindowEndMS: 60000,
+		Fragments: []hostedAssemblyFragment{{position, fragment, []int{1}}}}
+	freezeAssemblyTestClaim(t, &claim)
+	if want := "b392a14b0b869f6fb2b4393ae93a4e40c84baaea961e8e3a10be5475ffb2b664"; claim.MembershipFingerprint != want {
+		t.Fatalf("membership fingerprint = %s, want %s", claim.MembershipFingerprint, want)
+	}
+	position.NextMember = 1
+	members := []hostedAssemblyMember{{position, "b", 2, ref}}
+	id, err := hostedAssemblyDeliveryID(claim, members)
+	if want := "pc_hook_b72311f982cb074699b407d8b94075b0f752043feccdc4f7537c0c4fdf2ced6b"; err != nil || id != want {
+		t.Fatalf("delivery ID = %q, want %q, error: %v", id, want, err)
+	}
+	position.NextMember = 2
+	body := lakeapi.ImmutableObjectRef{Key: "delivery.json", VersionID: "delivery-v1", SHA256: "delivery-sha", Bytes: 8}
+	manifest := immutableWebhookAssemblyManifest{1, scope, "tenant", target, 0, 60000, "generation", claim.MembershipFingerprint, id, members, body, []hostedFragmentPosition{position}}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sha256Hex(raw), "d0a3dffee4cbeecec4b0eab673c7718617452a9a02553aad05aa28718e0b7aa2"; got != want {
+		t.Fatalf("manifest SHA-256 = %s, want %s", got, want)
+	}
+}
+
+func TestHostedWebhookAssemblyRejectsOversizedSingletonBeforeRead(t *testing.T) {
+	t.Parallel()
+	claim := assemblyTestClaim(t)
+	in := &claim.Fragments[0]
+	in.Members = []int{0}
+	in.Fragment.EventUUIDs = []string{"a"}
+	in.Fragment.EventBytes = []int64{lakeapi.MaxImmutableEffectObjectBytes - 2}
+	in.Fragment.Body.Bytes = lakeapi.MaxImmutableEffectObjectBytes
+	freezeAssemblyTestClaim(t, &claim)
+	result, err := assembleHostedWebhook(t.Context(), &lakeapi.DuckLakeObjectStore{}, claim)
+	if result != (PipelineAssemblyResult{}) || err == nil || err.Error() != "webhook singleton exceeds body limit" {
+		t.Fatalf("result = %+v, error = %v", result, err)
 	}
 }
