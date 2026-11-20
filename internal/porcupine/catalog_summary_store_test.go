@@ -117,6 +117,10 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	if _, state := read(first, "p", 1, 0); state.Status != "" {
 		t.Fatalf("migration seeded a project before discovery: %+v", state)
 	}
+	if state, err := first.status(ctx, "p", at); err != nil || state != (catalogSummaryState{}) {
+		t.Fatalf("status for an unseeded project: %+v %v", state, err)
+	}
+	idle(first)
 	request(first, "p", false, "queued")
 	if page, state := read(second, "p", 1, 0); state.Status != "queued" || state.Snapshot.CatalogID != "" || !state.RefreshedAt.IsZero() || len(page.Events) != 0 {
 		t.Fatalf("unbuilt summary: %+v %+v", page, state)
@@ -142,6 +146,9 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	complete(second, stolen, seed)
 	if p, s := read(first, "p", 1, 0); s.Status != "current" || s.Snapshot != v1 || !s.RefreshedAt.Equal(at) || len(p.Events) != 1 || p.Events[0] != seed.Rows[1].Event || p.NextOffset == nil || *p.NextOffset != 1 || p.Sampling.PropertyLimit != 10 {
 		t.Fatalf("first summary page: %+v, %+v", p, s)
+	}
+	if state, err := second.status(ctx, "p", at); err != nil || state.Status != "current" || state.Snapshot != v1 || !state.RefreshedAt.Equal(at) {
+		t.Fatalf("summary status: %+v %v", state, err)
 	}
 	if p, _ := read(second, "p", 1, 1); len(p.Events) != 1 || p.Events[0] != seed.Rows[0].Event || p.NextOffset != nil {
 		t.Fatalf("second summary page: %+v", p)
@@ -249,6 +256,9 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	}
 	if p, state := read(second, "p", 5, 0); len(p.Events) != 0 || state.Status != "" {
 		t.Fatalf("summary visible across deletion fence: %+v %+v", p, state)
+	}
+	if state, err := second.status(ctx, "p", at); err != nil || state != (catalogSummaryState{}) {
+		t.Fatalf("status crossed a deletion fence: %+v %v", state, err)
 	}
 	at = at.Add(lease)
 	other := claim(second)

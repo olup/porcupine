@@ -62,6 +62,26 @@ func catalogState(snapshot lakeapi.ExportSnapshot, refreshedMS, eligibleMS int64
 	return state
 }
 
+func scanCatalogStatus(row *sql.Row, now time.Time) (catalogSummaryState, error) {
+	var snapshot lakeapi.ExportSnapshot
+	var refreshed, eligible int64
+	var token string
+	var failures int
+	if err := row.Scan(&snapshot.CatalogID, &snapshot.Version, &refreshed, &eligible, &token, &failures); err != nil {
+		return catalogSummaryState{}, err
+	}
+	return catalogState(snapshot, refreshed, eligible, token, failures, now), nil
+}
+
+func (s catalogSummaryStore) status(ctx context.Context, project string, now time.Time) (catalogSummaryState, error) {
+	state, err := scanCatalogStatus(s.db.QueryRowContext(ctx, `SELECT c.catalog_id,c.snapshot_version,c.refreshed_at_ms,c.eligible_at_ms,c.lease_token,c.failures
+FROM catalog_refresh_state c JOIN projects p ON p.id=c.project_id WHERE c.project_id=$1 AND `+catalogProjectActive, project), now)
+	if errors.Is(err, sql.ErrNoRows) {
+		return catalogSummaryState{}, nil
+	}
+	return state, err
+}
+
 // State and rows must come from the same database snapshot, including when the
 // page is empty. The bounded subquery can use catalog_summary_page directly.
 func (s catalogSummaryStore) page(ctx context.Context, input lakeapi.EventCatalogInput, now time.Time) (lakeapi.EventCatalog, catalogSummaryState, error) {
@@ -142,15 +162,12 @@ ON CONFLICT(project_id) DO UPDATE SET eligible_at_ms=excluded.eligible_at_ms,fai
 WHERE $3=1 AND catalog_refresh_state.lease_token='' AND catalog_refresh_state.eligible_at_ms>excluded.eligible_at_ms`, project, now.UnixMilli(), force); err != nil {
 		return catalogSummaryState{}, err
 	}
-	var snapshot lakeapi.ExportSnapshot
-	var refreshed, eligible int64
-	var token string
-	var failures int
-	if err := tx.QueryRowContext(ctx, `SELECT catalog_id,snapshot_version,refreshed_at_ms,eligible_at_ms,lease_token,failures
-FROM catalog_refresh_state WHERE project_id=$1`, project).Scan(&snapshot.CatalogID, &snapshot.Version, &refreshed, &eligible, &token, &failures); err != nil {
+	state, err := scanCatalogStatus(tx.QueryRowContext(ctx, `SELECT catalog_id,snapshot_version,refreshed_at_ms,eligible_at_ms,lease_token,failures
+FROM catalog_refresh_state WHERE project_id=$1`, project), now)
+	if err != nil {
 		return catalogSummaryState{}, err
 	}
-	return catalogState(snapshot, refreshed, eligible, token, failures, now), tx.Commit()
+	return state, tx.Commit()
 }
 
 // Due jobs and abandoned claims use the same index. A claim locks only the
