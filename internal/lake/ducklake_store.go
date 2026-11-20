@@ -41,6 +41,7 @@ type DuckLakeStore struct {
 
 type ProjectLake struct {
 	nativeProofHistory atomic.Pointer[nativeProofHistoryMark]
+	maintenancePending atomic.Bool
 	DB                 *sql.DB
 	write              syncx.ContextMutex
 	maintenance        syncx.ContextMutex
@@ -583,7 +584,10 @@ func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, i
 	if err != nil {
 		return fail(err)
 	}
-	return &ProjectLake{DB: db, directory: directory, catalogInfo: info, leases: make(map[*projectLease]struct{}), lastUsed: time.Now()}, nil
+	p := &ProjectLake{DB: db, directory: directory, catalogInfo: info, leases: make(map[*projectLease]struct{}), lastUsed: time.Now()}
+	// An opened catalog can have work left by a previous process or engine.
+	p.maintenancePending.Store(true)
+	return p, nil
 }
 
 func (s *DuckLakeStore) DeleteProject(ctx context.Context, project string) error {
@@ -673,7 +677,7 @@ ON CONFLICT(project_id) DO UPDATE SET state='deleted',failed=0,next_attempt=0,la
 }
 
 func (s *DuckLakeStore) Maintain(ctx context.Context) error {
-	_, err := s.MaintainSized(ctx, 1, false, 1<<20)
+	_, err := s.maintainProjects(ctx, 1, false, 1<<20, s.SharedCatalog == nil)
 	return errors.Join(err, s.CleanupDue(ctx, time.Now()))
 }
 
@@ -690,14 +694,14 @@ type DuckLakeMaintenanceStats struct {
 }
 
 func (s *DuckLakeStore) MaintainMeasured(ctx context.Context, maxCompactions int) ([]DuckLakeMaintenanceStats, error) {
-	return s.maintainPolicy(ctx, maxCompactions, true)
-}
-
-func (s *DuckLakeStore) maintainPolicy(ctx context.Context, maxCompactions int, serialized bool) ([]DuckLakeMaintenanceStats, error) {
-	return s.MaintainSized(ctx, maxCompactions, serialized, 0)
+	return s.MaintainSized(ctx, maxCompactions, true, 0)
 }
 
 func (s *DuckLakeStore) MaintainSized(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64) ([]DuckLakeMaintenanceStats, error) {
+	return s.maintainProjects(ctx, maxCompactions, serialized, maxFileSize, false)
+}
+
+func (s *DuckLakeStore) maintainProjects(ctx context.Context, maxCompactions int, serialized bool, maxFileSize int64, pendingOnly bool) ([]DuckLakeMaintenanceStats, error) {
 	if err := s.Mu.Lock(ctx); err != nil {
 		return nil, err
 	}
@@ -709,9 +713,11 @@ func (s *DuckLakeStore) MaintainSized(ctx context.Context, maxCompactions int, s
 		s.Mu.Unlock()
 		return nil, err
 	}
-	projects := make(map[string]*ProjectLake, len(s.Projects))
+	projects := make(map[string]*ProjectLake)
 	for id, p := range s.Projects {
-		projects[id] = p
+		if !pendingOnly || p.maintenancePending.Load() {
+			projects[id] = p
+		}
 	}
 	s.Mu.Unlock()
 	var measurements []DuckLakeMaintenanceStats
@@ -723,7 +729,16 @@ func (s *DuckLakeStore) MaintainSized(ctx context.Context, maxCompactions int, s
 		if release == nil {
 			continue
 		}
+		// Consume pending work before the pass so a concurrent commit can
+		// request another pass without having its request cleared.
+		if pendingOnly && !p.maintenancePending.Swap(false) {
+			release()
+			continue
+		}
 		stats, err := p.maintainPolicy(ctx, maxCompactions, serialized, maxFileSize)
+		if pendingOnly && (err != nil || stats.RowsFlushed > 0 || stats.FilesProcessed > 0) {
+			p.maintenancePending.Store(true)
+		}
 		release()
 		measurements = append(measurements, stats)
 		if err != nil {
