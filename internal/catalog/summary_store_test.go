@@ -1,76 +1,58 @@
-package porcupine
+package catalog
 
 import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	lakeapi "github.com/olup/porcupine/internal/lake"
-	"github.com/olup/porcupine/internal/query"
+	"github.com/olup/porcupine/internal/testfixtures/postgresfixture"
+	_ "modernc.org/sqlite"
 )
+
+const catalogFixtureSchema = `CREATE TABLE projects(id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL);
+CREATE TABLE project_deletions(project_id TEXT PRIMARY KEY);
+CREATE TABLE tenant_deletions(tenant_id TEXT PRIMARY KEY);
+INSERT INTO projects VALUES('p','catalog-tenant'),('other','other-tenant');`
 
 func TestCatalogSummaryStoreSQLite(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "control.db")
-	db, err := openLocalSQLite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	previous := localControlSchema
-	previous.steps = previous.steps[:9]
-	if err := migrateSQLite(t.Context(), db, previous); err != nil {
-		t.Fatal(err)
-	}
-	seedCatalogStoreProjects(t, db)
-	limits, _ := query.Normalize(nil)
-	if err := initializeLocalControl(t.Context(), db, adminToken, limits, false); err != nil {
-		t.Fatal(err)
-	}
-	second, err := openLocalSQLite(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	testCatalogSummaryStore(t, catalogSummaryStore{db: db}, catalogSummaryStore{db: second})
+	path := url.URL{Scheme: "file", Path: filepath.Join(t.TempDir(), "catalog.db")}
+	path.RawQuery = url.Values{"_pragma": {"journal_mode(WAL)", "foreign_keys(ON)", "busy_timeout(5000)"}}.Encode()
+	first, second := catalogFixtureConnections(t, "sqlite", path.String())
+	testCatalogSummaryStore(t, catalogSummaryStore{db: first}, catalogSummaryStore{db: second})
 }
 
 func TestSharedCatalogSummaryStore(t *testing.T) {
 	t.Parallel()
-	db, dsn := sharedControlFixture(t)
-	for _, step := range sharedControlSteps[:26] {
-		if _, err := db.ExecContext(t.Context(), step); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO metadata(key,value) VALUES('schema_version','26')
-ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
-		t.Fatal(err)
-	}
-	seedCatalogStoreProjects(t, db)
-	limits, _ := query.Normalize(nil)
-	if err := initializeSharedControl(t.Context(), db, adminToken, limits, false); err != nil {
-		t.Fatal(err)
-	}
-	second, err := openSharedControl(t.Context(), SharedConfig{DatabaseURL: dsn})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	testCatalogSummaryStore(t, catalogSummaryStore{db: db, hosted: true}, catalogSummaryStore{db: second, hosted: true})
+	first, second := catalogFixtureConnections(t, "pgx", postgresfixture.DSN(t))
+	// Use the fixture's tombstones. Porcupine tests the actual hosted lock.
+	lock := (catalogSummaryStore{}).lockActiveProject
+	testCatalogSummaryStore(t, catalogSummaryStore{db: first, lockHostedProject: lock}, catalogSummaryStore{db: second, lockHostedProject: lock})
 }
 
-func seedCatalogStoreProjects(t *testing.T, db *sql.DB) {
+func catalogFixtureConnections(t *testing.T, driver, dsn string) (*sql.DB, *sql.DB) {
 	t.Helper()
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO tenants(id,name,created_at,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes)
-VALUES('catalog-tenant','Catalog tenant','',1,10000,100,1024),('other-tenant','Other tenant','',1,10000,100,1024);
-INSERT INTO projects(id,tenant_id,name,created_at) VALUES('p','catalog-tenant','Project',''),('other','other-tenant','Other project','')`); err != nil {
+	open := func() *sql.DB {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetMaxOpenConns(1)
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
+	first, second := open(), open()
+	if _, err := first.ExecContext(t.Context(), catalogFixtureSchema+ControlSchema); err != nil {
 		t.Fatal(err)
 	}
+	return first, second
 }
 
 func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
@@ -115,7 +97,7 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 
 	idle(first)
 	if _, state := read(first, "p", 1, 0); state.Status != "" {
-		t.Fatalf("migration seeded a project before discovery: %+v", state)
+		t.Fatalf("fixture seeded a project before discovery: %+v", state)
 	}
 	if state, err := first.status(ctx, "p", at); err != nil || state != (catalogSummaryState{}) {
 		t.Fatalf("status for an unseeded project: %+v %v", state, err)
@@ -244,13 +226,13 @@ func testCatalogSummaryStore(t *testing.T, first, second catalogSummaryStore) {
 	request(first, "p", "queued")
 	deleting := claim(first)
 	request(first, "other", "queued")
-	if _, err := second.db.ExecContext(ctx, `INSERT INTO tenant_deletions(tenant_id,state,started_at,updated_at) VALUES('catalog-tenant','deleting','','')`); err != nil {
+	if _, err := second.db.ExecContext(ctx, `INSERT INTO tenant_deletions(tenant_id) VALUES('catalog-tenant')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.request(ctx, "p", at); !errors.Is(err, errCatalogProjectFenced) {
+	if _, err := first.request(ctx, "p", at); !errors.Is(err, acceptance.ErrProjectFenced) {
 		t.Fatalf("request crossed deletion fence: %v", err)
 	}
-	if err := first.complete(ctx, deleting, replacement, at); !errors.Is(err, errCatalogProjectFenced) {
+	if err := first.complete(ctx, deleting, replacement, at); !errors.Is(err, acceptance.ErrProjectFenced) {
 		t.Fatalf("publish crossed deletion fence: %v", err)
 	}
 	if p, state := read(second, "p", 5, 0); len(p.Events) != 0 || state.Status != "" {

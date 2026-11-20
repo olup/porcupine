@@ -38,7 +38,7 @@ func main() {
 		if *pattern != "" {
 			selection = *pattern
 		}
-		command = []string{"go", "test", "./internal/porcupine", "./internal/lake", "./internal/auth", "./internal/output", "-run", selection, "-count=1", "-timeout=600s"}
+		command = []string{"go", "test", "./internal/porcupine", "./internal/catalog", "./internal/lake", "./internal/auth", "./internal/output", "-run", selection, "-count=1", "-timeout=600s"}
 		if *race {
 			command = append(command, "-race")
 		}

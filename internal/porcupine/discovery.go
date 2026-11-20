@@ -30,8 +30,8 @@ func (s *Service) eventCatalog(ctx context.Context, input *lakeapi.EventCatalogI
 	out := &EventCatalogOutput{}
 	bounds, err := s.queries.Catalog(ctx, options.ID, func(ctx context.Context) error {
 		if refresh := s.eventCatalogRefresh; refresh != nil && options.Event == "" {
-			result, status, usable := refresh.page(ctx, options)
-			out.Body.Refresh = status
+			result, status, usable := refresh.Page(ctx, options)
+			out.Body.Refresh = (*CatalogRefreshStatus)(status)
 			if usable {
 				out.Body.EventCatalog = result
 				return nil
