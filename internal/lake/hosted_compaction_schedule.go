@@ -16,6 +16,28 @@ const (
 	hostedMergeFileSize      = 1 << 20
 )
 
+func (s *DuckLakeStore) claimHostedMaintenance(ctx context.Context, registry *postgresNativeRegistry, table string, at, next time.Time) (nativeCleanupAttempt, error) {
+	if err := s.Mu.Lock(ctx); err != nil {
+		return nativeCleanupAttempt{}, err
+	}
+	if s.closed {
+		s.Mu.Unlock()
+		return nativeCleanupAttempt{}, errors.New("DuckLake is closed")
+	}
+	due, err := registry.hostedMaintenanceDue(ctx, table, at)
+	s.Mu.Unlock()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nativeCleanupAttempt{}, ctx.Err()
+		}
+		return nativeCleanupAttempt{}, errors.New("DuckLake source unavailable")
+	}
+	if !due {
+		return nativeCleanupAttempt{}, sql.ErrNoRows
+	}
+	return registry.claimDue(ctx, table, at, next)
+}
+
 // CompactHostedDue checks one registered project. The callback owns project
 // activity registration and executes only while the normal coordinator owns
 // the project. A claim permits scheduling, never native writes by itself.
@@ -25,12 +47,8 @@ func (s *DuckLakeStore) CompactHostedDue(ctx context.Context, now time.Time, coo
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostedCompactionTimeout)
 	defer cancel()
-	source, err := s.SourceID(ctx)
-	if err != nil {
-		return err
-	}
 	registry := s.registry.(*postgresNativeRegistry)
-	attempt, err := registry.claimDue(ctx, hostedCompactionSchedule, now, now.Add(hostedCompactionClaimTTL))
+	attempt, err := s.claimHostedMaintenance(ctx, registry, hostedCompactionSchedule, now, now.Add(hostedCompactionClaimTTL))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -41,7 +59,7 @@ func (s *DuckLakeStore) CompactHostedDue(ctx context.Context, now time.Time, coo
 	next := now.Add(hostedCompactionInterval)
 	layout, work, err := registry.hostedCompactionCandidate(ctx, attempt)
 	if err == nil && work {
-		key := ProjectWriteKey{SourceID: source, ProjectID: attempt.ProjectID}
+		key := ProjectWriteKey{SourceID: registry.source, ProjectID: attempt.ProjectID}
 		var stats DuckLakeMaintenanceStats
 		stats, err = runHostedCompaction(ctx, coordinator, key, run)
 		if err == nil && stats.FilesProcessed > 0 {

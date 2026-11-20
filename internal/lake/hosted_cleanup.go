@@ -144,11 +144,7 @@ func (s *DuckLakeStore) CleanupHostedDue(ctx context.Context, now time.Time, coo
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostedCompactionTimeout)
 	defer cancel()
-	source, err := s.SourceID(ctx)
-	if err != nil {
-		return err
-	}
-	attempt, err := registry.claimDue(ctx, hostedCleanupSchedule, now, now.Add(hostedCleanupClaimTTL))
+	attempt, err := s.claimHostedMaintenance(ctx, registry, hostedCleanupSchedule, now, now.Add(hostedCleanupClaimTTL))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -156,7 +152,7 @@ func (s *DuckLakeStore) CleanupHostedDue(ctx context.Context, now time.Time, coo
 		return err
 	}
 	var stats HostedCleanupStats
-	session, err := coordinator.TryAcquire(ctx, ProjectWriteKey{SourceID: source, ProjectID: attempt.ProjectID})
+	session, err := coordinator.TryAcquire(ctx, ProjectWriteKey{SourceID: registry.source, ProjectID: attempt.ProjectID})
 	if err == nil {
 		stats, err = run(ctx, session, now)
 		err = errors.Join(err, session.Release())
