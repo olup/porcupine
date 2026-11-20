@@ -11,59 +11,114 @@ import (
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
+const (
+	deliveryInterval = time.Second
+	deliveryMaxDelay = 30 * time.Second
+)
+
 func (s *Service) startDelivery() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.deliveryCancel = cancel
 	s.deliveryDone = make(chan struct{})
+	s.deliveryWake = make(chan struct{}, 1)
 	go func() {
 		defer close(s.deliveryDone)
-		initialized := false
-		backoff := time.Second
-		for ctx.Err() == nil {
-			var err error
-			if !initialized {
-				err = s.initializeDelivery(ctx)
-				initialized = err == nil
-			}
-			delivered := false
-			originalProgress := false
-			if err == nil {
-				mutations, mutationErr := s.deliverMutations(ctx)
-				var originalErr error
-				originalProgress, originalErr = s.deliverBatch(ctx)
-				delivered = mutations || originalProgress
-				err = errors.Join(mutationErr, originalErr)
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			s.recordDeliveryResult(ctx, err)
-			delay := time.Second
-			if err != nil {
-				if originalProgress {
-					// A blocked mutation must not stop healthy originals, but retry
-					// the failed lane at most once per second while they progress.
-					delay, backoff = time.Second, time.Second
-				} else {
-					initialized = false
-					delay = backoff
-					backoff = min(backoff*2, 30*time.Second)
-				}
-			} else {
-				backoff = time.Second
-				if delivered {
-					continue
-				}
-			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-		}
+		s.runDelivery(ctx)
 	}()
+}
+
+func (s *Service) wakeDelivery() {
+	select {
+	case s.deliveryWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) runDelivery(ctx context.Context) {
+	initialized := false
+	idleDelay, retryDelay := deliveryInterval, deliveryInterval
+	for ctx.Err() == nil {
+		// A sweep covers anything that committed before it began.
+		select {
+		case <-s.deliveryWake:
+		default:
+		}
+		var err error
+		if !initialized {
+			err = s.initializeDelivery(ctx)
+			initialized = err == nil
+		}
+		var mutations, originals bool
+		if err == nil {
+			mutations, originals, err = s.deliverPending(ctx)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.recordDeliveryResult(ctx, err)
+
+		var delay time.Duration
+		switch {
+		case err != nil:
+			idleDelay = deliveryInterval
+			if originals {
+				// Keep delivering healthy originals even if mutations are blocked.
+				delay, retryDelay = deliveryInterval, deliveryInterval
+			} else {
+				initialized = false
+				delay = retryDelay
+				retryDelay = min(retryDelay*2, deliveryMaxDelay)
+			}
+		case mutations || originals:
+			idleDelay, retryDelay = deliveryInterval, deliveryInterval
+			continue
+		default:
+			retryDelay = deliveryInterval
+			delay = idleDelay
+			idleDelay = min(idleDelay*2, deliveryMaxDelay)
+		}
+		if s.waitForDelivery(ctx, delay) {
+			idleDelay = deliveryInterval
+		}
+	}
+}
+
+// A commit shortens the idle wait. Keep the next sweep at least one interval
+// after the last so arrivals can still batch together.
+func (s *Service) waitForDelivery(ctx context.Context, delay time.Duration) bool {
+	earliest := time.Now().Add(deliveryInterval)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	case <-s.deliveryWake:
+	}
+	timer.Reset(time.Until(earliest))
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return true
+}
+
+func (s *Service) deliverPending(ctx context.Context) (mutations, originals bool, err error) {
+	// The journal remains authoritative. Skip the projection locks and
+	// cursor checks for empty queues, including when a sweep follows a wake.
+	var hasMutations, hasOriginals bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM mutation_outbox), EXISTS(SELECT 1 FROM delivery_ready)`).Scan(&hasMutations, &hasOriginals); err != nil {
+		return false, false, errors.New("cannot read delivery queues")
+	}
+	var mutationErr, originalErr error
+	if hasMutations {
+		mutations, mutationErr = s.deliverMutations(ctx)
+	}
+	if hasOriginals {
+		originals, originalErr = s.deliverBatch(ctx)
+	}
+	return mutations, originals, errors.Join(mutationErr, originalErr)
 }
 
 func (s *Service) flushDelivery(ctx context.Context) error {
@@ -72,9 +127,7 @@ func (s *Service) flushDelivery(ctx context.Context) error {
 	}
 	err := s.initializeDelivery(ctx)
 	if err == nil {
-		_, mutationErr := s.deliverMutations(ctx)
-		_, originalErr := s.deliverBatch(ctx)
-		err = errors.Join(mutationErr, originalErr)
+		_, _, err = s.deliverPending(ctx)
 	}
 	if ctx.Err() == nil {
 		s.recordDeliveryResult(ctx, err)
@@ -178,12 +231,22 @@ func (s *Service) acknowledgeOriginals(ctx context.Context, batch []eventapi.Eve
 }
 
 func (s *Service) recordDeliveryResult(ctx context.Context, deliveryErr error) {
-	if deliveryErr != nil {
-		message := "DuckLake delivery failed"
-		s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, message)
+	s.deliveryResultMu.Lock()
+	defer s.deliveryResultMu.Unlock()
+	failed := deliveryErr != nil
+	if s.deliveryFailed != nil && *s.deliveryFailed == failed {
 		return
 	}
-	s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key='last_delivery_error'`)
+
+	var err error
+	if failed {
+		_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('last_delivery_error','DuckLake delivery failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+	} else {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key='last_delivery_error'`)
+	}
+	if err == nil {
+		s.deliveryFailed = &failed
+	}
 }
 
 func (s *Service) deliveryStatus(ctx context.Context, projectID string) (lakeapi.DeliveryStatus, error) {

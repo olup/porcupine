@@ -411,6 +411,7 @@ func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventPr
 	if err != nil || tx.Commit() != nil {
 		return nil, apierr.New(503, "mutation storage unavailable")
 	}
+	s.wakeDelivery()
 	response.Revision = strconv.FormatInt(seq, 10)
 	return &MutationOutput{Body: response}, nil
 }

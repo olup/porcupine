@@ -14,6 +14,7 @@ type importManager struct {
 	control         oauthQueryer
 	rules           *eventRules
 	deliveryEnabled bool
+	wakeDelivery    func()
 	hosted          *hostedLiveFlusher
 }
 

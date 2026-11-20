@@ -39,6 +39,7 @@ type durableAcceptance struct {
 	db              *sql.DB
 	rules           *eventRules
 	enqueueWebhooks func(context.Context, *sql.Tx, []eventapi.Event) error
+	wakeDelivery    func()
 }
 
 func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime time.Time, metrics *operationalMetrics) (acceptance.Batch, error) {
@@ -265,6 +266,9 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, &acceptance.Failure{Message: "storage unavailable"}
+	}
+	if accepted > 0 && a.wakeDelivery != nil {
+		a.wakeDelivery()
 	}
 	return acceptance.DurableResult{Accepted: accepted, Duplicates: duplicates, IdentityIgnored: identityIgnored, Receipts: receipts}, nil
 }
