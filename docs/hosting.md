@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.4). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.19.5). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a><!-- Legacy URL fragment. -->
 <a id="choose-a-storage-mode"></a>
@@ -62,6 +62,16 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.19.4
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and check for shutdown errors. Investigate a failed drain before continuing because acknowledged events can still be in worker memory.
+2. Stop all v0.19.4 server processes. Keep the v0.19.4 image and private configuration.
+3. Take a complete recovery point. For standalone, capture both SQLite databases and the DuckLake storage, including any analytical objects in S3, together. For hosted, coordinate PostgreSQL recovery with S3 object versions. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+4. Start v0.19.5 with the existing configuration and storage.
+5. Update the CLI. Check readiness and verify that a new test event becomes queryable before resuming producers.
+
+v0.19.5 uses the v0.19.4 storage schemas. To roll back, drain and stop v0.19.5, then start v0.19.4 with the same configuration and storage.
 
 ### Upgrade from v0.19.3
 
