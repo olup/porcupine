@@ -65,6 +65,8 @@ Unbound native and Segment credentials use `native` and `segment` as their respe
 
 To track page exit from a native browser integration, send a small `track` event named `pageleave` on `pagehide`. Use `fetch` with `keepalive: true` and the usual `X-Porcupine-Key` header. A browser's `sendBeacon` API cannot set this header. Preserve the same `message_id` if you retry. Segment producers can send the same event name through their usual track call.
 
+### Base64 form encoding
+
 All three live inputs accept the same form transport. Set `compression=base64` in the URL and send the usual JSON as the standard Base64 value of a single form field named `data`. Use `Content-Type: application/x-www-form-urlencoded`. Credentials and message schemas follow the selected endpoint. The encoded request and decoded JSON must satisfy their normal size limits.
 
 ## Point a Segment producer at Porcupine
