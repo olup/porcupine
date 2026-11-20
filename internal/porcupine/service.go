@@ -83,6 +83,7 @@ type Service struct {
 	backups                     *nativeBackupRuntime
 	activity                    projectActivity
 	catalogMu                   sync.RWMutex
+	eventCatalogRefresh         *catalogRefresh
 	deletionMu                  syncx.ContextMutex
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
@@ -387,12 +388,17 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	}
 	s.startUsage()
 	s.startQueueSampling()
+	s.startCatalogRefresh()
 	return s, nil
 }
 
 func (s *Service) Close() error {
 	if s.hosted != nil {
 		return s.closeHosted()
+	}
+	if s.eventCatalogRefresh != nil {
+		s.eventCatalogRefresh.stop()
+		<-s.eventCatalogRefresh.done
 	}
 	if m := s.metrics; m != nil && m.stopSampling != nil {
 		m.stopSampling()

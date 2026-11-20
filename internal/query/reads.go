@@ -29,12 +29,10 @@ func (r *Runtime) SQL(ctx context.Context, reader Reader, project, sql string, p
 	return
 }
 
-func (r *Runtime) Catalog(ctx context.Context, reader Reader, input lake.EventCatalogInput) (result lake.EventCatalog, bounds ResponseBounds, err error) {
-	bounds, err = r.run(ctx, input.ID, opCatalog, func(ctx context.Context, _ InteractiveQueryConfig) error {
-		result, err = reader.Catalog(ctx, input)
-		return err
+func (r *Runtime) Catalog(ctx context.Context, project string, read func(context.Context) error) (ResponseBounds, error) {
+	return r.run(ctx, project, opCatalog, func(ctx context.Context, _ InteractiveQueryConfig) error {
+		return read(ctx)
 	})
-	return
 }
 
 func (r *Runtime) Profile(ctx context.Context, reader Reader, project string, options lake.EventProfileOptions) (lake.EventProfile, ResponseBounds, error) {

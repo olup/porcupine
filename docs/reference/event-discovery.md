@@ -6,6 +6,28 @@ Use `get-event-profile` to inspect an event before writing SQL. You need `events
 
 List the project's event names with `porcupine_schema` in MCP or `get-event-catalog` in the API and CLI. Choose an exact name, such as `userInputSent`. The catalog's latest pointer follows acceptance order. Its timestamp is not necessarily the most recent occurrence time.
 
+## Refresh the event list
+
+The event list can reuse a project summary. When the response includes `refresh`,
+`updated_at` is the last successful refresh or check of that summary.
+New names, counts, and last-received times can lag SQL by about an hour during
+normal operation. Portal users can select **Refresh catalog** to check for recent
+changes sooner. A project with no changes needs only a metadata check.
+
+To request a refresh from the CLI, run
+`porcupine refresh-event-catalog --id "$PROJECT_ID"`. The API is
+`POST /api/v1/projects/{id}/catalog/refresh`. It requires project
+`events:read`, returns HTTP 202, and coalesces concurrent requests for the same
+project. Read the catalog to see `queued`, `running`, `ready`, or `failed`.
+In MCP, call `refresh-event-catalog` through `porcupine_call`, then use
+`porcupine_schema` to read the list.
+
+The summary is initialized when a project's catalog is first used. It catches up
+from the last checkpoint when DuckLake can verify the changes. Porcupine uses
+the live read while a correction, deletion, or expired checkpoint makes the
+summary unavailable. Event profiles and sampled properties read DuckLake on
+demand.
+
 ## Request a profile
 
 With the CLI, run:

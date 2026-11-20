@@ -165,6 +165,7 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	s.pipelines.Start()
 	s.exports.Start()
 	s.startUsage()
+	s.startCatalogRefresh()
 	return s, nil
 }
 
@@ -267,8 +268,12 @@ func (s *Service) closeHosted() error {
 // waited for: their permits keep renewing until the process exits.
 func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
 	var maintenance <-chan struct{}
+	var catalog <-chan struct{}
 	if s.hosted.maintenance != nil {
 		maintenance = s.hosted.maintenance.done
+	}
+	if s.eventCatalogRefresh != nil {
+		catalog = s.eventCatalogRefresh.done
 	}
 	deadline := time.NewTimer(grace)
 	defer deadline.Stop()
@@ -284,7 +289,15 @@ func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
 			}
 		}
 		active := s.queries.Status().Active
-		if !running && active == 0 {
+		refreshing := false
+		if catalog != nil {
+			select {
+			case <-catalog:
+			default:
+				refreshing = true
+			}
+		}
+		if !running && !refreshing && active == 0 {
 			return nil
 		}
 		select {
@@ -292,6 +305,9 @@ func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
 			var err error
 			if running {
 				err = errors.New("hosted maintenance is still running")
+			}
+			if refreshing {
+				err = errors.Join(err, errors.New("hosted catalog refresh is still running"))
 			}
 			if active != 0 {
 				err = errors.Join(err, fmt.Errorf("hosted analytics execution is still active (%d calls); permit renewal continues until they return", active))
@@ -319,6 +335,9 @@ func (s *Service) initializeHostedUsage(ctx context.Context, c *usage.Config) er
 
 func (s *Service) BeginDrain() {
 	s.queries.Drain()
+	if s.eventCatalogRefresh != nil {
+		s.eventCatalogRefresh.stop()
+	}
 	if s.hosted != nil && s.hosted.maintenance != nil {
 		s.hosted.maintenance.stop()
 	}
