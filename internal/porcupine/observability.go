@@ -134,7 +134,19 @@ type httpObservationKey struct{}
 
 type observedResponse struct {
 	http.ResponseWriter
-	status int
+	status    int
+	rejection string
+}
+
+func markIngestionRejection(w http.ResponseWriter, reason string) {
+	if observed, ok := w.(*observedResponse); ok {
+		observed.rejection = reason
+	}
+}
+
+func ingestionProblem(w http.ResponseWriter, reason, message string) {
+	markIngestionRejection(w, reason)
+	problem(w, http.StatusBadRequest, message)
 }
 
 func (w *observedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -203,6 +215,10 @@ func (s *Service) observeHTTP(next http.Handler) http.Handler {
 			route := observability.Label{Name: "route", Value: group}
 			m.Add("porcupine_http_requests_total", 1, route, observability.Label{Name: "status_class", Value: statusClass(status)})
 			m.ObserveDuration("porcupine_http_request_duration_seconds", elapsed, route)
+			if reason := ingestionRejection(status, out.rejection); group == "ingestion" && r.Method == http.MethodPost && reason != "" {
+				m.Add("porcupine_ingestion_rejected_total", 1,
+					observability.Label{Name: "route", Value: r.URL.Path}, observability.Label{Name: "reason", Value: reason})
+			}
 		}
 		if observation.operation != "" {
 			s.observeOperation(r.Context(), "http", observation.operation, status, elapsed)
@@ -210,6 +226,21 @@ func (s *Service) observeHTTP(next http.Handler) http.Handler {
 			slog.Warn("HTTP request failed", "route", group, "status", status, "duration_ms", elapsed.Milliseconds())
 		}
 	})
+}
+
+var ingestionRejectionReasons = map[int]string{
+	400: "invalid_body", 401: "invalid_credential", 403: "forbidden",
+	404: "unavailable", 413: "body_too_large", 415: "unsupported_encoding", 429: "unavailable",
+}
+
+func ingestionRejection(status int, reason string) string {
+	if reason != "" {
+		return reason
+	}
+	if status >= 500 {
+		return "unavailable"
+	}
+	return ingestionRejectionReasons[status]
 }
 
 func statusClass(status int) string {

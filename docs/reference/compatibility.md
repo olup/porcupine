@@ -54,6 +54,13 @@ See the [identity design](../data-and-identity.md#cookieless-by-default).
 
 ## Test coverage and limitations
 
-The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, and identified capture. Browser retry behavior, independent new-tab sessions, and beacon and XHR transports remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
+The matrix covers Node retry deduplication, a browser batch with gzip, persistent-ID and reset behavior, cookie-free browser capture, identified capture, and page-leave beacon delivery in Chromium. Browser retry behavior, independent new-tab sessions, and XHR transport remain outside the tested contract. Autocapture, feature flags, replay, surveys, group updates and general aliasing are outside the supported profile. Review the [compatibility matrix](../../compat/matrix.json) before changing your SDK configuration.
+
+With `capture_pageleave` and `request_batching` enabled, `posthog-js` sends
+`$pageleave` and pending events through `navigator.sendBeacon` on page exit.
+`/e/`, `/i/v0/e/`, `/capture/`, and `/batch/` accept this
+[base64 form encoding](native-and-segment-ingestion.md#base64-form-encoding).
+The browser reports whether it queued a beacon. To see server-side refusals,
+check [ingestion rejection metrics](observability.md#read-the-dashboard).
 
 For fixture provenance, test commands, and SDK upgrade checks, see [SDK compatibility tests](../design/sdk-compatibility-tests.md).

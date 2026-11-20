@@ -7,12 +7,15 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -447,11 +450,12 @@ func problem(w http.ResponseWriter, status int, message string) {
 
 const maxBodyBytes = 1 << 20
 
-func readBody(w http.ResponseWriter, r *http.Request, ingestion bool) ([]byte, bool) {
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
 	compression := r.URL.Query().Get("compression")
-	supportedEncoding := encoding == "" || encoding == "identity" || ingestion && encoding == "gzip"
-	if !supportedEncoding || ingestion && compression != "" && compression != "gzip-js" {
+	beacon := compression == "base64"
+	supportedEncoding := encoding == "" || encoding == "identity" || encoding == "gzip" && !beacon
+	if !supportedEncoding || compression != "" && compression != "gzip-js" && !beacon {
 		problem(w, 415, "unsupported body encoding")
 		return nil, false
 	}
@@ -464,26 +468,51 @@ func readBody(w http.ResponseWriter, r *http.Request, ingestion bool) ([]byte, b
 		problem(w, 400, "invalid body")
 		return nil, false
 	}
+	invalidBody, oversizedBody := "invalid gzip body", "decompressed body exceeds 1 MiB"
 	// posthog-js sends /e/ gzip bytes as text/plain without an encoding marker.
-	browserGzip := ingestion && r.URL.Path == "/e/" && encoding == "" &&
+	browserGzip := r.URL.Path == "/e/" && encoding == "" &&
 		strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]), "text/plain") &&
 		bytes.HasPrefix(raw, []byte{0x1f, 0x8b})
-	if ingestion && (encoding == "gzip" || compression == "gzip-js" || browserGzip) {
-		reader, err := gzip.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			problem(w, 400, "invalid gzip body")
+	if beacon {
+		media, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if mediaErr != nil || media != "application/x-www-form-urlencoded" {
+			problem(w, 415, "base64 bodies require application/x-www-form-urlencoded")
+			return nil, false
+		}
+		form, formErr := url.ParseQuery(string(raw))
+		data := form.Get("data")
+		if formErr != nil || data == "" {
+			problem(w, 400, "invalid base64 form: expected a nonempty data field")
+			return nil, false
+		}
+		for _, values := range form {
+			if len(values) > 1 {
+				problem(w, 400, "duplicate base64 form field")
+				return nil, false
+			}
+		}
+		codec := base64.RawStdEncoding
+		if strings.HasSuffix(data, "=") {
+			codec = base64.StdEncoding
+		}
+		raw, err = codec.DecodeString(data)
+		invalidBody, oversizedBody = "invalid base64 body", "decoded body exceeds 1 MiB"
+	} else if encoding == "gzip" || compression == "gzip-js" || browserGzip {
+		reader, gzipErr := gzip.NewReader(bytes.NewReader(raw))
+		if gzipErr != nil {
+			problem(w, 400, invalidBody)
 			return nil, false
 		}
 		defer reader.Close()
 		raw, err = io.ReadAll(io.LimitReader(reader, maxBodyBytes+1))
-		if len(raw) > maxBodyBytes {
-			problem(w, 413, "decompressed body exceeds 1 MiB")
-			return nil, false
-		}
-		if err != nil {
-			problem(w, 400, "invalid gzip body")
-			return nil, false
-		}
+	}
+	if len(raw) > maxBodyBytes {
+		problem(w, 413, oversizedBody)
+		return nil, false
+	}
+	if err != nil {
+		problem(w, 400, invalidBody)
+		return nil, false
 	}
 	return raw, true
 }
@@ -604,7 +633,7 @@ type ingestInput struct {
 }
 
 func (s *Service) capture(w http.ResponseWriter, r *http.Request) {
-	raw, ok := readBody(w, r, true)
+	raw, ok := readBody(w, r)
 	if !ok {
 		return
 	}
@@ -645,7 +674,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	nativeResponse := len(batch) > 0 && batch[0].ingestion != nil
 	for _, e := range batch {
 		if (e.ingestion != nil) != nativeResponse {
-			problem(w, 400, "mixed ingestion protocols")
+			ingestionProblem(w, "invalid_event", "mixed ingestion protocols")
 			return
 		}
 	}
@@ -659,7 +688,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		}
 		if exists {
 			if _, ok := propertyToken.(string); !ok {
-				problem(w, 400, "token must be a string")
+				ingestionProblem(w, "invalid_credential", "token must be a string")
 				return
 			}
 		}
@@ -667,7 +696,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		for _, candidate := range []string{e.APIKey, e.Token, propertyKey} {
 			if candidate != "" {
 				if rawKey != "" && rawKey != candidate {
-					problem(w, 400, "batch credentials must match")
+					ingestionProblem(w, "invalid_credential", "batch credentials must match")
 					return
 				}
 				rawKey = candidate
@@ -756,27 +785,28 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 		return
 	}
 	if len(batch) == 0 || len(batch) > maxCaptureEvents {
-		problem(w, 400, "batch must contain 1 to 1000 events")
+		ingestionProblem(w, "invalid_event", "batch must contain 1 to 1000 events")
 		return
 	}
 	receiptTime, releaseReceiptTime := s.pipelines.BeginReceipt(projectID)
 	defer releaseReceiptTime()
 	prepared, err := prepareLiveBatch(projectID, a.SourceID, batch, receiptTime)
 	if err != nil {
-		problem(w, 400, err.Error())
+		ingestionProblem(w, "invalid_event", err.Error())
 		return
 	}
 	peer := acceptance.Peer{UserAgent: r.UserAgent()}
 	if prepared.Cookieless {
 		peer.Address, err = s.clientIP(r)
 		if err != nil {
-			problem(w, 400, "invalid cookieless client address")
+			ingestionProblem(w, "invalid_event", "invalid cookieless client address")
 			return
 		}
 	}
 	if s.hosted != nil {
 		for _, input := range prepared.Events {
 			if err := lakeapi.ValidateLiveProjection(input.Event); err != nil {
+				markIngestionRejection(w, "invalid_event")
 				write(w, 400, map[string]string{"error": err.Error(), "code": "invalid_live_projection"})
 				return
 			}
