@@ -246,7 +246,13 @@ func (p *ProjectLake) ApplyChunk(ctx context.Context, projections []PreparedLake
  `); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if !p.shared {
+		p.maintenancePending.Store(true)
+	}
+	return nil
 }
 
 func (prepared PreparedLakeProjection) row() lakeProjectionRow {

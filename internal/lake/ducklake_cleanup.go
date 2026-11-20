@@ -97,6 +97,11 @@ func (p *ProjectLake) cleanupHistory(ctx context.Context, snapshotBefore, fileBe
 	}
 	defer p.maintenance.Unlock()
 	var stats DuckLakeMaintenanceStats
+	defer func() {
+		if !p.shared && (stats.RowsFlushed > 0 || stats.FilesProcessed > 0) {
+			p.maintenancePending.Store(true)
+		}
+	}()
 	// Partial files need rewriting even when fewer than 95% of their rows were
 	// deleted. One native compaction operation per table bounds each pass.
 	for _, statement := range []string{
