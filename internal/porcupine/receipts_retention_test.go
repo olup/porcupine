@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -37,11 +36,11 @@ func TestBoundedReceiptsFallBackToDuckLake(t *testing.T) {
 	if receipts() != 1 {
 		t.Fatal("projected event has no receipt")
 	}
-	if err := s.pruneReceipts(ctx); err != nil || receipts() != 1 {
+	if err := s.receipts.Prune(ctx, s.receiptRetention); err != nil || receipts() != 1 {
 		t.Fatal("receipt pruned inside the retention window", err)
 	}
 	now.Add((72 * time.Hour).Milliseconds())
-	if err := s.pruneReceipts(ctx); err != nil || receipts() != 0 {
+	if err := s.receipts.Prune(ctx, s.receiptRetention); err != nil || receipts() != 0 {
 		t.Fatal("expired receipt kept", err)
 	}
 	replay := nativeRequest(t, s, writer, body, 200)
@@ -64,42 +63,22 @@ func TestReceiptRetentionZeroKeepsReceiptsAndSkipsLookups(t *testing.T) {
 	s := duckLakeJourneyService(t)
 	s.receiptRetention = 0
 	_, writer := project(t, s)
-	nativeRequest(t, s, writer, `{"type":"track","message_id":"kept","name":"purchase","timestamp":"2020-01-01T00:00:00Z"}`, 200)
+	body := `{"type":"track","message_id":"kept","name":"purchase","timestamp":"2020-01-01T00:00:00Z"}`
+	original := nativeRequest(t, s, writer, body, 200)
 	duckLakeJourneyDrain(t, s)
-	if err := s.pruneReceipts(context.Background()); err != nil {
+	if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil {
 		t.Fatal(err)
 	}
 	var n int
 	if err := s.db.QueryRow(`SELECT count(*) FROM event_receipts`).Scan(&n); err != nil || n != 1 {
 		t.Fatal("retention 0 pruned a receipt", n, err)
 	}
-	known, err := s.eventRules.coldKnown(context.Background(), "any", []eventapi.Event{{UUID: "u", Timestamp: "2020-01-01T00:00:00Z"}})
-	if err != nil || known != nil {
-		t.Fatal("retention 0 looked up DuckLake", known, err)
+	s.receiptLookup = func(context.Context, string, []string) (map[string]int64, error) {
+		return nil, errors.New("unexpected lookup before first prune")
 	}
-}
-
-func TestColdKnownDoesNotTrustProducerTimestamps(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 11, 30, 0, 0, 0, 0, time.UTC)
-	var asked []string
-	rules := &eventRules{clock: func() time.Time { return now }, receiptRetention: 30 * 24 * time.Hour,
-		knownEvents: func(_ context.Context, _ string, uuids []string) (map[string]int64, error) {
-			asked = append(asked, uuids...)
-			return map[string]int64{}, nil
-		}}
-	events := []eventapi.Event{
-		{UUID: "recent", Timestamp: now.Add(-time.Hour).Format(time.RFC3339Nano)},
-		{UUID: "inside-window", Timestamp: now.Add(-20 * 24 * time.Hour).Format(time.RFC3339Nano)},
-		{UUID: "within-margin", Timestamp: now.Add(-25 * 24 * time.Hour).Format(time.RFC3339Nano)},
-		{UUID: "old", Timestamp: now.Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)},
-		{UUID: "unparsed", Timestamp: "not a time"},
-	}
-	if _, err := rules.coldKnown(context.Background(), "project", events); err != nil {
-		t.Fatal(err)
-	}
-	if len(asked) != len(events) {
-		t.Fatalf("looked up %v", asked)
+	replayed := nativeRequest(t, s, writer, body, 200)
+	if replayed["duplicates"] != float64(1) || receiptFrom(t, replayed, 0)["event_id"] != receiptFrom(t, original, 0)["event_id"] {
+		t.Fatal("retry did not use the permanent local receipt", replayed)
 	}
 }
 
@@ -135,7 +114,7 @@ func TestPrunedReceiptsKeepIDsAndIdentityAcrossRestart(t *testing.T) {
 	request(t, s, "DELETE", path+uuids["deleted"], manager, `{"expected_revision":"0","idempotency_key":"delete"}`, 202)
 	duckLakeJourneyDrain(t, s)
 	clock.Add((72 * time.Hour).Milliseconds())
-	if err := s.pruneReceipts(ctx); err != nil {
+	if err := s.receipts.Prune(ctx, s.receiptRetention); err != nil {
 		t.Fatal(err)
 	}
 	var receipts int
@@ -199,7 +178,7 @@ func TestReceiptPruningRequiresConfirmedAnalyticalHeads(t *testing.T) {
 	if err := tx.QueryRow("SELECT id FROM events WHERE uuid=?", r["uuid"]).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.recordReceipt(context.Background(), tx, projectID, r["uuid"].(string), id); err != nil {
+	if err := s.receipts.Record(context.Background(), tx, projectID, r["uuid"].(string), id); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -209,7 +188,7 @@ func TestReceiptPruningRequiresConfirmedAnalyticalHeads(t *testing.T) {
 	if _, err := s.db.Exec("UPDATE event_receipts SET recorded_at_ms=0 WHERE project_id=?", projectID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.pruneReceipts(context.Background()); err != nil {
+	if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil {
 		t.Fatal(err)
 	}
 	if receiptCount(t, s) != 1 {
@@ -219,7 +198,7 @@ func TestReceiptPruningRequiresConfirmedAnalyticalHeads(t *testing.T) {
 	if err := s.lake.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.pruneReceipts(context.Background()); err == nil {
+	if err := s.receipts.Prune(context.Background(), s.receiptRetention); err == nil {
 		t.Fatal("pruning accepted unavailable analytical history")
 	}
 	if receiptCount(t, s) != 1 {
@@ -234,7 +213,7 @@ func TestPrunedReceiptLookupFailureRollsBackWholeBatch(t *testing.T) {
 	if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES('receipts_pruned:' || ?,'1')", projectID); err != nil {
 		t.Fatal(err)
 	}
-	s.eventRules.knownEvents = func(context.Context, string, []string) (map[string]int64, error) {
+	s.receiptLookup = func(context.Context, string, []string) (map[string]int64, error) {
 		return nil, errors.New("unavailable")
 	}
 	nativeRequest(t, s, writer, `[{"type":"track","message_id":"a","name":"a"},{"type":"track","message_id":"b","name":"b"}]`, 503)
@@ -264,7 +243,7 @@ func TestHistoricalImportsDeduplicatePrunedReceiptsAndRetryUnavailableLake(t *te
 			}
 			duckLakeJourneyDrain(t, s)
 			clock.Add((72 * time.Hour).Milliseconds())
-			if err := s.pruneReceipts(context.Background()); err != nil {
+			if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil {
 				t.Fatal(err)
 			}
 			if receiptCount(t, s) != 0 {
@@ -326,7 +305,7 @@ func TestHistoricalPersonsDeduplicateAfterReceiptPruning(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.Add((72 * time.Hour).Milliseconds())
-	if err := s.pruneReceipts(context.Background()); err != nil {
+	if err := s.receipts.Prune(context.Background(), s.receiptRetention); err != nil {
 		t.Fatal(err)
 	}
 	if receiptCount(t, s) != 0 {

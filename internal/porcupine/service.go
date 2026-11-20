@@ -98,7 +98,8 @@ type Service struct {
 	trustedProxies        []netip.Prefix
 	geoIPCountry          func(netip.Addr) string
 	lake                  *lakeapi.DuckLakeStore
-	receiptLookup         func(context.Context, string, []string) (map[string]int64, error)
+	receiptLookup         acceptance.ReceiptLookup
+	receiptRetention      time.Duration
 	lakeMemoryMB          int
 	lakeMaintenanceCancel context.CancelFunc
 	lakeMaintenanceDone   chan struct{}
@@ -162,8 +163,8 @@ func newServiceRuntime(c Config, interactiveConfig query.InteractiveQueryConfig)
 	s := &Service{eventRules: &eventRules{
 		queueMax: c.QueueMaxEvents, queueMaxBytes: c.QueueMaxBytes,
 		queueProjectMaxEvents: c.QueueProjectMaxEvents, queueProjectMaxBytes: c.QueueProjectMaxBytes,
-		clock: c.Clock, receiptRetention: c.ReceiptRetention,
-	}, allowedOrigins: origins, trustedProxies: proxies,
+		clock: c.Clock,
+	}, receiptRetention: c.ReceiptRetention, allowedOrigins: origins, trustedProxies: proxies,
 		oauth: oauth, resources: resources, geoIPCountry: geoIPCountry}
 	var registry *observability.Registry
 	if c.MetricsEnabled {
@@ -270,7 +271,7 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	}
 	s.db, s.control, s.backups = db, control, backups
 	s.queries.Bind(control, "", 0)
-	s.eventRules.knownEvents = s.knownEventsForAcceptance
+	s.eventRules.receipts = acceptance.NewSQLiteReceipts(db, &s.localAdmission, func() time.Time { return s.clock() }, s.receiptHistory)
 	durable := &durableAcceptance{db: db, rules: s.eventRules, wakeDelivery: s.wakeDelivery}
 	s.acceptance = durable
 	s.imports = &importManager{db: db, control: control, rules: s.eventRules, deliveryEnabled: c.DuckLake != nil, wakeDelivery: s.wakeDelivery}
@@ -346,7 +347,6 @@ func open(c Config, buffer acceptance.BufferConfig) (*Service, error) {
 	if err := s.bindLocalControl(context.Background()); err != nil {
 		return fail(err)
 	}
-	s.eventRules.admission = &s.localAdmission
 	s.eventRules.prepareAcceptance = s.prepareLocalAcceptance
 	if c.DuckLake != nil {
 		if err := s.initializeDuckLake(*c.DuckLake); err != nil {

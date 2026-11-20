@@ -55,7 +55,7 @@ func (s *Service) startLakeMaintenance(interval time.Duration, maintain func(con
 				}
 				if time.Since(lastPrune) >= time.Hour {
 					lastPrune = time.Now()
-					if pruneErr := s.pruneReceipts(ctx); pruneErr != nil && err == nil {
+					if pruneErr := s.receipts.Prune(ctx, s.receiptRetention); pruneErr != nil && err == nil {
 						err = pruneErr
 					}
 				}

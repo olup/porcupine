@@ -7,9 +7,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
-	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/importer"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -42,29 +42,19 @@ func (m *importManager) commitImportChunk(ctx context.Context, project, jobID st
 
 	ctx, cancelCommit := context.WithTimeout(ctx, importChunkCommitTimeout)
 	defer cancelCommit()
-	release, err := m.rules.receiptGates.lock(ctx, project)
+	uuids := make([]string, 0, len(work.rows))
+	for _, row := range work.rows {
+		// Person snapshots also have stable producer UUIDs.
+		uuids = append(uuids, row.Event.UUID)
+	}
+	known, release, err := m.rules.receipts.BeginAdmission(ctx, project, uuids)
+	if errors.Is(err, acceptance.ErrReceiptLookup) {
+		return apierr.New(503, "import storage unavailable; retry the same chunk")
+	}
 	if err != nil {
 		return err
 	}
 	defer release()
-	events := make([]eventapi.Event, 0, len(work.rows))
-	for _, row := range work.rows {
-		// Person snapshots have stable producer UUIDs too. Their receipts must
-		// participate in the same cold deduplication as ordinary events.
-		events = append(events, row.Event)
-	}
-	lookup, cancel := context.WithTimeout(ctx, receiptLookupTimeout)
-	known, err := m.rules.coldKnown(lookup, project, events)
-	cancel()
-	if err != nil {
-		return apierr.New(503, "import storage unavailable; retry the same chunk")
-	}
-	if m.rules.admission != nil {
-		if err := m.rules.admission.Lock(ctx); err != nil {
-			return err
-		}
-		defer m.rules.admission.Unlock()
-	}
 	if m.rules.prepareAcceptance != nil {
 		if err := m.rules.prepareAcceptance(ctx, project); err != nil {
 			return apierr.New(503, "ingestion policy unavailable; retry the same chunk")

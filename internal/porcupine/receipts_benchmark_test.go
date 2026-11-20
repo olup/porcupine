@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
 
@@ -17,7 +16,7 @@ import (
 //
 // CGO_ENABLED=1 go test ./internal/porcupine -run '^$' -bench '^BenchmarkReceiptFreshIDLookup$' -benchtime=10x -benchmem -count=3 -timeout=300s
 //
-// This measures only the real coldKnown admission lookup for fresh producer IDs.
+// This measures receipt admission preflight for fresh producer IDs.
 // It excludes HTTP decoding, authorization, SQLite acceptance/ACK, identity,
 // projection, pruning, extension loading, and fixture setup. The same IDs are
 // looked up repeatedly without inserting them. Both stages use a warm local
@@ -33,31 +32,38 @@ func BenchmarkReceiptFreshIDLookup(b *testing.B) {
 				if stage == "pruned" {
 					// Exactly one old receipt is eligible. The actual prune operation
 					// verifies its lake head and sets the durable marker atomically.
-					pruned, err := s.pruneReceiptBatch(ctx)
-					if err != nil || pruned != 1 {
-						b.Fatalf("prune one receipt: count=%d error=%v", pruned, err)
+					if err := s.receipts.Prune(ctx, s.receiptRetention); err != nil {
+						b.Fatal(err)
+					}
+					var remaining int
+					if err := s.db.QueryRow("SELECT count(*) FROM event_receipts").Scan(&remaining); err != nil || remaining != history-1 {
+						b.Fatalf("prune one receipt: remaining=%d error=%v", remaining, err)
 					}
 				}
 				b.Run(stage, func(b *testing.B) {
 					for _, batchSize := range []int{1, 100, 1000} {
 						b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
 							b.StopTimer()
-							events := make([]eventapi.Event, batchSize)
-							for i := range events {
-								events[i].UUID = receiptLookupBenchmarkUUID("fresh", i)
+							uuids := make([]string, batchSize)
+							for i := range uuids {
+								uuids[i] = receiptLookupBenchmarkUUID("fresh", i)
 							}
-							// Warm the exact lookup, including its local pruning-marker
-							// read, before measuring it. Fresh UUIDs must all miss.
-							if known, err := s.eventRules.coldKnown(ctx, project, events); err != nil || len(known) != 0 {
-								b.Fatalf("warm fresh-ID lookup: known=%d error=%v", len(known), err)
+							lookup := func() {
+								known, release, err := s.receipts.BeginAdmission(ctx, project, uuids)
+								if err != nil {
+									b.Fatal(err)
+								}
+								release()
+								if len(known) != 0 {
+									b.Fatalf("fresh-ID lookup found %d known IDs", len(known))
+								}
 							}
+							lookup()
 							b.ReportAllocs()
 							b.ResetTimer()
 							b.StartTimer()
 							for range b.N {
-								if known, err := s.eventRules.coldKnown(ctx, project, events); err != nil || len(known) != 0 {
-									b.Fatalf("fresh-ID lookup: known=%d error=%v", len(known), err)
-								}
+								lookup()
 							}
 							b.StopTimer()
 							b.ReportMetric(float64(batchSize), "ids/op")
