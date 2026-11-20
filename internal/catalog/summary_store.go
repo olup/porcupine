@@ -1,4 +1,4 @@
-package porcupine
+package catalog
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/olup/porcupine/internal/acceptance"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 )
@@ -18,14 +19,11 @@ const (
 	catalogSummaryMaxRows  = 20000
 )
 
-var (
-	errCatalogRefreshClaimLost = errors.New("event catalog refresh claim lost")
-	errCatalogProjectFenced    = errHostedProjectFenced
-)
+var errCatalogRefreshClaimLost = errors.New("event catalog refresh claim lost")
 
 type catalogSummaryStore struct {
-	db     *sql.DB
-	hosted bool
+	db                *sql.DB
+	lockHostedProject func(context.Context, *sql.Tx, string) error
 }
 
 type catalogSummaryState struct {
@@ -134,14 +132,13 @@ FROM state LEFT JOIN page ON 1=1 ORDER BY page.last_id DESC,page.event_name`, in
 }
 
 func (s catalogSummaryStore) lockActiveProject(ctx context.Context, tx *sql.Tx, project string) error {
-	if s.hosted {
-		_, err := lockActiveHostedProject(ctx, tx, project)
-		return err
+	if s.lockHostedProject != nil {
+		return s.lockHostedProject(ctx, tx, project)
 	}
 	var active bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND `+catalogProjectActive+`)`, project).Scan(&active)
 	if err == nil && !active {
-		return errCatalogProjectFenced
+		return acceptance.ErrProjectFenced
 	}
 	return err
 }
@@ -175,7 +172,7 @@ FROM catalog_refresh_state WHERE project_id=$1`, project), now)
 func (s catalogSummaryStore) claim(ctx context.Context, now time.Time, lease time.Duration) (catalogRefreshClaim, error) {
 	claim := catalogRefreshClaim{token: eventapi.NewID()}
 	lock := ""
-	if s.hosted {
+	if s.lockHostedProject != nil {
 		lock = " FOR UPDATE OF c SKIP LOCKED"
 	}
 	err := s.db.QueryRowContext(ctx, `WITH due AS (

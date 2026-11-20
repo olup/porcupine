@@ -273,7 +273,7 @@ func (s *Service) awaitHostedNativeReturn(grace time.Duration) error {
 		maintenance = s.hosted.maintenance.done
 	}
 	if s.eventCatalogRefresh != nil {
-		catalog = s.eventCatalogRefresh.done
+		catalog = s.eventCatalogRefresh.Done()
 	}
 	deadline := time.NewTimer(grace)
 	defer deadline.Stop()
@@ -336,7 +336,7 @@ func (s *Service) initializeHostedUsage(ctx context.Context, c *usage.Config) er
 func (s *Service) BeginDrain() {
 	s.queries.Drain()
 	if s.eventCatalogRefresh != nil {
-		s.eventCatalogRefresh.stop()
+		s.eventCatalogRefresh.Stop()
 	}
 	if s.hosted != nil && s.hosted.maintenance != nil {
 		s.hosted.maintenance.stop()

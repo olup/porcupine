@@ -2,13 +2,16 @@ package porcupine
 
 import (
 	"context"
+	"database/sql"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/catalog"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/query"
 )
@@ -65,6 +68,132 @@ func TestSharedHostedCloseDrainsBufferBeforeStuckAnalytics(t *testing.T) {
 	}
 	if _, err := buffer.Accept(t.Context(), testBufferBatch(t, "project", 1), acceptance.Peer{}, false); err == nil {
 		t.Fatal("closed worker admitted new events")
+	}
+}
+
+func TestSharedHostedCloseDrainsBufferBeforeWaitingForCatalogRefresh(t *testing.T) {
+	t.Parallel()
+	_, s, _ := sharedQueryTestFixture(t)
+	store, err := lakeapi.NewDuckLake(lakeapi.DuckLakeConfig{
+		Directory: filepath.Join(t.TempDir(), "lake"), MemoryLimitMB: 64, Threads: 1, MaxOpenProjects: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	s.lake = store
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, release, err := store.LeaseProject(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := s.control.ExecContext(ctx, `INSERT INTO catalog_refresh_state(project_id,eligible_at_ms) VALUES('a',0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshEntered := make(chan context.Context, 1)
+	releaseRefresh, resumeRefresh := context.WithCancel(t.Context())
+	defer resumeRefresh()
+	held := false
+	refresh := catalog.Start(s.control, store, s.queries, time.Now, func(ctx context.Context, tx *sql.Tx, project string) error {
+		// The background refresh has finished its native read and still owns
+		// its publication transaction. Simulate a callback slow to return.
+		if !held {
+			held = true
+			refreshEntered <- ctx
+			<-releaseRefresh.Done()
+		}
+		return lockHostedCatalogProject(ctx, tx, project)
+	})
+	s.eventCatalogRefresh = refresh
+	t.Cleanup(func() {
+		refresh.Stop()
+		<-refresh.Done()
+	})
+	var publication context.Context
+	select {
+	case publication = <-refreshEntered:
+	case <-ctx.Done():
+		t.Fatal("catalog refresh did not reach publication", ctx.Err())
+	}
+
+	lifetime, stopBuffer := context.WithCancel(context.Background())
+	defer stopBuffer()
+	releaseFlush, resumeFlush := context.WithCancel(t.Context())
+	defer resumeFlush()
+	flushStarted := make(chan struct{})
+	flushed := make(chan time.Time, 1)
+	buffer, err := acceptance.NewBuffer(lifetime, testBufferConfig(), func(_ context.Context, batch acceptance.FlushBatch) error {
+		close(flushStarted)
+		<-releaseFlush.Done()
+		if batch.ProjectID != "a" || len(batch.Events) != 1 {
+			t.Error("drain flushed the wrong batch", batch.ProjectID, len(batch.Events))
+		}
+		flushed <- time.Now()
+		return nil
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = buffer.Accept(ctx, testBufferBatch(t, "a", 1), acceptance.Peer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	const grace = 100 * time.Millisecond
+	s.hosted = &hostedRuntime{buffer: buffer, stopBuffer: stopBuffer, nativeGrace: grace}
+	type closeResult struct {
+		err error
+		at  time.Time
+	}
+	closed := make(chan closeResult, 1)
+	go func() {
+		err := s.Close()
+		closed <- closeResult{err: err, at: time.Now()}
+	}()
+	select {
+	case <-flushStarted:
+	case got := <-closed:
+		t.Fatal("close returned before draining accepted events", got.err)
+	case <-ctx.Done():
+		t.Fatal("in-flight catalog refresh prevented the ingest drain from starting")
+	}
+	select {
+	case <-publication.Done():
+	default:
+		t.Fatal("drain did not cancel the active catalog refresh")
+	}
+	select {
+	case <-refresh.Done():
+		t.Fatal("catalog refresh reported completion while publication was held")
+	case <-time.After(2 * grace):
+	}
+	resumeFlush()
+	var got closeResult
+	select {
+	case got = <-closed:
+	case <-ctx.Done():
+		t.Fatal("close did not bound the wait for the catalog refresh")
+	}
+	select {
+	case at := <-flushed:
+		if got.at.Sub(at) < grace {
+			t.Fatal("close spent the catalog return grace before the ingest drain finished")
+		}
+	default:
+		t.Fatal("close returned before the ingest drain finished")
+	}
+	if got.err == nil || !strings.Contains(got.err.Error(), "hosted catalog refresh is still running") {
+		t.Fatal("close hid the catalog refresh that is still running", got.err)
+	}
+	if snapshot := buffer.Snapshot(); snapshot.Events != 0 || !snapshot.Stopped {
+		t.Fatal("buffer retained events after close", snapshot)
+	}
+	resumeRefresh()
+	select {
+	case <-refresh.Done():
+	case <-ctx.Done():
+		t.Fatal("catalog refresh did not return after publication resumed")
 	}
 }
 

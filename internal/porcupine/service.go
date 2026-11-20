@@ -28,6 +28,7 @@ import (
 	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/auth"
+	"github.com/olup/porcupine/internal/catalog"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/observability"
@@ -83,7 +84,7 @@ type Service struct {
 	backups                     *nativeBackupRuntime
 	activity                    projectActivity
 	catalogMu                   sync.RWMutex
-	eventCatalogRefresh         *catalogRefresh
+	eventCatalogRefresh         *catalog.Refresher
 	deletionMu                  syncx.ContextMutex
 	deletionCancel              context.CancelFunc
 	deletionDone                chan struct{}
@@ -397,8 +398,8 @@ func (s *Service) Close() error {
 		return s.closeHosted()
 	}
 	if s.eventCatalogRefresh != nil {
-		s.eventCatalogRefresh.stop()
-		<-s.eventCatalogRefresh.done
+		s.eventCatalogRefresh.Stop()
+		<-s.eventCatalogRefresh.Done()
 	}
 	if m := s.metrics; m != nil && m.stopSampling != nil {
 		m.stopSampling()
