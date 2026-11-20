@@ -173,13 +173,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        id: setup-go
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            Makefile
-            internal/cmd/shared-postgres-integration/main.go
+          cache: false
+      - name: Locate Go caches
+        id: go-cache
+        env:
+          GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+        run: |
+          {
+            echo "prefix=shared-go-${RUNNER_ARCH}-${ImageOS}-${GO_VERSION}-"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "build=$(go env GOCACHE)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.modules }}
+            ${{ steps.go-cache.outputs.build }}
+          key: ${{ steps.go-cache.outputs.prefix }}${{ hashFiles('go.sum', 'Makefile', 'internal/cmd/shared-postgres-integration/main.go') }}
+          # Go recompiles changed inputs and reuses compatible compiled packages.
+          restore-keys: ${{ steps.go-cache.outputs.prefix }}
       - uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: ${{ runner.temp }}/porcupine-test-postgres
