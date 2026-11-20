@@ -17,26 +17,14 @@ import (
 )
 
 type frozenWebhookTarget struct {
-	PipelineID          string               `json:"pipeline_id"`
-	PipelineIncarnation string               `json:"pipeline_incarnation"`
-	RuleRevision        string               `json:"rule_revision"`
-	DestinationRevision string               `json:"destination_revision"`
-	Rule                delivery.WebhookRule `json:"rule"`
-	cutoff              time.Time
+	output.FrozenWebhookTarget
+	cutoff time.Time
 }
 type frozenLiveOutputPlan struct {
 	Scope              lakeapi.HostedProjectScope `json:"scope"`
 	TenantID           string                     `json:"tenant_id"`
 	Targets            []frozenWebhookTarget      `json:"targets"`
 	MaxEventReferences int64                      `json:"max_event_references"`
-}
-type immutableWebhookFragment struct {
-	FragmentID                 string                     `json:"fragment_id"`
-	Target                     frozenWebhookTarget        `json:"target"`
-	EventUUIDs                 []string                   `json:"event_uuids"`
-	EventBytes                 []int64                    `json:"event_bytes"`
-	Body                       lakeapi.ImmutableObjectRef `json:"body"`
-	WindowStartMS, WindowEndMS int64
 }
 
 // The stager builds output metadata and bodies from the frozen routing plan.

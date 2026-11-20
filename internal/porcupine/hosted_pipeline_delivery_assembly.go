@@ -2,13 +2,9 @@ package porcupine
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 
-	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
 	"github.com/olup/porcupine/internal/output"
@@ -124,7 +120,7 @@ func (w *hostedPipelineDelivery) assembleUnderFence(ctx context.Context, session
 	if err != nil || !registered {
 		return false, err
 	}
-	r, err := w.stageAssembly(ctx, scope, a)
+	r, err := output.StageWebhookAssembly(ctx, p.objects, scope, a)
 	if err != nil {
 		return false, err
 	}
@@ -154,7 +150,7 @@ func (w *hostedPipelineDelivery) prepareAssembly(ctx context.Context, scope lake
 	if err != nil {
 		return a, err
 	}
-	fragments, err := p.effects.AssemblyFragments(ctx, p.control, first, hostedAssemblyMaxReadBytes)
+	fragments, err := p.effects.AssemblyFragments(ctx, p.control, first)
 	if err != nil {
 		return a, err
 	}
@@ -180,133 +176,4 @@ func (w *hostedPipelineDelivery) prepareAssembly(ctx context.Context, scope lake
 	a.ArtifactLimit += min(lakeapi.MaxImmutableEffectObjectBytes, upperBound)
 
 	return a, nil
-}
-
-func (w *hostedPipelineDelivery) stageAssembly(ctx context.Context, scope lakeapi.HostedProjectScope, a output.PipelineAssembly) (output.PipelineAssemblyResult, error) {
-	f := w.flusher
-	anchor := a.Inputs[0].Fragment
-	if anchor.Recompose {
-		return w.recomposeAssembly(ctx, scope, a)
-	}
-	target := frozenWebhookTarget{PipelineID: anchor.Target.ID, PipelineIncarnation: anchor.Target.Incarnation, RuleRevision: anchor.Target.RuleRevision, DestinationRevision: anchor.Target.DestinationRevision, Rule: anchor.Spec.Rule}
-	claim := frozenWebhookAssemblyClaim{
-		Scope: scope, TenantID: a.TenantID, Target: target, WindowStartMS: anchor.Spec.WindowStartMS, WindowEndMS: anchor.Spec.WindowEndMS,
-		Generation: a.Generation, AttemptID: a.Attempt, MaxFragments: hostedAssemblyMaxFragments, MaxReadBytes: hostedAssemblyMaxReadBytes, MaxBodyBytes: lakeapi.MaxImmutableEffectObjectBytes,
-	}
-	for _, in := range a.Inputs {
-		if len(in.Eligible) == 0 {
-			continue
-		}
-		fragment := in.Fragment
-		converted := hostedAssemblyFragment{
-			Position: hostedFragmentPosition{Scope: scope, CommitSequence: fragment.Sequence, FragmentID: fragment.Claim.ID, NextMember: fragment.Next},
-			Fragment: immutableWebhookFragment{FragmentID: fragment.Claim.ID, Target: target, WindowStartMS: fragment.Spec.WindowStartMS, WindowEndMS: fragment.Spec.WindowEndMS, Body: nativeRef(fragment.Body)},
-			Members:  in.Eligible,
-		}
-		for _, member := range fragment.Members {
-			converted.Fragment.EventUUIDs = append(converted.Fragment.EventUUIDs, member.UUID)
-			converted.Fragment.EventBytes = append(converted.Fragment.EventBytes, member.Bytes)
-		}
-		claim.Fragments = append(claim.Fragments, converted)
-	}
-	var r output.PipelineAssemblyResult
-	if len(claim.Fragments) > 0 {
-		var err error
-		claim.MembershipFingerprint, err = hostedAssemblyFingerprint(claim.Fragments)
-		if err != nil {
-			return r, err
-		}
-		staged, err := assembleHostedWebhook(ctx, f.publisher.objects, claim)
-		if err != nil {
-			return r, err
-		}
-		for _, ref := range []lakeapi.ImmutableObjectRef{staged.Body, staged.Manifest} {
-			if _, err := f.publisher.objects.ReadImmutableEffectObject(ctx, scope, ref); err != nil {
-				return r, err
-			}
-		}
-		r.ID, r.Body, r.Manifest, r.Count = staged.DeliveryID, pipelineRef(staged.Body), pipelineRef(staged.Manifest), staged.EventCount
-	}
-	return r, nil
-}
-
-func (w *hostedPipelineDelivery) recomposeAssembly(ctx context.Context, scope lakeapi.HostedProjectScope, a output.PipelineAssembly) (output.PipelineAssemblyResult, error) {
-	in := a.Inputs[0]
-	f := in.Fragment
-	var r output.PipelineAssemblyResult
-	if len(in.Eligible) == 0 {
-		return r, nil
-	}
-	objects := w.flusher.publisher.objects
-	body, err := objects.ReadImmutableEffectObject(ctx, scope, nativeRef(f.Body))
-	if err != nil {
-		return r, err
-	}
-	var original delivery.WebhookPayload
-	if err := decodeHostedJSON(body, &original); err != nil {
-		return r, err
-	}
-	if original.Event != nil || original.DeliveryID != f.Claim.ID || original.PipelineID != f.Target.ID || original.ProjectID != scope.Key.ProjectID ||
-		original.WindowStartMS == nil || original.WindowEndMS == nil || *original.WindowStartMS != f.Spec.WindowStartMS || *original.WindowEndMS != f.Spec.WindowEndMS || len(original.Events) != f.Count {
-		return r, output.ErrPipelineConflict
-	}
-	for i, event := range original.Events {
-		if event.UUID != f.Members[i].UUID || event.ProjectID != scope.Key.ProjectID {
-			return r, output.ErrPipelineConflict
-		}
-	}
-	identity, err := json.Marshal(struct {
-		Scope             lakeapi.HostedProjectScope
-		Prior, Generation string
-		Positions         []int
-	}{scope, f.Claim.ID, a.Generation, in.Eligible})
-	if err != nil {
-		return r, err
-	}
-	r.ID = f.Claim.ID
-	if f.Frozen {
-		r.ID = fmt.Sprintf("pc_hook_%x", sha256.Sum256(identity))
-	}
-	prefix, err := delivery.WebhookBatchPrefix(r.ID, f.Target.ID, scope.Key.ProjectID, *original.WindowStartMS, *original.WindowEndMS)
-	if err != nil {
-		return r, err
-	}
-	var events [][]byte
-	for _, i := range in.Eligible {
-		b, err := delivery.EncodeJSON(original.Events[i])
-		if err != nil {
-			return r, err
-		}
-		if int64(len(b)) != f.Members[i].Bytes {
-			return r, output.ErrPipelineConflict
-		}
-		events = append(events, b)
-	}
-	recomposed, err := delivery.EncodeWebhookBatch(prefix, events, lakeapi.MaxImmutableEffectObjectBytes)
-	if err != nil {
-		return r, err
-	}
-	newBody, err := objects.PutImmutableEffectObject(ctx, scope, a.Attempt, recomposed)
-	if err != nil {
-		return r, err
-	}
-	manifest, err := json.Marshal(struct {
-		ID          string
-		Prior, Body lakeapi.ImmutableObjectRef
-		Positions   []int
-	}{r.ID, nativeRef(f.Body), newBody, in.Eligible})
-	if err != nil {
-		return r, err
-	}
-	newManifest, err := objects.PutImmutableEffectObject(ctx, scope, a.Attempt, manifest)
-	if err != nil {
-		return r, err
-	}
-	for _, ref := range []lakeapi.ImmutableObjectRef{newBody, newManifest} {
-		if _, err := objects.ReadImmutableEffectObject(ctx, scope, ref); err != nil {
-			return r, err
-		}
-	}
-	r.Body, r.Manifest, r.Count = pipelineRef(newBody), pipelineRef(newManifest), len(events)
-	return r, nil
 }

@@ -22,7 +22,7 @@ func TestHostedOutputPlanUsesWebhookContract(t *testing.T) {
 			if mode == "batch" {
 				spec.IntervalSeconds = 60
 			}
-			target := frozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: spec.DeliveryMode, IntervalSeconds: spec.IntervalSeconds, IncludeEvents: spec.IncludeEvents}}
+			target := frozenWebhookTarget{FrozenWebhookTarget: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: spec.DeliveryMode, IntervalSeconds: spec.IntervalSeconds, IncludeEvents: spec.IncludeEvents}}}
 			plan := frozenLiveOutputPlan{Scope: scope, TenantID: "tenant", Targets: []frozenWebhookTarget{target}, MaxEventReferences: 10}
 			stager, err := newHostedImmutableEffects(&lakeapi.DuckLakeObjectStore{}, fence, plan)
 			if err != nil {
@@ -34,7 +34,7 @@ func TestHostedOutputPlanUsesWebhookContract(t *testing.T) {
 			}
 		})
 	}
-	invalid := frozenLiveOutputPlan{Scope: scope, TenantID: "tenant", Targets: []frozenWebhookTarget{{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule", DestinationRevision: "destination", Rule: delivery.WebhookRule{DeliveryMode: "single"}}}, MaxEventReferences: 10}
+	invalid := frozenLiveOutputPlan{Scope: scope, TenantID: "tenant", Targets: []frozenWebhookTarget{{FrozenWebhookTarget: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule", DestinationRevision: "destination", Rule: delivery.WebhookRule{DeliveryMode: "single"}}}}, MaxEventReferences: 10}
 	if _, err := newHostedImmutableEffects(&lakeapi.DuckLakeObjectStore{}, fence, invalid); err == nil {
 		t.Fatal("non-contract delivery mode accepted")
 	}

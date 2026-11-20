@@ -14,16 +14,16 @@ func TestDuckLakeS3HostedWebhookRecomposition(t *testing.T) {
 	fixture := nativeS3Fixture(t)
 	h := newAssemblyS3Harness(t, fixture.storage)
 	events := assemblyEvents(3)
-	claim := h.claim(t, h.stage(t, events))
-	original, err := assembleHostedWebhook(t.Context(), h.objects, claim)
+	claim := h.claim(h.stage(t, events))
+	original, err := output.StageWebhookAssembly(t.Context(), h.objects, h.scope, claim)
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := output.PipelineFragment{
-		Claim:  output.PipelineClaim{ID: original.DeliveryID},
+		Claim:  output.PipelineClaim{ID: original.ID},
 		Target: output.PipelineTarget{ID: h.target.PipelineID},
-		Body:   pipelineRef(original.Body),
-		Spec:   output.PipelineFragmentSpec{WindowStartMS: claim.WindowStartMS, WindowEndMS: claim.WindowEndMS, Rule: h.target.Rule},
+		Body:   original.Body,
+		Spec:   claim.Inputs[0].Fragment.Spec,
 		Count:  3, Recompose: true, Frozen: true,
 	}
 	for _, event := range events {
@@ -33,13 +33,12 @@ func TestDuckLakeS3HostedWebhookRecomposition(t *testing.T) {
 		}
 		previous.Members = append(previous.Members, output.PipelineMember{UUID: event.UUID, Bytes: int64(len(raw))})
 	}
-	input := output.PipelineAssembly{Generation: eventapi.NewID(), Attempt: eventapi.NewID(), Inputs: []output.PipelineAssemblyInput{{Fragment: previous, Eligible: []int{0, 2}}}}
-	w := hostedPipelineDelivery{flusher: &hostedLiveFlusher{publisher: &hostedEffectPublisher{objects: h.objects}}}
-	got, err := w.recomposeAssembly(t.Context(), h.scope, input)
-	if err != nil || got.ID == original.DeliveryID || got.Count != 2 {
+	input := h.claim([]output.PipelineAssemblyInput{{Fragment: previous, Eligible: []int{0, 2}}})
+	got, err := output.StageWebhookAssembly(t.Context(), h.objects, h.scope, input)
+	if err != nil || got.ID == original.ID || got.Count != 2 {
 		t.Fatal(got, err)
 	}
-	retry, err := w.recomposeAssembly(t.Context(), h.scope, input)
+	retry, err := output.StageWebhookAssembly(t.Context(), h.objects, h.scope, input)
 	if err != nil || !reflect.DeepEqual(got, retry) {
 		t.Fatal(got, retry, err)
 	}
@@ -54,13 +53,13 @@ func TestDuckLakeS3HostedWebhookRecomposition(t *testing.T) {
 	if body.DeliveryID != got.ID || !reflect.DeepEqual(body.Events, []eventapi.Event{events[0], events[2]}) {
 		t.Fatal(body)
 	}
-	if !reflect.DeepEqual(h.readResult(t, original).Events, events) {
+	if !reflect.DeepEqual(h.readResult(t, original).payload.Events, events) {
 		t.Fatal("removed member changed the immutable original")
 	}
 	input.Generation, input.Attempt = eventapi.NewID(), eventapi.NewID()
 	input.Inputs[0].Fragment.Frozen = false
-	unfrozen, err := w.recomposeAssembly(t.Context(), h.scope, input)
-	if err != nil || unfrozen.ID != original.DeliveryID || unfrozen.Body.SHA256 == original.Body.SHA256 || unfrozen.Count != 2 {
+	unfrozen, err := output.StageWebhookAssembly(t.Context(), h.objects, h.scope, input)
+	if err != nil || unfrozen.ID != original.ID || unfrozen.Body.SHA256 == original.Body.SHA256 || unfrozen.Count != 2 {
 		t.Fatal(unfrozen, err)
 	}
 }
