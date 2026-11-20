@@ -106,7 +106,8 @@ func (r *catalogRefresh) refreshOne(ctx context.Context) bool {
 		// The job context can be expired while the control store remains healthy.
 		record, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer stop()
-		if err := r.store.fail(record, claim, r.clock()); err != nil &&
+		discard := errors.Is(err, lake.ErrCatalogSummaryTooLarge)
+		if err := r.store.fail(record, claim, r.clock(), discard); err != nil &&
 			!errors.Is(err, errCatalogRefreshClaimLost) && !errors.Is(err, errCatalogProjectFenced) {
 			slog.Warn("event catalog refresh retry could not be recorded")
 		}
