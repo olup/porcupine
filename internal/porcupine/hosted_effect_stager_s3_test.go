@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -43,36 +44,61 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 	selected := lakeapi.SelectedLiveEffects{Scope: scope, TenantID: "tenant", BatchID: "batch", Sequence: 1, Events: []eventapi.Event{ordinary, excluded, second}}
 	for _, mode := range []string{"event", "batch"} {
 		t.Run(mode, func(t *testing.T) {
-			target := frozenWebhookTarget{FrozenWebhookTarget: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}}}
+			target := output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "incarnation", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: mode, IncludeEvents: []string{"page_viewed"}}}
 			if mode == "batch" {
 				target.Rule.IntervalSeconds = 60
 			}
-			plan := frozenLiveOutputPlan{Scope: scope, TenantID: selected.TenantID, Targets: []frozenWebhookTarget{target}, MaxEventReferences: 10}
-			stager, err := newHostedImmutableEffects(store.Remote, fence, plan)
+			plan := output.HostedWebhookPlan{Scope: scope, TenantID: selected.TenantID, Targets: []output.FrozenWebhookTarget{target}, MaxEventReferences: 10}
+			stager, err := output.NewHostedWebhookPreparation(store.Remote, fence, plan)
 			if err != nil {
 				t.Fatal(err)
 			}
-			prepared, err := stager.prepare(ctx, selected)
+			prepared, objects, err := stager.Prepare(selected)
 			expected := 2
 			if mode == "batch" {
 				expected = 1
 			}
-			if err != nil || len(prepared) != expected {
+			if err != nil || len(prepared) != expected || len(objects) != expected {
 				t.Fatal(prepared, err)
 			}
-			replay, err := stager.prepare(ctx, selected)
-			if err != nil || !reflect.DeepEqual(replay, prepared) {
+			replay, replayObjects, err := stager.Prepare(selected)
+			if err != nil || !reflect.DeepEqual(replay, prepared) || !reflect.DeepEqual(replayObjects, objects) {
 				t.Fatal("immutable restaging changed references", replay, prepared, err)
 			}
+			list, err := fixture.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &fixture.storage.Bucket, Prefix: &objects[0].Ref.Key})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list.Contents) != 0 {
+				t.Fatal("preparation wrote an object before upload")
+			}
 			members := []string{}
-			for _, o := range prepared {
+			for i, o := range prepared {
+				if o.Body != pipelineRef(objects[i].Ref) {
+					t.Fatal("prepared metadata differs from the body descriptor", o.Body, objects[i].Ref)
+				}
+				ref := uploadPreparedWebhookBody(t, store.Remote, scope, fence, objects[i])
+				replayed := uploadPreparedWebhookBody(t, store.Remote, scope, fence, replayObjects[i])
+				if ref != replayed {
+					t.Fatal("retry changed the stored object reference", ref, replayed)
+				}
+				prepared[i].Body = pipelineRef(ref)
 				if o.Incarnation != "incarnation" || o.DestinationRevision != "destination-v1" {
 					t.Fatal("routing revision changed", o)
 				}
+				var queued int64
 				for _, m := range o.Members {
 					members = append(members, m.UUID)
+					queued += m.Bytes + 1024
 				}
-				body, err := store.Remote.ReadImmutableEffectObject(ctx, scope, nativeRef(o.Body))
+				charge := output.PipelineDemand{References: int64(len(o.Members)), QueuedBytes: ref.Bytes, MetadataRows: int64(1 + len(o.Members)), ArtifactBytes: ref.Bytes}
+				if mode == "batch" {
+					charge.QueuedBytes = max(queued, ref.Bytes)
+				}
+				if o.Charge != charge {
+					t.Fatal("webhook charge differs from the uploaded body and member metadata", o.Charge, charge)
+				}
+				body, err := store.Remote.ReadImmutableEffectObject(ctx, scope, ref)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -112,18 +138,32 @@ func TestDuckLakeS3HostedImmutableEffects(t *testing.T) {
 			private := selected
 			private.Events = append([]eventapi.Event(nil), selected.Events...)
 			private.Events[0].IdentitySnapshot = `{"private":true}`
-			if _, err := stager.prepare(ctx, private); err == nil {
+			if _, _, err := stager.Prepare(private); err == nil {
 				t.Fatal("private identity snapshot reached staging")
 			}
 			bounded := plan
 			bounded.MaxEventReferences = 1
-			limited, err := newHostedImmutableEffects(store.Remote, fence, bounded)
+			limited, err := output.NewHostedWebhookPreparation(store.Remote, fence, bounded)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := limited.prepare(ctx, selected); !errors.Is(err, delivery.ErrWebhookCapacity) {
+			if outputs, objects, err := limited.Prepare(selected); !errors.Is(err, delivery.ErrWebhookCapacity) || outputs != nil || objects != nil {
 				t.Fatal("fanout capacity was not enforced atomically", err)
 			}
 		})
 	}
+}
+
+func uploadPreparedWebhookBody(t *testing.T, objects *lakeapi.DuckLakeObjectStore, scope lakeapi.HostedProjectScope, fence lakeapi.ProjectWriteFence, o output.PreparedEffectObject) lakeapi.ImmutableObjectRef {
+	t.Helper()
+	ref, err := objects.PutImmutableEffectObject(t.Context(), scope, fence.AcquisitionID, o.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := ref
+	descriptor.VersionID = ""
+	if descriptor != o.Ref {
+		t.Fatal("uploaded body differs from its descriptor", ref, o.Ref)
+	}
+	return ref
 }

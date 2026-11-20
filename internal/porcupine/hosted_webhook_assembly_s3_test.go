@@ -31,7 +31,7 @@ type assemblyS3Harness struct {
 	objects  *lakeapi.DuckLakeObjectStore
 	fence    lakeapi.ProjectWriteFence
 	scope    lakeapi.HostedProjectScope
-	target   frozenWebhookTarget
+	target   output.FrozenWebhookTarget
 	sequence int64
 }
 
@@ -52,7 +52,7 @@ func newAssemblyS3Harness(t *testing.T, config lakeapi.DuckLakeS3Config) *assemb
 	}
 	key := lakeapi.ProjectWriteKey{SourceID: source, ProjectID: "project"}
 	fence := lakeapi.ProjectWriteFence{Key: key, StreamID: eventapi.NewID(), Epoch: 1, AcquisitionID: eventapi.NewID()}
-	return &assemblyS3Harness{objects: store.Remote, fence: fence, scope: lakeapi.HostedProjectScope{Key: key, CatalogID: lakeapi.SharedNativeCatalogID(source, key.ProjectID), StreamID: fence.StreamID}, target: frozenWebhookTarget{FrozenWebhookTarget: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "pipeline-v1", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60}}}}
+	return &assemblyS3Harness{objects: store.Remote, fence: fence, scope: lakeapi.HostedProjectScope{Key: key, CatalogID: lakeapi.SharedNativeCatalogID(source, key.ProjectID), StreamID: fence.StreamID}, target: output.FrozenWebhookTarget{PipelineID: "pipeline", PipelineIncarnation: "pipeline-v1", RuleRevision: "rule-v1", DestinationRevision: "destination-v1", Rule: delivery.WebhookRule{DeliveryMode: "batch", IntervalSeconds: 60}}}
 }
 
 func assemblyEvents(count int) []eventapi.Event {
@@ -66,11 +66,11 @@ func assemblyEvents(count int) []eventapi.Event {
 func (h *assemblyS3Harness) stage(t *testing.T, events []eventapi.Event) []output.PipelineAssemblyInput {
 	t.Helper()
 	h.sequence++
-	stager, err := newHostedImmutableEffects(h.objects, h.fence, frozenLiveOutputPlan{Scope: h.scope, TenantID: "tenant", Targets: []frozenWebhookTarget{h.target}, MaxEventReferences: int64(len(events))})
+	stager, err := output.NewHostedWebhookPreparation(h.objects, h.fence, output.HostedWebhookPlan{Scope: h.scope, TenantID: "tenant", Targets: []output.FrozenWebhookTarget{h.target}, MaxEventReferences: int64(len(events))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := stager.prepare(t.Context(), lakeapi.SelectedLiveEffects{Scope: h.scope, TenantID: "tenant", BatchID: eventapi.NewID(), Sequence: h.sequence, Events: events})
+	prepared, objects, err := stager.Prepare(lakeapi.SelectedLiveEffects{Scope: h.scope, TenantID: "tenant", BatchID: eventapi.NewID(), Sequence: h.sequence, Events: events})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +79,11 @@ func (h *assemblyS3Harness) stage(t *testing.T, events []eventapi.Event) []outpu
 		if o.Fragment == nil {
 			t.Fatal("stager created a delivery instead of a fragment", o)
 		}
+		ref := uploadPreparedWebhookBody(t, h.objects, h.scope, h.fence, objects[i])
 		fragment := output.PipelineFragment{
 			Claim:  output.PipelineClaim{ID: o.ID, Scope: pipelineScope(h.scope), TenantID: "tenant"},
 			Target: output.PipelineTarget{ID: o.PipelineID, Incarnation: o.Incarnation, RuleRevision: o.RuleRevision, DestinationRevision: o.DestinationRevision},
-			Spec:   *o.Fragment, Body: o.Body, Sequence: h.sequence, Count: len(o.Members), Members: o.Members,
+			Spec:   *o.Fragment, Body: pipelineRef(ref), Sequence: h.sequence, Count: len(o.Members), Members: o.Members,
 		}
 		members := make([]int, len(o.Members))
 		for j := range members {

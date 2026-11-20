@@ -39,13 +39,6 @@ type hostedPublicationManifest struct {
 	PlanRef                                                  output.PipelineRef
 }
 
-const maxHostedPreparedObjectBytes int64 = 64 << 20
-
-type hostedPreparedObject struct {
-	ref  lakeapi.ImmutableObjectRef
-	body []byte
-}
-
 func pipelineScope(s lakeapi.HostedProjectScope) output.PipelineScope {
 	return output.PipelineScope{SourceID: s.Key.SourceID, ProjectID: s.Key.ProjectID, CatalogID: s.CatalogID, StreamID: s.StreamID}
 }
@@ -77,7 +70,7 @@ func (p *hostedEffectPublisher) transaction(ctx context.Context, f func(*sql.Tx)
 	}
 	return tx.Commit()
 }
-func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope lakeapi.HostedProjectScope) (output.PipelinePlan, frozenLiveOutputPlan, error) {
+func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope lakeapi.HostedProjectScope) (output.PipelinePlan, output.HostedWebhookPlan, error) {
 	var plan output.PipelinePlan
 	err := p.transaction(ctx, func(tx *sql.Tx) error {
 		if p.ensureCapacity != nil {
@@ -89,7 +82,7 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 		plan, e = p.effects.FreezeLivePlanTx(ctx, tx, tenant, pipelineScope(scope))
 		return e
 	})
-	routing := frozenLiveOutputPlan{Scope: scope, TenantID: tenant, MaxEventReferences: 10000}
+	routing := output.HostedWebhookPlan{Scope: scope, TenantID: tenant, MaxEventReferences: 10000}
 	if err != nil {
 		return plan, routing, err
 	}
@@ -111,7 +104,7 @@ func (p *hostedEffectPublisher) plan(ctx context.Context, tenant string, scope l
 		target := output.FrozenWebhookTarget{
 			PipelineID: t.ID, PipelineIncarnation: t.Incarnation, RuleRevision: t.RuleRevision, DestinationRevision: t.DestinationRevision, Rule: rule,
 		}
-		routing.Targets = append(routing.Targets, frozenWebhookTarget{FrozenWebhookTarget: target})
+		routing.Targets = append(routing.Targets, target)
 	}
 	return plan, routing, nil
 }
@@ -127,7 +120,7 @@ type reservingHostedStager struct {
 	session          *lakeapi.ProjectWriteSession
 	fence            lakeapi.ProjectWriteFence
 	plan             output.PipelinePlan
-	routing          frozenLiveOutputPlan
+	routing          output.HostedWebhookPlan
 	canSplit         bool
 	refusedReason    string
 	refused          map[string]uint64
@@ -140,24 +133,11 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	s.uploadedManifest = lakeapi.ImmutableObjectRef{}
 	s.binding = output.PipelineBinding{}
 	s.refusedReason, s.refused = "", nil
-	stager, err := newHostedImmutableEffects(p.objects, s.fence, s.routing)
+	preparation, err := output.NewHostedWebhookPreparation(p.objects, s.fence, s.routing)
 	if err != nil {
 		return lakeapi.StagedLiveEffects{}, err
 	}
-	objects := []hostedPreparedObject{}
-	var preparedBytes int64
-	stager.put = func(_ context.Context, raw []byte) (lakeapi.ImmutableObjectRef, error) {
-		if int64(len(raw)) > lakeapi.MaxImmutableEffectObjectBytes || int64(len(raw)) > maxHostedPreparedObjectBytes-preparedBytes {
-			return lakeapi.ImmutableObjectRef{}, output.ErrPipelineCapacity
-		}
-		ref, _, e := p.objects.DescribeImmutableEffectObject(selected.Scope, s.fence.AcquisitionID, raw)
-		if e == nil {
-			preparedBytes += int64(len(raw))
-			objects = append(objects, hostedPreparedObject{ref: ref, body: raw})
-		}
-		return ref, e
-	}
-	prepared, err := stager.prepare(ctx, selected)
+	prepared, objects, err := preparation.Prepare(selected)
 	reason := ""
 	switch {
 	case errors.Is(err, delivery.ErrWebhookCapacity), errors.Is(err, output.ErrPipelineCapacity):
@@ -217,17 +197,10 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 			return staged, acceptance.ErrBatchTooLarge
 		}
 		prepared, objects, binding = empty, nil, noOutput
-		s.refusedReason, s.refused = reason, make(map[string]uint64)
-		for _, target := range stager.plan.Targets {
-			for _, e := range selected.Events {
-				_, matches, err := target.match(e)
-				if err != nil {
-					return staged, err
-				}
-				if matches {
-					s.refused[target.PipelineID]++
-				}
-			}
+		s.refusedReason = reason
+		s.refused, err = preparation.CountReferences(selected.Events)
+		if err != nil {
+			return staged, err
 		}
 		if err := reserve(); err != nil {
 			return staged, err
@@ -235,16 +208,16 @@ func (s *reservingHostedStager) StageLiveEffects(ctx context.Context, selected l
 	}
 	staged.OutputCount = int64(len(prepared))
 	if len(prepared) > 0 {
-		objects = append(objects, hostedPreparedObject{ref: planRef, body: planRaw})
+		objects = append(objects, output.PreparedEffectObject{Ref: planRef, Body: planRaw})
 	}
 	for _, o := range objects {
-		actual, e := p.objects.PutImmutableEffectObject(ctx, selected.Scope, s.fence.AcquisitionID, o.body)
+		actual, e := p.objects.PutImmutableEffectObject(ctx, selected.Scope, s.fence.AcquisitionID, o.Body)
 		if e != nil {
 			return staged, e
 		}
 		descriptor := actual
 		descriptor.VersionID = ""
-		if descriptor != o.ref {
+		if descriptor != o.Ref {
 			return staged, output.ErrPipelineConflict
 		}
 		for i := range prepared {
