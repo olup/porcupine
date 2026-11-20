@@ -84,10 +84,11 @@ func (s *DuckLakeStore) export(ctx context.Context, project, raw string, paramet
 	if err != nil {
 		return result, err
 	}
-	canonical, args, err := nativequery.Prepare(ctx, p.DB, raw, bindings)
+	query, err := nativequery.PrepareQuery(ctx, p.DB, raw, bindings)
 	if err != nil {
 		return result, ErrExportStreamInvalid
 	}
+	canonical, args := query.SQL, query.Args
 	conn, err := p.DB.Conn(ctx)
 	if err != nil {
 		return result, err
@@ -97,7 +98,7 @@ func (s *DuckLakeStore) export(ctx context.Context, project, raw string, paramet
 		return result, ErrExportStreamInvalid
 	}
 	if snapshot != nil {
-		if err = createExportSnapshotView(ctx, conn, *snapshot, window); err != nil {
+		if err = createExportSnapshotView(ctx, conn, *snapshot, window, query.NeedsPerson()); err != nil {
 			return result, err
 		}
 	} else if window != nil {

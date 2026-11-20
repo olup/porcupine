@@ -532,7 +532,7 @@ func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, i
 			return fail(err)
 		}
 	}
-	// The public view lives in the in-memory DuckDB catalog. Recreate it for
+	// The views live in the in-memory DuckDB catalog. Recreate them for
 	// cold, existing-only analytical reads without modifying DuckLake metadata.
 	if !maintenanceOnly {
 		if _, err = db.ExecContext(ctx, duckLakeEventsView); err != nil {
