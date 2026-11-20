@@ -70,12 +70,17 @@ func TestDuckLakeCatalogSnapshotCompactionAndInlineFlush(t *testing.T) {
 	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 1)
 	a := lakeStorageProjection(t, snapshotCatalogProject, "a", 1)
+	empty := readCatalogSnapshot(t, store, nil)
 	applyCatalogProjections(t, store, a)
 	seed := readCatalogSnapshot(t, store, nil)
 	catalogSnapshotExec(t, store, "CALL ducklake_flush_inlined_data('lake')")
 	flushed := readCatalogSnapshot(t, store, &seed.Snapshot)
 	if flushed.Replace || len(flushed.Rows) != 0 {
 		t.Fatalf("physical flush duplicated a seeded row: %+v", flushed)
+	}
+	flushDelta := readCatalogSnapshot(t, store, &empty.Snapshot)
+	if flushDelta.Replace || len(flushDelta.Rows) != 1 || flushDelta.Rows[0] != seed.Rows[0] {
+		t.Fatalf("physical flush lost or duplicated an append: %+v", flushDelta)
 	}
 	catalogSnapshotExec(t, store, "CALL ducklake_set_option('lake','data_inlining_row_limit','0')")
 	b := lakeStorageProjection(t, snapshotCatalogProject, "b", 2)
@@ -120,9 +125,26 @@ func TestDuckLakeCatalogSnapshotCompactionAndInlineFlush(t *testing.T) {
 	if rewritten.Snapshot.Version <= beforeRewrite.Version {
 		t.Fatalf("test did not exercise current_events rewrite: before %+v, after %+v", beforeRewrite, rewritten.Snapshot)
 	}
-	if rewritten.Replace || len(rewritten.Rows) != 1 || rewritten.Rows[0].Event.Count != "1" ||
-		rewritten.Rows[0].FirstID != d.ID || rewritten.Rows[0].LastID != d.ID {
-		t.Fatalf("rewrite lost or duplicated appends: %+v", rewritten)
+	if !rewritten.Replace || len(rewritten.Rows) != 1 || rewritten.Rows[0].Event.Count != "3" ||
+		rewritten.Rows[0].FirstID != a.ID || rewritten.Rows[0].LastID != d.ID {
+		t.Fatalf("rewrite with appends must rebuild without duplicating survivors: %+v", rewritten)
+	}
+	assertSummaryMatchesCatalog(t, store, rewritten)
+	assertCatalogSnapshotValid(t, store, deleted.Snapshot, true)
+
+	rewriteOnly := readCatalogSnapshot(t, store, &beforeRewrite)
+	if rewriteOnly.Replace || rewriteOnly.Snapshot != rewritten.Snapshot || len(rewriteOnly.Rows) != 0 {
+		t.Fatalf("physical rewrite should advance without a delta: %+v", rewriteOnly)
+	}
+	assertCatalogSnapshotValid(t, store, beforeRewrite, true)
+	assertCatalogSnapshotValid(t, store, full.Snapshot, false)
+
+	e := lakeStorageProjection(t, snapshotCatalogProject, "e", 5)
+	applyCatalogProjections(t, store, e)
+	postRewriteDelta := readCatalogSnapshot(t, store, &rewriteOnly.Snapshot)
+	if postRewriteDelta.Replace || len(postRewriteDelta.Rows) != 1 || postRewriteDelta.Rows[0].Event.Count != "1" ||
+		postRewriteDelta.Rows[0].FirstID != e.ID || postRewriteDelta.Rows[0].LastID != e.ID {
+		t.Fatalf("appends after a rewrite should remain incremental: %+v", postRewriteDelta)
 	}
 }
 

@@ -33,9 +33,10 @@ type CatalogSnapshotRead struct {
 type catalogSnapshotChange uint8
 
 const (
-	catalogRebuild catalogSnapshotChange = iota
-	catalogUnchanged
-	catalogAppend
+	catalogAppend catalogSnapshotChange = 1 << iota
+	catalogRewrite
+	catalogUnproven
+	catalogUnchanged = 0
 )
 
 // ReadCatalogSnapshot builds or advances a catalog summary at one pinned
@@ -54,7 +55,7 @@ func (s *DuckLakeStore) ReadCatalogSnapshot(ctx context.Context, project string,
 func (s *DuckLakeStore) CatalogSnapshotValid(ctx context.Context, project string, previous ExportSnapshot) (valid bool, err error) {
 	err = s.withCatalogSnapshot(ctx, project, func(p *ProjectLake, tx *sql.Tx, current ExportSnapshot) error {
 		change, err := p.catalogChanges(ctx, tx, current, &previous)
-		valid = change != catalogRebuild
+		valid = change != catalogUnproven
 		return err
 	})
 	return valid, err
@@ -96,7 +97,7 @@ func (s *DuckLakeStore) withCatalogSnapshot(ctx context.Context, project string,
 func (p *ProjectLake) readCatalogSnapshotAt(ctx context.Context, tx *sql.Tx, current ExportSnapshot, previous *ExportSnapshot) (CatalogSnapshotRead, error) {
 	change, proofErr := p.catalogChanges(ctx, tx, current, previous)
 	switch change {
-	case catalogUnchanged:
+	case catalogUnchanged, catalogRewrite:
 		return CatalogSnapshotRead{Snapshot: current}, nil
 	case catalogAppend:
 		rows, err := readCatalogAggregates(ctx, tx, "ducklake_table_insertions('lake','main','current_events',?,?)", previous.Version+1, current.Version)
@@ -136,7 +137,7 @@ WHERE s.snapshot_id BETWEEN $1 AND $2 ORDER BY s.snapshot_id`
 func (p *ProjectLake) catalogChanges(ctx context.Context, tx *sql.Tx, current ExportSnapshot, previous *ExportSnapshot) (catalogSnapshotChange, error) {
 	if previous == nil || previous.CatalogID == "" || previous.CatalogID != current.CatalogID ||
 		previous.Version < 0 || previous.Version > current.Version || current.Version-previous.Version > maxCatalogSnapshotSpan {
-		return catalogRebuild, nil
+		return catalogUnproven, nil
 	}
 	if *previous == current {
 		return catalogUnchanged, nil
@@ -146,10 +147,10 @@ func (p *ProjectLake) catalogChanges(ctx context.Context, tx *sql.Tx, current Ex
 	var engine, extension string
 	err := tx.QueryRowContext(ctx, "SELECT version(),extension_version FROM ducklake_settings('lake')").Scan(&engine, &extension)
 	if err != nil {
-		return catalogRebuild, err
+		return catalogUnproven, err
 	}
 	if engine != catalogDuckDBVersion || extension != catalogDuckLakeVersion {
-		return catalogRebuild, nil
+		return catalogUnproven, nil
 	}
 
 	var query interface {
@@ -159,7 +160,7 @@ func (p *ProjectLake) catalogChanges(ctx context.Context, tx *sql.Tx, current Ex
 	if p.shared {
 		registry, ok := p.sharedStore.registry.(*postgresNativeRegistry)
 		if !ok {
-			return catalogRebuild, nil
+			return catalogUnproven, nil
 		}
 		var cancel context.CancelFunc
 		ctx, cancel = registry.metadataContext(ctx)
@@ -171,67 +172,72 @@ func (p *ProjectLake) catalogChanges(ctx context.Context, tx *sql.Tx, current Ex
 	// bounded version range covered by this DuckLake transaction.
 	rows, err := query.QueryContext(ctx, strings.ReplaceAll(catalogSnapshotChangesSQL, "metadata.", metadata), previous.Version, current.Version)
 	if err != nil {
-		return catalogRebuild, err
+		return catalogUnproven, err
 	}
 	defer rows.Close()
-	change := catalogUnchanged
+	var change catalogSnapshotChange
 	lastVersion := previous.Version - 1
 	for rows.Next() {
 		var version, eventsID, identityID int64
 		var changes sql.NullString
 		if err := rows.Scan(&version, &eventsID, &identityID, &changes); err != nil {
-			return catalogRebuild, err
+			return catalogUnproven, err
 		}
 		if version != lastVersion+1 || eventsID < 0 || identityID < 0 || eventsID == identityID {
-			return catalogRebuild, nil
+			return catalogUnproven, nil
 		}
 		lastVersion = version
 		if version == previous.Version {
 			continue
 		}
-		switch classifyCatalogChanges(changes, eventsID, identityID) {
-		case catalogRebuild:
-			return catalogRebuild, nil
-		case catalogAppend:
-			change = catalogAppend
+		snapshotChange := classifyCatalogChanges(changes, eventsID, identityID)
+		if snapshotChange == catalogUnproven {
+			return catalogUnproven, nil
 		}
+		change |= snapshotChange
 	}
 	if err := rows.Err(); err != nil {
-		return catalogRebuild, err
+		return catalogUnproven, err
 	}
 	if lastVersion != current.Version {
-		return catalogRebuild, nil
+		return catalogUnproven, nil
 	}
 	return change, nil
 }
 
 func classifyCatalogChanges(changes sql.NullString, eventsID, identityID int64) catalogSnapshotChange {
 	if !changes.Valid || changes.String == "" {
-		return catalogRebuild
+		return catalogUnproven
 	}
-	result := catalogUnchanged
+	var result catalogSnapshotChange
 	for change := range strings.SplitSeq(changes.String, ",") {
 		kind, rawID, found := strings.Cut(change, ":")
 		id, err := strconv.ParseInt(rawID, 10, 64)
 		if !found || err != nil || id < 0 {
-			return catalogRebuild
+			return catalogUnproven
 		}
 		switch kind {
 		case "inserted_into_table", "inlined_insert":
 			if id == identityID {
-				return catalogRebuild
+				return catalogUnproven
 			}
 			if id == eventsID {
-				result = catalogAppend
+				result |= catalogAppend
 			}
 		case "deleted_from_table", "inlined_delete":
 			if id == eventsID || id == identityID {
-				return catalogRebuild
+				return catalogUnproven
 			}
-		case "merge_adjacent", "rewrite_delete", "compacted_table", "flushed_inlined", "inline_flush":
-			// These changes rewrite storage while preserving visible rows.
+		case "merge_adjacent", "flushed_inlined", "inline_flush":
+			// These maintenance commits preserve logical insertion versions.
+		case "rewrite_delete", "compacted_table":
+			if id == eventsID {
+				// A delete-file rewrite preserves visible rows but can report
+				// historical survivors in the insertion feed.
+				result |= catalogRewrite
+			}
 		default:
-			return catalogRebuild
+			return catalogUnproven
 		}
 	}
 	return result
