@@ -23,25 +23,33 @@ var functionSet = func() map[string]bool {
 }()
 
 type sqlGuard struct {
-	parameters   map[string]bool
-	eventSources int
-	nodes        int
+	parameters      map[string]bool
+	eventSources    int
+	nodes           int
+	rowNames        map[string]bool
+	referencedNames []string
+	needsPerson     bool
 }
 
-// Prepare uses the engine's parsed tree, never string matching, to
-// authorize every source and expression before the statement can be executed.
+// Prepare returns canonical SQL and its checked parameter bindings.
 func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, error) {
+	canonical, args, _, err := PrepareQuery(ctx, db, raw, parameters)
+	return canonical, args, err
+}
+
+// PrepareQuery authorizes every source and expression using DuckDB's parsed tree.
+func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, Statement, error) {
 	if len(raw) == 0 || len(raw) > MaxSQLBytes || len(parameters) > 32 {
-		return "", nil, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
+		return "", nil, Statement{}, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
 	}
 	for name, value := range parameters {
 		if !parameterName.MatchString(name) || len(value) > 4096 {
-			return "", nil, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
+			return "", nil, Statement{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
 		}
 	}
 	statement, err := Inspect(ctx, db, raw)
 	if err != nil {
-		return "", nil, err
+		return "", nil, Statement{}, err
 	}
 	arguments := make([]any, 0, len(parameters))
 	names := make([]string, 0, len(statement.parameters))
@@ -52,7 +60,7 @@ func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]
 	for _, name := range names {
 		value, ok := parameters[name]
 		if !ok {
-			return "", nil, policyError("missing_parameter", "Missing bound query parameter", "Supply this key in parameters; use $name placeholders for DuckDB.", name)
+			return "", nil, Statement{}, policyError("missing_parameter", "Missing bound query parameter", "Supply this key in parameters; use $name placeholders for DuckDB.", name)
 		}
 		arguments = append(arguments, sql.Named(name, value))
 	}
@@ -64,19 +72,19 @@ func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]
 	}
 	if len(names) > 0 {
 		sort.Strings(names)
-		return "", nil, policyError("unused_parameter", "Unused bound query parameter", "Remove this key or reference it with a $name placeholder.", names[0])
+		return "", nil, Statement{}, policyError("unused_parameter", "Unused bound query parameter", "Remove this key or reference it with a $name placeholder.", names[0])
 	}
 	var canonical string
 	if err := db.QueryRowContext(ctx, "SELECT json_deserialize_sql(?)", statement.serialized).Scan(&canonical); err != nil {
-		return "", nil, err
+		return "", nil, Statement{}, err
 	}
 	if err := validateSQLText(canonical); err != nil {
-		return "", nil, err
+		return "", nil, Statement{}, err
 	}
 	if len(canonical) == 0 || len(canonical) > MaxSQLBytes {
-		return "", nil, policyError("invalid_sql", "Canonical analytics query exceeds the supported size", "Use a shorter SELECT of at most 16384 bytes after formatting.", "")
+		return "", nil, Statement{}, policyError("invalid_sql", "Canonical analytics query exceeds the supported size", "Use a shorter SELECT of at most 16384 bytes after formatting.", "")
 	}
-	return canonical, arguments, nil
+	return canonical, arguments, statement, nil
 }
 
 // MaxSQLBytes is the maximum accepted analytical statement size.
@@ -113,13 +121,15 @@ func unsupportedSQL() error {
 // Statement holds a checked AST. Its SQL and mutable parameter inventory stay
 // private so callers cannot change the policy decision before binding.
 type Statement struct {
-	serialized string
-	parameters map[string]bool
-	usesEvents bool
+	serialized  string
+	parameters  map[string]bool
+	usesEvents  bool
+	needsPerson bool
 }
 
 func (s Statement) UsesEvents() bool              { return s.usesEvents }
 func (s Statement) HasParameter(name string) bool { return s.parameters[name] }
+func (s Statement) NeedsPerson() bool             { return s.needsPerson }
 
 // Inspect checks every AST node, including CTEs and nested expressions. The
 // supplied database must already expose only this project's analytical views.
@@ -144,11 +154,15 @@ func Inspect(ctx context.Context, db *sql.DB, raw string) (Statement, error) {
 	if json.Unmarshal([]byte(serialized), &parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
 		return Statement{}, policyError("invalid_sql", "Expected one valid DuckDB SELECT", "Use DuckDB syntax and $name parameters. Read get-event-schema for the supported dialect and functions.", "")
 	}
-	guard := sqlGuard{parameters: map[string]bool{}}
+	guard := sqlGuard{parameters: map[string]bool{}, rowNames: map[string]bool{"events": true}}
 	if err := guard.walk(parsed.Statements[0], map[string]bool{"events": true}, 0); err != nil {
 		return Statement{}, err
 	}
-	return Statement{serialized: serialized, parameters: guard.parameters, usesEvents: guard.eventSources > 0}, nil
+	// DuckDB can bind a table name or alias as a whole row, even in a subquery.
+	for _, name := range guard.referencedNames {
+		guard.needsPerson = guard.needsPerson || guard.rowNames[name]
+	}
+	return Statement{serialized: serialized, parameters: guard.parameters, usesEvents: guard.eventSources > 0, needsPerson: guard.needsPerson}, nil
 }
 
 func (g *sqlGuard) walk(value any, sources map[string]bool, depth int) error {
@@ -174,6 +188,9 @@ func (g *sqlGuard) walk(value any, sources map[string]bool, depth int) error {
 				return err
 			}
 		} else {
+			if alias, _ := node["alias"].(string); alias != "" {
+				g.rowNames[strings.ToLower(alias)] = true
+			}
 			switch kind {
 			case "":
 			case "BASE_TABLE":
@@ -184,9 +201,17 @@ func (g *sqlGuard) walk(value any, sources map[string]bool, depth int) error {
 				if !sources[strings.ToLower(name)] || !unqualified(node, "schema_name", "catalog_name") || node["at_clause"] != nil || node["sample"] != nil {
 					return unsupportedSQL()
 				}
+				g.rowNames[strings.ToLower(name)] = true
+				g.needsPerson = g.needsPerson || nonemptyList(node["column_name_alias"])
 			case "JOIN", "SUBQUERY", "EMPTY", "EMPTY_FROM", "CROSS_PRODUCT":
 				if node["sample"] != nil {
 					return unsupportedSQL()
+				}
+				g.needsPerson = g.needsPerson || node["ref_type"] == "NATURAL" || node["ref_type"] == "POSITIONAL"
+				columns, _ := node["using_columns"].([]any)
+				for _, column := range columns {
+					name, _ := column.(string)
+					g.needsPerson = g.needsPerson || isPersonColumn(strings.ToLower(name))
 				}
 			case "ORDER_MODIFIER", "LIMIT_MODIFIER", "DISTINCT_MODIFIER", "ORDER_DEFAULT", "ASCENDING", "DESCENDING":
 			default:
@@ -256,10 +281,13 @@ func (g *sqlGuard) expression(node map[string]any, class string) error {
 			return unsupportedSQL()
 		}
 		name, _ := columns[len(columns)-1].(string)
-		switch strings.ToLower(name) {
+		name = strings.ToLower(name)
+		switch name {
 		case "current_user", "session_user", "user", "current_role", "current_catalog", "current_schema", "current_database", "original_snapshot", "identity_snapshot", "payload", "is_deleted":
 			return unsupportedSQL()
 		}
+		g.needsPerson = g.needsPerson || isPersonColumn(name)
+		g.referencedNames = append(g.referencedNames, name)
 	case "FUNCTION", "WINDOW":
 		name, _ := node["function_name"].(string)
 		if !unqualified(node, "schema", "catalog") || node["export_state"] == true {
@@ -279,6 +307,7 @@ func (g *sqlGuard) expression(node map[string]any, class string) error {
 		}
 		g.parameters[name] = true
 	case "STAR":
+		g.needsPerson = true
 		if node["columns"] == true || node["expr"] != nil || nonemptyList(node["replace_list"]) || nonemptyList(node["rename_list"]) {
 			return unsupportedSQL()
 		}
@@ -314,6 +343,8 @@ func (g *sqlGuard) expression(node map[string]any, class string) error {
 	}
 	return nil
 }
+
+func isPersonColumn(name string) bool { return name == "person_id" || name == "person_properties" }
 
 func unqualified(node map[string]any, fields ...string) bool {
 	for _, field := range fields {

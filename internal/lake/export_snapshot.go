@@ -41,7 +41,7 @@ func (s *DuckLakeStore) ExportWindowAtSnapshot(ctx context.Context, project, raw
 	return s.export(ctx, project, raw, parameters, &window, &snapshot, maxRowBytes, callbacks)
 }
 
-func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot ExportSnapshot, window *AnalyticalWindow) error {
+func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot ExportSnapshot, window *AnalyticalWindow, needsPerson bool) error {
 	var identity string
 	if snapshot.CatalogID == "" || snapshot.Version < 0 {
 		return ErrExportSnapshotUnavailable
@@ -55,8 +55,13 @@ func createExportSnapshotView(ctx context.Context, conn *sql.Conn, snapshot Expo
 	// Version every base table, including the person projection, so a later
 	// identity mutation cannot change an otherwise historical export.
 	version := " AT (VERSION => " + strconv.FormatInt(snapshot.Version, 10) + ")"
-	view := duckLakeEventsSelect
-	for _, table := range []string{"lake.current_events", "lake.identity_links", "lake.identity_profiles"} {
+	view := duckLakeCoreEventsSelect
+	tables := []string{"lake.current_events"}
+	if needsPerson {
+		view = duckLakeEventsSelect
+		tables = append(tables, "lake.identity_links", "lake.identity_profiles")
+	}
+	for _, table := range tables {
 		view = strings.Replace(view, table+" ", "(SELECT * FROM "+table+version+") ", 1)
 	}
 	if window != nil {

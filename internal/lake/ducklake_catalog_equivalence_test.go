@@ -17,6 +17,57 @@ func TestDuckLakeCatalogMatchesEventsView(t *testing.T) {
 	t.Parallel()
 	store := openLakeStorageTest(t, t.TempDir(), 2)
 	const project, neighbor = "catalog-primary", "catalog-neighbor"
+	batch, archived := populateCatalogEquivalenceFixture(t, store, project, neighbor)
+	identity, err := store.Query(t.Context(), project, `SELECT person_id, json_extract_string(person_properties,'$.plan') AS plan FROM events WHERE uuid='purchase-1002'`, nil, DefaultQueryExecutionLimits())
+	if err != nil || identity.Rows != 1 || string(identity.Data[0]["person_id"]) != `"identified"` || string(identity.Data[0]["plan"]) != `"paid"` {
+		t.Fatalf("replacing a link and profile must still yield one joined row: %+v, %v", identity, err)
+	}
+
+	for _, name := range []string{"", "purchase", "signup", "neighbor-only"} {
+		for _, offset := range []int{0, 1, 2, 3, 10000} {
+			assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, EventCatalogInput{ID: project, Event: name, Limit: 1, Offset: offset})
+		}
+	}
+	all := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, EventCatalogInput{ID: project})
+	var names []string
+	for _, item := range all.Events {
+		names = append(names, item.Event)
+	}
+	if !slices.Equal(names, []string{"purchase", "signup", "preview"}) {
+		t.Fatalf("unexpected project catalog names: %v", names)
+	}
+	assertCatalogIsolated(t, store.Catalog, store.LeaseProject, neighbor, "neighbor-only", "purchase")
+
+	input := EventCatalogInput{ID: project, Event: "purchase"}
+	catalog := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, input)
+	wantEvent := EventCatalogEvent{Event: "purchase", Count: "1003", FirstReceivedAt: batch[0].ReceivedAt,
+		LastReceivedAt: archived.ReceivedAt, LatestEventUUID: archived.UUID, LatestEventTimestamp: archived.Timestamp}
+	if !slices.Equal(catalog.Events, []EventCatalogEvent{wantEvent}) {
+		t.Fatalf("unexpected purchase event metadata: %+v", catalog.Events)
+	}
+	lastLive := batch[1001]
+	wantProperties := []EventCatalogProperty{
+		{Key: "$reserved", Types: []string{"Null"}, SampleOccurrences: "1", LatestEventUUID: lastLive.UUID, LastReceivedAt: lastLive.ReceivedAt},
+		{Key: "at_boundary", Types: []string{"Bool"}, SampleOccurrences: "1", LatestEventUUID: batch[3].UUID, LastReceivedAt: batch[3].ReceivedAt},
+		{Key: "mixed", Types: []string{"Bool", "Int64", "String"}, SampleOccurrences: "1000", LatestEventUUID: archived.UUID, LastReceivedAt: archived.ReceivedAt},
+		{Key: "zeta", Types: []string{"Array"}, SampleOccurrences: "2", LatestEventUUID: archived.UUID, LastReceivedAt: archived.ReceivedAt},
+	}
+	if !reflect.DeepEqual(catalog.Properties, wantProperties) {
+		t.Fatalf("unexpected purchase sample: %+v", catalog.Properties)
+	}
+
+	input.PropertyLimit = 1
+	for i, property := range wantProperties {
+		page := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, input)
+		if !reflect.DeepEqual(page.Properties, []EventCatalogProperty{property}) || (page.NextPropertyCursor != "") != (i+1 < len(wantProperties)) {
+			t.Fatalf("unexpected purchase property page %d: %+v", i, page)
+		}
+		input.PropertyCursor = page.NextPropertyCursor
+	}
+}
+
+func populateCatalogEquivalenceFixture(t *testing.T, store *DuckLakeStore, project, neighbor string) ([]EventProjection, EventProjection) {
+	t.Helper()
 	var batch []EventProjection
 	for id := int64(1); id <= 1002; id++ {
 		row := lakeStorageProjection(t, project, fmt.Sprintf("purchase-%d", id), id)
@@ -69,52 +120,7 @@ func TestDuckLakeCatalogMatchesEventsView(t *testing.T) {
 	if err := store.Apply(t.Context(), []EventProjection{edit, deleted, relink, archived}); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := store.Query(t.Context(), project, `SELECT person_id, json_extract_string(person_properties,'$.plan') AS plan FROM events WHERE uuid='purchase-1002'`, nil, DefaultQueryExecutionLimits())
-	if err != nil || identity.Rows != 1 || string(identity.Data[0]["person_id"]) != `"identified"` || string(identity.Data[0]["plan"]) != `"paid"` {
-		t.Fatalf("replacing a link and profile must still yield one joined row: %+v, %v", identity, err)
-	}
-
-	for _, name := range []string{"", "purchase", "signup", "neighbor-only"} {
-		for _, offset := range []int{0, 1, 2, 3, 10000} {
-			assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, EventCatalogInput{ID: project, Event: name, Limit: 1, Offset: offset})
-		}
-	}
-	all := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, EventCatalogInput{ID: project})
-	var names []string
-	for _, item := range all.Events {
-		names = append(names, item.Event)
-	}
-	if !slices.Equal(names, []string{"purchase", "signup", "preview"}) {
-		t.Fatalf("unexpected project catalog names: %v", names)
-	}
-	assertCatalogIsolated(t, store.Catalog, store.LeaseProject, neighbor, "neighbor-only", "purchase")
-
-	input := EventCatalogInput{ID: project, Event: "purchase"}
-	catalog := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, input)
-	wantEvent := EventCatalogEvent{Event: "purchase", Count: "1003", FirstReceivedAt: batch[0].ReceivedAt,
-		LastReceivedAt: archived.ReceivedAt, LatestEventUUID: archived.UUID, LatestEventTimestamp: archived.Timestamp}
-	if !slices.Equal(catalog.Events, []EventCatalogEvent{wantEvent}) {
-		t.Fatalf("unexpected purchase event metadata: %+v", catalog.Events)
-	}
-	lastLive := batch[1001]
-	wantProperties := []EventCatalogProperty{
-		{Key: "$reserved", Types: []string{"Null"}, SampleOccurrences: "1", LatestEventUUID: lastLive.UUID, LastReceivedAt: lastLive.ReceivedAt},
-		{Key: "at_boundary", Types: []string{"Bool"}, SampleOccurrences: "1", LatestEventUUID: batch[3].UUID, LastReceivedAt: batch[3].ReceivedAt},
-		{Key: "mixed", Types: []string{"Bool", "Int64", "String"}, SampleOccurrences: "1000", LatestEventUUID: archived.UUID, LastReceivedAt: archived.ReceivedAt},
-		{Key: "zeta", Types: []string{"Array"}, SampleOccurrences: "2", LatestEventUUID: archived.UUID, LastReceivedAt: archived.ReceivedAt},
-	}
-	if !reflect.DeepEqual(catalog.Properties, wantProperties) {
-		t.Fatalf("unexpected purchase sample: %+v", catalog.Properties)
-	}
-
-	input.PropertyLimit = 1
-	for i, property := range wantProperties {
-		page := assertCatalogMatchesEventsView(t, store.Catalog, store.LeaseProject, input)
-		if !reflect.DeepEqual(page.Properties, []EventCatalogProperty{property}) || (page.NextPropertyCursor != "") != (i+1 < len(wantProperties)) {
-			t.Fatalf("unexpected purchase property page %d: %+v", i, page)
-		}
-		input.PropertyCursor = page.NextPropertyCursor
-	}
+	return batch, archived
 }
 
 func TestDuckLakeS3SharedPostgresHostedCatalogProjectIsolation(t *testing.T) {

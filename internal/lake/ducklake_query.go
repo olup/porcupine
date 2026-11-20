@@ -31,7 +31,7 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
-	canonical, args, err := nativequery.Prepare(ctx, p.DB, rawSQL, parameters)
+	canonical, args, statement, err := nativequery.PrepareQuery(ctx, p.DB, rawSQL, parameters)
 	if err != nil {
 		if ctx.Err() != nil {
 			return AnalyticsResult{}, apierr.New(429, "analytics execution time limit reached")
@@ -39,8 +39,10 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		return AnalyticsResult{}, duckLakeValidationError(ctx, err)
 	}
 	prefix := ""
-	if limits.TimeRange != nil {
-		prefix = eventTimeRangeCTE(*limits.TimeRange)
+	if statement.UsesEvents() && !statement.NeedsPerson() {
+		prefix = eventQueryCTE("_pc_events_core", limits.TimeRange)
+	} else if limits.TimeRange != nil {
+		prefix = eventQueryCTE("events", limits.TimeRange)
 	}
 	start := time.Now()
 	conn, err := p.DB.Conn(ctx)
@@ -127,10 +129,12 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 // The SQL policy reserves the unqualified events name. This statement-local
 // CTE supplies that relation to every user query node without changing the
 // project view or the connection. Keep it inline so scans can push filters down.
-func eventTimeRangeCTE(window QueryTimeRange) string {
-	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE " +
-		eventTimeBound(window.From, true) + " AND " + eventTimeBound(window.To, false) +
-		") "
+func eventQueryCTE(source string, window *QueryTimeRange) string {
+	query := "WITH events AS NOT MATERIALIZED (SELECT * FROM main." + source
+	if window != nil {
+		query += " WHERE " + eventTimeBound(window.From, true) + " AND " + eventTimeBound(window.To, false)
+	}
+	return query + ") "
 }
 
 func eventTimeBound(bound time.Time, inclusive bool) string {
