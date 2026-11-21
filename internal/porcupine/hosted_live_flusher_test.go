@@ -202,17 +202,29 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = fa.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal(err)
 	}
-	var metrics strings.Builder
-	fa.metrics.Write(&metrics, nil)
-	for _, phase := range []string{"coordinator_wait", "effects_stage", "commit_guard", "native_write", "publish"} {
-		requireMetric(t, metrics.String(), `porcupine_flush_phase_duration_seconds_count{profile="hosted",phase="`+phase+`"} 1`)
+	cleanPhases := map[string]int{
+		"coordinator_wait": 1, "coordinator_held": 1,
+		"effects_stage": 1, "commit_guard": 1, "native_write": 1, "publish": 1,
+		"native_predecessor": 1, "native_proof_lookup": 1, "native_fence": 1, "native_heads": 1,
+		"native_totals": 1, "native_event_rows": 1, "native_proof_insert": 1, "native_commit": 1,
 	}
+	assertHostedFlushPhaseCounts(t, fa.metrics, cleanPhases)
 	if got := snapshot() - before; got != 1 {
 		t.Fatalf("clean live flush advanced %d native snapshots, want 1", got)
 	}
+	fb.metrics = &operationalMetrics{Registry: observability.NewRegistry("hosted")}
 	if err = fb.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal("cold stable replay", err)
 	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := fb.FlushLive(cancelled, empty); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled acquisition returned %v", err)
+	}
+	assertHostedFlushPhaseCounts(t, fb.metrics, map[string]int{
+		"coordinator_wait": 2, "coordinator_held": 1, "native_write": 1,
+		"native_predecessor": 1, "native_proof_lookup": 1,
+	})
 	var n int
 	if err = a.service.control.QueryRow(`SELECT count(*) FROM pipeline_effect_cleanup WHERE project_id=$1`, project).Scan(&n); err != nil || n != 0 {
 		t.Fatal("empty output left cleanup", n, err)
@@ -417,6 +429,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	stageConflict.Store(true)
 	trackEffectKeys.Store(true)
 
+	fa.metrics = &operationalMetrics{Registry: observability.NewRegistry("hosted")}
 	blockEffects.Store(true)
 	completed := make(chan error, 1)
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
@@ -426,6 +439,11 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("flush ended before the admitted upload entered:", err)
 	case <-t.Context().Done():
 		t.Fatal("admitted upload did not enter")
+	}
+	var inFlightMetrics strings.Builder
+	fa.metrics.Write(&inFlightMetrics, nil)
+	if strings.Contains(inFlightMetrics.String(), `phase="coordinator_held"`) {
+		t.Error("reported a completed coordinator hold while upload was still blocked")
 	}
 	readsBeforePublication := reservationReads.Load()
 	var reserved, published bool
@@ -444,6 +462,12 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	if err = <-completed; err != nil {
 		t.Fatal("native retry lost its staged plan or admission after budget reduction", err)
 	}
+	assertHostedFlushPhaseCounts(t, fa.metrics, map[string]int{
+		"coordinator_wait": 1, "coordinator_held": 1, "native_write": 1, "recovery": 1, "publish": 1,
+		"effects_stage": 2, "commit_guard": 2,
+		"native_predecessor": 2, "native_proof_lookup": 2, "native_fence": 2, "native_heads": 2,
+		"native_totals": 2, "native_event_rows": 2, "native_proof_insert": 2, "native_commit": 2,
+	})
 	if got := aWakes.Load(); got != 1 {
 		t.Fatalf("confirmed publication woke webhook %d times, want 1", got)
 	}

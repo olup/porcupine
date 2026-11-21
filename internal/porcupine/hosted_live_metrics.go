@@ -42,6 +42,10 @@ func (m *operationalMetrics) observeHostedFlushPhase(phase string, elapsed time.
 	}
 }
 
+func (m *operationalMetrics) observeHostedNativeCommitPhase(phase lake.LiveCommitPhase, elapsed time.Duration) {
+	m.observeHostedFlushPhase(string(phase), elapsed)
+}
+
 func hostedFlushRetryReason(err error) string {
 	var native *duckdb.Error
 	var postgres *pgconn.PgError

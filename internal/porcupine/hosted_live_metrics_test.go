@@ -13,6 +13,19 @@ import (
 	"github.com/olup/porcupine/internal/query"
 )
 
+func assertHostedFlushPhaseCounts(t *testing.T, metrics *operationalMetrics, want map[string]int) {
+	t.Helper()
+	var out strings.Builder
+	metrics.Write(&out, nil)
+	const prefix = `porcupine_flush_phase_duration_seconds_count{`
+	if got := strings.Count(out.String(), prefix); got != len(want) {
+		t.Errorf("got %d flush phase series, want %d", got, len(want))
+	}
+	for phase, count := range want {
+		requireMetric(t, out.String(), fmt.Sprintf(prefix+`profile="hosted",phase="%s"} %d`, phase, count))
+	}
+}
+
 func TestHostedFlushRetryReason(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

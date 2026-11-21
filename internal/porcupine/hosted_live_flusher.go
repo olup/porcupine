@@ -98,11 +98,15 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 	key := lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: b.ProjectID}
 	started := time.Now()
 	session, err := f.coordinator.Acquire(ctx, key)
-	f.metrics.observeHostedFlushPhase("coordinator_wait", time.Since(started))
+	acquired := time.Now()
+	f.metrics.observeHostedFlushPhase("coordinator_wait", acquired.Sub(started))
 	if err != nil {
 		return err
 	}
-	defer session.Release()
+	defer func() {
+		_ = session.Release()
+		f.metrics.observeHostedFlushPhase("coordinator_held", time.Since(acquired))
+	}()
 	var quarantined bool
 	err = f.runActiveHostedProject(ctx, session, key.ProjectID, func(ctx context.Context) error {
 		scope, e := f.native.LookupHostedProjectExisting(ctx, key)
@@ -211,6 +215,10 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		return stager.StageLiveEffects(ctx, selected)
 	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
+	var observe lakeapi.LiveCommitObserver
+	if f.metrics != nil {
+		observe = f.metrics.observeHostedNativeCommitPhase
+	}
 	started := time.Now()
 	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
 		guardStarted := time.Now()
@@ -223,7 +231,7 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		})
 		observeOutsideNative("commit_guard", time.Since(guardStarted)-commitElapsed)
 		return err
-	})
+	}, observe)
 	f.metrics.observeHostedFlushPhase("native_write", time.Since(started)-outsideNative)
 	if err != nil {
 		return err
