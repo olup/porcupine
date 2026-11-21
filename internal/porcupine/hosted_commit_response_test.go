@@ -120,6 +120,10 @@ type hostedNativeBoundaryConn struct {
 func (c *hostedNativeBoundaryConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("boundary fixture requires direct native statements")
 }
+
+// The real DuckDB driver checks the original arguments, including list parameters.
+func (*hostedNativeBoundaryConn) CheckNamedValue(*driver.NamedValue) error { return nil }
+
 func (c *hostedNativeBoundaryConn) Close() error { return c.conn.Close() }
 func (c *hostedNativeBoundaryConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})

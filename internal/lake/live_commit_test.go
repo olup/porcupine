@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -11,6 +12,53 @@ import (
 	"github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 )
+
+func TestDuckLakeLiveHeadsParquet(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := openLakeStorageTest(t, t.TempDir(), 1)
+	p, release, err := store.LeaseProject(ctx, "live-heads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := p.DB.ExecContext(ctx, `CALL ducklake_set_option('lake','data_inlining_row_limit','0')`); err != nil {
+		t.Fatal(err)
+	}
+	const exactUUID = "comma,quote'backslash\\unicode-é\x00suffix"
+	if _, err := p.DB.ExecContext(ctx, `INSERT INTO lake.heads (uuid, is_deleted) VALUES (?,false),('deleted',true),('unrequested',false),('CASE',false)`, exactUUID); err != nil {
+		t.Fatal(err)
+	}
+	if files, err := lakeMaintenanceFileCount(ctx, p, "heads"); err != nil || files == 0 {
+		t.Fatalf("head fixture needs Parquet files, got %d: %v", files, err)
+	}
+	tx, err := p.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	assertHeads := func(uuids []string, want map[string]bool) {
+		t.Helper()
+		inputs := make([]LiveCommitInput, len(uuids))
+		for i, uuid := range uuids {
+			inputs[i].Event.UUID = uuid
+		}
+		got, err := liveHeads(ctx, tx, inputs)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("heads = %v, want %v: %v", got, want, err)
+		}
+	}
+	assertHeads(nil, map[string]bool{})
+	assertHeads([]string{exactUUID, "case"}, map[string]bool{exactUUID: true})
+
+	uuids := []string{exactUUID, "case"}
+	for i := range 1500 {
+		uuids = append(uuids, fmt.Sprintf("missing-%d", i))
+	}
+	uuids = append(uuids, exactUUID, "deleted", "deleted", "missing-0")
+	assertHeads(uuids, map[string]bool{exactUUID: true, "deleted": true})
+}
 
 // This component fixture uses the real immutable S3 object implementation. Its
 // routing plan is deliberately explicit; it is not the operational PG provider.
