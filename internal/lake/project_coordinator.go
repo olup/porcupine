@@ -65,6 +65,7 @@ type ProjectWriteSession struct {
 	key          ProjectWriteKey
 	lock         int64
 	pid          int
+	socket       projectWriteSocketSettings
 	epoch        int64
 	acquisition  string
 	ctx          context.Context
@@ -136,11 +137,15 @@ func (c *PostgresProjectCoordinator) acquire(parent context.Context, key Project
 		return nil, acquireError(ErrProjectWriteSessionLost)
 	}
 	session := &ProjectWriteSession{owner: c, conn: conn, key: key, lock: projectAdvisoryKey(key), done: make(chan struct{}), stopProbe: make(chan struct{}), acquisition: event.NewID()}
+	if err := session.configureSocket(ctx); err != nil {
+		return fail()
+	}
 	// Capture PID in the acquisition statement, before any second statement can
 	// be routed elsewhere by an unsupported transaction-pooling proxy.
 	if try {
-		var acquired bool
-		if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1),pg_backend_pid()", session.lock).Scan(&acquired, &session.pid); err != nil {
+		var acquired, restored bool
+		socket := session.socket
+		if err := conn.QueryRowContext(ctx, tryProjectWriteSQL, session.lock, socket.idle, socket.interval, socket.count, socket.userTimeout).Scan(&acquired, &session.pid, &restored); err != nil || !restored {
 			return fail()
 		}
 		if !acquired {
@@ -154,16 +159,12 @@ func (c *PostgresProjectCoordinator) acquire(parent context.Context, key Project
 			return fail()
 		}
 	}
-	if err := session.checkPhysicalSession(ctx); err != nil {
-		return fail()
-	}
-	var increment, cache int64
-	var cycle bool
-	if err := conn.QueryRowContext(ctx, `SELECT increment_by,cache_size,cycle FROM pg_sequences WHERE schemaname=current_schema() AND sequencename='shared_native_write_epoch'`).Scan(&increment, &cache, &cycle); err != nil || increment != 1 || cache != 1 || cycle {
-		return fail()
-	}
-	// The sequence is read on the same physical session that owns the lock.
-	if err := conn.QueryRowContext(ctx, `SELECT CASE WHEN pg_backend_pid()=$1 THEN nextval('shared_native_write_epoch') END`, session.pid).Scan(&session.epoch); err != nil || session.epoch <= 0 {
+	// Only advance the epoch when this physical backend owns the lock and the
+	// sequence preserves ordering across sessions.
+	high, low := session.lockParts()
+	if err := conn.QueryRowContext(ctx, `SELECT CASE WHEN (`+projectWriteOwnsLockSQL+`) AND EXISTS(
+ SELECT 1 FROM pg_sequences WHERE schemaname=current_schema() AND sequencename='shared_native_write_epoch'
+ AND increment_by=1 AND cache_size=1 AND NOT cycle) THEN nextval('shared_native_write_epoch') END`, session.pid, high, low).Scan(&session.epoch); err != nil || session.epoch <= 0 {
 		return fail()
 	}
 	if ctx.Err() != nil {
@@ -211,13 +212,19 @@ func (s *ProjectWriteSession) RunNative(ctx context.Context, call func(context.C
 	return call(nativeCtx)
 }
 
-func (s *ProjectWriteSession) checkPhysicalSession(ctx context.Context) error {
-	var owned bool
-	high, low := int64(uint64(s.lock)>>32), int64(uint64(s.lock)&0xffffffff)
-	err := s.conn.QueryRowContext(ctx, `SELECT pg_backend_pid()=$1 AND EXISTS(
+const projectWriteOwnsLockSQL = `pg_backend_pid()=$1 AND EXISTS(
  SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND granted
  AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
- AND classid::bigint=$2 AND objid::bigint=$3 AND objsubid=1)`, s.pid, high, low).Scan(&owned)
+ AND classid::bigint=$2 AND objid::bigint=$3 AND objsubid=1)`
+
+func (s *ProjectWriteSession) lockParts() (int64, int64) {
+	return int64(uint64(s.lock) >> 32), int64(uint64(s.lock) & 0xffffffff)
+}
+
+func (s *ProjectWriteSession) checkPhysicalSession(ctx context.Context) error {
+	var owned bool
+	high, low := s.lockParts()
+	err := s.conn.QueryRowContext(ctx, `SELECT `+projectWriteOwnsLockSQL, s.pid, high, low).Scan(&owned)
 	if err != nil || !owned {
 		return ErrProjectWriteSessionLost
 	}
@@ -269,8 +276,9 @@ func (s *ProjectWriteSession) Release() error {
 		s.cancel(ErrProjectWriteSessionLost)
 		cleanup, cancel := context.WithTimeout(context.Background(), s.owner.config.ProbeTimeout)
 		defer cancel()
-		var unlocked bool
-		if s.checkPhysicalSession(cleanup) != nil || s.conn.QueryRowContext(cleanup, "SELECT pg_advisory_unlock($1)", s.lock).Scan(&unlocked) != nil || !unlocked {
+		var restored bool
+		socket := s.socket
+		if s.checkPhysicalSession(cleanup) != nil || s.conn.QueryRowContext(cleanup, releaseProjectWriteSQL, s.lock, socket.idle, socket.interval, socket.count, socket.userTimeout).Scan(&restored) != nil || !restored {
 			s.releaseError = ErrProjectWriteSessionLost
 			discardProjectConnection(s.conn)
 		} else {
