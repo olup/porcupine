@@ -60,15 +60,20 @@ func newHostedLiveFlusher(control *sql.DB, native *lakeapi.DuckLakeStore, coordi
 	}, nil
 }
 
-func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project string) (func(), error) {
+func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project string) (_ func(), resultErr error) {
+	started := time.Now()
 	work, cancel := context.WithTimeout(ctx, hostedActivityControlTimeout)
 	stop := f.incarnation.cancelOnLoss(cancel)
+	defer func() {
+		f.metrics.observeHostedAdmissionGuard(work.Err(), resultErr, time.Since(started))
+		if resultErr != nil {
+			stop()
+		}
+	}()
 	tx, err := f.publisher.control.BeginTx(work, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		stop()
 		return nil, err
 	}
-	release := func() { _ = tx.Rollback(); stop() }
 	if _, err = lockActiveHostedProject(work, tx, project); err == nil {
 		var quarantined bool
 		err = tx.QueryRowContext(work, `SELECT EXISTS(SELECT 1 FROM hosted_recovery_pending WHERE project_id=$1 AND quarantine_code IS NOT NULL)`, project).Scan(&quarantined)
@@ -77,10 +82,10 @@ func (f *hostedLiveFlusher) lockLiveAdmission(ctx context.Context, project strin
 		}
 	}
 	if err != nil {
-		release()
+		_ = tx.Rollback()
 		return nil, err
 	}
-	return release, nil
+	return func() { _ = tx.Rollback(); stop() }, nil
 }
 
 // FlushLive processes batches admitted by the buffered ingestion path.
@@ -91,7 +96,9 @@ func (f *hostedLiveFlusher) FlushLive(ctx context.Context, b acceptance.FlushBat
 	ctx, cancel := f.incarnation.writeContext(ctx)
 	defer cancel()
 	key := lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: b.ProjectID}
+	started := time.Now()
 	session, err := f.coordinator.Acquire(ctx, key)
+	f.metrics.observeHostedFlushPhase("coordinator_wait", time.Since(started))
 	if err != nil {
 		return err
 	}
@@ -125,10 +132,13 @@ FROM projects p LEFT JOIN hosted_recovery_pending r ON r.project_id=p.id WHERE p
 		// Reservation cleanup and mutation settlement need a committed fence
 		// before reading native evidence. Ordinary flushes establish their
 		// fence only when the next outcome commits.
-		if e = f.native.AdvanceRecoveryFence(ctx, fence); e != nil {
-			return e
+		started := time.Now()
+		e = f.native.AdvanceRecoveryFence(ctx, fence)
+		if e == nil {
+			e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant)
 		}
-		if e = f.reconcileHostedWrites(ctx, session, scope, fence, tenant); e != nil {
+		f.metrics.observeHostedFlushPhase("recovery", time.Since(started))
+		if e != nil {
 			return e
 		}
 		return f.commitLiveBatch(ctx, session, fence, batch, b.CanSplit())
@@ -181,7 +191,16 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		return err
 	}
 	var stager *reservingHostedStager
+	// DuckDB calls these control and output steps synchronously while the
+	// transaction is open. Track their time separately across native retries.
+	var outsideNative time.Duration
+	observeOutsideNative := func(phase string, elapsed time.Duration) {
+		outsideNative += elapsed
+		f.metrics.observeHostedFlushPhase(phase, elapsed)
+	}
 	stage := liveEffectStageFunc(func(ctx context.Context, selected lakeapi.SelectedLiveEffects) (lakeapi.StagedLiveEffects, error) {
+		started := time.Now()
+		defer func() { observeOutsideNative("effects_stage", time.Since(started)) }()
 		if stager == nil {
 			plan, routing, err := f.publisher.plan(ctx, batch.TenantID, batch.Scope)
 			if err != nil {
@@ -192,9 +211,20 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		return stager.StageLiveEffects(ctx, selected)
 	})
 	checkpoint := lakeapi.NativeEffectCheckpoint{Sequence: seq, Fingerprint: hash}
+	started := time.Now()
 	result, err := f.native.CommitLiveFromCheckpoint(ctx, fence, batch, ids, stage, checkpoint, func(ctx context.Context, commit func() error) error {
-		return f.commitLiveIfActive(ctx, batch.Scope.Key.ProjectID, batch.TenantID, commit)
+		guardStarted := time.Now()
+		var commitElapsed time.Duration
+		err := f.commitLiveIfActive(ctx, batch.Scope.Key.ProjectID, batch.TenantID, func() error {
+			commitStarted := time.Now()
+			err := commit()
+			commitElapsed = time.Since(commitStarted)
+			return err
+		})
+		observeOutsideNative("commit_guard", time.Since(guardStarted)-commitElapsed)
+		return err
 	})
+	f.metrics.observeHostedFlushPhase("native_write", time.Since(started)-outsideNative)
 	if err != nil {
 		return err
 	}
@@ -221,7 +251,10 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 		if stager == nil || stager.binding == (output.PipelineBinding{}) {
 			return output.ErrPipelineConflict
 		}
-		return f.publisher.publishEvidence(ctx, stager.binding, v.Evidence, nil, false, stager.uploadedManifest)
+		started := time.Now()
+		err := f.publisher.publishEvidence(ctx, stager.binding, v.Evidence, nil, false, stager.uploadedManifest)
+		f.metrics.observeHostedFlushPhase("publish", time.Since(started))
+		return err
 	default:
 		return output.ErrPipelineConflict
 	}

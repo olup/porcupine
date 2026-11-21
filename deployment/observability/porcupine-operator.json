@@ -788,7 +788,7 @@
       "id": 20,
       "type": "timeseries",
       "title": "Query admission outcomes",
-      "description": "Interactive admission rate by operation and outcome. Compare limited admissions with worker slot utilization.",
+      "description": "Interactive admission rate by operation and outcome. Compare worker-limited admissions with worker slot use. Tenant-limited admissions reflect the tenant's concurrency policy.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"

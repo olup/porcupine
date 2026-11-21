@@ -52,25 +52,36 @@ func queryOutcome(contextErr, err error) string {
 		return "cancelled"
 	case errors.Is(contextErr, context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
-	default:
-		return "error"
 	}
+	var managed *apierr.Error
+	if errors.As(err, &managed) && managed.GetStatus() == 429 && managed.Message == "analytics execution time limit reached" {
+		return "timeout"
+	}
+	return "error"
+}
+
+func admissionOutcome(contextErr, err error) string {
+	outcome := queryOutcome(contextErr, err)
+	switch outcome {
+	case "ok":
+		return "admitted"
+	case "error":
+		switch {
+		case errors.Is(err, errWorkerFull):
+			return "worker_limited"
+		case errors.Is(err, errTenantFull):
+			return "tenant_limited"
+		}
+		var managed *apierr.Error
+		if errors.As(err, &managed) && managed.GetStatus() == 429 {
+			return "limited"
+		}
+	}
+	return outcome
 }
 
 func (m *metrics) admission(contextErr, err error, op operation, elapsed time.Duration) {
-	outcome := queryOutcome(contextErr, err)
-	if outcome == "ok" {
-		outcome = "admitted"
-	} else if outcome == "error" {
-		var managed *apierr.Error
-		if errors.As(err, &managed) && managed.GetStatus() == 429 {
-			outcome = "limited"
-			if managed.Message == "analytics execution time limit reached" {
-				outcome = "timeout"
-			}
-		}
-	}
 	kind := observability.Label{Name: "operation", Value: op.name()}
-	m.Add("porcupine_query_admissions_total", 1, kind, observability.Label{Name: "outcome", Value: outcome})
+	m.Add("porcupine_query_admissions_total", 1, kind, observability.Label{Name: "outcome", Value: admissionOutcome(contextErr, err)})
 	m.ObserveDuration("porcupine_query_admission_duration_seconds", elapsed, kind)
 }

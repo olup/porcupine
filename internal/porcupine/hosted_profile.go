@@ -142,6 +142,7 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	buffer.Clock, buffer.ClassifyFlushError = s.clock, hostedFlushError
 	if s.metrics != nil {
 		buffer.Metrics = s.metrics.Registry
+		buffer.FlushRetryReason = hostedFlushRetryReason
 	}
 	if c.QueueMaxEvents > 0 {
 		buffer.MaxEvents = c.QueueMaxEvents

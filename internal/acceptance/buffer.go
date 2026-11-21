@@ -72,6 +72,8 @@ type BufferConfig struct {
 	Metrics                                              *observability.Registry
 	// ClassifyFlushError returns a quarantine code or a code for a request rejected before commit.
 	ClassifyFlushError func(error) (projectCode, requestCode string)
+	// FlushRetryReason returns a fixed metric label for an error the buffer will retry.
+	FlushRetryReason func(error) string
 }
 
 func DefaultBufferConfig() BufferConfig {
@@ -489,6 +491,9 @@ func (b *Buffer) complete(result flushCompletion) {
 			observe("cancelled")
 		default:
 			observe("retry")
+			if m := b.config.Metrics; m != nil && b.config.FlushRetryReason != nil {
+				m.Add("porcupine_flush_retries_total", 1, observability.Label{Name: "reason", Value: b.config.FlushRetryReason(result.err)})
+			}
 		}
 		p.retryDelay += min(p.retryDelay, b.config.RetryMax-p.retryDelay)
 		p.retryDelay = max(b.config.RetryMin, p.retryDelay)
