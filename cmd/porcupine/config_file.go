@@ -53,6 +53,7 @@ type FileConfig struct {
 		MaxSnapshotBytes *int64 `json:"max_snapshot_bytes,omitempty" env:"PORCUPINE_USAGE_MAX_SNAPSHOT_BYTES"`
 	} `json:"usage"`
 	DuckLake struct {
+		Encrypted              *bool        `json:"encrypted,omitempty" env:"PORCUPINE_DUCKLAKE_ENCRYPTED"`
 		MemoryMB               *int         `json:"memory_mb,omitempty" env:"PORCUPINE_DUCKLAKE_MEMORY_MB"`
 		Threads                *int         `json:"threads,omitempty" env:"PORCUPINE_DUCKLAKE_THREADS"`
 		MaxOpenProjects        *int         `json:"max_open_projects,omitempty" env:"PORCUPINE_DUCKLAKE_MAX_OPEN_PROJECTS"`

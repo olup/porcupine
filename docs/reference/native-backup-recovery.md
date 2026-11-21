@@ -72,6 +72,12 @@ To recover into S3, also set `PORCUPINE_DUCKLAKE_S3_*` for a fresh analytical bu
 
 The restorer verifies the inventory, checks application and DuckLake formats, and reconstructs current tables in new catalogs. Native `INSERT ... SELECT` transfers data without downloading the full S3 archive onto the SSD. Event IDs, revisions, identity links and tombstones survive. Physical snapshot history is not part of this recovery contract. The target can operate after the archive becomes unavailable.
 
+## Restore with Parquet encryption
+
+Set `PORCUPINE_DUCKLAKE_ENCRYPTED=true` in the CLI environment when restoring an encrypted DuckLake bundle. The same option restores a plaintext bundle into fresh encrypted catalogs. Before starting the restored server, set `ducklake.encrypted` to match the restore target. [DuckLake Parquet encryption](configuration.md#ducklake-parquet-encryption)
+
+An encrypted native backup contains both the Parquet files and the catalogs with their encryption keys. Anyone who can read the bundle can recover the data. Protect access to the backup destination and all copies.
+
 ## Reconnect deliberately
 
 Recovery resets old API keys, OAuth credentials, human sign-ins, and invitations in a builtin control database. It rotates public ingestion credentials, pauses pipelines, and cancels or clears pending imports, exports, and outbound work in the journal. The result provides new ingestion credentials. A replacement for a retrievable browser key is also available through [`get-client-ingestion-key`](projects.md#get-a-browser-ingestion-key). The bootstrap secret stays in your private file. Invite people and create service keys explicitly with the recovery administrator.

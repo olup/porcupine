@@ -26,6 +26,97 @@ func nativeRestoreTarget(t *testing.T, id, bundle, source string) NativeRestoreR
 	return NativeRestoreRequest{BackupID: id, SourceID: source, LocalBundlePath: bundle, TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("private-recovery-bootstrap", 2)}
 }
 
+func TestDuckLakeEncryptedNativeRestoreReplaysJournal(t *testing.T) {
+	t.Parallel()
+	skipInShort(t)
+	ctx := t.Context()
+	root := t.TempDir()
+	live := filepath.Join(root, "live")
+	backup := filepath.Join(root, "backup")
+	sourceLake := lakeapi.DuckLakeConfig{Directory: filepath.Join(live, "lake"), MemoryLimitMB: 256, Threads: 1, MaintenanceInterval: 24 * time.Hour, Encrypted: true}
+	source, err := Open(Config{DBPath: filepath.Join(live, "queue.db"), BootstrapToken: adminToken, DuckLake: &sourceLake, NativeBackup: &lakeapi.NativeBackupConfig{Directory: backup, Retain: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if source != nil {
+			source.Close()
+		}
+	}()
+	source.stopNativeBackups()
+	a, ingestA := project(t, source)
+	b, ingestB := project(t, source)
+	const committed = `{"type":"track","message_id":"committed","actor_id":"person","name":"committed"}`
+	const other = `{"type":"track","message_id":"other","actor_id":"person","name":"other"}`
+	const pending = `{"type":"track","message_id":"pending","actor_id":"person","name":"pending"}`
+	committedID := receiptFrom(t, nativeRequest(t, source, ingestA, committed, 200), 0)["event_id"]
+	otherID := receiptFrom(t, nativeRequest(t, source, ingestB, other, 200), 0)["event_id"]
+	duckLakeJourneyDrain(t, source)
+	source.deliveryCancel()
+	<-source.deliveryDone
+	pendingID := receiptFrom(t, nativeRequest(t, source, ingestA, pending, 200), 0)["event_id"]
+	if n := eventCount(t, source); n != 1 {
+		t.Fatalf("pending journal rows before backup = %d, want 1", n)
+	}
+	if err := source.createNativeBackup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := source.nativeBackupStatus().LatestBundle
+	sourceID, err := source.lake.SourceID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = source.Close()
+	source = nil
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(live); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(backup, id)
+	r := nativeRestoreTarget(t, id, bundle, sourceID)
+	targetLake := sourceLake
+	targetLake.Directory = r.TargetDuckLakeDirectory
+	result, err := RestoreNativeBackup(ctx, NativeRestoreConfig{Request: r, DuckLake: targetLake})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rotated string
+	for _, key := range result.IngestionKeys {
+		if key.ProjectID == a {
+			rotated = key.Token
+		}
+	}
+	if rotated == "" {
+		t.Fatal("restore did not rotate the project ingestion key")
+	}
+	if err := os.Rename(bundle, bundle+".offline"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(Config{DBPath: r.TargetDBPath, DuckLake: &targetLake})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { restored.Close() })
+	duckLakeJourneyDrain(t, restored)
+	reader := request(t, restored, "POST", "/api/v1/access-keys", r.BootstrapToken, fmt.Sprintf(`{"name":"recovery reader","permissions":["events:read"],"projects":[%q]}`, a), 201)["token"].(string)
+	const query = "SELECT event_id FROM events ORDER BY event"
+	rows := duckLakeJourneyQuery(t, restored, a, reader, query, nil)
+	if len(rows) != 2 || rows[0].(map[string]any)["event_id"] != committedID || rows[1].(map[string]any)["event_id"] != pendingID {
+		t.Fatal("restored project lost its committed or journaled event", rows)
+	}
+	request(t, restored, "POST", "/api/v1/projects/"+b+"/query", reader, `{"sql":"SELECT event_id FROM events"}`, 403)
+	rows = duckLakeJourneyQuery(t, restored, b, r.BootstrapToken, query, nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != otherID {
+		t.Fatal("restored second project lost its event", rows)
+	}
+	retry := nativeRequest(t, restored, rotated, pending, 200)
+	if retry["duplicates"] != float64(1) || receiptFrom(t, retry, 0)["event_id"] != pendingID {
+		t.Fatal("retry changed the journaled event receipt", retry)
+	}
+}
+
 func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)

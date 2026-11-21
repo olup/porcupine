@@ -40,6 +40,7 @@ ADD COLUMN last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','restore_
 ADD COLUMN file_cutoff timestamptz, ADD COLUMN files_observed_at timestamptz,
 ADD COLUMN file_set text,
 ADD CHECK((file_cutoff IS NULL) = (files_observed_at IS NULL) AND (file_cutoff IS NULL) = (file_set IS NULL));`,
+	`ALTER TABLE pc_native_sources ADD COLUMN encrypted boolean NOT NULL DEFAULT false;`,
 }
 
 // Caller holds the domain initialization advisory lock. Catalog metadata can

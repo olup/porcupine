@@ -23,6 +23,14 @@ Analytical storage, [destination pipelines](pipelines.md), [one-time exports](ex
 
 Storage identity is pinned. An unexpected registry, catalog, bucket, or prefix change fails rather than opening an empty replacement. Project agents cannot change deployment storage settings or retrieve storage credentials through HTTP or MCP.
 
+## Encrypt analytical Parquet files
+
+Set `ducklake.encrypted` before initializing a new analytical store in either profile. DuckLake encrypts the Parquet data and delete files and stores the keys in each project's catalog. A copy of the S3 analytical objects or local `files/` directory alone lacks the keys. The server uses the catalog to decrypt files for queries.
+
+In a default standalone installation, the DuckLake directory holds both the project catalogs and their `files/` directories. Protect the whole directory, SQLite journal, and control database separately. Catalog metadata can contain plaintext column statistics. Backups that include both files and catalogs also contain everything needed to read them.
+
+One-time exports and scheduled S3 pipeline outputs remain readable in their configured formats. They are user deliverables and follow the destination's access and encryption policy. [Configuration and migration options](reference/configuration.md#ducklake-parquet-encryption)
+
 <a id="unreleased-separate-control-and-journal"></a><!-- Legacy URL fragment. -->
 
 ## Separate control and journal

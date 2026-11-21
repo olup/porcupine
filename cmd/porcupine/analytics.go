@@ -18,6 +18,13 @@ func (s settings) analyticsConfiguration() (*lakeapi.DuckLakeConfig, error) {
 		directory = defaultAnalyticsDirectory(s.get("PORCUPINE_DB"))
 	}
 	config := &lakeapi.DuckLakeConfig{Directory: directory, S3: remote}
+	if raw := s.get("PORCUPINE_DUCKLAKE_ENCRYPTED"); raw != "" {
+		encrypted, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, errors.New("invalid PORCUPINE_DUCKLAKE_ENCRYPTED")
+		}
+		config.Encrypted = encrypted
+	}
 	config.PostgresURL, err = s.secretSetting("PORCUPINE_DUCKLAKE_POSTGRES_URL")
 	if err != nil {
 		return nil, err

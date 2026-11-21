@@ -141,12 +141,7 @@ func NewDuckLake(config DuckLakeConfig) (*DuckLakeStore, error) {
 		registry.SetMaxOpenConns(1)
 		s.Registry = registry
 		s.registry = &sqliteNativeRegistry{db: registry}
-		if _, err = registry.Exec(`CREATE TABLE IF NOT EXISTS source (id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS catalogs (project_id TEXT PRIMARY KEY, id TEXT NOT NULL, ready INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS deleting_projects (project_id TEXT PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_attempt INTEGER NOT NULL, last_attempt INTEGER NOT NULL, last_success INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0 CHECK(failed IN (0,1)));`); err != nil {
-			return fail(err)
-		}
-		if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
+		if err = migrateSQLiteNativeRegistry(context.Background(), registry); err != nil {
 			return fail(err)
 		}
 		var count int
@@ -162,7 +157,13 @@ CREATE TABLE IF NOT EXISTS cleanup_progress (project_id TEXT PRIMARY KEY, next_a
 				return fail(err)
 			}
 		}
-		if err := PinDuckLakeStorage(context.Background(), registry, root, config.S3); err != nil {
+		if err := pinSQLiteNativeEncryption(context.Background(), registry, config.Encrypted); err != nil {
+			return fail(err)
+		}
+		if err := pinDuckLakeStorage(context.Background(), registry, root, config.S3); err != nil {
+			return fail(err)
+		}
+		if _, err = registry.Exec("UPDATE cleanup_progress SET state='interrupted',failed=1,next_attempt=0 WHERE state='running'"); err != nil {
 			return fail(err)
 		}
 		if err = os.Chmod(registryPath, 0600); err != nil {
@@ -461,12 +462,22 @@ func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, i
 			return fail(err)
 		}
 	}
-	attach := "ATTACH " + LakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + LakeLiteral(dataPath) + ")"
-	if s.SharedCatalog != nil {
-		attach = "ATTACH 'ducklake:postgres:' AS lake (DATA_PATH " + LakeLiteral(dataPath) + ", METADATA_SCHEMA " + LakeLiteral(SharedNativeSchema(catalogID)) + ", META_SECRET 'pc_analytics_postgres', DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false)"
+	if s.Config.Encrypted && s.Remote == nil {
+		// httpfs supplies the cryptographic writer for local Parquet too.
+		if _, err := db.ExecContext(ctx, "LOAD httpfs"); err != nil {
+			if _, err := db.ExecContext(ctx, "INSTALL httpfs; LOAD httpfs"); err != nil {
+				return fail(errors.New("DuckLake encryption requires the httpfs extension"))
+			}
+		}
 	}
-	if existingOnly {
-		attach = strings.TrimSuffix(attach, ")") + ", CREATE_IF_NOT_EXISTS false)"
+	attach := "ATTACH " + LakeLiteral("ducklake:"+catalog) + " AS lake (DATA_PATH " + LakeLiteral(dataPath) +
+		", ENCRYPTED " + strconv.FormatBool(s.Config.Encrypted) + ", CREATE_IF_NOT_EXISTS " + strconv.FormatBool(!ready && !existingOnly)
+	if s.Config.Encrypted {
+		attach += ", DATA_INLINING_ROW_LIMIT 0"
+	}
+	attach += ")"
+	if s.SharedCatalog != nil {
+		attach = s.sharedNativeAttach(dataPath, catalogID, !ready && !existingOnly)
 	}
 	for _, statement := range []string{
 		fmt.Sprintf("SET memory_limit='%dMiB'", s.Config.MemoryLimitMB),
@@ -483,7 +494,7 @@ func (s *DuckLakeStore) openProjectEngine(ctx context.Context, project string, i
 	if _, err = lakeCatalogVersion(ctx, db, !ready); err != nil {
 		return fail(err)
 	}
-	if s.SharedCatalog != nil && !existingOnly {
+	if (s.SharedCatalog != nil || s.Config.Encrypted) && !existingOnly {
 		if _, err = db.ExecContext(ctx, "CALL ducklake_set_option('lake','data_inlining_row_limit','0')"); err != nil {
 			return fail(err)
 		}
