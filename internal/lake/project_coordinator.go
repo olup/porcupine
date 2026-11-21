@@ -140,12 +140,11 @@ func (c *PostgresProjectCoordinator) acquire(parent context.Context, key Project
 	if err := session.configureSocket(ctx); err != nil {
 		return fail()
 	}
-	// Capture PID in the acquisition statement, before any second statement can
-	// be routed elsewhere by an unsupported transaction-pooling proxy.
+	// Acquire only on the backend whose socket settings we configured.
 	if try {
 		var acquired, restored bool
 		socket := session.socket
-		if err := conn.QueryRowContext(ctx, tryProjectWriteSQL, session.lock, socket.idle, socket.interval, socket.count, socket.userTimeout).Scan(&acquired, &session.pid, &restored); err != nil || !restored {
+		if err := conn.QueryRowContext(ctx, tryProjectWriteSQL, session.lock, socket.idle, socket.interval, socket.count, socket.userTimeout, session.pid).Scan(&acquired, &restored); err != nil || !restored {
 			return fail()
 		}
 		if !acquired {
@@ -155,7 +154,7 @@ func (c *PostgresProjectCoordinator) acquire(parent context.Context, key Project
 		}
 	} else {
 		var ignored any
-		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_lock($1),pg_backend_pid()", session.lock).Scan(&ignored, &session.pid); err != nil {
+		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_lock($1) WHERE pg_backend_pid()=$2", session.lock, session.pid).Scan(&ignored); err != nil {
 			return fail()
 		}
 	}
@@ -278,7 +277,7 @@ func (s *ProjectWriteSession) Release() error {
 		defer cancel()
 		var restored bool
 		socket := s.socket
-		if s.checkPhysicalSession(cleanup) != nil || s.conn.QueryRowContext(cleanup, releaseProjectWriteSQL, s.lock, socket.idle, socket.interval, socket.count, socket.userTimeout).Scan(&restored) != nil || !restored {
+		if s.conn.QueryRowContext(cleanup, releaseProjectWriteSQL, s.lock, socket.idle, socket.interval, socket.count, socket.userTimeout, s.pid).Scan(&restored) != nil || !restored {
 			s.releaseError = ErrProjectWriteSessionLost
 			discardProjectConnection(s.conn)
 		} else {

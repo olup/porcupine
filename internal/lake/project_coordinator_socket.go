@@ -22,7 +22,7 @@ WITH previous AS (
         current_setting('tcp_user_timeout', true) AS user_timeout
  OFFSET 0
 )
-SELECT idle, probe_interval, probe_count, user_timeout,
+SELECT pg_backend_pid(), idle, probe_interval, probe_count, user_timeout,
        CASE WHEN idle::int > 0 THEN set_config('tcp_keepalives_idle', LEAST(idle::int,15)::text, false) END,
        CASE WHEN probe_interval::int > 0 THEN set_config('tcp_keepalives_interval', LEAST(probe_interval::int,5)::text, false) END,
        CASE WHEN probe_count::int > 0 THEN set_config('tcp_keepalives_count', LEAST(probe_count::int,3)::text, false) END,
@@ -41,19 +41,19 @@ const restoreProjectWriteSocketSQL = `(
 )`
 
 const tryProjectWriteSQL = `
-WITH lock_attempt AS (SELECT pg_try_advisory_lock($1) AS acquired, pg_backend_pid() AS pid)
-SELECT acquired, pid, CASE WHEN acquired THEN true ELSE ` + restoreProjectWriteSocketSQL + ` END
+WITH lock_attempt AS (SELECT pg_try_advisory_lock($1) AS acquired WHERE pg_backend_pid()=$6)
+SELECT acquired, CASE WHEN acquired THEN true ELSE ` + restoreProjectWriteSocketSQL + ` END
 FROM lock_attempt`
 
 const releaseProjectWriteSQL = `
-WITH lock_release AS (SELECT pg_advisory_unlock($1) AS unlocked)
+WITH lock_release AS (SELECT pg_advisory_unlock($1) AS unlocked WHERE pg_backend_pid()=$6)
 SELECT CASE WHEN unlocked THEN ` + restoreProjectWriteSocketSQL + ` ELSE false END
 FROM lock_release`
 
 func (s *ProjectWriteSession) configureSocket(ctx context.Context) error {
 	var appliedIdle, appliedInterval, appliedCount, appliedTimeout any
 	return s.conn.QueryRowContext(ctx, configureProjectWriteSocketSQL).Scan(
-		&s.socket.idle, &s.socket.interval, &s.socket.count, &s.socket.userTimeout,
+		&s.pid, &s.socket.idle, &s.socket.interval, &s.socket.count, &s.socket.userTimeout,
 		&appliedIdle, &appliedInterval, &appliedCount, &appliedTimeout,
 	)
 }

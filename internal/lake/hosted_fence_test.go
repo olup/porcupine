@@ -467,17 +467,17 @@ func TestSharedPostgresCoordinatorAcquireTimeoutAndCancellation(t *testing.T) {
 	defer cancel()
 	// The fixture owns a distinct database. Checking its waiter list also
 	// confirms that canceled requests leave the server before the owner unlocks.
-	waitForQueued := func(want bool) {
+	waitForQueued := func(want bool) int {
 		t.Helper()
 		for {
-			var queued bool
-			err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks
-WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)`).Scan(&queued)
+			var pid int
+			err := db.QueryRowContext(ctx, `SELECT COALESCE((SELECT pid FROM pg_locks
+WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted LIMIT 1),0)`).Scan(&pid)
 			if err != nil {
 				t.Fatalf("waiting for advisory queue state %v: %v", want, err)
 			}
-			if queued == want {
-				return
+			if (pid != 0) == want {
+				return pid
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -510,12 +510,13 @@ WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datnam
 		}
 		result <- err
 	}()
-	waitForQueued(true)
+	canceledPID := waitForQueued(true)
 	stop()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatalf("blocked acquisition lost caller cancellation: %v", err)
 	}
 	waitForQueued(false)
+	waitForProjectBackendExit(t, ctx, db, canceledPID)
 	if err := owner.Release(); err != nil {
 		t.Fatal(err)
 	}
