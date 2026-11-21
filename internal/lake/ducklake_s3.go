@@ -37,11 +37,14 @@ func newDuckLakeObjectStore(ctx context.Context, c DuckLakeS3Config, source stri
 	return &DuckLakeObjectStore{sourceID: source, Config: c, Namespace: c.Prefix + "/" + source + "/", client: client, transport: transport}, nil
 }
 
+// ErrAnalyticalS3Unavailable identifies a failed operation without exposing storage details.
+var ErrAnalyticalS3Unavailable = errors.New("DuckLake analytical S3 operation failed; inspect the operator's storage configuration")
+
 func analyticalS3Error(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return errors.New("DuckLake analytical S3 operation failed; inspect the operator's storage configuration")
+	return ErrAnalyticalS3Unavailable
 }
 
 // Keep only our own constant stage, never an extension error or its SQL text.

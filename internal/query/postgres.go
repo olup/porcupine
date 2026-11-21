@@ -9,6 +9,7 @@ import (
 	"github.com/olup/porcupine/internal/apierr"
 	"github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/observability"
 )
 
 const (
@@ -48,17 +49,28 @@ func projectPolicy(ctx context.Context, db *sql.DB, project string) (string, Int
 
 // Shared admission serializes concurrent grants and policy changes on the
 // tenant row and locks the project against deletion.
-func (r *Runtime) acquirePermit(ctx context.Context, project, tenant string) (InteractiveQueryConfig, *permit, error) {
+func (r *Runtime) acquirePermit(ctx context.Context, project, tenant string) (_ InteractiveQueryConfig, _ *permit, resultErr error) {
 	// Leave enough lease lifetime for the first renewal after commit.
 	ctx, cancel := context.WithTimeout(ctx, min(r.limits.timeout(), admissionTimeout))
 	defer cancel()
+	if r.metrics.Registry != nil {
+		started := time.Now()
+		defer func() {
+			r.metrics.ObserveDuration("porcupine_query_shared_permit_duration_seconds", time.Since(started),
+				observability.Label{Name: "outcome", Value: admissionOutcome(ctx.Err(), resultErr)})
+		}()
+	}
 	tx, err := r.control.BeginTx(ctx, nil)
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, admissionError(ctx, err)
 	}
 	defer tx.Rollback()
 
+	lockStarted := time.Now()
 	_, limits, err := scanPolicy(tx.QueryRowContext(ctx, policySQL+` AND t.id=$2 FOR UPDATE OF t,p`, project, tenant))
+	if r.metrics.Registry != nil {
+		r.metrics.ObserveDuration("porcupine_query_shared_permit_lock_duration_seconds", time.Since(lockStarted))
+	}
 	if err != nil {
 		return InteractiveQueryConfig{}, nil, admissionError(ctx, err)
 	}

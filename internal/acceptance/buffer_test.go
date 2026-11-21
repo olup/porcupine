@@ -766,6 +766,12 @@ func TestOperationalHostedFlushRetriesAnIndivisibleBatch(t *testing.T) {
 	m := observability.NewRegistry("hosted")
 	c := testBufferConfig()
 	c.Metrics = m
+	c.FlushRetryReason = func(err error) string {
+		if errors.Is(err, ErrBatchTooLarge) {
+			return "pipeline_capacity"
+		}
+		return "other"
+	}
 	c.FlushBytes = 1
 	calls, results := make(chan FlushBatch, 2), make(chan error, 2)
 	b := newTestBuffer(t, c, blockingTestWriter(calls, results))
@@ -786,6 +792,8 @@ func TestOperationalHostedFlushRetriesAnIndivisibleBatch(t *testing.T) {
 		`porcupine_flush_attempts_total{profile="hosted",outcome="retry"} 2`,
 		`porcupine_flush_attempts_total{profile="hosted",outcome="ok"} 1`,
 		`porcupine_flush_duration_seconds_count{profile="hosted"} 3`,
+		`porcupine_flush_retries_total{profile="hosted",reason="other"} 1`,
+		`porcupine_flush_retries_total{profile="hosted",reason="pipeline_capacity"} 1`,
 	} {
 		if !strings.Contains(metrics, expected+"\n") {
 			t.Fatalf("missing metric %q in %s", expected, metrics)
