@@ -18,7 +18,7 @@ The rest of this readme is LLM generated.
 
 Paste this into your coding agent:
 
-> Read https://olup.github.io/porcupine/llms.txt and follow the guide to start Porcupine on my machine. Send a test event and show me the SQL that counts it.
+> Read https://olup.github.io/porcupine/llms.txt and start Porcupine on my machine with the local quickstart. Send a test event, then show me the SQL that counts it and its result.
 
 ### Local setup
 

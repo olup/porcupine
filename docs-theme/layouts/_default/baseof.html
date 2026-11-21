@@ -7,21 +7,26 @@
   <meta name="description" content="{{ .Title }} — Porcupine documentation">
   <title>{{ .Title }} · Porcupine</title>
   <link rel="icon" href="/porcupine/assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="/porcupine/assets/ibm-plex-mono-400.woff2">
+  <link rel="stylesheet" href="/porcupine/base.css">
   <link rel="stylesheet" href="/porcupine/docs/docs.css">
   <script src="/porcupine/docs/docs.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#content">Skip to content</a>
-  <div class="shell">
-    <header>
-      <a class="brand" href="/porcupine/"><img src="/porcupine/assets/favicon.svg" width="28" height="28" alt="">porcupine</a>
-      <span class="header-label">Documentation</span>
-      <a class="repo" href="https://github.com/olup/porcupine">GitHub ↗</a>
+  <div class="frame">
+    <header class="site-header">
+      <a class="brand" href="/porcupine/"><img src="/porcupine/assets/favicon.svg" width="26" height="26" alt="">porcupine</a>
+      <a class="crumb" href="/porcupine/docs/">docs</a>
+      <nav class="site-nav" aria-label="Site">
+        <a class="wide" href="/porcupine/llms.txt">Agent guide</a>
+        <a href="https://github.com/olup/porcupine">GitHub ↗</a>
+      </nav>
     </header>
     <div class="layout">
       <aside class="sidebar">
         <details class="navigation" open>
-          <summary>Browse guides</summary>
+          <summary>Browse the docs</summary>
           <nav aria-label="Documentation">
             {{ $current := .Params.nav_uri }}
             {{ range $index, $group := .Site.Params.navigation }}
@@ -50,11 +55,17 @@
         </div>
       </main>
       <aside class="contents">
-        <p class="nav-title">On this page</p>
+        <p class="contents-title">On this page</p>
         {{ .TableOfContents }}
       </aside>
     </div>
-    <footer><a href="/porcupine/">Home</a><a href="/porcupine/llms.txt">Agent guide</a><span>HTML and Markdown from the same source.</span></footer>
+    <footer class="site-footer">
+      <a href="https://github.com/olup/porcupine">GitHub</a>
+      <a href="/porcupine/">Home</a>
+      <a href="/porcupine/llms.txt">Agent guide</a>
+      <a href="https://github.com/olup/porcupine/blob/main/LICENSE">MIT license</a>
+      <span class="end">Every page is also available as Markdown.</span>
+    </footer>
   </div>
 </body>
 </html>

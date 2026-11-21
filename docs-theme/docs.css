@@ -1,78 +1,61 @@
-@font-face { font-family: "IBM Plex Mono"; src: url("/porcupine/assets/ibm-plex-mono-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "IBM Plex Mono"; src: url("/porcupine/assets/ibm-plex-mono-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
-:root { --paper: #f8f4ea; color-scheme: light; font: 15px/1.75 "IBM Plex Mono", monospace; color: #000; background: var(--paper); --line: 1px solid #000; }
-* { box-sizing: border-box; }
-body { margin: 0; }
-a { color: inherit; text-underline-offset: 4px; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: 2px solid #000; outline-offset: 4px; }
-.shell { max-width: 1600px; margin: 36px auto; border: var(--line); }
-header { height: 88px; display: flex; align-items: center; gap: 30px; padding: 0 32px; border-bottom: var(--line); }
-.brand { display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 600; letter-spacing: -1.3px; text-decoration: none; }
-.brand img { filter: brightness(0); }
-.header-label, .repo { font-size: 12px; }
-.repo { margin-left: auto; }
-.layout { display: grid; grid-template-columns: 238px minmax(0, 1fr) 205px; align-items: start; }
-.sidebar { border-right: var(--line); align-self: stretch; padding: 32px 24px; }
-.sidebar nav { display: flex; flex-direction: column; gap: 22px; }
+/* Documentation layout. Shared type, frame, header, footer and buttons live in /porcupine/base.css. */
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr) 200px; align-items: start; }
+
+.sidebar { align-self: stretch; border-right: var(--rule); padding: 28px 20px 32px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 18px; }
 .navigation > summary { display: none; }
-.nav-title { margin: 0 0 10px; font-weight: 600; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
-.nav-group > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; font-size: 12px; font-weight: 600; line-height: 1.6; list-style: none; }
+.nav-group > summary { display: flex; align-items: baseline; gap: 10px; cursor: pointer; font-size: 13px; font-weight: 600; line-height: 1.6; list-style: none; }
 .nav-group > summary::-webkit-details-marker { display: none; }
 .nav-group > summary::before { content: "+"; flex: 0 0 8px; }
 .nav-group[open] > summary::before { content: "−"; }
-.nav-links { margin-top: 10px; padding-left: 18px; }
-.nav-group a { display: block; padding: 5px 8px; margin-left: -8px; text-decoration: none; font-size: 12px; line-height: 1.55; }
+.nav-links { margin-top: 8px; padding-left: 18px; }
+.nav-group a { display: block; padding: 4px 8px; margin-left: -8px; text-decoration: none; font-size: 13px; line-height: 1.5; }
 .nav-group a:hover { text-decoration: underline; }
-.nav-group a[aria-current] { background: #000; color: var(--paper); }
-main { min-width: 0; padding: 34px clamp(24px, 3.5vw, 60px) 0; }
-.page-tools { display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 10px; padding-bottom: 30px; }
-article { overflow-wrap: anywhere; }
-h1 { font-size: clamp(28px, 3vw, 42px); line-height: 1.2; letter-spacing: -.06em; margin: 10px 0 32px; }
-h2 { font-size: 23px; line-height: 1.4; letter-spacing: -.045em; margin: 48px 0 16px; scroll-margin-top: 24px; }
-h3 { font-size: 17px; line-height: 1.5; margin: 32px 0 12px; scroll-margin-top: 24px; }
+.nav-group a[aria-current] { background: var(--ink); color: var(--paper); }
+
+main { min-width: 0; padding: 28px clamp(24px, 3.5vw, 56px) 0; }
+main:focus { outline: none; }
+.page-tools { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 24px; color: var(--muted); font-size: 12px; }
+.page-tools a { color: var(--ink); }
+article { max-width: 78ch; overflow-wrap: anywhere; }
+h1 { font-size: clamp(30px, 3vw, 42px); line-height: 1.15; letter-spacing: -.06em; margin: 8px 0 28px; }
+h2 { font-size: 23px; line-height: 1.35; letter-spacing: -.045em; margin: 48px 0 14px; scroll-margin-top: 24px; }
+h3 { font-size: 17px; line-height: 1.5; margin: 32px 0 10px; scroll-margin-top: 24px; }
 h4 { font-size: 15px; }
-p { margin: 0 0 20px; }
-ul, ol { padding-left: 22px; }
-li { margin-bottom: 9px; }
-code { font: inherit; font-size: .88em; }
-p code, li code, td code { border-bottom: 1px dotted; }
-pre { overflow-x: auto; border: var(--line); padding: 22px; margin: 24px 0; line-height: 1.65; overflow-wrap: normal; }
-pre code { font-size: 12px; }
-table { display: block; overflow-x: auto; border-collapse: collapse; width: 100%; margin: 28px 0; font-size: 12px; }
-th, td { border: var(--line); padding: 14px 16px; vertical-align: top; text-align: left; min-width: 130px; }
-th { font-weight: 600; }
+p { margin: 0 0 18px; }
+ul, ol { padding-left: 22px; margin: 0 0 18px; }
+li { margin-bottom: 8px; }
+code { font: inherit; font-size: .9em; }
+:not(pre) > code { background: var(--tint); padding: .05em .3em; }
+pre { overflow-x: auto; border: var(--rule); padding: 20px 22px; margin: 22px 0; line-height: 1.65; overflow-wrap: normal; tab-size: 2; }
+pre code { font-size: 13px; }
+table { display: block; overflow-x: auto; border-collapse: collapse; width: 100%; margin: 26px 0; font-size: 13px; }
+th, td { border: var(--rule); padding: 12px 14px; vertical-align: top; text-align: left; min-width: 130px; }
+th { font-weight: 600; background: var(--tint); }
 th code, td code { white-space: nowrap; }
-blockquote { margin: 26px 0; border-left: 3px solid; padding: 0 0 0 22px; }
+blockquote { margin: 24px 0; border-left: 3px solid var(--ink); padding: 0 0 0 20px; }
 .headerlink { margin-left: 8px; font-size: 12px; text-decoration: none; opacity: 0; }
 h1:hover .headerlink, h2:hover .headerlink, h3:hover .headerlink, .headerlink:focus { opacity: 1; }
 article img { max-width: 100%; }
-.contents { position: sticky; top: 28px; padding: 39px 20px; font-size: 11px; }
-.contents nav a { display: block; text-decoration: none; line-height: 1.6; margin: 12px 0; }
+
+.contents { position: sticky; top: 24px; padding: 34px 20px; font-size: 12px; }
+.contents-title { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.contents nav ul { list-style: none; margin: 0; padding: 0; }
+.contents nav li { margin: 0; }
+.contents nav ul ul { padding-left: 12px; }
+.contents nav a { display: block; text-decoration: none; line-height: 1.5; margin: 9px 0; }
 .contents a:hover { text-decoration: underline; }
-.page-bottom { display: flex; justify-content: space-between; gap: 20px; border-top: var(--line); margin-top: 60px; padding: 24px 0; font-size: 11px; }
-footer { display: flex; flex-wrap: wrap; gap: 24px; padding: 22px 32px; border-top: var(--line); font-size: 11px; }
-footer span { margin-left: auto; }
-.skip { position: absolute; top: -100px; background: var(--paper); padding: 10px; }
-.skip:focus { top: 0; }
-@media (max-width: 1650px) { .shell { margin: 24px; } }
-@media (max-width: 1120px) { .layout { grid-template-columns: 218px minmax(0, 1fr); } .contents { display: none; } }
+
+.page-bottom { display: flex; justify-content: space-between; gap: 20px; border-top: var(--rule); margin-top: 56px; padding: 22px 0; font-size: 13px; }
+
+@media (max-width: 1120px) { .layout { grid-template-columns: 220px minmax(0, 1fr); } .contents { display: none; } }
 @media (max-width: 720px) {
-  .shell { margin: 12px; }
-  header { height: 76px; padding: 0 20px; gap: 14px; }
-  .brand { font-size: 22px; }
-  .header-label { display: none; }
   .layout { display: block; }
-  .sidebar { border-right: 0; border-bottom: var(--line); padding: 0; }
-  .navigation > summary { display: list-item; cursor: pointer; padding: 16px 20px; font-size: 12px; }
-  .navigation > nav { padding: 0 20px 24px; max-height: 55vh; overflow-y: auto; }
-  main { padding: 24px 22px 0; }
-  .page-tools { gap: 12px; padding-bottom: 20px; }
+  .sidebar { border-right: 0; border-bottom: var(--rule); padding: 0; }
+  .navigation > summary { display: list-item; cursor: pointer; padding: 14px 20px; font-size: 13px; }
+  .navigation > nav { padding: 0 20px 22px; max-height: 55vh; overflow-y: auto; }
+  main { padding: 22px 20px 0; }
   h1 { font-size: 28px; }
   h2 { font-size: 21px; }
   pre { padding: 16px; }
-  footer { padding: 20px; gap: 12px 20px; }
-  footer span { margin-left: 0; flex-basis: 100%; }
 }
-.contents nav ul { list-style: none; margin: 0; padding: 0; }
-.contents nav li { margin: 0; }
