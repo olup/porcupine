@@ -422,6 +422,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	go func() { completed <- fa.FlushLive(t.Context(), body) }()
 	select {
 	case <-effectEntered:
+	case err := <-completed:
+		t.Fatal("flush ended before the admitted upload entered:", err)
 	case <-t.Context().Done():
 		t.Fatal("admitted upload did not enter")
 	}
