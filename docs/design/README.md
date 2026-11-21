@@ -13,6 +13,7 @@ Start with the [product guides](../README.md) to use Porcupine. Measurements app
 ## Experiments and measurements
 
 - [Initial DuckLake experiment](ducklake-experiment.md)
+- [DuckLake Parquet encryption](ducklake-parquet-encryption.md)
 - [Validation plan](ducklake-validation-plan.md) and [validation results](ducklake-validation.md)
 - [Maintenance investigation](ducklake-maintenance.md) and [prolonged-load record](ducklake-maintenance-soak.md)
 - [Large-batch behavior](ducklake-large-batches.md)

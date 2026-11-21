@@ -72,6 +72,12 @@ func (s *DuckLakeStore) ConfigureSharedPostgres(ctx context.Context, db *sql.DB)
 	return nil
 }
 
+func (s *DuckLakeStore) sharedNativeAttach(dataPath, catalogID string, create bool) string {
+	return fmt.Sprintf(`ATTACH 'ducklake:postgres:' AS lake (DATA_PATH %s, METADATA_SCHEMA %s,
+META_SECRET 'pc_analytics_postgres', DATA_INLINING_ROW_LIMIT 0, OVERRIDE_DATA_PATH false, CREATE_IF_NOT_EXISTS %t, ENCRYPTED %t)`,
+		LakeLiteral(dataPath), LakeLiteral(SharedNativeSchema(catalogID)), create, s.Config.Encrypted)
+}
+
 func (s *DuckLakeStore) initializeSharedNative(ctx context.Context) error {
 	actual := s.Config.SharedSourceID
 	db, err := sql.Open("pgx", s.Config.PostgresURL)
@@ -93,12 +99,16 @@ func (s *DuckLakeStore) initializeSharedNative(ctx context.Context) error {
 	c := s.Config.S3
 	digest := sha256.Sum256([]byte(c.Bucket + "\x00" + c.Prefix + "\x00" + c.Endpoint + "\x00" + c.Region))
 	fingerprint := hex.EncodeToString(digest[:])
-	if _, err := db.ExecContext(bounded, "INSERT INTO pc_native_sources(source_id,fingerprint) VALUES($1,$2) ON CONFLICT DO NOTHING", actual, fingerprint); err != nil {
+	if _, err := db.ExecContext(bounded, "INSERT INTO pc_native_sources(source_id,fingerprint,encrypted) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", actual, fingerprint, s.Config.Encrypted); err != nil {
 		return errors.New("shared analytical source unavailable")
 	}
 	var stored string
-	if err := db.QueryRowContext(bounded, "SELECT fingerprint FROM pc_native_sources WHERE source_id=$1", actual).Scan(&stored); err != nil || stored != fingerprint {
+	var encrypted bool
+	if err := db.QueryRowContext(bounded, "SELECT fingerprint,encrypted FROM pc_native_sources WHERE source_id=$1", actual).Scan(&stored, &encrypted); err != nil || stored != fingerprint {
 		return errors.New("shared analytical storage configuration changed")
+	}
+	if encrypted != s.Config.Encrypted {
+		return errors.New(duckLakeEncryptionModeChanged)
 	}
 	s.registry = &postgresNativeRegistry{db: db, source: actual, fingerprint: fingerprint, timeout: time.Duration(s.Config.MetadataTimeoutSeconds) * time.Second}
 	return nil
@@ -297,8 +307,7 @@ func (s *DuckLakeStore) openSharedDeletionProject(ctx context.Context, project, 
 	if _, err = s.Remote.Configure(ctx, db, project); err != nil {
 		return fail()
 	}
-	attach := "ATTACH 'ducklake:postgres:' AS lake (DATA_PATH " + LakeLiteral(s.Remote.projectPath(project)) + ", METADATA_SCHEMA " + LakeLiteral(SharedNativeSchema(catalogID)) + ", META_SECRET 'pc_analytics_postgres', DATA_INLINING_ROW_LIMIT 0, CREATE_IF_NOT_EXISTS false, OVERRIDE_DATA_PATH false)"
-	if _, err = db.ExecContext(ctx, attach); err != nil {
+	if _, err = db.ExecContext(ctx, s.sharedNativeAttach(s.Remote.projectPath(project), catalogID, false)); err != nil {
 		return fail()
 	}
 	return &ProjectLake{DB: db, shared: true}, nil

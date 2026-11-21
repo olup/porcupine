@@ -12,7 +12,7 @@ import (
 )
 
 func RestoreNativeProject(ctx context.Context, target *DuckLakeStore, reader NativeBackupReader, m NativeBackupManifest, c NativeBackupCatalog, stage string) error {
-	legacy, err := validateNativeRestoreCatalog(ctx, reader, m, c, stage)
+	legacy, err := validateNativeRestoreCatalog(ctx, reader, m, c, stage, target.Config.Encrypted)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func RestoreNativeProject(ctx context.Context, target *DuckLakeStore, reader Nat
 // still contain the previous application layout when a new binary captures it.
 // Attach its catalog read-only and translate rows while copying, leaving the
 // verified archive unchanged.
-func validateNativeRestoreCatalog(ctx context.Context, reader NativeBackupReader, m NativeBackupManifest, c NativeBackupCatalog, stage string) (legacy bool, result error) {
+func validateNativeRestoreCatalog(ctx context.Context, reader NativeBackupReader, m NativeBackupManifest, c NativeBackupCatalog, stage string, targetEncrypted bool) (legacy bool, result error) {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return false, err
@@ -187,6 +187,13 @@ func validateNativeRestoreCatalog(ctx context.Context, reader NativeBackupReader
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return false, err
 		}
+	}
+	var encrypted bool
+	if err := db.QueryRowContext(ctx, "SELECT encrypted FROM duckdb_databases() WHERE database_name='archive'").Scan(&encrypted); err != nil {
+		return false, err
+	}
+	if encrypted && !targetEncrypted {
+		return false, errors.New("encrypted DuckLake backup requires encryption on the restore target")
 	}
 	version, err := applicationCatalogVersion(ctx, db, "archive", false)
 	if err != nil {

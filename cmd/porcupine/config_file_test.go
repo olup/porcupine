@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/olup/porcupine/internal/porcupine"
 )
 
 func TestConfigFileStrictDecoding(t *testing.T) {
@@ -17,6 +19,7 @@ func TestConfigFileStrictDecoding(t *testing.T) {
 	for _, body := range []string{
 		`{"unexpected":"secret-value"}`, `{"query":{"max_rowz":1}}`,
 		`{"query":{"max_rows":"secret-value"}}`, `{} {}`, `null`, `[]`,
+		`{"ducklake":{"encrypted":"secret-value"}}`,
 		`{"bootstrap_token":secret-value}`, strings.Repeat("x", (1<<20)+1),
 	} {
 		t.Run(body[:min(len(body), 50)], func(t *testing.T) {
@@ -35,12 +38,13 @@ func TestConfigFileStrictDecoding(t *testing.T) {
 
 func TestConfigEnvironmentOverrideAndUnknownVariable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "porcupine.json")
-	if err := os.WriteFile(path, []byte(`{"listen":"127.0.0.1:7777","geoip_database":"/file-country.mmdb","query":{"max_rows":900},"ducklake":{"cleanup_enabled":false}}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"listen":"127.0.0.1:7777","geoip_database":"/file-country.mmdb","query":{"max_rows":900},"ducklake":{"cleanup_enabled":false,"encrypted":true}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PORCUPINE_ADDR", "127.0.0.1:8888")
 	t.Setenv("PORCUPINE_QUERY_MAX_ROWS", "800")
 	t.Setenv("PORCUPINE_GEOIP_DATABASE", "/env-country.mmdb")
+	t.Setenv("PORCUPINE_DUCKLAKE_ENCRYPTED", "false")
 	s, err := loadSettings(path, true)
 	if err != nil {
 		t.Fatal(err)
@@ -48,12 +52,54 @@ func TestConfigEnvironmentOverrideAndUnknownVariable(t *testing.T) {
 	if s.get("PORCUPINE_ADDR") != "127.0.0.1:8888" || s.get("PORCUPINE_QUERY_MAX_ROWS") != "800" || s.get("PORCUPINE_DUCKLAKE_CLEANUP_ENABLED") != "false" {
 		t.Fatal("file/env precedence or bool conversion failed")
 	}
-	if _, cfg, err := s.serviceConfig(); err != nil || cfg.GeoIPDatabase != "/env-country.mmdb" {
-		t.Fatalf("GeoIP database path did not reach server configuration: %q (%v)", cfg.GeoIPDatabase, err)
+	_, cfg, err := s.serviceConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GeoIPDatabase != "/env-country.mmdb" {
+		t.Fatalf("GeoIP database path did not reach server configuration: %q", cfg.GeoIPDatabase)
+	}
+	if cfg.DuckLake.Encrypted {
+		t.Fatal("environment did not disable DuckLake encryption")
+	}
+	t.Setenv("PORCUPINE_DUCKLAKE_ENCRYPTED", "secret-value")
+	var output bytes.Buffer
+	if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || !strings.Contains(err.Error(), "PORCUPINE_DUCKLAKE_ENCRYPTED") || strings.Contains(err.Error(), "secret-value") || output.Len() != 0 {
+		t.Fatalf("invalid DuckLake encryption override: %v", err)
 	}
 	t.Setenv("PORCUPINE_QUERY_MAX_ROWZ", "private-secret")
 	if _, err := loadSettings(path, true); err == nil || !strings.Contains(err.Error(), "PORCUPINE_QUERY_MAX_ROWZ") || strings.Contains(err.Error(), "private-secret") {
 		t.Fatalf("unknown setting: %v", err)
+	}
+}
+
+func TestConfigDuckLakeEncryption(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"default", `{}`, false},
+		{"standalone", `{"ducklake":{"encrypted":true}}`, true},
+		{"hosted", strings.Replace(hostedConfigurationJSON, `"ducklake":{`, `"ducklake":{"encrypted":true,`, 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := readSettings(strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, config, err := s.serviceConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := porcupine.ValidateConfig(config); err != nil {
+				t.Fatal(err)
+			}
+			if got := config.DuckLake.Encrypted; got != tc.want {
+				t.Fatalf("DuckLake encryption = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

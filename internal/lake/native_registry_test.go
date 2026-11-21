@@ -109,7 +109,7 @@ func TestSharedNativeRegistryLegacyAdoptionAndUnknownRefusal(t *testing.T) {
 			if _, err := db.Exec(nativeRegistrySchemaV1); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.Exec(`INSERT INTO pc_native_sources VALUES('source','binding'); INSERT INTO pc_native_projects VALUES('source','project','catalog',1,1)`); err != nil {
+			if _, err := db.Exec(`INSERT INTO pc_native_sources(source_id,fingerprint) VALUES('source','binding'); INSERT INTO pc_native_projects VALUES('source','project','catalog',1,1)`); err != nil {
 				t.Fatal(err)
 			}
 			if unknown {
@@ -132,7 +132,43 @@ func TestSharedNativeRegistryLegacyAdoptionAndUnknownRefusal(t *testing.T) {
 			if err := db.QueryRow(`SELECT ready,deleted FROM pc_native_projects WHERE project_id='project'`).Scan(&ready, &deleted); err != nil || ready != 1 || deleted != 1 {
 				t.Fatal("legacy fences lost", ready, deleted, err)
 			}
+			var encrypted bool
+			if err := db.QueryRow(`SELECT encrypted FROM pc_native_sources WHERE source_id='source'`).Scan(&encrypted); err != nil || encrypted {
+				t.Fatal("legacy source was not pinned to plaintext", encrypted, err)
+			}
 		})
+	}
+}
+
+func TestSharedNativeRegistryEncryptionPins(t *testing.T) {
+	t.Parallel()
+	db, dsn := registryTestDB(t)
+	for _, encrypted := range []bool{false, true} {
+		source := event.NewID()
+		config := DuckLakeConfig{PostgresURL: dsn, SharedSourceID: source, S3: &DuckLakeS3Config{Bucket: "bucket"}, Encrypted: encrypted}
+		initialize := func(config DuckLakeConfig) error {
+			store := &DuckLakeStore{Config: config}
+			err := store.initializeSharedNative(t.Context())
+			if store.SharedCatalog != nil {
+				defer store.SharedCatalog.Close()
+			}
+			return err
+		}
+		if err := initialize(config); err != nil {
+			t.Fatal(err)
+		}
+		if err := initialize(config); err != nil {
+			t.Fatal("same-mode worker could not start", err)
+		}
+		changed := config
+		changed.Encrypted = !encrypted
+		if err := initialize(changed); err == nil || !strings.Contains(err.Error(), duckLakeEncryptionModeChanged) {
+			t.Fatal("worker with a different encryption mode was accepted", err)
+		}
+		var stored bool
+		if err := db.QueryRow(`SELECT encrypted FROM pc_native_sources WHERE source_id=$1`, source).Scan(&stored); err != nil || stored != encrypted {
+			t.Fatal("source encryption mode changed", stored, err)
+		}
 	}
 }
 
@@ -144,7 +180,7 @@ func TestSharedNativeRegistryCleanupTakeoverAndReadOnly(t *testing.T) {
 	}
 	const binding = "opaque-binding"
 	source := event.NewID()
-	if _, err := db.Exec(`INSERT INTO pc_native_sources VALUES($1,$2)`, source, binding); err != nil {
+	if _, err := db.Exec(`INSERT INTO pc_native_sources(source_id,fingerprint) VALUES($1,$2)`, source, binding); err != nil {
 		t.Fatal(err)
 	}
 	a := &postgresNativeRegistry{db: db, source: source, fingerprint: binding}
@@ -235,7 +271,7 @@ func TestSharedNativeRegistryConcurrentCleanupClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := event.NewID()
-	if _, err := db.Exec(`INSERT INTO pc_native_sources VALUES($1,'binding')`, source); err != nil {
+	if _, err := db.Exec(`INSERT INTO pc_native_sources(source_id,fingerprint) VALUES($1,'binding')`, source); err != nil {
 		t.Fatal(err)
 	}
 	r := &postgresNativeRegistry{db: db, source: source, fingerprint: "binding"}
@@ -286,7 +322,7 @@ func TestSharedNativeRegistryBoundsBlockedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := event.NewID()
-	if _, err := db.Exec(`INSERT INTO pc_native_sources VALUES($1,'binding')`, source); err != nil {
+	if _, err := db.Exec(`INSERT INTO pc_native_sources(source_id,fingerprint) VALUES($1,'binding')`, source); err != nil {
 		t.Fatal(err)
 	}
 	r := &postgresNativeRegistry{db: db, source: source, fingerprint: "binding", timeout: time.Second}
@@ -360,7 +396,7 @@ func TestSharedNativeRegistryHostedMaintenanceClaim(t *testing.T) {
 	if _, err := claim(ctx, at); err == nil || errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("missing source appeared idle", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO pc_native_sources VALUES($1,'binding')`, r.source); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO pc_native_sources(source_id,fingerprint) VALUES($1,'binding')`, r.source); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.ensure(ctx, "project"); err != nil {

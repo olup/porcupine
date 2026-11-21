@@ -25,7 +25,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `auth` | `mode` defaults to `builtin`; `external` selects a resource server with `public_url` and the explicit issuer, JWKS, audiences, algorithms, token types, clock tolerance, and token lifetime in `auth.external`. See the [external contract](external-auth.md). |
 | `email` | `admin_email`, `host`, `port`, `tls`, `from`, `username`, `password_file` |
 | `oidc` | `issuer`, `client_id`, and either `client_secret` or `client_secret_file` |
-| `ducklake` | `memory_mb`, `threads`, `max_open_projects`, maintenance/cleanup settings, `postgres_url` or `postgres_url_file`, and analytical `s3` |
+| `ducklake` | `encrypted`, `memory_mb`, `threads`, `max_open_projects`, maintenance/cleanup settings, `postgres_url` or `postgres_url_file`, and analytical `s3` |
 | `shared` | `control_database_url` or `control_database_url_file`: hosted PostgreSQL connection |
 | `pipeline` | `key` or `key_file` for destination encryption, plus allowed `s3_endpoints` |
 | `export` | Separate export-result `s3` settings and job/output limits |
@@ -41,6 +41,16 @@ In standalone the generated control path is the journal path plus `.control`. Se
 `init` explicitly writes `queue.receipt_retention: "0"`. Optional pruning makes acceptance depend on DuckLake after a project's first prune. Changing back to zero stops pruning but does not restore missing receipts. See the [receipt contract](receipts.md#bounded-receipts).
 
 `ducklake.s3`, `backup.s3`, and `export.s3` have distinct destinations. Common fields are `bucket`, `prefix`, `region`, `endpoint`, `path_style`, `access_key_id`, `secret_access_key`, and `session_token`. Empty explicit credentials use the configured AWS credential chain. Analytical and backup S3 also support `ca_cert_file` and `request_timeout_seconds`. A query destination does not configure analytical storage or backups.
+
+## DuckLake Parquet encryption
+
+Set `ducklake.encrypted` to `true` or `PORCUPINE_DUCKLAKE_ENCRYPTED=true` before initializing a new standalone or hosted analytical store. The default is `false`. Startup rejects a setting that differs from the initialized store's encryption mode. Existing stores created before this setting use `false`. All hosted workers for the same analytical store must use the same value.
+
+With encryption enabled, DuckLake encrypts the Parquet data and delete files it writes to local disk or S3. Both paths require the DuckDB `httpfs` extension, which the server image includes. Porcupine disables data inlining for encrypted standalone catalogs and for all hosted catalogs.
+
+DuckLake generates the file encryption keys and stores them in the catalog. Recovery requires both the catalog and the Parquet files. The catalog, SQLite journal, control database, and export destinations require their own storage protection. [DuckLake encryption](https://www.ducklake.select/docs/stable/duckdb/advanced_features/encryption)
+
+To move a standalone instance from plaintext to encrypted Parquet, use [offline backup recovery into fresh storage](native-backup-recovery.md#restore-with-parquet-encryption).
 
 ## Browser ingestion
 

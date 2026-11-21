@@ -180,9 +180,13 @@ func (s *DuckLakeObjectStore) configureNamed(ctx context.Context, db *sql.DB, pr
 }
 
 func PinDuckLakeStorage(ctx context.Context, db *sql.DB, root string, remote *DuckLakeS3Config) error {
-	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS storage_configuration (id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL)"); err != nil {
+	if _, err := db.ExecContext(ctx, sqliteCreateTable+sqliteStorageDDL); err != nil {
 		return err
 	}
+	return pinDuckLakeStorage(ctx, db, root, remote)
+}
+
+func pinDuckLakeStorage(ctx context.Context, db *sql.DB, root string, remote *DuckLakeS3Config) error {
 	mode := "local\x00" + root
 	if remote != nil {
 		partition := "endpoint"

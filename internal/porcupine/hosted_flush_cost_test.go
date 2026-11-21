@@ -2,6 +2,7 @@ package porcupine
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ type hostedFlushSample struct {
 
 type hostedFlushCostRow struct {
 	Phase          string `json:"phase"`
+	Encrypted      bool   `json:"encrypted"`
 	Webhook        bool   `json:"webhook"`
 	HistoryBefore  int64  `json:"history_before"`
 	EventsPerFlush int    `json:"events_per_flush"`
@@ -45,8 +47,8 @@ type hostedFlushCostRow struct {
 	SnapshotsPerFlush float64                       `json:"ducklake_snapshots_per_flush"`
 }
 
-func summarizeHostedFlushes(phase string, webhook bool, history int64, events int, samples []hostedFlushSample) hostedFlushCostRow {
-	row := hostedFlushCostRow{Phase: phase, Webhook: webhook, HistoryBefore: history, EventsPerFlush: events, Flushes: len(samples),
+func summarizeHostedFlushes(phase string, encrypted, webhook bool, history int64, events int, samples []hostedFlushSample) hostedFlushCostRow {
+	row := hostedFlushCostRow{Phase: phase, Encrypted: encrypted, Webhook: webhook, HistoryBefore: history, EventsPerFlush: events, Flushes: len(samples),
 		S3ByMethod: map[string]float64{}, S3Requests: map[string]float64{}, S3ParquetByTable: map[string]map[string]float64{}}
 	if len(samples) == 0 {
 		return row
@@ -98,7 +100,8 @@ func hostedFlushCostInt(t *testing.T, raw string) int {
 
 // TestDuckLakeS3SharedPostgresHostedFlushCost records the cost of one hosted
 // live flush; see docs/design/archive/hosted-flush-cost.md. It is opt-in so CI cost
-// does not change.
+// does not change. Set PORCUPINE_MEASURE_HOSTED_FLUSH_ENCRYPTED=true to use
+// DuckLake Parquet encryption.
 func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
@@ -107,6 +110,10 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	}
 	flushes := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_N", "20"))
 	events := hostedFlushCostInt(t, hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_EVENTS", "100"))
+	encrypted, err := strconv.ParseBool(hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_ENCRYPTED", "false"))
+	if err != nil {
+		t.Fatal("PORCUPINE_MEASURE_HOSTED_FLUSH_ENCRYPTED must be a boolean")
+	}
 	var histories []int64
 	for _, raw := range strings.Split(hostedFlushCostEnv(t, "PORCUPINE_MEASURE_HOSTED_FLUSH_HISTORY", "0,200"), ",") {
 		histories = append(histories, int64(hostedFlushCostInt(t, raw)))
@@ -119,6 +126,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	traffic := economicsS3Proxy(t, &fixture)
 	control := sharedPostgresDSN(t)
 	config := hostedJourneyConfig(t, control, fixture)
+	config.DuckLake.Encrypted = encrypted
 	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
 	config.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
 	service, host, _ := hostedCleanupWorker(t, config)
@@ -186,15 +194,19 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 		traffic.calls, traffic.parquetCalls = map[string]int{}, map[string]map[string]int{}
 		return calls, parquet
 	}
-	at := time.Now().UTC().Add(-time.Hour)
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	flush := func(count int) hostedFlushSample {
 		t.Helper()
 		batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project}
 		for i := range count {
 			at = at.Add(time.Millisecond)
 			instant := at.Format(time.RFC3339Nano)
+			digest := sha256.Sum256([]byte(instant))
+			digest[6] = digest[6]&0x0f | 0x40
+			digest[8] = digest[8]&0x3f | 0x80
+			uuid := fmt.Sprintf("%x-%x-%x-%x-%x", digest[:4], digest[4:6], digest[6:8], digest[8:10], digest[10:16])
 			input, err := acceptance.ValidateInput(eventapi.Event{
-				ProjectID: project, UUID: eventapi.NewID(), Event: "page", DistinctID: fmt.Sprintf("visitor-%d", i%100),
+				ProjectID: project, UUID: uuid, Event: "page", DistinctID: fmt.Sprintf("visitor-%d", i%100),
 				Properties: json.RawMessage(`{"page":"/pricing","plan":"team"}`), Context: json.RawMessage(`{}`), Timestamp: instant, ReceivedAt: instant,
 			})
 			if err != nil {
@@ -238,7 +250,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 		if got := jobs() - jobsBefore; got != wantJobs {
 			t.Fatalf("published %d webhook jobs, want %d", got, wantJobs)
 		}
-		raw, err := json.Marshal(summarizeHostedFlushes(phase, hooked, start, count, samples))
+		raw, err := json.Marshal(summarizeHostedFlushes(phase, encrypted, hooked, start, count, samples))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,7 +276,10 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	if err := errors.Join(err, session.Release()); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(stats)
+	raw, _ := json.Marshal(struct {
+		Encrypted bool `json:"encrypted"`
+		lakeapi.DuckLakeMaintenanceStats
+	}{encrypted, stats})
 	t.Logf("hosted-flush-cost-maintenance %s", raw)
 	report("flush_after_maintenance", false, events, flushes)
 }

@@ -22,6 +22,8 @@ type DuckLakeConfig struct {
 	RestoreMaxReaderTime time.Duration
 	RestoreSafetyMargin  time.Duration
 	DisableCleanup       bool
+	// Encrypted requires DuckLake Parquet encryption for this analytical source.
+	Encrypted bool
 	// Hosted selects the fenced history cleanup in CleanupHostedDue. The
 	// unfenced CleanupDue path never runs for a hosted store.
 	Hosted                 bool
