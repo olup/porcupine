@@ -1,8 +1,8 @@
 # Event correction and deletion API
 
-To change an event, read it with `get-event`, then submit `edit-event` or `delete-event` with its current revision and an idempotency key. Poll `get-event-mutation` until the change is applied. These operation names work as CLI commands and through the MCP call tool.
+To change one event, read its revision with `get-event`, then submit `edit-event` or `delete-event` with an idempotency key. Poll `get-event-mutation` for the result. To delete events that match a SQL predicate, use `delete-events` and poll `get-event-deletion`. The same operation names work in the CLI and through the MCP call tool.
 
-Event mutations use project-scoped permissions and durable SQLite acceptance. Analytical projection is asynchronous. A `202` response means the mutation is queued, not that analytical results have changed.
+Event mutations require project-scoped permissions. Standalone queues them durably in SQLite. Hosted records a durable PostgreSQL intent with an immutable S3 input. A `202` response confirms durable acceptance. Analytical projection happens asynchronously.
 
 ## Operations
 
@@ -12,12 +12,14 @@ Event mutations use project-scoped permissions and durable SQLite acceptance. An
 | `edit-event` | `PATCH /api/v1/projects/{id}/events/{uuid}` | `events:edit` | `202` |
 | `delete-event` | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` | `202` |
 | `get-event-mutation` | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` | `200` |
+| `delete-events` | `POST /api/v1/projects/{id}/event-deletions` | `events:read` and `events:delete` | `200` preview, `202` confirmation |
+| `get-event-deletion` | `GET /api/v1/projects/{id}/event-deletions/{mutation_id}` | `events:read` | `200` |
 
-Use a [service key](reference/service-keys.md) or [OAuth token](reference/oauth.md) with the required project grant and the audience of the interface. The CLI and HTTP API use the API audience. The same operations are available through [MCP](reference/mcp.md) with the MCP audience. Use the mutation endpoints to correct or delete individual events. To remove an entire project, see [project deletion](reference/management-api.md#operations).
+Use a [service key](reference/service-keys.md) or [OAuth token](reference/oauth.md) with the required project grant and the audience of the interface. The CLI and HTTP API use the API audience. The same operations are available through [MCP](reference/mcp.md) with the MCP audience. To remove an entire project, use [project deletion](reference/management-api.md#operations).
 
 ## Current accepted event
 
-`get-event` returns `event`, `revision`, and `pending`. Private `$identify` and `$set` control records are excluded from event reads and cannot be changed through event mutation endpoints. See [identity](data-and-identity.md) for how to query the resulting profile. The event contains its durable ID, project, UUID, event name, distinct ID, properties, timestamp, and receipt metadata. `revision` is a decimal string; the original revision is `"0"`. Later revisions are positive SQLite mutation audit sequence numbers and can have gaps for an individual event.
+`get-event` returns `event`, `revision`, and `pending`. Private `$identify` and `$set` control records are excluded from event reads and cannot be changed through event mutation endpoints. See [identity](data-and-identity.md) for how to query the resulting profile. The event contains its durable ID, project, UUID, event name, distinct ID, properties, timestamp, and receipt metadata. `revision` is a decimal string. The original revision is `"0"`. Later revisions are positive and can have gaps for an individual event.
 
 `pending: true` means the current mutation awaits analytical acknowledgment. This endpoint reflects an accepted pending correction immediately. The initial ingestion queue's delivery state is separate. A deleted event returns `410`, including while its tombstone is pending. Unknown events return `404`.
 
@@ -63,15 +65,39 @@ The supplied revision must come from the current event; `"1"` is illustrative. D
 
 After projection, SQL and catalog results exclude the event. For the lifetime of a project, Porcupine retains tombstones to prevent retries from resurrecting an event. Project deletion schedules removal of the project’s physical rows. DuckLake historical snapshots, S3 object versions, SQLite free pages or WAL, and backups can retain prior payloads. Scheduled cleanup rewrites deleted rows, expires snapshots, and removes obsolete files under reader and backup protection. It does not promise physical erasure within 30 days. API deletion is not a guarantee of immediate physical erasure from every copy. See [storage](storage.md) for S3 behavior.
 
+## Delete events matching a query
+
+Send `delete-events` with `dry_run: true` to preview the deletion. Both preview and confirmation require `events:read` and `events:delete` on the target project.
+
+```json
+{
+	"where": "event = $event",
+	"parameters": {"event": "test_checkout"},
+	"time_range": {"from": "2026-11-07T00:00:00Z", "to": "2026-11-08T00:00:00Z"},
+	"idempotency_key": "delete-test-checkouts-2026-11-07",
+	"dry_run": true
+}
+```
+
+`where` is one DuckDB predicate over the project's projected `events` table. The selector uses the read-only SQL policy and execution limits of `query-events`, including `$name` parameters. The optional `time_range` applies to every `events` reference, including subqueries. `from` is inclusive and `to` is exclusive. Both bounds use RFC3339 occurrence timestamps. Omit `time_range` to select across all time. Pending originals and private identity control records are outside the selection. [Query events](query-events.md)
+
+The `200` preview returns `matched_count`, state `preview`, and up to five UUIDs in `sample_uuids`. It reserves neither the idempotency key nor the selected events. To confirm, send the same predicate, parameters, and time range with `dry_run: false` and `expected_count` set to the preview's count. You can reuse the preview's key. Confirmation runs a fresh selection. A count mismatch returns `409` and queues no tombstones. The check compares counts, so two selections with the same count can contain different events.
+
+Each request can match up to 1,000 events. A larger result returns `422` with `event_deletion_match_limit`. A lower interactive query row or byte budget can return `429` earlier. Narrow `where` or `time_range` before retrying. A pending or newer revision can also cause `409`. Standalone needs enough room to queue the whole group in its mutation outbox. Queue or storage pressure can return `503`.
+
+A `202` response includes `mutation_id`. The same credential and confirmed request return the same ID on retry, including after restart. The key is scoped to the project. Reuse of a confirmed key for a different request or actor returns `409`.
+
+Poll `get-event-deletion` for `state`, `matched_count`, `applied_count`, and `failed_count`. The state is `pending`, `applied`, or `failed`, with `error_code` when a terminal failure is recorded. Acceptance queues all tombstones as one durable unit. Standalone can project them in multiple batches. A confirmed zero-match deletion has a durable ID and no tombstones. After projection, the deleted events disappear from current analytical reads. Exports and pipeline copies already delivered are outside the operation.
+
 ## Idempotency, concurrency, and audit
 
-`expected_revision` is required and must be a nonnegative decimal string within the supported signed 64-bit range. A stale revision returns `409`. Only one mutation per event can be pending; another mutation returns `409` until acknowledgment.
+Single-event mutations require `expected_revision` as a nonnegative decimal string within the supported signed 64-bit range. A stale revision returns `409`. Only one mutation per event can be pending. Another mutation returns `409` until acknowledgment.
 
-An idempotency key contains 1 through 200 bytes and cannot be blank. Its scope is the project. SQLite stores its hash and a request digest, not the raw key. Repeating the same key, actor credential, operation, event, expected revision, and normalized request returns the existing mutation. Reusing the key for a different actor or request returns `409`. Keep the same key when retrying an uncertain response.
+An idempotency key contains 1 through 200 bytes and cannot be blank. Its scope is the project. The mutation store retains the key hash and a request digest. Repeating the same key, actor credential, operation, event, expected revision, and normalized request returns the existing mutation. Reusing the key for a different actor or request returns `409`. Keep the same key when retrying an uncertain response.
 
-The mutation outbox is bounded instance-wide by the smaller of the ingestion queue event limit and 1,000 entries, plus a 64 MiB payload budget. A full outbox returns `503`. Ordinary request bodies and edited snapshots remain subject to the 1 MiB limit.
+The SQLite mutation outbox is bounded instance-wide by the smaller of the ingestion queue event limit and 1,000 entries, plus a 64 MiB payload budget. A full outbox returns `503`. Ordinary request bodies and edited snapshots are subject to the 1 MiB limit.
 
-Mutation responses and `get-event-mutation` contain `mutation_id`, `project_id`, `uuid`, decimal-string `revision`, `operation`, `state`, `created_at`, and optional `applied_at`. State is `pending` or `applied`. Applied means analytical storage acknowledged projection. A lost acknowledgment can leave a visible correction marked pending until retry succeeds.
+Single-event mutation responses and `get-event-mutation` contain `mutation_id`, `project_id`, `uuid`, decimal-string `revision`, `operation`, `state`, `created_at`, and optional `applied_at`. State is `pending`, `applied`, or `failed` if the store records a terminal failure. A lost acknowledgment can leave a visible correction marked pending until retry succeeds.
 
 The audit retains actor, operation, revision, time, idempotency hash, request digest, and status metadata. It retains no before-and-after values. Full pending projection payloads leave the SQLite outbox after analytical acknowledgment in the same transaction that marks the mutation applied. The separate private original snapshot remains in analytical storage through corrections and is blanked by deletion's newest projection.
 

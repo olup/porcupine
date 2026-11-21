@@ -56,6 +56,8 @@ Historical upload requests authorize against the shared project and job state. S
 
 Explicit event mutations persist a durable intent before success. Immutable S3 objects hold the mutation input. The project writer applies the change once against the expected revision and reconciles the intent after commit. The deletion fence still applies to resumed work. [Correct or delete events](../events.md)
 
+A query deletion stores its selected UUIDs and revisions in one immutable intent. The project writer checks all selected revisions and commits the tombstones and their proof together. Publication cancels pending webhook work for those UUIDs and settles the intent in one PostgreSQL transaction.
+
 ## Query permits and output jobs
 
 Hosted SQL, catalog, and profile requests use worker-local slots and renewable PostgreSQL permits. The keeper renews until actual native return, independently of HTTP deadlines. A stuck call or failed permit renewal quarantines that project's interactive engine on the worker. The process stays up and other projects can execute within their limits. A lost heartbeat can free a permit before a partitioned native call returns. Physical concurrency can exceed the configured limit during that window. [Hosted runtime reference](../reference/shared-deployment.md#native-timeouts-and-worker-supervision)
@@ -112,6 +114,7 @@ The inventory maps versioned standalone journal tables to their hosted equivalen
 | `metadata` | PostgreSQL | Exactly once | Durable source, schema, and job keys. |
 | `mutation_audit` | PostgreSQL | Exactly once | Revision, request hash, actor, state. |
 | `mutation_outbox` | PostgreSQL | At least once | Intent and immutable object reference. |
+| `event_deletions` | PostgreSQL | Exactly once | Project-scoped idempotency, match count, and state in `hosted_mutation_intents`. |
 | `pipeline_retired_destinations` | PostgreSQL | At least once | Hosted attempts retain destination authority for cleanup. |
 | `pipeline_retired_files` | PostgreSQL | At least once | Hosted attempt records retain ownership evidence. |
 | `pipeline_s3_files` | PostgreSQL | At least once | File and upload references. |

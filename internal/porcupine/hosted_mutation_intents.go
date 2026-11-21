@@ -51,6 +51,9 @@ CREATE UNIQUE INDEX hosted_mutation_one_unresolved
 	ON hosted_mutation_intents(source_id,project_id) WHERE state IN ('staging','ready');
 `
 
+const hostedEventDeletionSchema = `ALTER TABLE hosted_mutation_intents ADD COLUMN matched_count INTEGER
+CHECK (matched_count IS NULL OR (operation='delete' AND matched_count BETWEEN 0 AND 1000));`
+
 const hostedMutationProjectCapacity int64 = 128 << 20
 const hostedMutationInstanceCapacity int64 = 8 << 30
 const hostedMutationTenantCapacity int64 = 1 << 30
@@ -65,12 +68,13 @@ type hostedMutationIntent struct {
 	operation, state, createdAt, appliedAt, errorCode string
 	revision, expected                                int64
 	order                                             sql.NullInt64
+	matchedCount                                      sql.NullInt64
 	body                                              lakeapi.ImmutableObjectRef
 	prefix                                            string
 }
 
 const hostedMutationColumns = `source_id,project_id,catalog_id,stream_id,tenant_id,mutation_id,key_hash,request_hash,actor_hash,
-operation,state,created_at,applied_at,error_code,revision,expected_revision,acceptance_order,body_key,body_sha256,body_bytes,body_version,body_prefix`
+operation,state,created_at,applied_at,error_code,revision,expected_revision,acceptance_order,body_key,body_sha256,body_bytes,body_version,body_prefix,matched_count`
 
 type hostedMutationQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -79,7 +83,7 @@ type hostedMutationQuery interface {
 func scanHostedMutation(row *sql.Row) (hostedMutationIntent, error) {
 	var i hostedMutationIntent
 	err := row.Scan(&i.scope.Key.SourceID, &i.scope.Key.ProjectID, &i.scope.CatalogID, &i.scope.StreamID, &i.tenant, &i.id, &i.keyHash, &i.requestHash, &i.actorHash,
-		&i.operation, &i.state, &i.createdAt, &i.appliedAt, &i.errorCode, &i.revision, &i.expected, &i.order, &i.body.Key, &i.body.SHA256, &i.body.Bytes, &i.body.VersionID, &i.prefix)
+		&i.operation, &i.state, &i.createdAt, &i.appliedAt, &i.errorCode, &i.revision, &i.expected, &i.order, &i.body.Key, &i.body.SHA256, &i.body.Bytes, &i.body.VersionID, &i.prefix, &i.matchedCount)
 	return i, err
 }
 
@@ -136,9 +140,9 @@ WHERE source_id=$1 AND project_id=$2 AND state IN ('staging','ready'))`, i.scope
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO hosted_mutation_intents
 (source_id,project_id,tenant_id,catalog_id,stream_id,mutation_id,key_hash,request_hash,actor_hash,operation,
-expected_revision,revision,state,body_key,body_sha256,body_bytes,body_prefix,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'staging',$13,$14,$15,$16,$17)`,
-		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, i.id, i.keyHash, i.requestHash, i.actorHash, i.operation, i.expected, i.revision, i.body.Key, i.body.SHA256, i.body.Bytes, i.prefix, i.createdAt); err != nil {
+expected_revision,revision,state,body_key,body_sha256,body_bytes,body_prefix,created_at,matched_count)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'staging',$13,$14,$15,$16,$17,$18)`,
+		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, i.id, i.keyHash, i.requestHash, i.actorHash, i.operation, i.expected, i.revision, i.body.Key, i.body.SHA256, i.body.Bytes, i.prefix, i.createdAt, i.matchedCount); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE hosted_mutation_projects SET revision=$3,retained_bytes=retained_bytes+$4
@@ -182,22 +186,23 @@ OR EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=$2)`, project, tenant).
 	return err
 }
 
-func readyHostedMutationTx(ctx context.Context, tx *sql.Tx, i hostedMutationIntent, body lakeapi.ImmutableObjectRef) error {
-	if body.Key != i.body.Key || body.SHA256 != i.body.SHA256 || body.Bytes != i.body.Bytes {
-		return errHostedMutationConflict
+func acceptHostedMutationIntentTx(ctx context.Context, tx *sql.Tx, i hostedMutationIntent) error {
+	settled := 0
+	if i.state == "applied" {
+		settled = 1
 	}
 	var order int64
-	err := tx.QueryRowContext(ctx, `UPDATE hosted_mutation_projects SET accepted_through=accepted_through+1
+	err := tx.QueryRowContext(ctx, `UPDATE hosted_mutation_projects SET accepted_through=accepted_through+1,settled_through=settled_through+$7
 WHERE source_id=$1 AND project_id=$2 AND tenant_id=$3 AND catalog_id=$4 AND stream_id=$5
 AND accepted_through=settled_through AND accepted_through<$6 RETURNING accepted_through`,
-		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, int64(math.MaxInt64)).Scan(&order)
+		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.tenant, i.scope.CatalogID, i.scope.StreamID, int64(math.MaxInt64), settled).Scan(&order)
 	if err != nil {
 		return err
 	}
 	var id string
-	return tx.QueryRowContext(ctx, `UPDATE hosted_mutation_intents SET state='ready',body_version=$4,acceptance_order=$5
-WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='staging' AND body_sha256=$6 RETURNING mutation_id`,
-		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, body.VersionID, order, i.body.SHA256).Scan(&id)
+	return tx.QueryRowContext(ctx, `UPDATE hosted_mutation_intents SET state=$7,body_version=$4,acceptance_order=$5,applied_at=$8
+WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='staging' AND body_sha256=$6 AND body_key=$9 AND body_bytes=$10 RETURNING mutation_id`,
+		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, i.body.VersionID, order, i.body.SHA256, i.state, i.appliedAt, i.body.Key, i.body.Bytes).Scan(&id)
 }
 
 func (i hostedMutationIntent) response(uuid string) MutationResponse {
@@ -237,7 +242,14 @@ func hostedMutationTerminalState(evidence lakeapi.NativeCommitEvidence) string {
 func (i hostedMutationIntent) settledBy(evidence lakeapi.NativeCommitEvidence) bool {
 	return i.order.Valid && i.state == hostedMutationTerminalState(evidence) &&
 		i.errorCode == evidence.Mutation.ErrorCode && i.appliedAt == evidence.AccountedAt.Format(time.RFC3339Nano) &&
-		i.body.SHA256 == evidence.InputFingerprint
+		i.matchesProof(evidence)
+}
+
+func (i hostedMutationIntent) matchesProof(evidence lakeapi.NativeCommitEvidence) bool {
+	outcome := evidence.Mutation
+	return i.body.SHA256 == evidence.InputFingerprint && i.revision == int64(outcome.Revision) &&
+		(i.operation == "delete") == outcome.Deleted && i.matchedCount.Valid == (outcome.MatchedCount != nil) &&
+		(!i.matchedCount.Valid || i.matchedCount.Int64 == int64(*outcome.MatchedCount))
 }
 
 func retireHostedMutationStagingTx(ctx context.Context, tx *sql.Tx, scope lakeapi.HostedProjectScope, tenant, createdBefore string) error {
@@ -247,10 +259,17 @@ AND state='staging' AND created_at<$6`, scope.Key.SourceID, scope.Key.ProjectID,
 	return err
 }
 
+func abortHostedMutationStagingTx(ctx context.Context, tx *sql.Tx, i hostedMutationIntent) error {
+	var id string
+	return tx.QueryRowContext(ctx, `UPDATE hosted_mutation_intents SET state='aborted'
+WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='staging' AND body_sha256=$4 RETURNING mutation_id`,
+		i.scope.Key.SourceID, i.scope.Key.ProjectID, i.id, i.body.SHA256).Scan(&id)
+}
+
 func hostedReadyDelete(ctx context.Context, tx *sql.Tx, scope lakeapi.HostedProjectScope, tenant string) (bool, error) {
 	var ready bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM hosted_mutation_intents
 WHERE source_id=$1 AND project_id=$2 AND catalog_id=$3 AND stream_id=$4 AND tenant_id=$5
-AND state='ready' AND operation='delete')`, scope.Key.SourceID, scope.Key.ProjectID, scope.CatalogID, scope.StreamID, tenant).Scan(&ready)
+AND state='ready' AND operation='delete' AND matched_count IS DISTINCT FROM 0)`, scope.Key.SourceID, scope.Key.ProjectID, scope.CatalogID, scope.StreamID, tenant).Scan(&ready)
 	return ready, err
 }

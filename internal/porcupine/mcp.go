@@ -57,7 +57,7 @@ type mcpCallInput struct {
 	OperationID string            `json:"operation_id" jsonschema:"Operation ID discovered with porcupine_docs; no URLs or HTTP methods"`
 	Path        map[string]string `json:"path,omitempty" jsonschema:"Path parameters from the operation contract, such as id"`
 	Query       map[string]string `json:"query,omitempty" jsonschema:"Query parameters from the operation contract, such as limit"`
-	Body        map[string]any    `json:"body,omitempty" jsonschema:"JSON request body from the operation contract; omit for reads and deletion"`
+	Body        map[string]any    `json:"body,omitempty" jsonschema:"JSON request body from the operation contract. Omit when the operation does not accept a body."`
 }
 
 type mcpCallOutput struct {

@@ -11,22 +11,37 @@ import (
 
 var ErrHostedMutationConflict = errors.New("native mutation input conflicts with the original operation")
 
+const MaxHostedEventDeletionTargets = 1000
+
 type HostedMutationInput struct {
 	Scope            HostedProjectScope
 	TenantID         string
 	MutationID       string
 	ExpectedRevision uint64
 	Projection       EventProjection
+	Deletion         *HostedEventDeletion `json:",omitempty"`
+}
+
+type HostedEventDeletion struct {
+	Revision uint64
+	Targets  []HostedEventDeletionTarget
+}
+
+type HostedEventDeletionTarget struct {
+	UUID             string
+	ExpectedRevision uint64
 }
 
 type HostedMutationOutcome struct {
-	Revision  uint64
-	Deleted   bool
-	ErrorCode string
+	Revision     uint64
+	Deleted      bool
+	ErrorCode    string
+	MatchedCount *int `json:",omitempty"`
 }
 
 func (o HostedMutationOutcome) valid() bool {
-	return o.Revision > 0 && o.Revision <= math.MaxInt64 && (o.ErrorCode == "" || o.ErrorCode == "head_conflict")
+	return o.Revision > 0 && o.Revision <= math.MaxInt64 && (o.ErrorCode == "" || o.ErrorCode == "head_conflict") &&
+		(o.MatchedCount == nil || o.Deleted && *o.MatchedCount >= 0 && *o.MatchedCount <= MaxHostedEventDeletionTargets)
 }
 
 // HostedMutationFingerprint identifies the exact immutable intent bytes.
@@ -70,12 +85,21 @@ func (s *DuckLakeStore) CommitHostedMutation(ctx context.Context, fence ProjectW
 	if s.SharedCatalog == nil || !validProjectWriteFence(fence) || fence.Key != scope.Key || fence.StreamID != scope.StreamID || scope.CatalogID != SharedNativeCatalogID(scope.Key.SourceID, scope.Key.ProjectID) || fence.Key.SourceID != s.Config.SharedSourceID {
 		return NativeCommitEvidence{}, ErrProjectWriteFenceStale
 	}
-	if input.MutationID == "" || len(input.MutationID) > 200 || input.TenantID == "" || projection.ProjectID != scope.Key.ProjectID || !ValidStoredEventUUID(projection.UUID) || projection.Revision <= input.ExpectedRevision || projection.Revision > math.MaxInt64 || projection.IdentitySnapshot != "" {
+	if input.MutationID == "" || len(input.MutationID) > 200 || input.TenantID == "" {
 		return NativeCommitEvidence{}, errors.New("invalid native mutation input")
 	}
-	prepared, err := PrepareLakeProjection(projection)
-	if err != nil {
-		return NativeCommitEvidence{}, err
+	var prepared PreparedLakeProjection
+	if input.Deletion == nil {
+		if projection.ProjectID != scope.Key.ProjectID || !ValidStoredEventUUID(projection.UUID) || projection.Revision <= input.ExpectedRevision || projection.Revision > math.MaxInt64 || projection.IdentitySnapshot != "" {
+			return NativeCommitEvidence{}, errors.New("invalid native mutation projection")
+		}
+		var err error
+		prepared, err = PrepareLakeProjection(projection)
+		if err != nil {
+			return NativeCommitEvidence{}, err
+		}
+	} else if !input.Deletion.Valid(input.ExpectedRevision) {
+		return NativeCommitEvidence{}, errors.New("invalid native event deletion")
 	}
 	fingerprint, err := HostedMutationFingerprint(input)
 	if err != nil {
@@ -116,14 +140,8 @@ func (s *DuckLakeStore) CommitHostedMutation(ctx context.Context, fence ProjectW
 		if err != nil {
 			return err
 		}
-		old, err := loadEventProjection(ctx, tx, scope.Key.ProjectID, projection.UUID)
-		if err != nil && !errors.Is(err, ErrEventNotFound) {
-			return err
-		}
-		outcome := HostedMutationOutcome{Revision: projection.Revision, Deleted: projection.IsDeleted}
-		if errors.Is(err, ErrEventNotFound) || old.IsDeleted || old.IdentitySnapshot != "" || old.ID != projection.ID || old.Revision != input.ExpectedRevision || old.ReceivedAt != prepared.projection.ReceivedAt {
-			outcome.ErrorCode = "head_conflict"
-		} else if err := applyHostedMutationProjection(ctx, tx, old, prepared); err != nil {
+		outcome, err := applyHostedMutation(ctx, tx, input, prepared)
+		if err != nil {
 			return err
 		}
 		at := s.liveCommitTime()
@@ -145,6 +163,72 @@ func (s *DuckLakeStore) CommitHostedMutation(ctx context.Context, fence ProjectW
 		return NativeCommitEvidence{}, err
 	}
 	return result, nil
+}
+
+func (d HostedEventDeletion) Valid(expected uint64) bool {
+	if d.Revision <= expected || d.Revision > math.MaxInt64 || len(d.Targets) > MaxHostedEventDeletionTargets {
+		return false
+	}
+	seen := make(map[string]struct{}, len(d.Targets))
+	var latest uint64
+	for _, target := range d.Targets {
+		if _, duplicate := seen[target.UUID]; duplicate || !ValidStoredEventUUID(target.UUID) {
+			return false
+		}
+		seen[target.UUID] = struct{}{}
+		latest = max(latest, target.ExpectedRevision)
+	}
+	return latest == expected
+}
+
+func applyHostedMutation(ctx context.Context, tx *sql.Tx, input HostedMutationInput, prepared PreparedLakeProjection) (HostedMutationOutcome, error) {
+	project, projection := input.Scope.Key.ProjectID, input.Projection
+	if d := input.Deletion; d != nil {
+		count := len(d.Targets)
+		outcome := HostedMutationOutcome{Revision: d.Revision, Deleted: true, MatchedCount: &count}
+		matched, err := applyHostedEventDeletion(ctx, tx, project, *d)
+		if !matched {
+			outcome.ErrorCode = "head_conflict"
+		}
+		return outcome, err
+	}
+	outcome := HostedMutationOutcome{Revision: projection.Revision, Deleted: projection.IsDeleted}
+	old, err := loadEventProjection(ctx, tx, project, projection.UUID)
+	if err != nil && !errors.Is(err, ErrEventNotFound) {
+		return outcome, err
+	}
+	if errors.Is(err, ErrEventNotFound) || old.IsDeleted || old.IdentitySnapshot != "" || old.ID != projection.ID || old.Revision != input.ExpectedRevision || old.ReceivedAt != prepared.projection.ReceivedAt {
+		outcome.ErrorCode = "head_conflict"
+		return outcome, nil
+	}
+	return outcome, applyHostedMutationProjection(ctx, tx, old, prepared)
+}
+
+func applyHostedEventDeletion(ctx context.Context, tx *sql.Tx, project string, deletion HostedEventDeletion) (bool, error) {
+	if len(deletion.Targets) == 0 {
+		return true, nil
+	}
+	uuids := make([]string, len(deletion.Targets))
+	revisions := make([]uint64, len(deletion.Targets))
+	for i, target := range deletion.Targets {
+		uuids[i], revisions[i] = target.UUID, target.ExpectedRevision
+	}
+	var matched, distinct int
+	err := tx.QueryRowContext(ctx, `WITH targets AS (
+ SELECT unnest(CAST(? AS VARCHAR[])) AS uuid, unnest(CAST(? AS UBIGINT[])) AS revision
+)
+SELECT count(*),count(DISTINCT t.uuid) FROM targets t
+JOIN lake.heads h ON h.uuid=t.uuid AND h.revision=t.revision AND NOT h.is_deleted
+JOIN lake.current_events e ON e.uuid=h.uuid AND e.id=h.event_id AND e.revision=h.revision AND e.received_at=h.received_at
+WHERE e.project_id=? AND e.identity_snapshot=''`, uuids, revisions, project).Scan(&matched, &distinct)
+	if err != nil || matched != len(uuids) || distinct != len(uuids) {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM lake.current_events WHERE project_id=? AND identity_snapshot='' AND uuid IN (SELECT unnest(CAST(? AS VARCHAR[])))`, project, uuids); err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE lake.heads SET revision=?,is_deleted=true WHERE uuid IN (SELECT unnest(CAST(? AS VARCHAR[])))`, int64(deletion.Revision), uuids)
+	return err == nil, err
 }
 
 func requireHostedMutationCatalog(ctx context.Context, tx *sql.Tx) error {

@@ -34,6 +34,8 @@ type QueryExecutionLimits struct {
 	MaxRows        int
 	MaxResultBytes int
 	TimeRange      *QueryTimeRange
+	// EventSelectionMax makes the SQL input a deletion predicate and sets its match cap.
+	EventSelectionMax int
 }
 
 func DefaultQueryExecutionLimits() QueryExecutionLimits {

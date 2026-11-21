@@ -31,7 +31,13 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 		return AnalyticsResult{}, duckLakeProjectError(ctx, err)
 	}
 	defer release()
-	canonical, args, statement, err := nativequery.PrepareQuery(ctx, p.DB, rawSQL, parameters)
+	prepare := nativequery.PrepareQuery
+	maxRows := limits.MaxRows
+	if limits.EventSelectionMax > 0 {
+		prepare = nativequery.PrepareEventSelection
+		maxRows = min(maxRows, limits.EventSelectionMax)
+	}
+	canonical, args, statement, err := prepare(ctx, p.DB, rawSQL, parameters)
 	if err != nil {
 		if ctx.Err() != nil {
 			return AnalyticsResult{}, apierr.New(429, "analytics execution time limit reached")
@@ -74,13 +80,16 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	if bytes > limits.MaxResultBytes {
 		return AnalyticsResult{}, apierr.Detailed(429, "result_byte_limit", "analytics result byte limit reached", "Select fewer columns or use create-event-export for a larger result.", "")
 	}
-	rows, err := conn.QueryContext(ctx, prefix+"SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(limits.MaxRows+1), args...)
+	rows, err := conn.QueryContext(ctx, prefix+"SELECT CAST(to_json("+alias+") AS VARCHAR) FROM ("+canonical+") AS "+alias+" LIMIT "+strconv.Itoa(maxRows+1), args...)
 	if err != nil {
 		return AnalyticsResult{}, DuckLakeQueryError(ctx, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if len(result.Data) >= limits.MaxRows {
+		if limits.EventSelectionMax > 0 && len(result.Data) >= limits.EventSelectionMax {
+			return AnalyticsResult{}, apierr.Detailed(422, "event_deletion_match_limit", "Too many events match the deletion query", "Narrow where or time_range and retry.", "where")
+		}
+		if len(result.Data) >= maxRows {
 			return AnalyticsResult{}, apierr.Detailed(429, "result_row_limit", "analytics result row limit reached", "Reduce the result or use create-event-export for a larger CSV or JSONL export.", "")
 		}
 		var raw string

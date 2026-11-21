@@ -20,15 +20,16 @@ import (
 
 // Publication uses persisted pipeline authority and the native commit proof.
 type hostedEffectPublisher struct {
-	control               *sql.DB
-	effects               *output.PGPipelineEffects
-	usage                 *usage.Store
-	objects               *lakeapi.DuckLakeObjectStore
-	cancelMutationWebhook func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
-	checkpointImport      func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
-	wakeWebhook           func()
-	ensureCapacity        func(context.Context, *sql.Tx, string, string) error
-	loadRule              func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
+	control                *sql.DB
+	effects                *output.PGPipelineEffects
+	usage                  *usage.Store
+	objects                *lakeapi.DuckLakeObjectStore
+	cancelMutationWebhook  func(context.Context, *sql.Tx, output.PipelineScope, string, string) error
+	cancelMutationWebhooks func(context.Context, *sql.Tx, output.PipelineScope, string, []string) error
+	checkpointImport       func(context.Context, *sql.Tx, lakeapi.NativeCommitEvidence) error
+	wakeWebhook            func()
+	ensureCapacity         func(context.Context, *sql.Tx, string, string) error
+	loadRule               func(context.Context, string, string, output.PipelineTarget) ([]byte, error)
 }
 type hostedPublicationManifest struct {
 	Version                                                  int
@@ -349,7 +350,7 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 	}
 	var v output.PipelinePublication
 	var mutation hostedMutationIntent
-	var mutationUUID string
+	var mutationUUIDs []string
 	var err error
 	switch e.Kind {
 	case lakeapi.NativeCommitLive:
@@ -372,18 +373,27 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 		if err != nil {
 			return err
 		}
-		if mutation.body.SHA256 != e.InputFingerprint || mutation.revision != int64(e.Mutation.Revision) || (mutation.operation == "delete") != e.Mutation.Deleted {
+		if !mutation.matchesProof(e) {
 			return output.ErrPipelineConflict
 		}
-		if mutation.state == "ready" && e.Mutation.Deleted && e.Mutation.ErrorCode == "" {
-			if p.cancelMutationWebhook == nil {
-				return output.ErrPipelineConflict
-			}
+		if mutation.state == "ready" && e.Mutation.Deleted && e.Mutation.ErrorCode == "" && (!mutation.matchedCount.Valid || mutation.matchedCount.Int64 > 0) {
 			body, err := p.readHostedMutation(ctx, mutation)
 			if err != nil {
 				return err
 			}
-			mutationUUID = body.Projection.UUID
+			if body.Deletion == nil {
+				if p.cancelMutationWebhook == nil {
+					return output.ErrPipelineConflict
+				}
+				mutationUUIDs = []string{body.Projection.UUID}
+			} else {
+				if p.cancelMutationWebhooks == nil {
+					return output.ErrPipelineConflict
+				}
+				for _, target := range body.Deletion.Targets {
+					mutationUUIDs = append(mutationUUIDs, target.UUID)
+				}
+			}
 		}
 		v = output.PipelinePublication{Sequence: e.Sequence, ProofSHA256: e.ProofFingerprint}
 	default:
@@ -432,8 +442,14 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 				}
 				break
 			}
-			if mutationUUID != "" {
-				if err := p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUID); err != nil {
+			if len(mutationUUIDs) > 0 {
+				var err error
+				if mutation.matchedCount.Valid {
+					err = p.cancelMutationWebhooks(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUIDs)
+				} else {
+					err = p.cancelMutationWebhook(ctx, tx, pipelineScope(e.Scope), e.TenantID, mutationUUIDs[0])
+				}
+				if err != nil {
 					return err
 				}
 			}
@@ -472,7 +488,7 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 			}
 		}
 	}
-	if advanced && p.wakeWebhook != nil && (len(v.Outputs) > 0 || mutationUUID != "") {
+	if advanced && p.wakeWebhook != nil && (len(v.Outputs) > 0 || len(mutationUUIDs) > 0) {
 		p.wakeWebhook()
 	}
 	return nil

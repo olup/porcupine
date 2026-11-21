@@ -67,6 +67,8 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `PATCH /api/v1/projects/{id}/events/{uuid}` | `events:edit` and access to the project | `202` |
 | `DELETE /api/v1/projects/{id}/events/{uuid}` | `events:delete` and access to the project | `202` |
 | `GET /api/v1/projects/{id}/event-mutations/{mutation_id}` | `events:read` and access to the project | `200` |
+| `POST /api/v1/projects/{id}/event-deletions` | `events:read`, `events:delete`, and access to the project | `200` preview, `202` accepted |
+| `GET /api/v1/projects/{id}/event-deletions/{mutation_id}` | `events:read` and access to the project | `200` |
 
 For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads.
 
@@ -216,9 +218,13 @@ and eventual consistency. All three require one permitted project per request.
 Use [set-catalog-description](event-discovery.md#document-an-event-or-property)
 to edit optional event and property descriptions in the catalog.
 
-The [event mutation reference](../events.md) describes current-event reads, full
-replacement corrections, deletion tombstones, revision checks, idempotency, and
-mutation status. A `202` confirms durable acceptance, not analytical visibility.
+`delete-events` accepts a SQL `where` predicate, optional `parameters` and
+`time_range`, and a required `idempotency_key`. Send `dry_run: true` for the
+matching count and a UUID sample. Confirmation requires `expected_count` and
+returns `409` on count mismatch. The maximum is 1,000 matching events. A `202`
+confirms durable acceptance. `get-event-deletion` returns the projection state
+and counts. [Event mutation reference](../events.md)
+
 Storage tiering is deployment-only and has no management endpoint.
 
 ## Historical imports
@@ -251,11 +257,11 @@ with the same envelope.
 | `401` | Missing, invalid, expired, revoked, or wrong-resource access token |
 | `403` | Missing permission, project outside scope, or attempted privilege escalation |
 | `404` | Revocation target or retained event does not exist, or the target is already revoked |
-| `409` | Last administrator protection, stale revision, pending mutation, or idempotency conflict |
+| `409` | Last administrator protection, stale mutation revision or deletion count, pending mutation, or idempotency conflict |
 | `410` | Requested event has been deleted |
 | `413` | Request body exceeds 1 MiB |
 | `415` | Unsupported body encoding or content type |
-| `422` | Request schema validation failed, including wrong types, required fields, or invalid limits |
+| `422` | Request schema validation failed or the query deletion match limit was exceeded |
 | `429` | Analytics concurrency or database resource limit exceeded |
 | `500` | Storage or internal error |
 | `503` | Authentication dependency, analytics storage, reader provisioning, or delivery-status storage unavailable; authentication failures include `Retry-After` and do not mark the credential invalid |

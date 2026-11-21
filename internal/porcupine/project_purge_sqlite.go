@@ -28,6 +28,7 @@ func purgeProjectLocalRecords(ctx context.Context, tx *sql.Tx, projectID string)
 		"DELETE FROM posthog_import_person_state WHERE project_id=?",
 		"DELETE FROM mutation_outbox WHERE project_id=?",
 		"DELETE FROM mutation_audit WHERE project_id=?",
+		"DELETE FROM event_deletions WHERE project_id=?",
 		"DELETE FROM event_heads WHERE project_id=?",
 		"DELETE FROM identity_links WHERE project_id=?",
 		"DELETE FROM identity_profiles WHERE project_id=?",

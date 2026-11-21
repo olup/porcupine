@@ -51,7 +51,7 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
 	if err := initializeSharedControl(t.Context(), db, adminToken, limits, false); err != nil {
 		t.Fatal(err)
 	}
-	assertCatalogMigration(t, db, `SELECT value FROM metadata WHERE key='schema_version'`, 27)
+	assertCatalogMigration(t, db, `SELECT value FROM metadata WHERE key='schema_version'`, len(sharedControlSteps))
 
 	s := &Service{control: db, hosted: &hostedRuntime{}, lake: &lakeapi.DuckLakeStore{}, eventRules: &eventRules{clock: time.Now}}
 	s.startCatalogRefresh()
