@@ -230,29 +230,31 @@ func (p *ProjectLake) beginHostedIngestionWrite(ctx context.Context, tx *sql.Tx,
 }
 func liveHeads(ctx context.Context, tx *sql.Tx, inputs []LiveCommitInput) (map[string]bool, error) {
 	known := make(map[string]bool, len(inputs))
-	for offset := 0; offset < len(inputs); offset += 1000 {
-		end := min(len(inputs), offset+1000)
-		args := make([]any, 0, end-offset)
-		for _, input := range inputs[offset:end] {
-			args = append(args, input.Event.UUID)
-		}
-		rows, err := tx.QueryContext(ctx, "SELECT uuid FROM lake.heads WHERE uuid IN (?"+strings.Repeat(",?", len(args)-1)+")", args...)
-		if err != nil {
+	if len(inputs) == 0 {
+		return known, nil
+	}
+	uuids := make([]string, len(inputs))
+	for i, input := range inputs {
+		uuids[i] = input.Event.UUID
+	}
+	// Look up the whole batch in one scan. Deleted heads still count.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT h.uuid FROM lake.heads AS h
+		SEMI JOIN UNNEST(CAST(? AS VARCHAR[])) AS batch(uuid) ON h.uuid = batch.uuid
+	`, uuids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var uuid string
-			if err := rows.Scan(&uuid); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			known[uuid] = true
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return nil, err
-		}
+		known[uuid] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return known, nil
 }
