@@ -205,7 +205,7 @@ func verifyQueryReturnsAfterCancellation(t *testing.T, timeout bool, outcome str
 	requireMetric(t, metrics, `porcupine_query_active{profile="standalone",operation="sql"} 1`)
 	requireMetric(t, metrics, `porcupine_query_slots_used{profile="standalone"} 1`)
 	requireMetric(t, metrics, `porcupine_query_admissions_total{profile="standalone",operation="sql",outcome="admitted"} 1`)
-	requireMetric(t, metrics, `porcupine_query_admissions_total{profile="standalone",operation="sql",outcome="limited"} 1`)
+	requireMetric(t, metrics, `porcupine_query_admissions_total{profile="standalone",operation="sql",outcome="tenant_limited"} 1`)
 	if strings.Contains(metrics, "porcupine_query_backend_duration_seconds_count") {
 		t.Error("in-flight cancelled query recorded a backend return")
 	}

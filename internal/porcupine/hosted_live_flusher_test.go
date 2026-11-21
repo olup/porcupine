@@ -27,6 +27,7 @@ import (
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/observability"
 	"github.com/olup/porcupine/internal/output"
 	"github.com/olup/porcupine/internal/usage"
 )
@@ -197,8 +198,14 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		return id
 	}
 	before := snapshot()
+	fa.metrics = &operationalMetrics{Registry: observability.NewRegistry("hosted")}
 	if err = fa.FlushLive(t.Context(), empty); err != nil {
 		t.Fatal(err)
+	}
+	var metrics strings.Builder
+	fa.metrics.Write(&metrics, nil)
+	for _, phase := range []string{"coordinator_wait", "effects_stage", "commit_guard", "native_write", "publish"} {
+		requireMetric(t, metrics.String(), `porcupine_flush_phase_duration_seconds_count{profile="hosted",phase="`+phase+`"} 1`)
 	}
 	if got := snapshot() - before; got != 1 {
 		t.Fatalf("clean live flush advanced %d native snapshots, want 1", got)

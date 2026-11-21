@@ -134,12 +134,48 @@ them in the journal. A hosted attempt covers one call to the live flusher.
 Retries and split batches can produce several attempts. Use the probe to
 measure SQL visibility from the client.
 
+For hosted flushes, `porcupine_flush_phase_duration_seconds{phase}` measures
+each phase reached, including failed calls.
+
+| Phase | Measured work |
+| --- | --- |
+| `coordinator_wait` | Acquire the project write session, including a worker slot, a PostgreSQL connection, and the project advisory lock. |
+| `native_write` | DuckLake live write call, including native retries and DuckDB-managed catalog and S3 I/O. The separate effect staging and commit guard calls are excluded. |
+| `effects_stage` | Freeze the output plan, prepare and reserve effects, and upload any immutable effect objects to S3. |
+| `commit_guard` | Check the project deletion fence in PostgreSQL before the native commit. |
+| `recovery` | Advance the recovery fence and reconcile pending evidence, including any publication during recovery. |
+| `publish` | Verify and publish the live batch proof, including any S3 reads and the PostgreSQL publication transaction. |
+
+A flush can skip phases or repeat them. The existing flush attempt
+histogram measures total elapsed time. Use `porcupine_flush_retries_total{reason}`
+for the subset of attempts reported as `retry`. Reasons group errors by
+known causes such as `coordinator_busy`, `write_session_lost`, `native_conflict`,
+`object_storage`, `postgres_error`, and `timeout`. Unclassified errors use
+`other`.
+
+`porcupine_ingestion_admission_guard_duration_seconds{outcome}` measures
+the hosted PostgreSQL guard before the live request enters the memory buffer.
+It covers connection checkout, the shared tenant and project lock reads,
+and the deletion and quarantine checks. Outcomes are `acquired`, `fenced`,
+`quarantined`, `timeout`, `cancelled`, and `error`. An `acquired` guard
+still needs to pass the in-memory capacity check.
+
 The query panels group operations as `sql`, `catalog`, and `profile`.
 Catalog covers event discovery, including recent event listings that read
 DuckLake. Admission includes reserving capacity and recording the durable
 usage start. Backend time stops when the backend returns, even if the
 request context expired earlier. Used worker slots include reservations
 for background work.
+
+`porcupine_query_admissions_total` reports concurrency rejections as
+`worker_limited` or `tenant_limited` and execution-deadline errors as `timeout`.
+The backend duration histogram also reports execution timeouts.
+`porcupine_query_shared_permit_duration_seconds{outcome}` measures the shared
+PostgreSQL permit transaction. Its
+`porcupine_query_shared_permit_lock_duration_seconds` counterpart measures
+the tenant and project policy read that takes exclusive row locks. This
+statement can contend with the ingestion admission guard's shared locks.
+Both lock measurements include the database round trips.
 
 ## Collect server logs
 
