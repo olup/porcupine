@@ -140,14 +140,30 @@ each phase reached, including failed calls.
 | Phase | Measured work |
 | --- | --- |
 | `coordinator_wait` | Acquire the project write session, including a worker slot, a PostgreSQL connection, and the project advisory lock. |
+| `coordinator_held` | Elapsed time from acquiring the project write session through completed release and connection cleanup. Recorded once for each acquired session. |
 | `native_write` | DuckLake live write call, including native retries and DuckDB-managed catalog and S3 I/O. The separate effect staging and commit guard calls are excluded. |
+| `native_predecessor` | Read the native high-water mark and verify the control checkpoint against the previous proof. |
+| `native_proof_lookup` | Look up a prior commit proof for this batch. |
+| `native_fence` | Advance the native write fence and effect sequence and check project deletion state. |
+| `native_heads` | Look up UUIDs in the native head table to deduplicate the batch. |
+| `native_totals` | Read and update native usage totals. |
+| `native_event_rows` | Encode the selected event rows, stage them in DuckDB, and insert the native head and current-event rows. |
+| `native_proof_insert` | Fingerprint and write the new commit proof. |
+| `native_commit` | Execute the native transaction's `tx.Commit()` call after the control guard passes. |
 | `effects_stage` | Freeze the output plan, prepare and reserve effects, and upload any immutable effect objects to S3. |
 | `commit_guard` | Check the project deletion fence in PostgreSQL before the native commit. |
 | `recovery` | Advance the recovery fence and reconcile pending evidence, including any publication during recovery. |
 | `publish` | Verify and publish the live batch proof, including any S3 reads and the PostgreSQL publication transaction. |
 
-A flush can skip phases or repeat them. The existing flush attempt
-histogram measures total elapsed time. Use `porcupine_flush_retries_total{reason}`
+The native subphases sit inside `native_write` and may repeat across native
+transaction retries. They measure the elapsed time of Go calls into DuckDB.
+That time can include CPU work, catalog queries, and object store requests
+handled by DuckDB. Measuring S3 request latency requires storage-side or
+HTTP measurements.
+
+`coordinator_held` also covers staging, publication, and recovery when reached.
+Phases overlap and a flush can skip or repeat them. Use the flush attempt
+histogram for total elapsed time and `porcupine_flush_retries_total{reason}`
 for the subset of attempts reported as `retry`. Reasons group errors by
 known causes such as `coordinator_busy`, `write_session_lost`, `native_conflict`,
 `object_storage`, `postgres_error`, and `timeout`. Unclassified errors use

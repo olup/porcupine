@@ -20,7 +20,7 @@ import (
 // CommitLive owns the native transaction. It never acknowledges volatile input
 // or publishes PG jobs; its proof makes those later effects recoverable.
 func (s *DuckLakeStore) CommitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager) (LiveCommitResult, error) {
-	return s.commitLive(ctx, fence, batch, reservation, stager, nil, func(_ context.Context, commit func() error) error { return commit() })
+	return s.commitLive(ctx, fence, batch, reservation, stager, nil, func(_ context.Context, commit func() error) error { return commit() }, nil)
 }
 
 // NativeEffectCheckpoint is the last publication committed by the control store.
@@ -46,18 +46,42 @@ func ValidateLiveProjection(e event.Event) error {
 	return err
 }
 
+// LiveCommitPhase identifies a native step within one live transaction attempt.
+type LiveCommitPhase string
+
+const (
+	LiveCommitPredecessor LiveCommitPhase = "native_predecessor"
+	LiveCommitProofLookup LiveCommitPhase = "native_proof_lookup"
+	LiveCommitFence       LiveCommitPhase = "native_fence"
+	LiveCommitHeads       LiveCommitPhase = "native_heads"
+	LiveCommitTotals      LiveCommitPhase = "native_totals"
+	LiveCommitEventRows   LiveCommitPhase = "native_event_rows"
+	LiveCommitProofInsert LiveCommitPhase = "native_proof_insert"
+	LiveCommitTransaction LiveCommitPhase = "native_commit"
+)
+
+// LiveCommitObserver reports each reached phase synchronously, including failed
+// calls and repeats across native retries. A nil observer disables reporting.
+type LiveCommitObserver func(LiveCommitPhase, time.Duration)
+
+func (observe LiveCommitObserver) since(phase LiveCommitPhase, started time.Time) {
+	if observe != nil {
+		observe(phase, time.Since(started))
+	}
+}
+
 // CommitLiveFromCheckpoint advances the write fence and acknowledges the
 // published predecessor in the same transaction as the next live outcome.
 // The guard checks the control fence and invokes COMMIT synchronously,
 // at most once.
-func (s *DuckLakeStore) CommitLiveFromCheckpoint(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint NativeEffectCheckpoint, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
+func (s *DuckLakeStore) CommitLiveFromCheckpoint(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint NativeEffectCheckpoint, guard func(context.Context, func() error) error, observe LiveCommitObserver) (LiveCommitResult, error) {
 	if guard == nil {
 		return nil, errors.New("hosted live commit requires a control fence guard")
 	}
-	return s.commitLive(ctx, fence, batch, reservation, stager, &checkpoint, guard)
+	return s.commitLive(ctx, fence, batch, reservation, stager, &checkpoint, guard, observe)
 }
 
-func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint *NativeEffectCheckpoint, guard func(context.Context, func() error) error) (LiveCommitResult, error) {
+func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence, batch LiveCommitBatch, reservation EventIDReservation, stager LiveEffectStager, checkpoint *NativeEffectCheckpoint, guard func(context.Context, func() error) error, observe LiveCommitObserver) (LiveCommitResult, error) {
 	fingerprint, err := validateLiveCommitBatch(fence, batch, reservation)
 	if err != nil {
 		return nil, err
@@ -82,11 +106,16 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 		}
 		defer tx.Rollback()
 		if checkpoint != nil {
-			if err := verifyLivePredecessor(ctx, tx, batch.Scope, *checkpoint); err != nil {
+			started := time.Now()
+			err := verifyLivePredecessor(ctx, tx, batch.Scope, *checkpoint)
+			observe.since(LiveCommitPredecessor, started)
+			if err != nil {
 				return err
 			}
 		}
+		started := time.Now()
 		prior, found, err := readNativeCommitProof(ctx, tx, batch.Scope, batch.ID)
+		observe.since(LiveCommitProofLookup, started)
 		if err != nil {
 			return err
 		}
@@ -98,15 +127,19 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			return nil
 		}
 		var sequence int64
+		started = time.Now()
 		if checkpoint != nil {
 			sequence, err = beginCheckpointedLiveWrite(ctx, tx, fence, batch, *checkpoint)
 		} else {
 			sequence, err = p.beginHostedIngestionWrite(ctx, tx, fence, batch.TenantID)
 		}
+		observe.since(LiveCommitFence, started)
 		if err != nil {
 			return err
 		}
+		started = time.Now()
 		known, err := liveHeads(ctx, tx, batch.Inputs)
+		observe.since(LiveCommitHeads, started)
 		if err != nil {
 			return err
 		}
@@ -146,22 +179,34 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			return err
 		}
 		accountedAt := s.liveCommitTime()
+		started = time.Now()
 		totals, err := updateNativeSourceTotals(ctx, tx, sequence, accountedAt, int64(len(selected)), 0)
+		observe.since(LiveCommitTotals, started)
 		if err != nil {
 			return err
 		}
-		if err := insertCanonicalEvents(ctx, tx, selected); err != nil {
+		started = time.Now()
+		err = insertCanonicalEvents(ctx, tx, selected)
+		observe.since(LiveCommitEventRows, started)
+		if err != nil {
 			return err
 		}
+		started = time.Now()
 		evidence := NativeCommitEvidence{Kind: NativeCommitLive, Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, OperationID: batch.ID, InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), Effects: effects, Totals: totals}
 		evidence.ProofFingerprint, err = nativeEvidenceFingerprint(evidence)
+		if err == nil {
+			err = insertNativeCommitProof(ctx, tx, evidence)
+		}
+		observe.since(LiveCommitProofInsert, started)
 		if err != nil {
 			return err
 		}
-		if err := insertNativeCommitProof(ctx, tx, evidence); err != nil {
+		if err := guard(ctx, func() error {
+			started := time.Now()
+			err := tx.Commit()
+			observe.since(LiveCommitTransaction, started)
 			return err
-		}
-		if err := guard(ctx, tx.Commit); err != nil {
+		}); err != nil {
 			return err
 		}
 		result = CommittedLiveBatch{Evidence: evidence, Fresh: true}

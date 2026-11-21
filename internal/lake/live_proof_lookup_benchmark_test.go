@@ -127,7 +127,7 @@ func TestDuckLakeS3SharedPostgresLiveProofLookupPerformance(t *testing.T) {
 							t.Fatal(err)
 						}
 						err = session.RunNative(ctx, func(ctx context.Context) error {
-							result, err := store.CommitLiveFromCheckpoint(ctx, fence, batch, reservation, stager, checkpoint, func(_ context.Context, commit func() error) error { return commit() })
+							result, err := store.CommitLiveFromCheckpoint(ctx, fence, batch, reservation, stager, checkpoint, func(_ context.Context, commit func() error) error { return commit() }, nil)
 							if err != nil {
 								return err
 							}

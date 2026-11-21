@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -249,18 +250,33 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var phases []LiveCommitPhase
+	assertPhases := func(want ...LiveCommitPhase) {
+		t.Helper()
+		if !slices.Equal(phases, want) {
+			t.Errorf("live commit phases = %v, want %v", phases, want)
+		}
+	}
 	commitSecond := func(checkpoint NativeEffectCheckpoint) (LiveCommitResult, error) {
+		phases = nil
 		return b.CommitLiveFromCheckpoint(ctx, next, second, secondIDs, recovered, checkpoint, func(_ context.Context, commit func() error) error {
 			return commit()
+		}, func(phase LiveCommitPhase, elapsed time.Duration) {
+			if elapsed < 0 {
+				t.Errorf("negative duration for %s: %s", phase, elapsed)
+			}
+			phases = append(phases, phase)
 		})
 	}
 	if _, err := commitSecond(NativeEffectCheckpoint{}); !errors.Is(err, ErrNativeEffectsPending) {
 		t.Fatal("new fence skipped unpublished predecessor", err)
 	}
+	assertPhases(LiveCommitPredecessor)
 	checkpoint := NativeEffectCheckpoint{Sequence: committed.Evidence.Sequence, Fingerprint: "wrong"}
 	if _, err := commitSecond(checkpoint); !errors.Is(err, ErrNativeEvidenceGap) {
 		t.Fatal("new fence accepted mismatched predecessor", err)
 	}
+	assertPhases(LiveCommitPredecessor)
 	if len(recovered.selected) != 0 {
 		t.Fatal("invalid checkpoint staged effects")
 	}
@@ -269,6 +285,7 @@ func TestDuckLakeS3SharedPostgresLiveCommitProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPhases(LiveCommitPredecessor, LiveCommitProofLookup, LiveCommitFence, LiveCommitHeads, LiveCommitTotals, LiveCommitEventRows, LiveCommitProofInsert, LiveCommitTransaction)
 	if _, err := a.CommitLive(ctx, fence, failed, failedIDs, stager); !errors.Is(err, ErrProjectWriteFenceStale) {
 		t.Fatal("combined write let a previous writer commit", err)
 	}
