@@ -245,15 +245,8 @@ func (s *Service) enqueueMutation(ctx context.Context, project, uuid, operation,
 	}
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
-	previous, previousHash, err := s.findMutation(ctx, project, "idempotency_key_hash", keyHash)
-	if err == nil {
-		if previousHash != requestHash {
-			return nil, apierr.New(409, "idempotency_key was used for a different request")
-		}
-		return &MutationOutput{Body: previous}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, apierr.New(503, "mutation storage unavailable")
+	if previous, err := replayJournalMutation(ctx, s.db, project, keyHash, requestHash); previous != nil || err != nil {
+		return previous, err
 	}
 	if s.lake == nil {
 		return nil, apierr.New(503, "analytical delivery is disabled")
@@ -289,11 +282,7 @@ func prepareMutation(current lakeapi.EventProjection, pending bool, operation st
 
 	projection := current
 	if operation == "delete" {
-		projection.IsDeleted = true
-		projection.Event.Event, projection.DistinctID, projection.Timestamp = "", "", ""
-		projection.Properties, projection.OriginalSnapshot = json.RawMessage(`{}`), ""
-		projection.SourceID, projection.MessageID, projection.EventType = "", "", ""
-		projection.Context = json.RawMessage(`{}`)
+		return eventTombstone(projection), nil
 	} else {
 		var originalProperties map[string]any
 		if json.Unmarshal(current.Properties, &originalProperties) != nil {
@@ -335,71 +324,138 @@ func prepareMutation(current lakeapi.EventProjection, pending bool, operation st
 	return projection, nil
 }
 
+func eventTombstone(projection lakeapi.EventProjection) lakeapi.EventProjection {
+	projection.IsDeleted = true
+	projection.Event.Event, projection.DistinctID, projection.Timestamp = "", "", ""
+	projection.Properties, projection.OriginalSnapshot = json.RawMessage(`{}`), ""
+	projection.SourceID, projection.MessageID, projection.EventType = "", "", ""
+	projection.Context = json.RawMessage(`{}`)
+	return projection
+}
+
 func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventProjection, actorID, operation, keyHash, requestHash string, expected uint64) (*MutationOutput, error) {
+	tx, err := s.beginMutationWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if previous, err := replayJournalMutation(ctx, tx, projection.ProjectID, keyHash, requestHash); previous != nil || err != nil {
+		return previous, err
+	}
+	if err := checkJournalMutationHead(ctx, tx, projection.ProjectID, projection.UUID, expected); err != nil {
+		return nil, err
+	}
+	bytes, err := s.checkMutationQueue(ctx, tx, 1)
+	if err != nil {
+		return nil, err
+	}
+	if err := advanceMutationSequence(ctx, tx, expected); err != nil {
+		return nil, err
+	}
+	response := MutationResponse{MutationID: eventapi.NewID(), ProjectID: projection.ProjectID, UUID: projection.UUID, Operation: operation, State: "pending", CreatedAt: now()}
+	seq, err := s.appendJournalMutation(ctx, tx, journalMutation{
+		projection: projection, id: response.MutationID, actorID: actorID, operation: operation,
+		keyHash: keyHash, requestHash: requestHash, expected: expected, createdAt: response.CreatedAt,
+	}, &bytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, apierr.New(503, "mutation storage unavailable")
+	}
+	s.wakeDelivery()
+	response.Revision = strconv.FormatInt(seq, 10)
+	return &MutationOutput{Body: response}, nil
+}
+
+func (s *Service) beginMutationWrite(ctx context.Context) (*sql.Tx, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, apierr.New(503, "mutation storage unavailable")
 	}
-	defer tx.Rollback()
+	// Reserve the SQLite writer before checking idempotency, queue capacity, or event heads.
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
+		tx.Rollback()
 		return nil, apierr.New(503, "mutation storage unavailable")
 	}
-	// A second service sharing this SQLite file must also respect CAS and the one-pending limit.
-	var headRevision int64
-	var pending bool
-	err = tx.QueryRowContext(ctx, `SELECT revision,pending FROM event_heads WHERE project_id=$1 AND uuid=$2`, projection.ProjectID, projection.UUID).Scan(&headRevision, &pending)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, apierr.New(503, "mutation storage unavailable")
-	}
-	if pending || uint64(headRevision) > expected {
-		return nil, apierr.New(409, "event revision changed or a mutation is pending")
-	}
+	return tx, nil
+}
+
+func (s *Service) checkMutationQueue(ctx context.Context, tx *sql.Tx, incoming int) (int64, error) {
 	var count, bytes int64
 	if err := tx.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(length(CAST(payload AS BLOB))),0) FROM mutation_outbox`).Scan(&count, &bytes); err != nil {
-		return nil, apierr.New(503, "mutation storage unavailable")
+		return 0, apierr.New(503, "mutation storage unavailable")
 	}
-	if count >= int64(min(s.queueMax, 1000)) {
-		return nil, apierr.New(503, "mutation queue is full")
+	if count+int64(incoming) > int64(min(s.queueMax, 1000)) {
+		return 0, apierr.New(503, "mutation queue is full")
 	}
+	return bytes, nil
+}
+
+func advanceMutationSequence(ctx context.Context, tx *sql.Tx, expected uint64) error {
 	// A restored SQLite backup may lag behind an already applied native
 	// revision. Advance from the revision we loaded and checked, never from an
 	// unchecked client claim, so the next accepted mutation still wins.
 	advanced, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=max(seq,$1) WHERE name='mutation_audit'`, int64(expected))
 	if err != nil {
-		return nil, apierr.New(503, "mutation revision unavailable")
+		return apierr.New(503, "mutation revision unavailable")
 	}
 	if changed, err := advanced.RowsAffected(); err != nil {
-		return nil, apierr.New(503, "mutation revision unavailable")
+		return apierr.New(503, "mutation revision unavailable")
 	} else if changed == 0 {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence(name,seq) VALUES('mutation_audit',$1)`, int64(expected)); err != nil {
-			return nil, apierr.New(503, "mutation revision unavailable")
+			return apierr.New(503, "mutation revision unavailable")
 		}
 	}
-	response := MutationResponse{MutationID: eventapi.NewID(), ProjectID: projection.ProjectID, UUID: projection.UUID, Operation: operation, State: "pending", CreatedAt: now()}
-	result, err := tx.ExecContext(ctx, `INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, response.MutationID, response.ProjectID, response.UUID, actorID, operation, keyHash, requestHash, int64(expected), response.State, response.CreatedAt)
+	return nil
+}
+
+type journalMutation struct {
+	projection                                              lakeapi.EventProjection
+	id, actorID, operation, keyHash, requestHash, createdAt string
+	expected                                                uint64
+	deletionID                                              *string
+}
+
+func checkJournalMutationHead(ctx context.Context, tx *sql.Tx, project, uuid string, expected uint64) error {
+	var headRevision int64
+	var deleted, pending bool
+	err := tx.QueryRowContext(ctx, `SELECT revision,is_deleted,pending FROM event_heads WHERE project_id=$1 AND uuid=$2`, project, uuid).Scan(&headRevision, &deleted, &pending)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return apierr.New(503, "mutation storage unavailable")
+	}
+	if deleted || pending || uint64(headRevision) > expected {
+		return apierr.New(409, "event revision changed or a mutation is pending")
+	}
+	return nil
+}
+
+func (s *Service) appendJournalMutation(ctx context.Context, tx *sql.Tx, mutation journalMutation, bytes *int64) (int64, error) {
+	projection := mutation.projection
+	result, err := tx.ExecContext(ctx, `INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at,deletion_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10)`, mutation.id, projection.ProjectID, projection.UUID, mutation.actorID, mutation.operation, mutation.keyHash, mutation.requestHash, int64(mutation.expected), mutation.createdAt, mutation.deletionID)
 	if err != nil {
-		return nil, apierr.New(409, "mutation request conflicts with an existing request")
+		return 0, apierr.New(503, "mutation storage unavailable")
 	}
 	seq, err := result.LastInsertId()
-	if err != nil || seq <= 0 || uint64(seq) <= expected {
-		return nil, apierr.New(503, "mutation revision unavailable")
+	if err != nil || seq <= 0 || uint64(seq) <= mutation.expected {
+		return 0, apierr.New(503, "mutation revision unavailable")
 	}
 	projection.Revision = uint64(seq)
 	payload, err := json.Marshal(projection)
 	if err != nil {
-		return nil, apierr.New(503, "cannot encode mutation")
+		return 0, apierr.New(503, "cannot encode mutation")
 	}
 	if len(payload) > mutationMaxBytes {
-		return nil, apierr.New(413, "mutation exceeds the payload limit")
+		return 0, apierr.New(413, "mutation exceeds the payload limit")
 	}
-	if bytes+int64(len(payload)) > mutationMaxBytes {
-		return nil, apierr.New(503, "mutation queue is full")
+	if *bytes+int64(len(payload)) > mutationMaxBytes {
+		return 0, apierr.New(503, "mutation queue is full")
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO event_heads(project_id,uuid,revision,is_deleted,pending,event_id) VALUES($1,$2,$3,$4,1,$5) ON CONFLICT(project_id,uuid) DO UPDATE SET revision=excluded.revision,is_deleted=excluded.is_deleted,pending=1,event_id=CASE WHEN event_heads.event_id=0 THEN excluded.event_id ELSE event_heads.event_id END`, projection.ProjectID, projection.UUID, seq, projection.IsDeleted, projection.ID)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `INSERT INTO mutation_outbox(seq,project_id,uuid,payload) VALUES($1,$2,$3,$4)`, seq, projection.ProjectID, projection.UUID, string(payload))
 	}
-	if err == nil && operation == "delete" {
+	if err == nil && mutation.operation == "delete" {
 		err = output.CancelWebhookEvent(ctx, tx, projection.ProjectID, projection.UUID, s.clock)
 		if err == nil {
 			err = s.receipts.Record(ctx, tx, projection.ProjectID, projection.UUID, projection.ID)
@@ -408,20 +464,40 @@ func (s *Service) commitMutation(ctx context.Context, projection lakeapi.EventPr
 			_, err = tx.ExecContext(ctx, `DELETE FROM events WHERE project_id=$1 AND uuid=$2`, projection.ProjectID, projection.UUID)
 		}
 	}
-	if err != nil || tx.Commit() != nil {
-		return nil, apierr.New(503, "mutation storage unavailable")
+	if err != nil {
+		return 0, apierr.New(503, "mutation storage unavailable")
 	}
-	s.wakeDelivery()
-	response.Revision = strconv.FormatInt(seq, 10)
-	return &MutationOutput{Body: response}, nil
+	*bytes += int64(len(payload))
+	return seq, nil
 }
 
-func (s *Service) findMutation(ctx context.Context, project, field, value string) (MutationResponse, string, error) {
+func replayJournalMutation(ctx context.Context, query oauthQueryer, project, key, requestHash string) (*MutationOutput, error) {
+	previous, previousHash, err := findJournalMutation(ctx, query, project, "idempotency_key_hash", key)
+	if err == nil {
+		if previousHash != requestHash {
+			return nil, apierr.New(409, "idempotency_key was used for a different request")
+		}
+		return &MutationOutput{Body: previous}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, apierr.New(503, "mutation storage unavailable")
+	}
+	var used bool
+	if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM event_deletions WHERE project_id=$1 AND idempotency_key_hash=$2)`, project, key).Scan(&used); err != nil {
+		return nil, apierr.New(503, "mutation storage unavailable")
+	}
+	if used {
+		return nil, apierr.New(409, "idempotency_key was used for a different request")
+	}
+	return nil, nil
+}
+
+func findJournalMutation(ctx context.Context, query oauthQueryer, project, field, value string) (MutationResponse, string, error) {
 	var response MutationResponse
 	var revision int64
 	var requestHash string
 	// field is selected only by private callers, never from request input.
-	err := s.db.QueryRowContext(ctx, `SELECT mutation_id,project_id,uuid,seq,operation,state,created_at,applied_at,request_hash FROM mutation_audit WHERE project_id=$1 AND `+field+`=$2`, project, value).Scan(&response.MutationID, &response.ProjectID, &response.UUID, &revision, &response.Operation, &response.State, &response.CreatedAt, &response.AppliedAt, &requestHash)
+	err := query.QueryRowContext(ctx, `SELECT mutation_id,project_id,uuid,seq,operation,state,created_at,applied_at,request_hash FROM mutation_audit WHERE project_id=$1 AND `+field+`=$2`, project, value).Scan(&response.MutationID, &response.ProjectID, &response.UUID, &revision, &response.Operation, &response.State, &response.CreatedAt, &response.AppliedAt, &requestHash)
 	response.Revision = strconv.FormatInt(revision, 10)
 	return response, requestHash, err
 }
@@ -434,7 +510,7 @@ func (s *Service) getEventMutation(ctx context.Context, input *EventMutationInpu
 		}
 		return &MutationOutput{Body: response}, nil
 	}
-	response, _, err := s.findMutation(ctx, input.ID, "mutation_id", input.MutationID)
+	response, _, err := findJournalMutation(ctx, s.db, input.ID, "mutation_id", input.MutationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apierr.New(404, "mutation not found")
 	}

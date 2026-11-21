@@ -39,13 +39,17 @@ func Prepare(ctx context.Context, db *sql.DB, raw string, parameters map[string]
 
 // PrepareQuery authorizes every source and expression using DuckDB's parsed tree.
 func PrepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string) (string, []any, Statement, error) {
+	return prepareQuery(ctx, db, raw, parameters, Inspect)
+}
+
+func prepareQuery(ctx context.Context, db *sql.DB, raw string, parameters map[string]string, inspect func(context.Context, *sql.DB, string) (Statement, error)) (string, []any, Statement, error) {
 	if len(raw) == 0 || len(raw) > MaxSQLBytes || len(parameters) > MaxParameterCount {
 		return "", nil, Statement{}, policyError("invalid_sql", "Invalid analytics query size or parameter count", "Send one SELECT of at most 16384 bytes and at most 32 parameters.", "")
 	}
 	if !ValidParameterEntries(parameters) {
 		return "", nil, Statement{}, policyError("invalid_parameter", "Invalid analytics parameter", "Use identifier keys of at most 64 ASCII characters and values of at most 4096 bytes.", "")
 	}
-	statement, err := Inspect(ctx, db, raw)
+	statement, err := inspect(ctx, db, raw)
 	if err != nil {
 		return "", nil, Statement{}, err
 	}
@@ -148,23 +152,39 @@ func Inspect(ctx context.Context, db *sql.DB, raw string) (Statement, error) {
 	if len(raw) == 0 || len(raw) > MaxSQLBytes {
 		return Statement{}, unsupportedSQL()
 	}
-	if err := validateSQLText(raw); err != nil {
+	parsed, serialized, err := parseSelect(ctx, db, raw)
+	if err != nil {
 		return Statement{}, err
+	}
+	return inspectSelect(parsed, serialized)
+}
+
+type parsedSelect struct {
+	Error      bool             `json:"error"`
+	Statements []map[string]any `json:"statements"`
+}
+
+func parseSelect(ctx context.Context, db *sql.DB, raw string) (parsedSelect, string, error) {
+	if err := validateSQLText(raw); err != nil {
+		return parsedSelect{}, "", err
 	}
 	var serialized string
 	if err := db.QueryRowContext(ctx, "SELECT CAST(json_serialize_sql(?) AS VARCHAR)", raw).Scan(&serialized); err != nil {
-		return Statement{}, err
+		return parsedSelect{}, "", err
 	}
 	if len(serialized) > 4<<20 {
-		return Statement{}, unsupportedSQL()
+		return parsedSelect{}, "", unsupportedSQL()
 	}
-	var parsed struct {
-		Error      bool             `json:"error"`
-		Statements []map[string]any `json:"statements"`
+	var parsed parsedSelect
+	decoder := json.NewDecoder(strings.NewReader(serialized))
+	decoder.UseNumber()
+	if decoder.Decode(&parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
+		return parsedSelect{}, "", policyError("invalid_sql", "Expected one valid DuckDB SELECT", "Use DuckDB syntax and $name parameters. Read get-event-schema for the supported dialect and functions.", "")
 	}
-	if json.Unmarshal([]byte(serialized), &parsed) != nil || parsed.Error || len(parsed.Statements) != 1 {
-		return Statement{}, policyError("invalid_sql", "Expected one valid DuckDB SELECT", "Use DuckDB syntax and $name parameters. Read get-event-schema for the supported dialect and functions.", "")
-	}
+	return parsed, serialized, nil
+}
+
+func inspectSelect(parsed parsedSelect, serialized string) (Statement, error) {
 	guard := sqlGuard{parameters: map[string]bool{}, rowNames: map[string]bool{"events": true}}
 	if err := guard.walk(parsed.Statements[0], map[string]bool{"events": true}, 0); err != nil {
 		return Statement{}, err

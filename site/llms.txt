@@ -25,6 +25,10 @@ For other operations, use `porcupine_docs` to list permitted operations and load
 
 [SQL reference](https://olup.github.io/porcupine/docs/reference/analytics.md) · [Recipes](https://olup.github.io/porcupine/docs/reference/duckdb-recipes.md) · [MCP contracts](https://olup.github.io/porcupine/docs/reference/mcp.md)
 
+## Delete events matching a query
+
+Use `delete-events` with `dry_run: true`, a SQL `where` predicate, and an `idempotency_key`. Preview requires both `events:read` and `events:delete` on the target project. It returns a match count and up to five UUIDs. Confirm only when the user intends to delete that selection. Use the same query with `dry_run: false` and `expected_count` set to the preview count. Each request can match up to 1,000 events. After a `409` count mismatch, preview again. After an uncertain confirmation response, retry the same body and key. Poll `get-event-deletion` until projection finishes. [Event deletion contract](https://olup.github.io/porcupine/docs/events.md#delete-events-matching-a-query)
+
 ## Review catalog documentation
 
 Use `porcupine_schema` in MCP or `porcupine get-event-catalog --id PROJECT_ID` in the CLI. Inspect `documentation_status` for custom events and sampled properties. Descriptions become stale more than six calendar months after the last edit or confirmed review, measured in UTC.

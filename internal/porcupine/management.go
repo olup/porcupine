@@ -312,6 +312,13 @@ Queries see only this project's delivered logical events. The optional time_rang
 	huma.Register(api, op("edit-event", "PATCH", "/api/v1/projects/{id}/events/{uuid}", "Queue an audited full event correction with expected_revision and idempotency_key", auth.OperationAccess{Permission: "events:edit", ProjectParameter: "id"}, 202), s.editEvent)
 	huma.Register(api, op("delete-event", "DELETE", "/api/v1/projects/{id}/events/{uuid}", "Queue a deletion tombstone. Analytical visibility changes after projection. Previously started queries or sends can still complete, and published customer outputs are outside this operation.", auth.OperationAccess{Permission: "events:delete", ProjectParameter: "id"}, 202), s.deleteEvent)
 	huma.Register(api, op("get-event-mutation", "GET", "/api/v1/projects/{id}/event-mutations/{mutation_id}", "Read whether an event correction or deletion is pending, applied, or failed", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventMutation)
+	deleteEventsOp := op("delete-events", "POST", "/api/v1/projects/{id}/event-deletions", "Preview or queue deletion of events that match a project-scoped SQL predicate", auth.OperationAccess{Permission: "events:delete", AdditionalPermissions: []string{"events:read"}, ProjectParameter: "id"}, 202)
+	deleteEventsOp.Description = "Use dry_run: true to preview the count and sample UUIDs. Confirm with expected_count and a project-scoped idempotency_key. The operation reselects projected events using the same read policy and limits as query-events. A count mismatch returns 409. Each request may match up to 1,000 events. A 202 means the group is durably queued; poll get-event-deletion for projection status and counts. Copies already delivered to exports or pipelines are outside this operation."
+	previewResponse := &huma.MediaType{}
+	deleteEventsOp.Responses["200"] = &huma.Response{Description: "Dry-run preview", Content: map[string]*huma.MediaType{"application/json": previewResponse}}
+	huma.Register(api, deleteEventsOp, s.deleteEvents)
+	previewResponse.Schema = deleteEventsOp.Responses["202"].Content["application/json"].Schema
+	huma.Register(api, op("get-event-deletion", "GET", "/api/v1/projects/{id}/event-deletions/{mutation_id}", "Read the state and counts of a deletion queued by delete-events", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.getEventDeletion)
 	if s.hosted == nil {
 		s.registerQuarantine(api, op)
 	}

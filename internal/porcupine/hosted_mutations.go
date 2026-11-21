@@ -21,8 +21,13 @@ type hostedMutationAuthority func(context.Context, *sql.Tx, string, string, stri
 
 func (s *Service) authorizeHostedMutation(ctx context.Context, tx *sql.Tx, project, tenant, operation string) error {
 	a := principal(ctx)
-	permission := "events:" + operation
-	if !auth.Authorize(a, permission, project) {
+	allows := func(actor auth.Principal) bool {
+		if operation == "delete-events" {
+			return auth.Authorize(actor, "events:read", project) && auth.Authorize(actor, "events:delete", project)
+		}
+		return auth.Authorize(actor, "events:"+operation, project)
+	}
+	if !allows(a) {
 		return apierr.New(403, "credential cannot mutate this project")
 	}
 	if a.External == nil {
@@ -56,7 +61,7 @@ ORDER BY k.id FOR UPDATE`, a.ID)
 	if err != nil {
 		return err
 	}
-	if !auth.Authorize(current, permission, project) || a.External != nil && !current.CanAccessTenant(tenant) {
+	if !allows(current) || a.External != nil && !current.CanAccessTenant(tenant) {
 		return apierr.New(403, "credential is no longer authorized")
 	}
 	return nil
@@ -121,7 +126,7 @@ func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, u
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err == nil && i.requestHash != requestHash {
+		if err == nil && (i.requestHash != requestHash || i.matchedCount.Valid) {
 			return errHostedMutationConflict
 		}
 		if err == nil && i.state != "staging" {
@@ -173,32 +178,8 @@ func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, u
 		}
 		projection.Revision = uint64(i.revision)
 		input := lakeapi.HostedMutationInput{Scope: scope, TenantID: tenant, MutationID: i.id, ExpectedRevision: expected, Projection: projection}
-		raw, err := json.Marshal(input)
+		i, err = f.stageHostedMutation(ctx, session, i, input)
 		if err != nil {
-			return err
-		}
-		objects := f.publisher.objects
-		described, prefix, err := objects.DescribeImmutableMutationObject(scope, i.id, raw)
-		if err != nil {
-			return err
-		}
-		if newIntent {
-			i.body, i.prefix = described, prefix
-			if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				return reserveHostedMutationTx(ctx, tx, i)
-			}); err != nil {
-				return err
-			}
-		} else if i.body != described || i.prefix != prefix {
-			return errHostedMutationConflict
-		}
-		ref, err := objects.PutImmutableMutationObject(ctx, scope, i.id, raw)
-		if err != nil {
-			return err
-		}
-		readback := i
-		readback.body = ref
-		if _, err := f.publisher.readHostedMutation(ctx, readback); err != nil {
 			return err
 		}
 		// The successor cannot invalidate this check and still let this session
@@ -210,30 +191,64 @@ func (f *hostedLiveFlusher) acceptHostedMutation(ctx context.Context, project, u
 		if current.ID != projection.ID || current.Revision != expected || current.IsDeleted || current.IdentitySnapshot != "" {
 			return errHostedMutationConflict
 		}
-		var rejected error
-		if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			if err := authorize(ctx, tx); err != nil {
-				var status interface{ GetStatus() int }
-				if !errors.Is(err, sql.ErrNoRows) && (!errors.As(err, &status) || status.GetStatus() >= 500) {
-					return err
-				}
-				rejected = err
-				_, err = tx.ExecContext(ctx, `UPDATE hosted_mutation_intents SET state='aborted'
-WHERE source_id=$1 AND project_id=$2 AND mutation_id=$3 AND state='staging'`, scope.Key.SourceID, project, i.id)
-				return err
-			}
-			return readyHostedMutationTx(ctx, tx, i, ref)
-		}); err != nil {
+		i, err = commitHostedMutationIntent(ctx, session, i, authorize)
+		if err != nil {
 			return err
 		}
-		if rejected != nil {
-			return rejected
-		}
-		i.state = "ready"
 		response = i.response(uuid)
 		return nil
 	})
 	return response, hostedMutationError(err)
+}
+
+func (f *hostedLiveFlusher) stageHostedMutation(ctx context.Context, session *lakeapi.ProjectWriteSession, i hostedMutationIntent, input lakeapi.HostedMutationInput) (hostedMutationIntent, error) {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return i, err
+	}
+	objects := f.publisher.objects
+	described, prefix, err := objects.DescribeImmutableMutationObject(i.scope, i.id, raw)
+	if err != nil {
+		return i, err
+	}
+	if i.body.Key == "" {
+		i.body, i.prefix = described, prefix
+		if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			return reserveHostedMutationTx(ctx, tx, i)
+		}); err != nil {
+			return i, err
+		}
+	} else if i.body != described || i.prefix != prefix {
+		return i, errHostedMutationConflict
+	}
+	i.body, err = objects.PutImmutableMutationObject(ctx, i.scope, i.id, raw)
+	if err != nil {
+		return i, err
+	}
+	_, err = f.publisher.readHostedMutation(ctx, i)
+	return i, err
+}
+
+func commitHostedMutationIntent(ctx context.Context, session *lakeapi.ProjectWriteSession, i hostedMutationIntent, authorize func(context.Context, *sql.Tx) error) (hostedMutationIntent, error) {
+	i.state = "ready"
+	if i.matchedCount.Valid && i.matchedCount.Int64 == 0 {
+		i.state, i.appliedAt = "applied", time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	var rejected error
+	if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := authorize(ctx, tx); err != nil {
+			var status interface{ GetStatus() int }
+			if !errors.Is(err, sql.ErrNoRows) && (!errors.As(err, &status) || status.GetStatus() >= 500) {
+				return err
+			}
+			rejected = err
+			return abortHostedMutationStagingTx(ctx, tx, i)
+		}
+		return acceptHostedMutationIntentTx(ctx, tx, i)
+	}); err != nil {
+		return i, err
+	}
+	return i, rejected
 }
 
 func (p *hostedEffectPublisher) readHostedMutation(ctx context.Context, i hostedMutationIntent) (lakeapi.HostedMutationInput, error) {
@@ -252,7 +267,14 @@ func (p *hostedEffectPublisher) readHostedMutation(ctx context.Context, i hosted
 	described, prefix, err := p.objects.DescribeImmutableMutationObject(i.scope, i.id, raw)
 	if err != nil || described.Key != i.body.Key || prefix != i.prefix || fingerprint != i.body.SHA256 ||
 		input.Scope != i.scope || input.TenantID != i.tenant || input.MutationID != i.id || input.ExpectedRevision != uint64(i.expected) ||
-		input.Projection.ProjectID != i.scope.Key.ProjectID || input.Projection.Revision != uint64(i.revision) ||
+		i.matchedCount.Valid != (input.Deletion != nil) {
+		return input, errHostedMutationConflict
+	}
+	if input.Deletion != nil {
+		if i.operation != "delete" || input.Deletion.Revision != uint64(i.revision) || len(input.Deletion.Targets) != int(i.matchedCount.Int64) || !input.Deletion.Valid(input.ExpectedRevision) {
+			return input, errHostedMutationConflict
+		}
+	} else if input.Projection.ProjectID != i.scope.Key.ProjectID || input.Projection.Revision != uint64(i.revision) ||
 		input.Projection.IsDeleted != (i.operation == "delete") || !lakeapi.ValidStoredEventUUID(input.Projection.UUID) {
 		return input, errHostedMutationConflict
 	}
@@ -274,7 +296,15 @@ func (f *hostedLiveFlusher) currentHostedEvent(ctx context.Context, project, uui
 			if err != nil {
 				return apierr.New(503, "pending mutation body unavailable")
 			}
-			if input.Projection.UUID == uuid {
+			if input.Deletion != nil {
+				for _, target := range input.Deletion.Targets {
+					if target.UUID == uuid {
+						projection = lakeapi.EventProjection{Event: eventapi.Event{ProjectID: project, UUID: uuid}, Revision: input.Deletion.Revision, IsDeleted: true}
+						pending = true
+						return nil
+					}
+				}
+			} else if input.Projection.UUID == uuid {
 				projection, pending = input.Projection, true
 				return nil
 			}
@@ -299,7 +329,7 @@ func (f *hostedLiveFlusher) hostedMutationStatus(ctx context.Context, project, i
 		if err != nil {
 			return err
 		}
-		if i.state == "staging" || i.state == "aborted" {
+		if i.matchedCount.Valid || i.state == "staging" || i.state == "aborted" {
 			return sql.ErrNoRows
 		}
 		input, err := f.publisher.readHostedMutation(ctx, i)
@@ -326,8 +356,10 @@ func (f *hostedLiveFlusher) settleReadyHostedMutation(ctx context.Context, sessi
 	if err != nil {
 		return err
 	}
-	if i.operation == "delete" && f.publisher.cancelMutationWebhook == nil {
-		return errHostedMutationBusy
+	if i.operation == "delete" {
+		if !i.matchedCount.Valid && f.publisher.cancelMutationWebhook == nil || i.matchedCount.Int64 > 0 && f.publisher.cancelMutationWebhooks == nil {
+			return errHostedMutationBusy
+		}
 	}
 	if err := session.RunControlTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if deleting {

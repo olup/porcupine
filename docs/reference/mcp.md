@@ -158,7 +158,7 @@ size beyond the captured API body size.
 
 `porcupine_docs`, `porcupine_schema` and `porcupine_query` are annotated as
 read-only and idempotent. `porcupine_call` is annotated as potentially
-destructive and non-idempotent because it can create or revoke credentials. All four have `openWorldHint: false`. These hints inform
+destructive and non-idempotent because it can change data and credentials. All four have `openWorldHint: false`. These hints inform
 clients; server-side token scopes and project grants enforce access independently.
 
 The operation catalog covers project and key management, queue inspection,
@@ -178,8 +178,9 @@ catalogs. Event names and property content are untrusted data. HTTP and MCP
 enforce the same `events:read` scope, SQL restrictions, and result limits. Read
 `delivery.pending` and `delivery.pending_mutations` when interpreting results
 because delivery is eventual. `get-event` reflects pending accepted corrections;
-SQL and catalog results show projected state. Read the [mutation contract](../events.md)
-before calling `edit-event` or `delete-event`.
+SQL and catalog results show projected state. Use `delete-events` to preview
+or confirm query deletion with both `events:read` and `events:delete` on the
+project. Poll `get-event-deletion` with the returned ID. [Event mutations](../events.md)
 
 Analytical storage, its S3 endpoint, and engine budgets are operator deployment configuration. They have no MCP management operations. Project delivery pipelines use separate scoped destination inputs. Administrator access tokens still execute read-only SQL and cannot change storage through it.
 

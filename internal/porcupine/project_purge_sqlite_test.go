@@ -60,7 +60,8 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 			"INSERT INTO identity_profiles VALUES(?1,'user',1,'{}',1)",
 			"INSERT INTO identity_links VALUES(?1,'anon','user',1)",
 			"INSERT OR IGNORE INTO event_receipts(project_id,uuid) VALUES(?1,'stable')",
-			"INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at) VALUES(?1,?1,'stable',?2,'edit','key','hash',1,'queued','now')",
+			"INSERT INTO event_deletions(mutation_id,project_id,actor_id,idempotency_key_hash,request_hash,matched_count,created_at) VALUES('group-' || ?1,?1,?2,'group-key','hash',1,'now')",
+			"INSERT INTO mutation_audit(mutation_id,project_id,uuid,actor_id,operation,idempotency_key_hash,request_hash,expected_revision,state,created_at,deletion_id) VALUES(?1,?1,'stable',?2,'delete','key','hash',1,'pending','now','group-' || ?1)",
 			"INSERT INTO mutation_outbox SELECT seq,project_id,uuid,'{}' FROM mutation_audit WHERE project_id=?1",
 			"INSERT INTO pipelines VALUES(?1,?1,?2,'webhook','hook','paused','{}',X'00',1)",
 			"INSERT INTO webhook_deliveries(id,pipeline_id,project_id,event_uuid,payload,bytes,state,next_attempt_ms,created_at_ms) VALUES(?1,?1,?1,'stable','{}',2,'queued',0,1)",
@@ -86,7 +87,7 @@ func TestProjectPurgeSQLiteRowsAndAccounting(t *testing.T) {
 		t.Fatal("partial purge after rollback")
 	}
 	runProjectPurge(t, s, remove, true)
-	for _, table := range []string{"projects", "events", "event_receipts", "project_queue_usage", "delivery_quarantine", "identity_profiles", "identity_links", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
+	for _, table := range []string{"projects", "events", "event_receipts", "project_queue_usage", "delivery_quarantine", "identity_profiles", "identity_links", "event_deletions", "mutation_audit", "mutation_outbox", "export_jobs", "export_files", "import_uploads", "import_upload_files", "import_upload_samples", "pipelines", "webhook_deliveries", "webhook_members"} {
 		var n int
 		if err := s.db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("%s count = %d err %v", table, n, err)

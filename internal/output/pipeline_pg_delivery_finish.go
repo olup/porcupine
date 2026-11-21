@@ -36,15 +36,24 @@ func (p *PGPipelineEffects) DeliveryMembers(ctx context.Context, db *sql.DB, c P
 // UUID and retains composed bodies until their surviving members are rescheduled.
 // It is safe to replay in the mutation publication transaction.
 func (p *PGPipelineEffects) CancelHostedWebhookEventTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant, uuid string) error {
-	if tx == nil || !scope.valid() || !pipelineID(tenant) || !pipelineID(uuid) {
+	return p.CancelHostedWebhookEventsTx(ctx, tx, scope, tenant, []string{uuid})
+}
+
+func (p *PGPipelineEffects) CancelHostedWebhookEventsTx(ctx context.Context, tx *sql.Tx, scope PipelineScope, tenant string, uuids []string) error {
+	if tx == nil || !scope.valid() || !pipelineID(tenant) || len(uuids) == 0 {
 		return ErrPipelineConflict
+	}
+	for _, uuid := range uuids {
+		if !pipelineID(uuid) {
+			return ErrPipelineConflict
+		}
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE pipeline_effect_jobs AS j SET state='retired',version=version+1,lease_until=NULL,
  completed_at=clock_timestamp(),error_code='event_deleted',needs_recompose=(window_end_ms>0 AND refs>1) WHERE `+pipelineScopeWhere+`
  AND tenant_id=$5 AND kind='delivery' AND state IN ('pending','running') AND EXISTS (
  SELECT 1 FROM pipeline_effect_members m
  WHERE (m.source_id,m.project_id,m.catalog_id,m.stream_id,m.job_id)=(j.source_id,j.project_id,j.catalog_id,j.stream_id,j.id)
- AND m.uuid=$6)`, append(pipelineScopeArgs(scope), tenant, uuid)...)
+ AND m.uuid=ANY($6::text[]))`, append(pipelineScopeArgs(scope), tenant, uuids)...)
 	return err
 }
 

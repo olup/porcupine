@@ -179,6 +179,22 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "delete-events", Method: "POST", Path: "/api/v1/projects/{id}/event-deletions",
+		Summary: "Preview or queue deletion of events that match a project-scoped SQL predicate",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"dry_run (boolean) Preview the match count and up to five UUIDs without queuing a deletion or reserving the key.",
+			"expected_count (integer) Required when dry_run is false, including for zero matches. A different match count returns 409.",
+			"idempotency_key (string, required) Project-scoped key for retrying a confirmed request. A preview can use the same key as its confirmation.",
+			"parameters (object) Bound DuckDB scalar parameters such as $event. Same limits as query-events.",
+			"time_range (object) Inclusive from and exclusive to in RFC3339. Bounds every events reference by occurrence time.",
+			"where (string, required) One DuckDB WHERE predicate over the project's projected events. Use only read-only expressions allowed by query-events.",
+		},
+	},
+	{
 		ID: "delete-pipeline", Method: "DELETE", Path: "/api/v1/projects/{id}/pipelines/{pipeline_id}",
 		Summary: "Delete a pipeline and its retained delivery metadata",
 		Params: []parameter{
@@ -255,6 +271,14 @@ var operations = []operation{
 		Summary: "Read the catalogue refresh status without executing an analytical query",
 		Params: []parameter{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+	},
+	{
+		ID: "get-event-deletion", Method: "GET", Path: "/api/v1/projects/{id}/event-deletions/{mutation_id}",
+		Summary: "Read the state and counts of a deletion queued by delete-events",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+			{Name: "mutation_id", In: "path", Type: "string", Description: "", Required: true},
 		},
 	},
 	{

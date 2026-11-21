@@ -66,6 +66,14 @@ PRIMARY KEY(actor_id,tenant_id)) WITHOUT ROWID;`,
 	`DROP TABLE shared_tenant_cache`,
 	// 10: per-project usage of pending payloads in the local journal.
 	journalProjectQueueSchemaV10,
+	// 11: audited query deletions group durable tombstone mutations.
+	`CREATE TABLE event_deletions (
+mutation_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), actor_id TEXT NOT NULL,
+idempotency_key_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+	matched_count INTEGER NOT NULL CHECK(matched_count>=0), created_at TEXT NOT NULL,
+UNIQUE(project_id,idempotency_key_hash)) WITHOUT ROWID;
+ALTER TABLE mutation_audit ADD COLUMN deletion_id TEXT REFERENCES event_deletions(mutation_id);
+CREATE INDEX mutation_audit_deletion_members ON mutation_audit(deletion_id,seq) WHERE deletion_id IS NOT NULL;`,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
@@ -133,6 +141,7 @@ var hostedImportSchema string
 // 25: explicit public client ingestion credentials.
 // 26: shared retry deadline for scheduled hosted recovery.
 // 27: durable event catalog summaries and refresh claims.
+// 28: distinguish hosted query deletions from single-event mutations.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -174,6 +183,7 @@ END $$;
 CREATE TRIGGER hosted_recovery_reset_retry BEFORE UPDATE OF generation ON hosted_recovery_pending
 FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCTION reset_hosted_recovery_retry();`,
 	catalog.ControlSchema,
+	hostedEventDeletionSchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.
