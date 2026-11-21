@@ -34,6 +34,8 @@ Shutdown drains the buffer before waiting for canceled analytics and maintenance
 
 A PostgreSQL advisory lock ties each project write session to one connection and serializes hosted writers. Blocking acquisition has a five-second default deadline across the local slot, connection, and advisory lock. Live writes, imports, mutations, maintenance, and sealing also use a native fence. Query readers use snapshots and separate permits.
 
+Before acquiring that lock, the worker caps the PostgreSQL backend's supported TCP keepalive settings at 15 seconds idle, 5 seconds between probes, and 3 probes. It caps the Linux TCP user timeout at 30 seconds so unacknowledged data can also trigger disconnect detection. The worker restores the prior socket settings before returning the connection to the control pool. If acquisition or cleanup leaves ownership uncertain, the worker discards the connection. Takeover still depends on PostgreSQL detecting the lost peer and releasing the session lock, and on the successor acquiring the lock and advancing the native fence.
+
 An ordinary live flush follows this sequence:
 
 1. Deduplicate the batch against authoritative DuckLake heads, including tombstones. Only newly retained UUIDs update identity or schedule live effects.
