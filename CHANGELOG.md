@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.6
+
+- Hosted writers shorten PostgreSQL TCP keepalives on connections that hold project write locks. On Linux they also cap the TCP user timeout. A replacement writer can take over once PostgreSQL detects the lost connection, releases the lock, and the replacement advances the DuckLake write fence. (#186)
+- Hosted live flushes check all event UUIDs in a single DuckLake query. Deleted event IDs still count as duplicates. (#188)
+- Prometheus metrics break down hosted flushes, time spent holding project write locks, DuckLake commit phases, and time spent waiting for shared PostgreSQL admission. (#187, #189) [Monitor flushes and queries](https://github.com/olup/porcupine/blob/v0.19.6/docs/reference/observability.md#read-the-dashboard)
+- Consolidated pipeline credential lookup, hosted webhook preparation and staging, and standalone SQLite receipt handling in their respective internal packages. (#182, #183, #184, #185)
+- The refreshed landing page shows an MCP example and PostHog SDK setup. It shares its base styling with the documentation. (#190)
+
+v0.19.6 uses the v0.19.5 storage schemas. [Upgrade from v0.19.5](https://github.com/olup/porcupine/blob/v0.19.6/docs/hosting.md#upgrade-from-v0195)
+
 ## 0.19.5
 
 - The CLI and agent guides explain how to find missing or stale event and property descriptions and confirm descriptions that still apply. (#178) [Review catalog documentation](https://github.com/olup/porcupine/blob/v0.19.5/docs/reference/event-discovery.md#review-catalog-documentation)

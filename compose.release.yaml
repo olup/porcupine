@@ -1,7 +1,7 @@
 # Use only from the matching released Git tag with Compose 2.24.4+.
 x-release: &release
   build: !reset null
-  image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.19.5}
+  image: ${PORCUPINE_IMAGE:-ghcr.io/olup/porcupine:0.19.6}
   pull_policy: missing
 services:
   porcupine:
