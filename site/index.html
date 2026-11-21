@@ -3,61 +3,138 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Headless product analytics you can self-host. Capture native, PostHog or Segment events and query SQL through your own agent.">
+  <meta name="description" content="Headless product analytics you can self-host. Capture PostHog, Segment or native events, then let your agent query them in SQL over MCP or the CLI.">
   <meta name="theme-color" content="#f8f4ea">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
   <title>Porcupine · Product analytics for agents</title>
   <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="./assets/ibm-plex-mono-400.woff2">
+  <link rel="stylesheet" href="./base.css">
   <link rel="stylesheet" href="./styles.css">
   <script src="./site.js" defer></script>
 </head>
 <body>
-  <main>
-    <section class="intro" aria-labelledby="name">
-      <div class="signature">
-        <img class="mark" src="./assets/favicon.svg" width="76" height="76" alt="">
-        <h1 id="name">porcupine</h1>
-        <p class="lead">Porcupine is a headless product analytics tool and a general-purpose event store.</p>
-      </div>
-      <div class="story">
-        <p class="description">It works with PostHog and Segment clients. Headless means it ships with no UI at all. Once it’s installed, an agent or a human can manage it and query it through MCP or the CLI.</p>
-        <p class="description">I wanted a lightweight product analytics tool I could self-host. Then I realised no one on my team ever opens the PostHog UI. Our local agents already manage everything and run the queries.</p>
-        <p class="description">PostHog, OpenPanel and Pug were big inspirations. I wanted direct SQL queries, pipelines that send data to other systems, and the option to offload older data to S3, all in something light enough to host myself.</p>
-        <p class="credit"><small>This text is human. The agent did the rest.</small></p>
-      </div>
-    </section>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="frame">
+    <header class="site-header">
+      <a class="brand" href="./"><img src="./assets/favicon.svg" width="26" height="26" alt="">porcupine</a>
+      <nav class="site-nav" aria-label="Site">
+        <a href="./docs/">Docs</a>
+        <a class="wide" href="./llms.txt">Agent guide</a>
+        <a href="https://github.com/olup/porcupine">GitHub ↗</a>
+      </nav>
+    </header>
 
-    <section id="get-started" aria-labelledby="start">
-      <div class="start-intro">
-        <h2 id="start">Get started</h2>
-        <p>Paste this into your coding agent.</p>
-      </div>
-      <div class="start-content">
-        <p id="prompt">Read https://olup.github.io/porcupine/llms.txt. Start the local quickstart, send a test event, and show me the SQL and its result.</p>
-        <div class="start-actions">
-          <button type="button" id="copy" hidden>Copy prompt</button>
-          <div class="guide-links"><a href="./llms.txt">Agent guide</a><a href="./docs/hosting/">Hosting guide</a><a href="./docs/cli/">Standalone CLI</a></div>
+    <main id="content" tabindex="-1">
+      <section class="hero" aria-labelledby="title">
+        <div class="hero-text">
+          <h1 id="title">Product analytics for agents.</h1>
+          <p class="lead">Porcupine is a headless product analytics tool and a general-purpose event store. Your SDKs send events in, your agent asks the questions in SQL.</p>
+          <div class="actions">
+            <a class="button" href="#get-started">Get started</a>
+            <a class="button secondary" href="./docs/">Read the docs</a>
+          </div>
+          <p class="facts">Open source · MIT · Self-hosted · DuckDB inside</p>
         </div>
-        <span id="copy-status" role="status"></span>
-      </div>
-    </section>
+        <figure class="session">
+          <pre aria-label="Example agent session"><span class="you">› How many people signed up each day last week?</span>
 
-    <section class="features" aria-label="Features">
-      <article>
-        <h2><a href="./docs/compatibility/">Capture</a></h2>
-        <p>Keep a supported PostHog SDK, send Segment events, or POST your own JSON. For a website, you can estimate daily visitors without setting a cookie.</p>
-      </article>
-      <article>
-        <h2><a href="./docs/query-events/">Query</a></h2>
-        <p>Give an agent read access to a project. It can look up event names and properties before it writes a SQL query.</p>
-      </article>
-      <article>
-        <h2><a href="./docs/pipelines/">Deliver</a></h2>
-        <p>Send each signup to a webhook, or batch the events. For a daily extract, schedule a SQL query and have Porcupine write the results to S3.</p>
-      </article>
-    </section>
-  </main>
-  <footer><a href="https://github.com/olup/porcupine">GitHub</a><a href="./docs/">Documentation</a><a href="https://github.com/olup/porcupine/releases/tag/__PORCUPINE_RELEASE_TAG__">Release __PORCUPINE_RELEASE_TAG__</a></footer>
+<span class="tool">porcupine_schema</span>  <span class="dim">web · 14 events</span>
+<span class="tool">porcupine_query</span>
+  SELECT CAST(event_time AS DATE) AS day,
+         count(DISTINCT person_id) AS people
+  FROM events
+  WHERE event = $event
+  GROUP BY day ORDER BY day
+  <span class="dim">$event = signup_completed · Nov 9 → Nov 16</span>
+
+  <span class="dim">day         people</span>
+  2026-11-09      38
+  2026-11-10      52
+  2026-11-11      47
+  <span class="dim">…</span>
+
+<span class="answer">Signups peaked on Tuesday, with 52 people.</span></pre>
+          <figcaption>An agent answering over MCP. Illustrative data.</figcaption>
+        </figure>
+      </section>
+
+      <section id="get-started" class="band" aria-labelledby="start">
+        <div class="band-intro">
+          <h2 id="start">Get started</h2>
+          <p>Paste this into your coding agent. It reads the agent guide and runs the local quickstart for you.</p>
+        </div>
+        <div>
+          <p id="prompt">Read https://olup.github.io/porcupine/llms.txt and start Porcupine on my machine with the local quickstart. Send a test event, then show me the SQL that counts it and its result.</p>
+          <div class="start-actions">
+            <button type="button" class="button" id="copy" hidden>Copy prompt</button>
+            <span class="links">Prefer to read? <a href="./docs/quickstart/">Quickstart</a> <a href="./docs/hosting/">Hosting</a> <a href="./docs/cli/">CLI</a></span>
+          </div>
+          <span id="copy-status" role="status"></span>
+        </div>
+      </section>
+
+      <section class="features" aria-labelledby="features">
+        <h2 id="features" class="visually-hidden">What it does</h2>
+        <article>
+          <h3><a href="./docs/collect-events/">Capture</a></h3>
+          <p>Keep a supported PostHog SDK, send Segment events, or POST your own JSON. A cookieless browser profile counts daily visitors without storing anything in the browser.</p>
+        </article>
+        <article>
+          <h3><a href="./docs/query-events/">Query</a></h3>
+          <p>Agents look up event names and properties, then run project-scoped DuckDB SQL over MCP, HTTP or the CLI. Funnels and retention are joins and window functions.</p>
+        </article>
+        <article>
+          <h3><a href="./docs/pipelines/">Deliver</a></h3>
+          <p>Send each new event to a webhook, alone or in batches. Schedule a SQL query and have Porcupine write its results to your S3 bucket.</p>
+        </article>
+        <article>
+          <h3><a href="./docs/imports/">Import</a></h3>
+          <p>Bring PostHog exports, Segment files or native JSONL with one CLI command. Imports resume after interruption and keep the original event times.</p>
+        </article>
+        <article>
+          <h3><a href="./docs/access/">Share</a></h3>
+          <p>Invite your team to projects. Each person approves their own MCP or CLI connection, and HTTP, CLI and MCP enforce the same permissions.</p>
+        </article>
+        <article>
+          <h3><a href="./docs/storage/">Store</a></h3>
+          <p>DuckDB and DuckLake run inside the server. A single process with SQLite runs a whole instance, with analytical files on local disk or a private S3 bucket.</p>
+        </article>
+      </section>
+
+      <section class="band" aria-labelledby="sdk">
+        <div class="band-intro">
+          <h2 id="sdk">Already on PostHog?</h2>
+          <p>Point your SDK at Porcupine. Porcupine is tested against pinned <code>posthog-js</code> and <code>posthog-node</code> versions. <a href="./docs/compatibility/">Compatibility</a></p>
+        </div>
+        <pre class="code"><code>posthog.init(projectIngestionKey, {
+  ...cookielessProfile,
+  api_host: 'https://analytics.example.com',
+  opt_out_useragent_filter: false
+})
+posthog.capture('signup_completed', { plan: 'team' })</code></pre>
+      </section>
+
+      <section class="band why" aria-labelledby="why">
+        <div class="band-intro">
+          <h2 id="why">Why it exists</h2>
+        </div>
+        <div class="story">
+          <p>It works with PostHog and Segment clients. Headless means it ships with no UI at all. Once it’s installed, an agent or a human can manage it and query it through MCP or the CLI.</p>
+          <p>I wanted a lightweight product analytics tool I could self-host. Then I realised no one on my team ever opens the PostHog UI. Our local agents already manage everything and run the queries.</p>
+          <p>PostHog, OpenPanel and Pug were big inspirations. I wanted direct SQL queries, pipelines that send data to other systems, and the option to offload older data to S3, all in something light enough to host myself.</p>
+          <p class="credit">This text is human. The agent did the rest.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a href="https://github.com/olup/porcupine">GitHub</a>
+      <a href="./docs/">Documentation</a>
+      <a href="./llms.txt">Agent guide</a>
+      <a href="https://github.com/olup/porcupine/blob/main/LICENSE">MIT license</a>
+      <a class="end" href="https://github.com/olup/porcupine/releases/tag/__PORCUPINE_RELEASE_TAG__">Release __PORCUPINE_RELEASE_TAG__</a>
+    </footer>
+  </div>
 </body>
 </html>
