@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.0
+
+- Preview and confirm project-scoped event deletion with a SQL predicate over projected events. HTTP, CLI, and MCP support up to 1,000 matches per request and require both `events:read` and `events:delete`. After confirmation, poll the deletion status while tombstones are applied. (#192) [Delete events matching a query](https://github.com/olup/porcupine/blob/v0.20.0/docs/events.md#delete-events-matching-a-query)
+- New standalone and hosted analytical stores can opt in to DuckLake Parquet encryption through `ducklake.encrypted`. The catalog holds the keys for the data and delete files in local storage or S3. Existing stores keep their plaintext mode. (#193) [Configure Parquet encryption](https://github.com/olup/porcupine/blob/v0.20.0/docs/reference/configuration.md#ducklake-parquet-encryption)
+
+Startup applies storage migrations in both profiles. Drain and stop the deployment, then take a complete recovery point before upgrading. [Upgrade from v0.19.6](https://github.com/olup/porcupine/blob/v0.20.0/docs/hosting.md#upgrade-from-v0196)
+
 ## 0.19.6
 
 - Hosted writers shorten PostgreSQL TCP keepalives on connections that hold project write locks. On Linux they also cap the TCP user timeout. A replacement writer can take over once PostgreSQL detects the lost connection, releases the lock, and the replacement advances the DuckLake write fence. (#186)
