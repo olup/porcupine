@@ -45,16 +45,20 @@ integration: ducklake-smoke ducklake-s3-test ducklake-restore-drill shared-integ
 
 integration-s3: ducklake-s3-test
 
-.PHONY: compat-install compat compat-canary
+.PHONY: browser-sdk compat-install compat compat-canary
+browser-sdk:
+	npm --prefix sdk/browser run build
+
 compat-install:
 	npm ci --prefix compat
+	npm ci --prefix sdk/browser
 	npm --prefix compat run install-browser
 
-compat:
+compat: browser-sdk
 	npm --prefix compat test
 
 # Run in a disposable checkout; the lockfile remains the supported SDK baseline.
-compat-canary:
+compat-canary: browser-sdk
 	cd compat && npm install --no-save --package-lock=false posthog-js@latest posthog-node@latest
 	PORCUPINE_COMPAT_CANARY=1 npm --prefix compat test
 

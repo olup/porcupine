@@ -16,7 +16,7 @@ make compat
 Run `npm --prefix compat run test:identify` to exercise browser and backend SDK identity through project-scoped native SQL. Its report is `compat/artifacts/identify-native.json`.
 
 The runner builds the real Go binary, starts it with a temporary SQLite database,
-creates two projects, and loads official SDK packages. Chromium runs a local page
+creates test projects, and loads the official SDK packages and the Porcupine browser build. Chromium runs a local page
 on a different origin from the ingestion server. No SDK events go to PostHog Cloud.
 The runner rejects unexpected routes and outbound SDK traffic outside its local
 servers. Data, processes, and browser contexts are cleaned up afterward.
@@ -38,6 +38,12 @@ The Node retry contract forwards a real SDK request to Porcupine, replaces its
 successful response with a 503, then observes the SDK resend the same UUID. The
 read API must show one logical event. This proves retry deduplication for that
 scenario, not exactly-once delivery under every failure.
+
+The Porcupine browser contract does the same with a first pageview and a custom
+event. It also checks for omitted browser credentials, a fresh send timestamp
+on retry, and empty browser storage. To run the SDK's unit tests alone, install
+its dependencies with `npm ci --prefix sdk/browser` and run
+`npm test --prefix sdk/browser`.
 
 Session assertions verify SDK identifiers and reset behavior. The separate [identified capture contract](../data-and-identity.md#link-an-anonymous-browser-at-login) covers login, person-property updates, and links within a project. Native DuckLake journeys verify SQL identity resolution for historical events.
 

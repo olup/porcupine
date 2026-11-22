@@ -19,8 +19,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: compat/package-lock.json
+          cache-dependency-path: |
+            compat/package-lock.json
+            sdk/browser/package-lock.json
       - run: npm ci --prefix compat
+      - run: npm ci --prefix sdk/browser
       - run: cd compat && npx playwright install --with-deps chromium
       - run: make compat-canary
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
