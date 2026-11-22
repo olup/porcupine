@@ -4,12 +4,36 @@ Use a public `pc_ci_` key from a Porcupine project with mixed ingestion enabled.
 Set `api_host` to your Porcupine base URL. If the server restricts capture
 origins, include your app's origin in its allowlist.
 
-Choose a version from [GitHub Releases](https://github.com/olup/porcupine/releases)
-and replace both instances of `VERSION` with it.
+## Install from a release
+
+Choose a tagged [GitHub release](https://github.com/olup/porcupine/releases)
+with a `porcupine-browser-VERSION.tgz` asset. Replace both instances of
+`VERSION` with that exact version.
 
 ```sh
 npm install https://github.com/olup/porcupine/releases/download/vVERSION/porcupine-browser-VERSION.tgz
 ```
+
+## Build from source
+
+You can build the SDK from the commit that added it. Run these commands from
+your app directory with Git and npm installed.
+
+```sh
+sdk_source="$(mktemp -d)"
+git clone https://github.com/olup/porcupine.git "$sdk_source"
+git -C "$sdk_source" checkout --detach 26bf2d858c2579117aae954e26eb8b86c62f68ad
+npm ci --prefix "$sdk_source/sdk/browser"
+npm --prefix "$sdk_source/sdk/browser" run build
+npm pack "$sdk_source/sdk/browser/dist" --ignore-scripts
+npm install ./porcupine-browser-0.20.0.tgz
+```
+
+Keep the tarball with your app so that future installs can resolve the local
+dependency. For a classic script, the build writes `sdk/browser/dist/porcupine.js`
+in the source checkout.
+
+## Capture an event
 
 ```js
 import { init } from '@porcupine/browser'

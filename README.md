@@ -48,7 +48,7 @@ Porcupine embeds DuckDB and DuckLake. See [standalone and hosted storage](docs/s
 
 Hosted ingestion can lose acknowledged events if a worker crashes before committing them to DuckLake.
 
-Send events with [native or Segment inputs](docs/reference/native-and-segment-ingestion.md) or a [supported PostHog SDK](docs/reference/compatibility.md). Use the CLI to [import history](docs/imports.md).
+[Send events](docs/collect-events.md) with PostHog JS, the Segment Node SDK, the Porcupine browser SDK, or native HTTP. Use the CLI to [import history](docs/imports.md).
 
 [Query or export events](docs/query-events.md) with SQL. For scheduled results or webhook delivery, use a [pipeline](docs/pipelines.md).
 
