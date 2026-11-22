@@ -1,8 +1,8 @@
 # Porcupine browser SDK
 
 Use a public `pc_ci_` key from a Porcupine project with mixed ingestion enabled.
-Set `api_host` to your Porcupine base URL. If the server restricts capture
-origins, include your app's origin in its allowlist.
+If the server restricts capture origins, include your app's origin in its
+allowlist.
 
 ## Install from a release
 
@@ -16,17 +16,17 @@ npm install https://github.com/olup/porcupine/releases/download/vVERSION/porcupi
 
 ## Build from source
 
-You can build the SDK from the commit that added it. Run these commands from
-your app directory with Git and npm installed.
+To try the SDK from the current main branch, run these commands from your app
+directory with Git and npm installed.
 
 ```sh
 sdk_source="$(mktemp -d)"
-git clone https://github.com/olup/porcupine.git "$sdk_source"
-git -C "$sdk_source" checkout --detach 26bf2d858c2579117aae954e26eb8b86c62f68ad
+git clone --depth=1 --branch main https://github.com/olup/porcupine.git "$sdk_source"
+sdk_version="$(cat "$sdk_source/VERSION")"
 npm ci --prefix "$sdk_source/sdk/browser"
 npm --prefix "$sdk_source/sdk/browser" run build
 npm pack "$sdk_source/sdk/browser/dist" --ignore-scripts
-npm install ./porcupine-browser-0.20.0.tgz
+npm install "./porcupine-browser-${sdk_version}.tgz"
 ```
 
 Keep the tarball with your app so that future installs can resolve the local
@@ -34,6 +34,19 @@ dependency. For a classic script, the build writes `sdk/browser/dist/porcupine.j
 in the source checkout.
 
 ## Capture an event
+
+On Porcupine Cloud, use `initCloud` with your Cloud project's key. It sends
+events to `https://api.getporcupine.eu`. Use a release that includes
+`initCloud` or build from source.
+
+```js
+import { initCloud } from '@porcupine/browser'
+
+const analytics = initCloud('pc_ci_YOUR_KEY')
+analytics.capture('signup_completed', { plan: 'starter' })
+```
+
+For a self-hosted instance, use `init` with its key and base URL.
 
 ```js
 import { init } from '@porcupine/browser'
@@ -48,15 +61,12 @@ asset from your own site.
 ```html
 <script src="/assets/porcupine-browser-VERSION.js"></script>
 <script>
-  const analytics = Porcupine.init('pc_ci_YOUR_KEY', {
-    api_host: 'https://analytics.example.com',
-    capture_pageview: false,
-  })
+  const analytics = Porcupine.initCloud('pc_ci_YOUR_KEY', { capture_pageview: false })
   analytics.capture('$pageview', { page: 'pricing' })
 </script>
 ```
 
-`init` queues one bare `$pageview` in the browser by default. Pass `capture_pageview: false`
+Both initializers queue one bare `$pageview` in the browser by default. Pass `capture_pageview: false`
 to opt out. For a single-page app, call `capture('$pageview', properties)` on
 the route changes you want to measure. `disable()` stops the client and clears
 the queue. It attempts to abort any in-flight request, which the server may

@@ -39,7 +39,16 @@ The Porcupine browser SDK captures events without cookies or browser storage. It
 
 Use the [pinned tarball from a tagged release](../sdk/browser/README.md#install-from-a-release) that includes the SDK, or [build it from source](../sdk/browser/README.md#build-from-source).
 
-Initialize the SDK with a mixed project's public ingestion key and your Porcupine URL.
+For Porcupine Cloud, use `initCloud` with a mixed project's public ingestion key. The SDK sends events to `https://api.getporcupine.eu`. Use a release that includes `initCloud` or build from source.
+
+```js
+import { initCloud } from '@porcupine/browser'
+
+const analytics = initCloud('pc_ci_YOUR_KEY')
+analytics.capture('signup_completed', { plan: 'starter' })
+```
+
+For a self-hosted instance, pass the project's key and the instance URL to `init`.
 
 ```js
 import { init } from '@porcupine/browser'

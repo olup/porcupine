@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
-import { init } from '../dist/index.js'
+import { init, initCloud } from '../dist/index.js'
 
 const key = 'pc_ci_test'
 const api_host = 'https://analytics.example.test'
@@ -112,6 +112,38 @@ test('queues one bare pageview, snapshots explicit properties and sends the cook
   assert.notEqual(first.uuid, second.uuid)
 })
 
+test('Cloud quickstart sends a pageview and the captured event to Porcupine Cloud', async t => {
+  const { calls, tick } = page(t)
+  const analytics = initCloud('pc_ci_YOUR_KEY')
+  t.after(() => analytics.disable())
+  assert.equal(analytics.capture('signup_completed', { plan: 'starter' }), true)
+  await tick(1000)
+
+  assert.equal(calls.length, 1)
+  const [{ url, payload }] = calls
+  assert.equal(url, 'https://api.getporcupine.eu/batch/')
+  assert.equal(payload.api_key, 'pc_ci_YOUR_KEY')
+  assert.deepEqual(payload.batch.map(event => [event.event, event.properties]), [
+    ['$pageview', {}],
+    ['signup_completed', { plan: 'starter' }],
+  ])
+})
+
+test('Cloud initialization honors pageview opt-out', async t => {
+  const { calls, tick } = page(t)
+  const analytics = initCloud(key, { capture_pageview: false })
+  t.after(() => analytics.disable())
+  await tick(1000)
+  assert.equal(calls.length, 0)
+  assert.equal(analytics.capture('$pageview', { page: 'pricing' }), true)
+  await tick(1000)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://api.getporcupine.eu/batch/')
+  assert.deepEqual(calls[0].payload.batch.map(event => [event.event, event.properties]), [
+    ['$pageview', { page: 'pricing' }],
+  ])
+})
+
 test('honors opt-out, rejects invalid input, and sends an explicit view when the page hides', async t => {
   const { calls, connect, document, window, tick } = page(t)
   const client = connect()
@@ -137,7 +169,9 @@ test('honors opt-out, rejects invalid input, and sends an explicit view when the
 
 test('requires a public project key and a base URL without leaking bad inputs', () => {
   assert.throws(() => init('pc_secret_test', { api_host }), { message: 'A public pc_ci_ ingestion key is required' })
-  for (const bad of ['/analytics', 'mailto:secret@example.test', 'https://user:secret@example.test', api_host + '?secret=1', api_host + '#secret']) {
+  assert.throws(() => initCloud('pc_secret_test'), { message: 'A public pc_ci_ ingestion key is required' })
+  assert.throws(() => init(key), { message: /^api_host must be an absolute HTTP/ })
+  for (const bad of [undefined, '/analytics', 'mailto:secret@example.test', 'https://user:secret@example.test', api_host + '?secret=1', api_host + '#secret']) {
     assert.throws(() => init(key, { api_host: bad }), {
       message: 'api_host must be an absolute HTTP(S) base URL without credentials, a query, or a fragment',
     })
@@ -388,5 +422,5 @@ test('classic bundle exposes the same public interface', async () => {
   const source = await readFile(new URL('../dist/porcupine.js', import.meta.url), 'utf8')
   const context = {}
   runInNewContext(source, context)
-  assert.deepEqual(Object.keys(context.Porcupine), ['init'])
+  assert.deepEqual(Object.keys(context.Porcupine).sort(), ['init', 'initCloud'])
 })
