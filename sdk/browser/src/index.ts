@@ -4,6 +4,8 @@ export interface BrowserOptions {
   capture_pageview?: boolean
 }
 
+export type CloudBrowserOptions = Omit<BrowserOptions, 'api_host'>
+
 export interface BrowserClient {
   /** Return whether the event entered the local queue. */
   capture(event: string, properties?: Readonly<Record<string, unknown>>): boolean
@@ -96,6 +98,11 @@ function acknowledgment(value: unknown, count: number): Outcome {
     return 'accepted'
   }
   return 'retry'
+}
+
+/** Initialize capture against Porcupine Cloud. */
+export function initCloud(publicKey: string, options?: CloudBrowserOptions): BrowserClient {
+  return init(publicKey, { ...options, api_host: 'https://api.getporcupine.eu' })
 }
 
 export function init(publicKey: string, options: BrowserOptions): BrowserClient {
