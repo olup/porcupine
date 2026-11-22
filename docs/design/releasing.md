@@ -27,6 +27,8 @@ The release workflow rejects a tag that differs from `VERSION` or current instal
 
 The release workflow publishes the tested server images and CLI archives, then calls the Pages workflow with that exact tag. A Pages failure fails the release workflow even if the GitHub release has already been created. Fix and republish the site without replacing released binaries.
 
+Each stable GitHub release includes `porcupine-image-digest.txt` with a single lowercase `sha256:<64 hex digits>` line. It identifies the registry image index containing the tested Linux `amd64` and `arm64` images. Use `ghcr.io/olup/porcupine@<digest>` to pull that exact release.
+
 Pages checks that `VERSION` has a published stable GitHub release. A preparation commit for an unpublished version leaves the current site online. The release workflow publishes that version's site after its assets are available, so the landing does not advertise unfinished downloads.
 
 If the `github-pages` environment restricts deployments, allow the `main` branch and version tags matching `v*.*.*`. Otherwise, GitHub blocks site publication from a release tag.

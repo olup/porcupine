@@ -195,19 +195,29 @@ jobs:
 
           [Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting instructions]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/hosting.md)
           EOF
+          # Assemble and verify the published index using the digests returned by the pushes.
+          image_refs=()
           for arch in amd64 arm64; do
             docker load -i "porcupine-$version-linux-$arch.tar.gz"
             test "$(docker image inspect --format '{{.Architecture}}' "$repo:$version")" = "$arch"
             docker tag "$repo:$version" "$repo:$version-$arch"
-            docker push "$repo:$version-$arch"
+            push_output="$(docker push "$repo:$version-$arch")"
+            printf '%s\n' "$push_output"
+            arch_digest="$(awk -v tag="$version-$arch:" '$1 == tag && $2 == "digest:" { print $3 }' <<< "$push_output")"
+            [[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            image_refs+=("$repo@$arch_digest")
             docker image rm "$repo:$version" >/dev/null
           done
-          docker buildx imagetools create -t "$repo:$version" "$repo:$version-amd64" "$repo:$version-arm64"
-          docker buildx imagetools inspect "$repo:$version" --raw |
+          image_metadata="$(mktemp)"
+          docker buildx imagetools create --metadata-file "$image_metadata" -t "$repo:$version" "${image_refs[@]}"
+          image_digest="$(jq -er '."containerimage.descriptor".digest' "$image_metadata")"
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "$repo@$image_digest" --raw |
             jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
+          printf '%s\n' "$image_digest" > porcupine-image-digest.txt
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Porcupine $GITHUB_REF_NAME" --generate-notes --notes-file "$notes" \
-            SHA256SUMS *.tar.gz *.zip
+            SHA256SUMS porcupine-image-digest.txt *.tar.gz *.zip
 
   pages:
     needs: publish
