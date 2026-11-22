@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0
+
+- The first Porcupine browser SDK release includes an npm-installable tarball, a standalone script, and its subresource integrity value. The SDK captures events without cookies or browser storage. Call `initCloud` to send events to `https://api.getporcupine.eu`, or use `init` with your self-hosted URL. (#196, #198) [Install the browser SDK](https://github.com/olup/porcupine/blob/v0.21.0/sdk/browser/README.md#install-from-a-release)
+- Cross-origin capture responses expose `Retry-After` to scripts on allowed origins. (#196)
+- The ingestion guide has setup instructions for Porcupine JS, PostHog JS, and the Segment Node SDK. (#197) [Choose an event input](https://github.com/olup/porcupine/blob/v0.21.0/docs/collect-events.md)
+- `porcupine-image-digest.txt` contains the image index digest for the tested Linux `amd64` and `arm64` images. (#195) [Release downloads](https://github.com/olup/porcupine/releases/tag/v0.21.0)
+
+v0.21.0 uses the v0.20.0 storage schemas. [Upgrade from v0.20.0](https://github.com/olup/porcupine/blob/v0.21.0/docs/hosting.md#upgrade-from-v0200)
+
 ## 0.20.0
 
 - Preview and confirm project-scoped event deletion with a SQL predicate over projected events. HTTP, CLI, and MCP support up to 1,000 matches per request and require both `events:read` and `events:delete`. After confirmation, poll the deletion status while tombstones are applied. (#192) [Delete events matching a query](https://github.com/olup/porcupine/blob/v0.20.0/docs/events.md#delete-events-matching-a-query)

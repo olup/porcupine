@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.20.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.21.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a><!-- Legacy URL fragment. -->
 <a id="choose-a-storage-mode"></a>
@@ -12,6 +12,8 @@ Start a new instance with the [quickstart](../README.md#quickstart) and install 
 - For replaceable workers behind an ingress, follow the [hosted setup and recovery runbook](reference/shared-deployment.md#configuration).
 
 See [storage and acknowledgment by profile](storage.md#deployment-profiles) and [offline image loading](reference/hosting-options.md#load-an-image-without-registry-access).
+
+To pin a Compose deployment to the tested image, download `porcupine-image-digest.txt` from the release. Set `PORCUPINE_IMAGE` to `ghcr.io/olup/porcupine@<digest>` using the file's `sha256:…` value.
 
 <a id="configure-the-development-build"></a>
 
@@ -62,6 +64,16 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.20.0
+
+v0.21.0 uses the v0.20.0 storage schemas in both deployment profiles.
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and investigate any shutdown errors before continuing.
+2. Stop v0.20.0 and start v0.21.0 with the existing configuration and storage.
+3. Update the CLI. Check readiness and verify that a new test event becomes queryable before resuming producers.
+
+To roll back, drain and stop v0.21.0, then start v0.20.0 with the same configuration and storage.
 
 ### Upgrade from v0.19.6
 

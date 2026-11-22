@@ -6,13 +6,14 @@ allowlist.
 
 ## Install from a release
 
-Choose a tagged [GitHub release](https://github.com/olup/porcupine/releases)
-with a `porcupine-browser-VERSION.tgz` asset. Replace both instances of
-`VERSION` with that exact version.
+The SDK is available starting with [v0.21.0](https://github.com/olup/porcupine/releases/tag/v0.21.0).
+Install the release tarball from your app directory.
 
 ```sh
-npm install https://github.com/olup/porcupine/releases/download/vVERSION/porcupine-browser-VERSION.tgz
+npm install https://github.com/olup/porcupine/releases/download/v0.21.0/porcupine-browser-0.21.0.tgz
 ```
+
+To install a later release, update the version in the tag and filename in the URL.
 
 ## Build from source
 
@@ -36,8 +37,7 @@ in the source checkout.
 ## Capture an event
 
 On Porcupine Cloud, use `initCloud` with your Cloud project's key. It sends
-events to `https://api.getporcupine.eu`. Use a release that includes
-`initCloud` or build from source.
+events to `https://api.getporcupine.eu`.
 
 ```js
 import { initCloud } from '@porcupine/browser'
@@ -55,11 +55,12 @@ const analytics = init('pc_ci_YOUR_KEY', { api_host: 'https://analytics.example.
 analytics.capture('signup_completed', { plan: 'starter' })
 ```
 
-For a classic script, serve the pinned `porcupine-browser-VERSION.js` release
-asset from your own site.
+For a classic script, download `porcupine-browser-0.21.0.js` from the release
+and serve it from your site. To verify the script in the browser, set the
+script's `integrity` attribute to the value in `porcupine-browser-0.21.0.js.sri`.
 
 ```html
-<script src="/assets/porcupine-browser-VERSION.js"></script>
+<script src="/assets/porcupine-browser-0.21.0.js"></script>
 <script>
   const analytics = Porcupine.initCloud('pc_ci_YOUR_KEY', { capture_pageview: false })
   analytics.capture('$pageview', { page: 'pricing' })

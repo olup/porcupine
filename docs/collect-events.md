@@ -37,9 +37,9 @@ For a `server_only` project, use [native HTTP with private credentials](#send-a-
 
 The Porcupine browser SDK captures events without cookies or browser storage. It queues a bare pageview on initialization unless you set `capture_pageview: false`.
 
-Use the [pinned tarball from a tagged release](../sdk/browser/README.md#install-from-a-release) that includes the SDK, or [build it from source](../sdk/browser/README.md#build-from-source).
+The SDK is available as a package tarball or a standalone script starting with v0.21.0. [Install from a release](../sdk/browser/README.md#install-from-a-release) or [build from source](../sdk/browser/README.md#build-from-source).
 
-For Porcupine Cloud, use `initCloud` with a mixed project's public ingestion key. The SDK sends events to `https://api.getporcupine.eu`. Use a release that includes `initCloud` or build from source.
+For Porcupine Cloud, use `initCloud` with a mixed project's public ingestion key. The SDK sends events to `https://api.getporcupine.eu`.
 
 ```js
 import { initCloud } from '@porcupine/browser'
