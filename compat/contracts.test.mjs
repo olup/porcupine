@@ -184,10 +184,14 @@ before(async () => {
       const text = await upstream.text();
       wire.status = upstream.status;
       const responseHeaders = { 'content-type': 'application/json' };
-      if (upstream.headers.has('access-control-allow-origin')) responseHeaders['access-control-allow-origin'] = upstream.headers.get('access-control-allow-origin');
+      for (const name of ['access-control-allow-origin', 'access-control-expose-headers']) {
+        if (upstream.headers.has(name)) responseHeaders[name] = upstream.headers.get(name);
+      }
       if (upstream.ok && (fromBrowser ? failBrowserAcknowledgement : failAcknowledgement)) {
-        if (fromBrowser) failBrowserAcknowledgement = false;
-        else failAcknowledgement = false;
+        if (fromBrowser) {
+          failBrowserAcknowledgement = false;
+          responseHeaders['retry-after'] = '2';
+        } else failAcknowledgement = false;
         response.writeHead(503, responseHeaders).end('{"error":"injected lost acknowledgement"}');
         return;
       }
@@ -752,7 +756,7 @@ contract('porcupine-browser.capture-and-retry', async () => {
     }
     const [first, retried] = observed.map(decodeWire);
     assert.deepEqual(retried.batch, first.batch, 'retry preserves capture time and UUID');
-    assert.ok(Date.parse(retried.sent_at) > Date.parse(first.sent_at), 'send time reflects the retry');
+    assert.ok(Date.parse(retried.sent_at) - Date.parse(first.sent_at) >= 2000, 'browser respects Retry-After and refreshes send time');
     assert.deepEqual(first.batch.map(item => item.event), ['$pageview', 'porcupine SDK signup']);
     assert.ok(first.batch.every(item => item.distinct_id === '$posthog_cookieless'));
     assert.equal(JSON.stringify(first).includes('fixture-value'), false);

@@ -1,6 +1,6 @@
 export interface BrowserOptions {
   api_host: string
-  /** Queue one $pageview during init. Defaults to true. */
+  /** Queue one $pageview during browser init. Defaults to true. */
   capture_pageview?: boolean
 }
 
@@ -21,20 +21,19 @@ const requestTimeoutMs = 10_000
 const maxRetries = 3
 const maxRetryDelayMs = 30_000
 const retryJitterMs = 250
-const encoder = new TextEncoder()
+const quotaCooldownMs = 60_000
 const browserEvents = new Set(['$pageview', '$pageleave', '$autocapture', '$screen', '$exception'])
 
 type QueuedEvent = { json: string; bytes: number; expiresAt: number }
+type RetryBatch = { count: number; retries: number }
 
 type Delivery =
   | { kind: 'idle' }
-  | { kind: 'scheduled' | 'retry'; timer: ReturnType<typeof setTimeout> }
+  | { kind: 'scheduled'; timer: ReturnType<typeof setTimeout> }
   | { kind: 'sending'; controller: AbortController }
   | { kind: 'disabled' }
 
-type Outcome =
-  | { kind: 'accepted' | 'refused' }
-  | { kind: 'retry'; retryAfterMs?: number }
+type Outcome = 'accepted' | 'refused' | 'quota' | 'retry'
 
 function batchEndpoint(apiHost: string): string {
   const message = 'api_host must be an absolute HTTP(S) base URL without credentials, a query, or a fragment'
@@ -44,7 +43,7 @@ function batchEndpoint(apiHost: string): string {
   } catch {
     throw new TypeError(message)
   }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.href.includes('?') || url.href.includes('#')) {
     throw new TypeError(message)
   }
   url.pathname = url.pathname.replace(/\/+$/, '') + '/batch/'
@@ -71,15 +70,21 @@ function isCount(value: unknown): value is number {
 }
 
 function acknowledgment(value: unknown, count: number): Outcome {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { kind: 'retry' }
-  if ('quota_limited' in value || ('code' in value && value.code === 'ingestion_budget_exceeded')) {
-    return { kind: 'refused' }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'retry'
+  if ('code' in value && (value.code === 'ingestion_budget_exceeded' || value.code === 'ingestion_suspended')) {
+    return 'quota'
+  }
+  if ('quota_limited' in value) {
+    if (!Array.isArray(value.quota_limited) || !value.quota_limited.every(item => typeof item === 'string' && item.length > 0)) {
+      return 'retry'
+    }
+    if (value.quota_limited.length > 0) return 'quota'
   }
   if (!('status' in value) || value.status !== 1 || !('durability' in value) || 'code' in value || 'error' in value) {
-    return { kind: 'retry' }
+    return 'retry'
   }
   if (value.durability === 'buffered' && 'received' in value && value.received === count) {
-    return { kind: 'accepted' }
+    return 'accepted'
   }
   if (
     value.durability === 'durable' &&
@@ -88,9 +93,9 @@ function acknowledgment(value: unknown, count: number): Outcome {
     'identity_ignored' in value && value.identity_ignored === 0 &&
     value.accepted + value.duplicates === count
   ) {
-    return { kind: 'accepted' }
+    return 'accepted'
   }
-  return { kind: 'retry' }
+  return 'retry'
 }
 
 export function init(publicKey: string, options: BrowserOptions): BrowserClient {
@@ -98,11 +103,16 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     throw new TypeError('A public pc_ci_ ingestion key is required')
   }
   const endpoint = batchEndpoint(options?.api_host)
+  const encoder = new TextEncoder()
   const keyJson = JSON.stringify(publicKey)
   const envelopeBytes = encoder.encode(batchBody('2000-01-01T00:00:00.000Z', '')).length
+  const pageWindow = typeof window === 'undefined' ? undefined : window
+  const pageDocument = typeof document === 'undefined' ? undefined : document
   const queue: QueuedEvent[] = []
   let queueBytes = 0
   let delivery: Delivery = { kind: 'idle' }
+  let retryBatch: RetryBatch | undefined
+  let notBefore = 0
 
   function batchBody(sentAt: string, events: string): string {
     return `{"api_key":${keyJson},"sent_at":"${sentAt}","batch":[${events}]}`
@@ -112,8 +122,7 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     for (const entry of queue.splice(0, count)) queueBytes -= entry.bytes + 1
   }
 
-  function discardExpired(): number {
-    const now = performance.now()
+  function discardExpired(now: number): number {
     let count = 0
     for (const entry of queue) {
       if (entry.expiresAt > now) break
@@ -127,7 +136,25 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     if (delivery.kind === 'scheduled') clearTimeout(delivery.timer)
     else if (delivery.kind !== 'idle') return
     delivery = { kind: 'idle' }
-    discardExpired()
+    const now = performance.now()
+    const expired = discardExpired(now)
+    if (retryBatch) {
+      retryBatch.count -= expired
+      if (retryBatch.count <= 0) retryBatch = undefined
+    }
+    if (queue.length === 0) return
+    if (now < notBefore) {
+      // Wake for expiration even when the server asks for a much longer wait.
+      const delay = Math.ceil(Math.min(notBefore, queue[0].expiresAt) - now)
+      delivery = { kind: 'scheduled', timer: setTimeout(flush, delay) }
+      return
+    }
+    if (retryBatch) {
+      const { count, retries } = retryBatch
+      retryBatch = undefined
+      void send(count, retries)
+      return
+    }
     let count = 0
     let bytes = envelopeBytes
     for (const entry of queue) {
@@ -139,34 +166,30 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
   }
 
   function scheduleFlush(): void {
-    if (delivery.kind !== 'idle' && delivery.kind !== 'scheduled') return
-    if (queue.length >= maxBatchEvents || queueBytes + envelopeBytes >= maxBatchBytes) {
+    if ((delivery.kind !== 'idle' && delivery.kind !== 'scheduled') || queue.length === 0) return
+    if (performance.now() < notBefore) {
+      if (delivery.kind === 'idle') flush()
+    } else if (queue.length >= maxBatchEvents || queueBytes + envelopeBytes >= maxBatchBytes) {
       flush()
-    } else if (delivery.kind === 'idle' && queue.length > 0) {
+    } else if (delivery.kind === 'idle') {
       delivery = { kind: 'scheduled', timer: setTimeout(flush, flushDelayMs) }
     }
   }
 
-  function finish(count: number, retries: number, outcome: Outcome): void {
+  function finish(count: number, retries: number, outcome: Outcome, retryAfterMs: number): void {
     if (delivery.kind === 'disabled') return
-    if (outcome.kind === 'retry' && retries < maxRetries) {
+    const now = performance.now()
+    if (outcome === 'quota') {
+      notBefore = now + Math.max(quotaCooldownMs, retryAfterMs)
+    } else if (outcome === 'retry') {
       const backoff = 1_000 * 2 ** retries + Math.floor(Math.random() * retryJitterMs)
-      const delay = Math.max(backoff, outcome.retryAfterMs ?? 0)
-      if (delay <= maxRetryDelayMs && queue[0].expiresAt > performance.now() + delay) {
-        const timer = setTimeout(() => {
-          const remaining = count - discardExpired()
-          if (remaining > 0) {
-            void send(remaining, retries + 1)
-          } else {
-            delivery = { kind: 'idle' }
-            flush()
-          }
-        }, delay)
-        delivery = { kind: 'retry', timer }
-        return
+      const delay = Math.max(backoff, retryAfterMs)
+      notBefore = now + delay
+      if (retries < maxRetries && delay <= maxRetryDelayMs) {
+        retryBatch = { count, retries: retries + 1 }
       }
     }
-    discard(count)
+    if (!retryBatch) discard(count)
     delivery = { kind: 'idle' }
     scheduleFlush()
   }
@@ -176,6 +199,7 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     delivery = { kind: 'sending', controller }
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
     let outcome: Outcome
+    let retryAfterMs = 0
     try {
       const batch = queue.slice(0, count).map(entry => entry.json).join(',')
       const response = await fetch(endpoint, {
@@ -188,20 +212,21 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
         keepalive: true,
         signal: controller.signal,
       })
+      retryAfterMs = retryAfter(response.headers.get('Retry-After')) ?? 0
       if (response.status === 200) {
         outcome = acknowledgment(await response.json(), count)
       } else {
         void response.body?.cancel().catch(() => {})
-        outcome = response.status === 429 || response.status >= 500
-          ? { kind: 'retry', retryAfterMs: retryAfter(response.headers.get('Retry-After')) }
-          : { kind: 'refused' }
+        outcome = response.status === 408 || response.status === 429 || response.status >= 500
+          ? 'retry'
+          : 'refused'
       }
     } catch {
-      outcome = { kind: 'retry' }
+      outcome = 'retry'
     } finally {
       clearTimeout(timeout)
     }
-    finish(count, retries, outcome)
+    finish(count, retries, outcome, retryAfterMs)
   }
 
   function hasSpace(): boolean {
@@ -234,22 +259,23 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
   }
 
   function onVisibilityChange(): void {
-    if (document.visibilityState === 'hidden') flush()
+    if (pageDocument?.visibilityState === 'hidden') flush()
   }
 
   function disable(): void {
     const previous = delivery
     delivery = { kind: 'disabled' }
+    retryBatch = undefined
     discard(queue.length)
     if (previous.kind === 'sending') previous.controller.abort()
-    if (previous.kind === 'scheduled' || previous.kind === 'retry') clearTimeout(previous.timer)
-    if (typeof window !== 'undefined') window.removeEventListener('pagehide', flush)
-    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (previous.kind === 'scheduled') clearTimeout(previous.timer)
+    pageWindow?.removeEventListener('pagehide', flush)
+    pageDocument?.removeEventListener('visibilitychange', onVisibilityChange)
   }
 
-  if (typeof window !== 'undefined') window.addEventListener('pagehide', flush)
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibilityChange)
-  if (options.capture_pageview !== false) capture('$pageview')
+  pageWindow?.addEventListener('pagehide', flush)
+  pageDocument?.addEventListener('visibilitychange', onVisibilityChange)
+  if (pageWindow && pageDocument && options.capture_pageview !== false) capture('$pageview')
 
   return { capture, disable }
 }

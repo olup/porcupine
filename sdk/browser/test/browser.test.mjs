@@ -29,7 +29,7 @@ function durable(count, duplicates = 0) {
   })
 }
 
-function page(t, respond = call => durable(call.payload.batch.length), pageview = false) {
+function page(t, respond = call => durable(call.payload.batch.length)) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: start })
   t.mock.method(performance, 'now', () => Date.now() - start)
   t.mock.method(Math, 'random', () => 0)
@@ -46,7 +46,7 @@ function page(t, respond = call => durable(call.payload.batch.length), pageview 
   return {
     window, document, calls,
     connect(options = {}) {
-      const client = init(key, { api_host, capture_pageview: pageview, ...options })
+      const client = init(key, { api_host, capture_pageview: false, ...options })
       t.after(() => client.disable())
       return client
     },
@@ -59,7 +59,7 @@ function page(t, respond = call => durable(call.payload.batch.length), pageview 
 
 test('queues one bare pageview, snapshots explicit properties and sends the cookieless wire format', async t => {
   const { calls, connect, tick, window, document } = page(t)
-  const reads = []
+  const accesses = []
   for (const [object, names] of [
     [globalThis, ['location', 'navigator', 'localStorage', 'sessionStorage']],
     [window, ['location', 'navigator', 'localStorage', 'sessionStorage']],
@@ -68,7 +68,11 @@ test('queues one bare pageview, snapshots explicit properties and sends the cook
     for (const name of names) {
       replaceProperty(t, object, name, {
         get() {
-          reads.push(name)
+          accesses.push(name)
+          throw new Error(name)
+        },
+        set() {
+          accesses.push(name)
           throw new Error(name)
         },
       })
@@ -81,7 +85,7 @@ test('queues one bare pageview, snapshots explicit properties and sends the cook
   await tick(999)
   assert.equal(calls.length, 0)
   await tick(1)
-  assert.deepEqual(reads, [])
+  assert.deepEqual(accesses, [])
   assert.equal(calls.length, 1)
   const [{ url, options, payload }] = calls
   assert.equal(url, api_host + '/proxy/batch/')
@@ -140,6 +144,16 @@ test('requires a public project key and a base URL without leaking bad inputs', 
   }
 })
 
+test('initializing on a server does not send an automatic pageview', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const fetch = t.mock.method(globalThis, 'fetch', async () => durable(1))
+  const client = init(key, { api_host })
+  t.after(() => client.disable())
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  assert.equal(fetch.mock.callCount(), 0)
+})
+
 test('retries the same events after network failure and 503, honoring exposed Retry-After', async t => {
   const { calls, connect, tick, window } = page(t, (call, attempt) => {
     if (attempt === 1) throw new TypeError('network error')
@@ -189,29 +203,105 @@ test('requires a matching acknowledgment and bounds retries, including HTTP 429'
   assert.equal(calls.length, 4)
   assert.ok(calls.every(call => call.payload.batch[0].uuid === calls[0].payload.batch[0].uuid))
   client.capture('buffered')
-  await tick(1000)
+  await tick(7999)
+  assert.equal(calls.length, 4)
+  await tick(1)
   await tick(30_000)
   assert.equal(calls.length, 5)
   assert.equal(calls[4].payload.batch[0].event, 'buffered')
 })
 
-test('treats quota, permanent 4xx and retries beyond the delay limit as terminal per batch', async t => {
+test('drops batches refused for quota, suspension or a permanent 4xx', async t => {
   const responses = [
-    () => Response.json({ status: 1, accepted: 0, duplicates: 0, identity_ignored: 0, quota_limited: ['events'], code: 'ingestion_budget_exceeded' }),
+    () => Response.json({ status: 1, accepted: 0, duplicates: 0, identity_ignored: 0, quota_limited: ['events'] }),
     () => Response.json({ status: 1, code: 'ingestion_budget_exceeded' }),
+    () => Response.json({ status: 1, code: 'ingestion_suspended' }),
     () => new Response(null, { status: 403 }),
-    () => new Response(null, { status: 429, headers: { 'Retry-After': '300' } }),
-    () => durable(1),
   ]
   const { calls, connect, tick } = page(t, (_, attempt) => responses[attempt - 1]())
-  const client = connect()
   for (let i = 0; i < responses.length; i++) {
+    const client = connect()
     client.capture('event-' + i)
     await tick(1000)
-    await tick(31_000)
+    await tick(61_000)
     assert.equal(calls.length, i + 1)
     assert.equal(calls[i].payload.batch[0].event, 'event-' + i)
+    client.disable()
   }
+})
+
+test('a quota refusal drops the active batch and pauses new captures through page hide', async t => {
+  let refuseFirst
+  const { calls, connect, tick, window, document } = page(t, (_, attempt) => attempt === 1
+    ? new Promise(resolve => { refuseFirst = resolve })
+    : durable(1))
+  const client = connect()
+  client.capture('first')
+  await tick(1000)
+  client.capture('second')
+  refuseFirst(Response.json({ status: 1, code: 'ingestion_budget_exceeded' }))
+  await tick(0)
+  document.visibilityState = 'hidden'
+  document.dispatchEvent(new Event('visibilitychange'))
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(59_999)
+  assert.equal(calls.length, 1)
+  await tick(1)
+  assert.deepEqual(calls.map(call => call.payload.batch.map(event => event.event)), [['first'], ['second']])
+})
+
+test('an empty quota array does not delay later batches', async t => {
+  const { calls, connect, tick, window } = page(t, () => Response.json({
+    status: 1, durability: 'buffered', received: 1, quota_limited: [],
+  }))
+  const client = connect()
+  client.capture('first')
+  await tick(1000)
+  client.capture('second')
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(0)
+  assert.deepEqual(calls.map(call => call.payload.batch.map(event => event.event)), [['first'], ['second']])
+})
+
+test('a terminal retry still delays the next batch, even on page hide', async t => {
+  const { calls, connect, tick, window } = page(t, (call, attempt) => {
+    if (attempt === 1) return new Response(null, { status: 408 })
+    if (attempt <= 3) return new Response(null, { status: 503 })
+    if (attempt === 4) return new Response(null, { status: 503, headers: { 'Retry-After': '10' } })
+    return durable(call.payload.batch.length)
+  })
+  const client = connect()
+  client.capture('first')
+  await tick(1000)
+  client.capture('second')
+  await tick(1000)
+  await tick(2000)
+  await tick(4000)
+  assert.equal(calls.length, 4)
+  assert.ok(calls.every(call => call.payload.batch[0].uuid === calls[0].payload.batch[0].uuid))
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(9999)
+  assert.equal(calls.length, 4)
+  await tick(1)
+  assert.deepEqual(calls[4].payload.batch.map(event => event.event), ['second'])
+})
+
+test('a long Retry-After allows pending events to expire and keeps the next batch waiting', async t => {
+  const { calls, connect, tick, window } = page(t, (call, attempt) => attempt === 1
+    ? new Response(null, { status: 429, headers: { 'Retry-After': '300' } })
+    : durable(call.payload.batch.length))
+  const client = connect()
+  client.capture('first')
+  await tick(1000)
+  for (let i = 0; i < 200; i++) assert.equal(client.capture('expires'), true)
+  assert.equal(client.capture('overflow'), false)
+  await tick(240_000)
+  assert.equal(client.capture('fresh'), true)
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(59_999)
+  assert.equal(calls.length, 1)
+  await tick(1)
+  assert.deepEqual(calls[1].payload.batch.map(event => event.event), ['fresh'])
 })
 
 test('bounds the queue count while a single request is in flight, then drains FIFO', async t => {
@@ -284,9 +374,19 @@ test('disable aborts in-flight work and cancels scheduled work and listeners', a
   assert.equal(calls.length, 1)
 })
 
+test('disable cancels scheduled retries', async t => {
+  const { calls, connect, tick } = page(t, () => new Response(null, { status: 503 }))
+  const client = connect()
+  client.capture('retrying')
+  await tick(1000)
+  client.disable()
+  await tick(30_000)
+  assert.equal(calls.length, 1)
+})
+
 test('classic bundle exposes the same public interface', async () => {
   const source = await readFile(new URL('../dist/porcupine.js', import.meta.url), 'utf8')
-  const context = { TextEncoder }
+  const context = {}
   runInNewContext(source, context)
   assert.deepEqual(Object.keys(context.Porcupine), ['init'])
 })

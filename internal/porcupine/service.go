@@ -596,6 +596,7 @@ func (s *Service) allowCaptureOrigin(w http.ResponseWriter, r *http.Request) boo
 	origin := r.Header.Get("Origin")
 	switch {
 	case origin == "":
+		return true
 	case len(s.allowedOrigins) == 0:
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	case s.allowedOrigins[origin]:
@@ -604,6 +605,7 @@ func (s *Service) allowCaptureOrigin(w http.ResponseWriter, r *http.Request) boo
 		problem(w, 403, "origin is not allowed")
 		return false
 	}
+	w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 	return true
 }
 
