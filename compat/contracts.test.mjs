@@ -26,6 +26,7 @@ const admin = randomBytes(32).toString('hex');
 const blocked = [], unexpected = [], wires = [], browserWires = [], browserFailures = [];
 const identifiedProjects = [];
 let failAcknowledgement = false;
+let failBrowserAcknowledgement = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; };
 const close = server => server ? new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) : Promise.resolve();
@@ -182,8 +183,19 @@ before(async () => {
       const upstream = await fetch(api + request.url, { method: request.method, headers, body });
       const text = await upstream.text();
       wire.status = upstream.status;
-      if (!fromBrowser && failAcknowledgement && upstream.ok) { failAcknowledgement = false; response.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"injected lost acknowledgement"}'); return; }
-      response.writeHead(upstream.status, { 'content-type': 'application/json' }).end(text);
+      const responseHeaders = { 'content-type': 'application/json' };
+      for (const name of ['access-control-allow-origin', 'access-control-expose-headers']) {
+        if (upstream.headers.has(name)) responseHeaders[name] = upstream.headers.get(name);
+      }
+      if (upstream.ok && (fromBrowser ? failBrowserAcknowledgement : failAcknowledgement)) {
+        if (fromBrowser) {
+          failBrowserAcknowledgement = false;
+          responseHeaders['retry-after'] = '2';
+        } else failAcknowledgement = false;
+        response.writeHead(503, responseHeaders).end('{"error":"injected lost acknowledgement"}');
+        return;
+      }
+      response.writeHead(upstream.status, responseHeaders).end(text);
     } catch {
       unexpected.push('proxy forwarding failure');
       response.writeHead(502).end();
@@ -702,6 +714,72 @@ contract('node.identify-target-only', async () => {
     assert.deepEqual(person.traits, { plan: 'team', nested: { locale: 'fr' }, first_source: 'node' });
     assert.equal((await event('node after trait update', 1, scoped.project.id))[0].distinct_id, 'node-identified-account');
   } finally { await client.shutdown(); }
+});
+
+contract('porcupine-browser.capture-and-retry', async () => {
+  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Porcupine browser SDK contract' } });
+  const projectID = scoped.project.id;
+  const isolated = await browser.newContext({ serviceWorkers: 'block' });
+  const firstWire = browserWires.length;
+  try {
+    await isolated.addCookies([{ name: 'fixture_cookie', value: 'keep-off-ingestion', url: origin }]);
+    const existingCookies = await isolated.cookies();
+    await isolated.route('**/*', async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.origin === origin || url.origin === proxyURL && url.pathname === '/batch/' && request.method() === 'POST') {
+        await route.continue();
+        return;
+      }
+      blocked.push('unexpected Porcupine browser SDK request');
+      await route.abort();
+    });
+    const tab = await isolated.newPage();
+    await tab.goto(origin);
+    await tab.addScriptTag({ path: join(root, 'sdk/browser/dist/porcupine.js') });
+    failBrowserAcknowledgement = true;
+    const response = tab.waitForResponse(result => result.url() === proxyURL + '/batch/' && result.status() === 200);
+    const queued = await tab.evaluate(({ apiHost, key }) => {
+      window.history.replaceState(null, '', '/?private=fixture-value#fragment');
+      window.firstPartyAnalytics = window.Porcupine.init(key, { api_host: apiHost });
+      return window.firstPartyAnalytics.capture('porcupine SDK signup', { plan: 'starter' });
+    }, { apiHost: proxyURL, key: scoped.ingest_token });
+    assert.equal(queued, true);
+    assert.deepEqual(await (await response).json(), { status: 1, durability: 'durable', accepted: 0, duplicates: 2, identity_ignored: 0 });
+
+    const observed = browserWires.slice(firstWire);
+    assert.equal(observed.length, 2);
+    for (const request of observed) {
+      assert.equal(request.headers.cookie, undefined, 'eligible browser cookie is omitted');
+      assert.equal(request.headers.referer, undefined, 'fetch omits the document referrer');
+      assert.equal(request.status, 200, 'the real server accepted both attempts');
+    }
+    const [first, retried] = observed.map(decodeWire);
+    assert.deepEqual(retried.batch, first.batch, 'retry preserves capture time and UUID');
+    assert.ok(Date.parse(retried.sent_at) - Date.parse(first.sent_at) >= 2000, 'browser respects Retry-After and refreshes send time');
+    assert.deepEqual(first.batch.map(item => item.event), ['$pageview', 'porcupine SDK signup']);
+    assert.ok(first.batch.every(item => item.distinct_id === '$posthog_cookieless'));
+    assert.equal(JSON.stringify(first).includes('fixture-value'), false);
+    assert.equal(JSON.stringify(first).includes('Porcupine SDK contract'), false);
+    assert.deepEqual(await isolated.cookies(), existingCookies);
+    assert.deepEqual(await tab.evaluate(async () => [localStorage.length, sessionStorage.length, (await indexedDB.databases()).length]), [0, 0, 0]);
+
+    const [pageview] = await event('$pageview', 1, projectID);
+    const [signup] = await event('porcupine SDK signup', 1, projectID);
+    assert.match(pageview.distinct_id, /^cookieless_[a-f0-9]+$/);
+    assert.equal(signup.distinct_id, pageview.distinct_id);
+    assert.equal(signup.properties.plan, 'starter');
+    assert.equal(signup.uuid, first.batch[1].uuid);
+    assertTimestamp(signup, first, first.batch[1]);
+    assert.equal((await events(projectID)).length, 2);
+    assert.equal(await tab.evaluate(() => {
+      window.firstPartyAnalytics.disable();
+      return window.firstPartyAnalytics.capture('disabled event');
+    }), false);
+  } finally {
+    failBrowserAcknowledgement = false;
+    await isolated.close();
+  }
 });
 
 contract('isolation-and-network', async () => {

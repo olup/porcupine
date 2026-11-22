@@ -25,9 +25,11 @@ The release workflow rejects a tag that differs from `VERSION` or current instal
 
 ## Verify publication
 
-The release workflow publishes the tested server images and CLI archives, then calls the Pages workflow with that exact tag. A Pages failure fails the release workflow even if the GitHub release has already been created. Fix and republish the site without replacing released binaries.
+The release workflow publishes the tested server images, CLI archives, and browser SDK, then calls the Pages workflow with that exact tag. A Pages failure fails the release workflow even if the GitHub release has already been created. Fix and republish the site without replacing released artifacts.
 
 Each stable GitHub release includes `porcupine-image-digest.txt` with a single lowercase `sha256:<64 hex digits>` line. It identifies the registry image index containing the tested Linux `amd64` and `arm64` images. Use `ghcr.io/olup/porcupine@<digest>` to pull that exact release.
+
+Check the browser SDK tarball, script, and script integrity value in the release. Their names share the `porcupine-browser-<VERSION>` prefix. `SHA256SUMS` covers all three files.
 
 Pages checks that `VERSION` has a published stable GitHub release. A preparation commit for an unpublished version leaves the current site online. The release workflow publishes that version's site after its assets are available, so the landing does not advertise unfinished downloads.
 

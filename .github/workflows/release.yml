@@ -165,6 +165,10 @@ jobs:
           pattern: cli-*
           merge-multiple: true
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: browser-sdk
+          path: dist
       - name: Publish the tested images and release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,7 +183,8 @@ jobs:
           fi
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           cd dist
-          sha256sum *.tar.gz *.zip > SHA256SUMS
+          sdk="porcupine-browser-$version"
+          sha256sum *.tar.gz *.zip "$sdk.tgz" "$sdk.js" "$sdk.js.sri" > SHA256SUMS
           notes="$(mktemp)"
           awk -v heading="## $version" '
             $0 == heading { release = 1; next }
@@ -192,6 +197,8 @@ jobs:
           Pull \`$repo:$version\` or verify the archive for your architecture against \`SHA256SUMS\` and import it with \`docker load\`.
 
           Download the matching standalone CLI for macOS, Linux or Windows from the \`porcupine-cli-\` assets. Verify its archive against \`SHA256SUMS\` before extracting it.
+
+          Install the browser SDK from \`$sdk.tgz\` or serve \`$sdk.js\` from your site. The matching \`$sdk.js.sri\` file contains the script integrity value. [Browser SDK setup]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/sdk/browser/README.md)
 
           [Agent guide](https://olup.github.io/porcupine/llms.txt) · [Hosting instructions]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/hosting.md)
           EOF
@@ -217,7 +224,7 @@ jobs:
           printf '%s\n' "$image_digest" > porcupine-image-digest.txt
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Porcupine $GITHUB_REF_NAME" --generate-notes --notes-file "$notes" \
-            SHA256SUMS porcupine-image-digest.txt *.tar.gz *.zip
+            SHA256SUMS porcupine-image-digest.txt *.tar.gz *.zip "$sdk.tgz" "$sdk.js" "$sdk.js.sri"
 
   pages:
     needs: publish

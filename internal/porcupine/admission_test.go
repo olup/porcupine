@@ -35,9 +35,14 @@ func TestCapturePressureLeavesTokenExchangeAvailable(t *testing.T) {
 	defer func() { writer.Close(); <-done; reader.Close() }()
 	for _, path := range []string{"/capture/", "/e/", "/i/v0/e/", "/batch/"} {
 		reply := httptest.NewRecorder()
-		h.ServeHTTP(reply, httptest.NewRequest("POST", path, strings.NewReader("invalid")))
+		req := httptest.NewRequest("POST", path, strings.NewReader("invalid"))
+		req.Header.Set("Origin", "https://app.example.test")
+		h.ServeHTTP(reply, req)
 		if reply.Code != 503 || reply.Header().Get("Retry-After") == "" {
 			t.Fatalf("%s saturated capture status %d", path, reply.Code)
+		}
+		if reply.Header().Get("Access-Control-Allow-Origin") != "*" || reply.Header().Get("Access-Control-Expose-Headers") != "Retry-After" {
+			t.Fatalf("%s browser cannot read Retry-After", path)
 		}
 	}
 	// Exchange using the actual HTTP server while the capture slot is occupied.

@@ -79,6 +79,13 @@
       "configuration": "cookielessProfile"
     },
     {
+      "id": "porcupine-browser.capture-and-retry",
+      "required": true,
+      "status": "implemented",
+      "scope": "Porcupine SDK in Chromium sends a bare pageview and custom capture with no browser storage or credentials. A lost response retries the same UUIDs and SQL returns each event once.",
+      "configuration": "Porcupine browser SDK defaults"
+    },
+    {
       "id": "isolation-and-network",
       "required": true,
       "status": "implemented",

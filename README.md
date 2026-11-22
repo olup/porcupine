@@ -62,7 +62,7 @@ make check-full         # local lint and full race suite
 make integration        # native smoke, S3 and offline restore drills
 make integration-s3     # local HTTP/TLS S3-compatible fixtures
 make compat-install
-make compat             # pinned PostHog SDKs
+make compat             # Porcupine and pinned PostHog SDKs
 ```
 
 Run `./scripts/aws-emulator-test.sh` for an optional check against the official

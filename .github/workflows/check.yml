@@ -223,17 +223,36 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: compat/package-lock.json
-      - run: npm ci --prefix compat
-      - run: npm --prefix compat run install-browser
+          cache-dependency-path: |
+            compat/package-lock.json
+            sdk/browser/package-lock.json
+      - run: make compat-install
+      - run: npm --prefix sdk/browser test
       - name: Race-test the Chromium sign-in journeys
         run: go test -race -v ./internal/porcupine -run '^(TestInteractiveOIDCRealBrowser|TestEmailLoginChromium)$' -count=1
         env:
           PORCUPINE_OIDC_BROWSER: "1"
-      - run: make compat
+      - run: npm --prefix compat test
       - run: npm ci --prefix compat/segment
       - run: npm test --prefix compat/segment
       - run: npm --prefix compat run test:identify
+      - name: Package the tested browser SDK
+        working-directory: sdk/browser
+        run: |
+          set -euo pipefail
+          version="$(cat ../../VERSION)"
+          out="$RUNNER_TEMP/browser-sdk"
+          mkdir -p "$out"
+          npm pack ./dist --ignore-scripts --pack-destination "$out"
+          test -s "$out/porcupine-browser-$version.tgz"
+          script="$out/porcupine-browser-$version.js"
+          cp dist/porcupine.js "$script"
+          printf 'sha384-%s\n' "$(openssl dgst -sha384 -binary "$script" | openssl base64 -A)" > "$script.sri"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-sdk
+          path: ${{ runner.temp }}/browser-sdk/
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
