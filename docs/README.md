@@ -3,6 +3,7 @@
 <a id="porcupine-documentation"></a>
 
 - [Start a local instance](../README.md#quickstart) or [host Porcupine](hosting.md).
+- Send your first event with [PostHog JS](collect-events.md#posthog-js), [Segment](collect-events.md#segment), or [Porcupine JS](collect-events.md#porcupine-js).
 - [Connect your agent or CLI](connect-tools.md) to an existing instance.
 - Give your agent [llms.txt](https://olup.github.io/porcupine/llms.txt) and your goal. Keep credentials out of prompts.
 

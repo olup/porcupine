@@ -1,13 +1,14 @@
 # Choose an event input
 
-Porcupine accepts native HTTP events, supported PostHog SDK requests, and Segment HTTP requests. All three inputs write to the same project event table, so the query workflow stays the same.
+Porcupine writes events from the SDKs and native HTTP to the same project event table.
 
 ## Choose the producer
 
 | Your application | Start with |
 | --- | --- |
-| Already uses PostHog | [PostHog SDK configuration and tested profiles](reference/compatibility.md) |
-| Already uses Segment | [Segment tracking routes and SDK example](reference/native-and-segment-ingestion.md#point-a-segment-producer-at-porcupine) |
+| Already uses PostHog in the browser | [PostHog JS](#posthog-js) |
+| Already uses Segment on the backend | [Segment](#segment) |
+| Needs cookieless browser capture | [Porcupine JS](#porcupine-js) |
 | Sends JSON from a backend or custom client | [Native event format](reference/native-and-segment-ingestion.md#send-native-events) |
 | Has historical events | [Native, PostHog, or Segment imports](imports.md) |
 
@@ -21,6 +22,33 @@ Create or select a [project](reference/projects.md) before configuring the produ
 - For native backend capture, use an API-audience [service key](reference/service-keys.md) or OAuth token with `events:write` for the project. A `server_only` project requires private credentials.
 
 Keep private credentials on the backend. Use the adapter-specific authentication described in the PostHog or Segment guide when configuring those SDKs.
+
+## PostHog JS
+
+Install `posthog-js@1.447.3` and set `api_host` to your Porcupine URL. Use a mixed project's public ingestion key and the tested cookieless profile. It disables autocapture and browser storage. Porcupine derives a daily pseudonym for anonymous visitors. [Browser setup and capture example](reference/compatibility.md#configure-browser-capture)
+
+## Segment
+
+On your backend, install `@segment/analytics-node@3.1.0`. Set `PORCUPINE_URL` to your Porcupine origin and `PORCUPINE_WRITE_KEY` to the mixed project's write key in your backend environment. The SDK can send `page`, `track`, and `identify` calls. [Segment setup and capture example](reference/native-and-segment-ingestion.md#point-a-segment-producer-at-porcupine)
+
+For a `server_only` project, use [native HTTP with private credentials](#send-a-native-backend-event).
+
+## Porcupine JS
+
+The Porcupine browser SDK captures events without cookies or browser storage. It queues a bare pageview on initialization unless you set `capture_pageview: false`.
+
+Use the [pinned tarball from a tagged release](../sdk/browser/README.md#install-from-a-release) that includes the SDK, or [build it from source](../sdk/browser/README.md#build-from-source).
+
+Initialize the SDK with a mixed project's public ingestion key and your Porcupine URL.
+
+```js
+import { init } from '@porcupine/browser'
+
+const analytics = init('pc_ci_YOUR_KEY', { api_host: 'https://analytics.example.com' })
+analytics.capture('signup_completed', { plan: 'starter' })
+```
+
+[Browser SDK options and delivery behavior](../sdk/browser/README.md)
 
 ## Send a native backend event
 
