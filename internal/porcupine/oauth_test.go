@@ -24,7 +24,7 @@ func oauthProtocolService(t *testing.T) (*Service, *atomic.Int64) {
 	t.Helper()
 	clock := &atomic.Int64{}
 	clock.Store(time.Now().UTC().UnixMilli())
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oauth.db"), BootstrapToken: adminToken, Clock: func() time.Time { return time.UnixMilli(clock.Load()) }, OAuth: &OAuthConfig{Issuer: "https://oauth.example", AllowLegacyKeys: true}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oauth.db"), BootstrapToken: adminToken, Clock: func() time.Time { return time.UnixMilli(clock.Load()) }, OAuth: &OAuthConfig{Issuer: "https://oauth.example"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +80,17 @@ func oauthProtocolRequest(t *testing.T, s *Service, id, secret string, form url.
 
 func oauthGrantForm() url.Values { return url.Values{"grant_type": {"client_credentials"}} }
 
+func oauthProject(t *testing.T, s *Service, bearer string) (string, string) {
+	t.Helper()
+	created := request(t, s, "POST", "/api/v1/projects", bearer, `{"name":"app"}`, 201)
+	return created["project"].(map[string]any)["id"].(string), created["ingest_token"].(string)
+}
+
 func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 	t.Parallel()
 	s, _ := oauthProtocolService(t)
-	projectID, _ := project(t, s)
+	admin := accountTestToken(t, s)
+	projectID, _ := oauthProject(t, s, admin)
 	clientID, secret := oauthProtocolClient(t, s, []string{"events:read"}, []string{projectID})
 	host := httptest.NewServer(s.Handler())
 	defer host.Close()
@@ -104,14 +111,14 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 		t.Fatal("OAuth token lost original scoped principal", err)
 	}
 	request(t, s, "GET", "/api/v1/projects/"+projectID+"/events", token.AccessToken, "", 200)
-	other, _ := project(t, s)
+	other, _ := oauthProject(t, s, admin)
 	request(t, s, "GET", "/api/v1/projects/"+other+"/events", token.AccessToken, "", 403)
 	if _, err = s.authenticateResource(context.Background(), secret, s.resources.apiResource); err == nil {
 		t.Fatal("client secret worked as a bearer key")
 	}
 	var storedHash, storedClient, resource, scope string
 	var issued, expires int64
-	if err = s.control.QueryRow(`SELECT token_hash,client_id,resource,scope,issued_at_ms,expires_at_ms FROM oauth_tokens`).Scan(&storedHash, &storedClient, &resource, &scope, &issued, &expires); err != nil {
+	if err = s.control.QueryRow(`SELECT token_hash,client_id,resource,scope,issued_at_ms,expires_at_ms FROM oauth_tokens WHERE client_id=?`, clientID).Scan(&storedHash, &storedClient, &resource, &scope, &issued, &expires); err != nil {
 		t.Fatal(err)
 	}
 	if storedHash != hash(token.AccessToken) || storedHash == token.AccessToken || storedClient != clientID || resource != s.resources.apiResource || scope != "events:read" || expires-issued != 900000 {
@@ -122,15 +129,16 @@ func TestOAuthStandardClientCredentialsAndHashOnlyPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if secretHash != hash(secret) || principalHash == secretHash {
-		t.Fatal("OAuth secret reused as legacy credential")
+		t.Fatal("OAuth secret reused as principal bearer secret")
 	}
 }
 
 func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T) {
 	t.Parallel()
 	s, clock := oauthProtocolService(t)
-	projectID, _ := project(t, s)
-	otherProject, _ := project(t, s)
+	admin := accountTestToken(t, s)
+	projectID, _ := oauthProject(t, s, admin)
+	otherProject, _ := oauthProject(t, s, admin)
 	id, secret := oauthProtocolClient(t, s, []string{"events:read", "events:write"}, []string{projectID})
 	form := oauthGrantForm()
 	form.Set("scope", "events:read")
@@ -173,7 +181,7 @@ func TestOAuthResourceExpiryRevocationAndLivePermissionIntersection(t *testing.T
 	}
 	clock.Add(900000)
 	if _, err = s.authenticateResource(context.Background(), raw, s.resources.apiResource); err == nil {
-		t.Fatal("expired OAuth token fell back to legacy auth")
+		t.Fatal("expired OAuth token authenticated")
 	}
 	clock.Add(-900000)
 	if _, err = s.control.Exec(`UPDATE access_keys SET revoked_at=? WHERE id=?`, now(), id); err != nil {
@@ -278,7 +286,7 @@ func TestOAuthRejectsMixedDuplicateAndUnsupportedRequests(t *testing.T) {
 func TestOAuthEndpointRateLimitAndPublicIngestClientRejection(t *testing.T) {
 	t.Parallel()
 	s, _ := oauthProtocolService(t)
-	_, public := project(t, s)
+	_, public := oauthProject(t, s, accountTestToken(t, s))
 	var id string
 	if err := s.control.QueryRow(`SELECT id FROM access_keys WHERE token_hash=?`, hash(public)).Scan(&id); err != nil {
 		t.Fatal(err)

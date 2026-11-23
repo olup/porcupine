@@ -90,7 +90,7 @@ func TestDuckLakeNativeAnalyticalReference(t *testing.T) {
 		t.Run(check.name, func(t *testing.T) { assertRows(t, check.sql, check.want) })
 	}
 	request(t, s, "POST", "/api/v1/projects/"+otherProject+"/query", reader, `{"sql":"SELECT count(*) FROM events"}`, 403)
-	original := duckLakeJourneyQuery(t, s, projectID, reader, "SELECT event_id FROM events WHERE uuid='u1-purchase'", nil)[0].(map[string]any)["event_id"]
+	original := duckLakeJourneyQuery(t, s, projectID, reader, "SELECT id FROM events WHERE uuid='u1-purchase'", nil)[0].(map[string]any)["id"]
 
 	edit := map[string]any{"expected_revision": "0", "idempotency_key": "native-reference-edit", "snapshot": map[string]any{
 		"event": "purchase_corrected", "distinct_id": "u1", "timestamp": "2026-11-01T23:32:00Z", "properties": map[string]any{"language": "fr", "amount": 100.25, "duration_ms": 20},
@@ -99,8 +99,8 @@ func TestDuckLakeNativeAnalyticalReference(t *testing.T) {
 	request(t, s, "PATCH", "/api/v1/projects/"+projectID+"/events/u1-purchase", editor, string(body), 202)
 	duckLakeJourneyDrain(t, s)
 	assertRows(t, "SELECT uuid,event,CAST(json_extract_string(properties,'$.amount') AS DOUBLE) AS amount FROM events WHERE uuid='u1-purchase'", []map[string]string{{"uuid": "u1-purchase", "event": "purchase_corrected", "amount": "100.25"}})
-	corrected := duckLakeJourneyQuery(t, s, projectID, reader, "SELECT event_id,source_id,message_id FROM events WHERE uuid='u1-purchase'", nil)[0].(map[string]any)
-	if corrected["event_id"] != original || corrected["source_id"] != "posthog" || corrected["message_id"] != "u1-purchase" {
+	corrected := duckLakeJourneyQuery(t, s, projectID, reader, "SELECT id,source_id,message_id FROM events WHERE uuid='u1-purchase'", nil)[0].(map[string]any)
+	if corrected["id"] != original || corrected["source_id"] != "posthog" || corrected["message_id"] != "u1-purchase" {
 		t.Fatal("correction changed the immutable event or source identity", corrected)
 	}
 

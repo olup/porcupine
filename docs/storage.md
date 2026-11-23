@@ -31,15 +31,11 @@ In a default standalone installation, the DuckLake directory holds both the proj
 
 One-time exports and scheduled S3 pipeline outputs remain readable in their configured formats. They are user deliverables and follow the destination's access and encryption policy. [Configuration and migration options](reference/configuration.md#ducklake-parquet-encryption)
 
-<a id="unreleased-separate-control-and-journal"></a><!-- Legacy URL fragment. -->
-
 ## Separate control and journal
 
 Standalone uses two SQLite databases. Control holds accounts, grants, tenants, projects, and policies. The journal holds accepted live events, retry receipts, identity state, imports, and jobs. See [server configuration](reference/configuration.md#configuration-sections) for the paths.
 
 Startup rejects missing or mismatched database identities. See [native bundle contents](reference/native-backup-recovery.md#inspect-a-backup) and [upgrade steps for v0.14.0](hosting.md#move-from-v0140).
-
-<a id="unreleased-schema-versions"></a><!-- Legacy URL fragment. -->
 
 ## Schema versions
 
@@ -64,7 +60,3 @@ Whole-project deletion removes managed data. See [project cleanup and retries](r
 ## Recovery
 
 Choose the [backup and restore method](backup-and-restore.md#choose-a-method) for your deployment. If analytical files are on S3, the recovery point must include the referenced objects as well as their catalogs and operational state.
-
-## Earlier analytical backends
-
-To move from ClickHouse, set up a fresh DuckLake instance, convert any ClickHouse SQL you still use, and follow the [historical import guide](imports.md). Keep the older deployment and its backups until you have verified the imported history. The old implementation remains on the `reference/clickhouse-before-ducklake` branch.

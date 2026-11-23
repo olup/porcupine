@@ -43,6 +43,7 @@ func TestNativeRestoreCommandInfersDestinationAuthMode(t *testing.T) {
 	for _, tc := range []struct {
 		name, destination, request, want, provider string
 	}{
+		{name: "offline request requires a mode", want: "auth_mode is required"},
 		{name: "offline external request fallback", request: "external", want: "local_bundle_path is required"},
 		{name: "explicit builtin cannot adopt external", destination: "builtin", request: "external", want: "auth_mode differs"},
 		{name: "builtin OAuth constrains destination", request: "external", provider: "PORCUPINE_OAUTH_ISSUER", want: "auth_mode differs"},
@@ -54,7 +55,11 @@ func TestNativeRestoreCommandInfersDestinationAuthMode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			body, err := json.Marshal(map[string]any{"backup_id": "pc_backup_test", "auth_mode": tc.request, "target_db_path": filepath.Join(root, "journal.db"), "target_ducklake_directory": filepath.Join(root, "lake"), "reset_credentials_acknowledged": true})
+			request := map[string]any{"backup_id": "pc_backup_test", "target_db_path": filepath.Join(root, "journal.db"), "target_ducklake_directory": filepath.Join(root, "lake"), "reset_credentials_acknowledged": true}
+			if tc.request != "" {
+				request["auth_mode"] = tc.request
+			}
+			body, err := json.Marshal(request)
 			if err != nil {
 				t.Fatal(err)
 			}

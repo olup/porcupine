@@ -38,9 +38,6 @@ func (s *Service) authenticateResource(ctx context.Context, raw, resource string
 	if strings.HasPrefix(raw, serviceKeyPrefix) {
 		return s.authenticateServiceKey(ctx, raw, resource)
 	}
-	if s.oauth != nil && s.oauth.config.AllowLegacyKeys {
-		return s.authenticate(ctx, raw)
-	}
 	return auth.Principal{}, errors.New("OAuth access token required")
 }
 

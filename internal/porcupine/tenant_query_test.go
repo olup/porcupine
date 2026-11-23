@@ -148,8 +148,12 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 		t.Fatal("profile byte policy ignored", err)
 	}
 	set(20, 1000, 1<<20)
+	shortDeadline, err := s.analyticsSchema(context.Background(), &AnalyticsSchemaInput{ID: id})
+	if err != nil || shortDeadline.Body.Limits.MaxExecutionMS != 20 || shortDeadline.Body.Limits.RequestTimeoutSeconds != 6 {
+		t.Fatalf("inaccurate short deadline discovery: %+v, %v", shortDeadline, err)
+	}
 	started := time.Now()
-	_, err := s.analyticsQuery(context.Background(), queryInput(id, `SELECT sum(a.timestamp_ms % (b.timestamp_ms+1) + c.timestamp_ms % (d.timestamp_ms+1)) FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d CROSS JOIN events e CROSS JOIN events f`))
+	_, err = s.analyticsQuery(context.Background(), queryInput(id, `SELECT sum(a.timestamp_ms % (b.timestamp_ms+1) + c.timestamp_ms % (d.timestamp_ms+1)) FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d CROSS JOIN events e CROSS JOIN events f`))
 	if queryStatus(err) != 429 || time.Since(started) > 3*time.Second {
 		t.Fatal("execution was not canceled", err, time.Since(started))
 	}
@@ -180,6 +184,9 @@ func TestTenantInteractiveQueryRuntimeBudgetsAndDiscovery(t *testing.T) {
 		t.Fatalf("inaccurate query policy discovery: %+v", schema.Body)
 	}
 	encoded, _ := json.Marshal(schema.Body)
+	if strings.Contains(string(encoded), `"max_execution_seconds"`) {
+		t.Fatal("discovery included the retired execution limit in seconds")
+	}
 	if strings.Contains(string(encoded), "ingested_events") || strings.Contains(string(encoded), "used_events") {
 		t.Fatal("discovery leaked aggregate tenant usage")
 	}

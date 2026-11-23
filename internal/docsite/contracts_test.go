@@ -25,7 +25,6 @@ var (
 	operationExample = regexp.MustCompile(`\boperation_id"?\s*:\s*"?([a-z][a-z0-9]*(?:-[a-z0-9]+)+)\b`)
 	operationLiteral = regexp.MustCompile("`([a-z][a-z0-9]*(?:-[a-z0-9]+)+)`")
 	releaseAnchor    = regexp.MustCompile(`(?i)(^#{1,6}[ \t]+.*\bunreleased\b|\bid=["'][^"']*unreleased[^"']*["'])`)
-	legacyAnchor     = regexp.MustCompile(`^<a id="[a-z0-9-]*unreleased[a-z0-9-]*"></a><!-- Legacy URL fragment\. -->$`)
 )
 
 func TestPublishedDocumentationContracts(t *testing.T) {
@@ -78,7 +77,7 @@ func TestPublishedDocumentationContracts(t *testing.T) {
 					t.Errorf("%s:%d: unknown environment variable %q", file, i+1, name)
 				}
 			}
-			if releaseAnchor.MatchString(line) && !legacyAnchor.MatchString(line) {
+			if releaseAnchor.MatchString(line) {
 				t.Errorf("%s:%d: use a release-neutral heading or anchor", file, i+1)
 			}
 		}

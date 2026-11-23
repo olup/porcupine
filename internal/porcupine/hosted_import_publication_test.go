@@ -451,7 +451,7 @@ VALUES($1,$2,0,'empty','events',0,$3)`, outcome.Key.FileID, outcome.Key.JobID, n
 
 // The caller owns a real paused live backlog. Only its configured limit changes;
 // no fabricated used counters or output reservations establish this regression.
-func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher, node *sharedJourneyNode, limits output.PipelineDemand) {
+func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher, node *sharedJourneyNode, admin string, limits output.PipelineDemand) {
 	t.Helper()
 	ctx := t.Context()
 	var before, after output.PipelineDemand
@@ -470,7 +470,7 @@ func assertFirstImportIgnoresWebhookOvershoot(t *testing.T, f *hostedLiveFlusher
 			t.Error(err)
 		}
 	}()
-	project, _ := sharedJourneyProject(t, node.host.URL, defaultTenantID, "import over output backlog")
+	project, _ := sharedJourneyProjectAs(t, node.host.URL, admin, defaultTenantID, "import over output backlog")
 	scope, err := f.native.InitializeHostedProject(ctx, lakeapi.ProjectWriteKey{SourceID: f.native.Config.SharedSourceID, ProjectID: project})
 	if err != nil {
 		t.Fatal(err)

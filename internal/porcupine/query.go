@@ -32,7 +32,6 @@ type AnalyticsLimits struct {
 	MaxRows                            int    `json:"max_rows"`
 	MaxResultBytes                     int    `json:"max_result_bytes"`
 	MaxExecutionMS                     int    `json:"max_execution_ms" doc:"Effective tenant interactive execution deadline in milliseconds."`
-	MaxExecutionSeconds                int    `json:"max_execution_seconds"`
 	RequestTimeoutSeconds              int    `json:"request_timeout_seconds" doc:"Suggested client request timeout. Native object-storage I/O can finish after the SQL cancellation deadline."`
 	ObjectStorageRequestTimeoutSeconds int    `json:"object_storage_request_timeout_seconds,omitempty" doc:"Native object-storage I/O timeout. Cancellation cannot immediately interrupt an in-flight HTTP request; it may extend the SQL execution deadline by this interval. Automatic HTTP retries are disabled."`
 	MetadataRequestTimeoutSeconds      int    `json:"metadata_request_timeout_seconds,omitempty" doc:"Configured native PostgreSQL metadata I/O allowance. Shared execution permits renew until the call returns; failed renewal quarantines the project on this worker. Automatic expiry can overlap native work during a network partition."`
@@ -126,7 +125,6 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	}
 	columns := []AnalyticsColumn{
 		{"id", "BIGINT", "Durable event ID, returned as a decimal string."},
-		{"event_id", "BIGINT", "Alias of id."},
 		{"uuid", "VARCHAR", "Stable event identifier within the project."},
 		{"project_id", "VARCHAR", "Owning project, isolated in a separate analytical catalog."},
 		{"event", "VARCHAR", "Event name."},
@@ -158,7 +156,7 @@ func (s *Service) analyticsSchema(ctx context.Context, input *AnalyticsSchemaInp
 	executionSeconds := (effective.TimeoutMS + 999) / 1000
 	limits := AnalyticsLimits{
 		MaxSQLBytes: lakeapi.MaxSQLBytes, MaxRows: effective.MaxRows, MaxResultBytes: effective.MaxResultBytes,
-		MaxExecutionMS: effective.TimeoutMS, MaxExecutionSeconds: executionSeconds, MaxConcurrentQueries: effective.MaxConcurrent,
+		MaxExecutionMS: effective.TimeoutMS, MaxConcurrentQueries: effective.MaxConcurrent,
 		RequestTimeoutSeconds:              executionSeconds + 5 + s.lakeMetadataTimeoutSeconds,
 		ObjectStorageRequestTimeoutSeconds: s.lakeS3RequestTimeoutSeconds, MetadataRequestTimeoutSeconds: s.lakeMetadataTimeoutSeconds,
 		MaxMemoryBytes: lakeapi.DefaultDuckLakeMemoryMB << 20, MemoryScope: "per_resident_project_engine",

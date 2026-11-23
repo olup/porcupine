@@ -8,14 +8,20 @@ The running server publishes its OpenAPI contract at `GET /openapi.json`. The CL
 
 [`list-usage`](usage.md) at `GET /api/v1/usage` exposes replayable numerical consumption by tenant/project and UTC day/month. It requires the instance operator; tenant administrators retain their separate `get-tenant-usage` allowance view.
 
-Send a Bearer credential for the instance's `/api/v1` resource. In builtin mode, a person authorizes the [CLI](../../cli/README.md) with email sign-in. A machine uses an [API-audience service key](service-keys.md) or exchanges its client credentials for a short-lived [OAuth access token](oauth.md).
+Send a Bearer credential in the Authorization header. A builtin standalone
+server without OAuth accepts static access keys. With builtin OAuth, use an
+access token or a service key for the `/api/v1` audience. A person can authorize
+the CLI with email sign-in. A machine can exchange its client credentials for a
+short-lived token. See the [CLI setup](../../cli/README.md), [OAuth token
+exchange](oauth.md#token-exchange), and [service keys](service-keys.md).
 
 [Externally issued access JWTs](external-auth.md) use the configured API audience. Native service keys remain available. Local token exchange, human invitations, memberships, and consent management are absent. Machine-account operations remain available, but return no local OAuth secret in this mode.
 
 On first builtin startup, `PORCUPINE_BOOTSTRAP_TOKEN` creates an `instance:admin`
-principal with `*` project scope. The OAuth client ID `bootstrap` exchanges its
-original secret. Subsequent startups preserve state; changing the environment
-does not reset credentials. The alias stays pinned to that first administrator.
+principal with `*` project scope. Without OAuth, the original secret is a static
+Bearer credential. With OAuth, exchange the secret through the client ID
+`bootstrap`. The alias stays pinned to the first administrator. Subsequent
+startups keep the stored credential.
 
 Each principal has permissions and project IDs. `*` includes all projects.
 `instance:admin` grants all operations and requires `*` scope. An access token's
@@ -23,11 +29,6 @@ issued scope and project snapshot intersect current parent grants on every
 request. Operators can configure [email accounts](email-accounts.md) for interactive API and MCP access. [Google or another trusted OIDC provider](mcp-interactive-oauth.md) can authenticate those same invited accounts, with email OTP available alongside it when SMTP is configured. Both login methods use the same current permissions. Authentication
 runs before request validation. HTTP and [MCP](mcp.md) share operation policies
 and project checks, with separate API and MCP token resources. The CLI generates its commands from the same OpenAPI operations.
-
-With an issuer configured, legacy API and MCP Bearer keys are rejected by
-default. Explicit legacy-key allowance is a migration setting. Without any OAuth
-configuration, the server retains legacy authentication for offline use. Public
-PostHog ingestion keys are separate and remain valid for capture.
 
 ## Operations
 
@@ -47,7 +48,7 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `DELETE /api/v1/access-keys/{id}` | Instance operator or administrator of the tenant that owns the key | `204` |
 | `POST /api/v1/oauth-clients` | `management:write`; requested grants cannot exceed the caller | `201` |
 | `GET /api/v1/oauth-clients` | `management:read`; complete project scope required for each returned client | `200` |
-| `DELETE /api/v1/oauth-clients/{id}` | `instance:admin`; last administrator protected | `204` |
+| `DELETE /api/v1/oauth-clients/{id}` | `instance:admin`, with [recovery administrator protection](#project-and-credential-details) in builtin mode | `204` |
 | `POST /api/v1/oauth-clients/{id}/api-keys` | `instance:admin`; service key must fit the machine client's grants | `201` |
 | `GET /api/v1/oauth-grants` | `instance:admin` | `200` |
 | `DELETE /api/v1/oauth-grants/{id}` | `instance:admin` | `204` |
@@ -71,8 +72,6 @@ PostHog ingestion keys are separate and remain valid for capture.
 | `GET /api/v1/projects/{id}/event-deletions/{mutation_id}` | `events:read` and access to the project | `200` |
 
 For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads.
-
-<a id="unreleased-tenant-operations"></a><!-- Legacy URL fragment. -->
 
 ### Tenant operations
 
@@ -150,9 +149,13 @@ secrets or hashes. Items contain `client_id`, name, grants, creation time, and
 nullable revocation time. The bootstrap alias is not listed as a registered
 client. See [OAuth client management](oauth.md#bootstrap-and-registered-clients).
 
-In OAuth mode with legacy keys disabled, access-key creation is restricted to
-`permissions: ["events:write"]` and exactly one project. It returns the one-time
-`token` used by public PostHog ingestion. Use an OAuth machine client or a [service key](service-keys.md) for service and agent access. Legacy mode retains the older scoped-key behavior.
+With a builtin or external issuer, access-key creation requires
+`permissions: ["events:write"]` and exactly one project. The one-time `token`
+can authorize capture for a `mixed` project or select a project for an
+authenticated API writer. See [ingestion credentials](oauth.md#browser-and-backend-ingestion).
+
+A builtin standalone instance without OAuth also lets instance administrators
+issue scoped static Bearer access keys for API and MCP operations.
 
 Key listing returns `{"access_keys":[...]}`. Each item contains `id`, `kind`, `name`,
 `permissions`, `projects`, `created_at`, and `revoked_at`. Active keys have
@@ -161,8 +164,14 @@ projects A and B is omitted entirely from a caller restricted to A. Use `kind: "
 
 Client or principal revocation disables future authentication, including all
 access tokens issued to it. Ordinary already-authenticated requests are not
-automatically canceled. Exports also recheck creator authority while running. Revoking the last active instance administrator
-returns `409`. The check and update share a SQLite write transaction.
+automatically canceled. Exports also recheck creator authority while running.
+In builtin mode, revoking the last independent instance administrator returns
+`409`. With builtin OAuth, only the bootstrap administrator and machine clients
+with `instance:admin` and the `client_credentials` grant qualify. Without OAuth,
+the bootstrap administrator and other independently issued static keys with
+`instance:admin` qualify. The check and update share a control database
+transaction.
+
 Access tokens expire; public ingestion keys and client secrets have no expiry
 or dedicated rotation endpoint. Rotate a client by creating a replacement and
 revoking the old principal.

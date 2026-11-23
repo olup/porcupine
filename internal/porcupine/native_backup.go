@@ -269,7 +269,7 @@ func (s *Service) createNativeBackup(ctx context.Context) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, checkpoint.Close()) }()
-	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage); err != nil {
 		return err
 	}
 	stage := checkpoint.Directory

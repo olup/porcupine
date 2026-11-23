@@ -25,8 +25,6 @@ Run `codex mcp login porcupine_admin --scopes instance:admin` and approve instan
 
 Copy both tables above and rename `porcupine_admin` to `porcupine`. Set `client_id = "porcupine-local"` and `scopes = ["events:read", "management:read"]`, then run `codex mcp login porcupine`. The local client uses public PKCE without a secret. For other clients, [register the exact callback and allowed scopes](mcp-interactive-oauth.md#register-the-downstream-client). Multiple people can use one client registration.
 
-<a id="choose-a-tenant-for-your-projects-unreleased"></a><!-- Legacy URL fragment. -->
-
 ## Choose a tenant for your projects
 
 [Invite the first tenant administrator](tenant-access.md#invite-the-first-tenant-administrator) to the `default` tenant or a new one. The administrator uses a dedicated [CLI or Codex tenant connection](tenant-access.md#connect-as-the-tenant-administrator) to manage that team's projects, members, and service accounts.

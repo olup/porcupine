@@ -184,7 +184,7 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	fixture := nativeS3Fixture(t)
 	traffic := economicsS3Proxy(t, &fixture)
 	a, b := sharedNativeJourneyPair(t, fixture, func(c *Config) {
-		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999"}
 		c.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
 	})
 	nodes := []*sharedJourneyNode{a, b}
@@ -199,11 +199,12 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 	reader := b.service.lake
 	const quietProjects, windows, flushWindowSeconds = 12, 4, 2
 
+	admin := accountTestToken(t, a.service)
 	started := time.Now()
 	projects := make([][]string, 2)
 	for cohort := range projects {
 		for i := range quietProjects {
-			id, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, fmt.Sprintf("quiet %d/%d", cohort, i))
+			id, _ := sharedJourneyProjectAs(t, a.host.URL, admin, defaultTenantID, fmt.Sprintf("quiet %d/%d", cohort, i))
 			key := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: id}
 			if _, err := store.InitializeHostedProject(ctx, key); err != nil {
 				t.Fatal(err)
@@ -211,16 +212,11 @@ func TestDuckLakeS3SharedPostgresHostedEconomics(t *testing.T) {
 			projects[cohort] = append(projects[cohort], id)
 		}
 	}
-	noisyTenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, []byte(`{"name":"noisy"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
-	noisyProject, _ := sharedJourneyProject(t, a.host.URL, noisyTenant, "noisy")
+	noisyTenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", admin, []byte(`{"name":"noisy"}`), nil, 201)["tenant"].(map[string]any)["id"].(string)
+	noisyProject, _ := sharedJourneyProjectAs(t, a.host.URL, admin, noisyTenant, "noisy")
 	noisyKey := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: noisyProject}
-	webhookProject, _ := sharedJourneyProject(t, a.host.URL, noisyTenant, "noisy webhook")
-	permissions := []string{"pipelines:write", "events:read"}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "economics webhook", Projects: []string{webhookProject}, Permissions: permissions})
-	accounts := "/api/v1/tenants/" + noisyTenant + "/service-accounts"
-	account := sharedJourneyHTTP(t, a.host.URL, "POST", accounts, adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "economics webhook key", Audience: "api", Projects: []string{webhookProject}, Permissions: permissions})
-	creator := sharedJourneyHTTP(t, a.host.URL, "POST", accounts+"/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["token"].(string)
+	webhookProject, _ := sharedJourneyProjectAs(t, a.host.URL, admin, noisyTenant, "noisy webhook")
+	_, creator := sharedJourneyServiceKey(t, a.host.URL, admin, noisyTenant, "economics webhook", webhookProject, []string{"pipelines:write", "events:read"})
 	webhookBody, _ := json.Marshal(PipelineCreateBody{Name: "all events", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{
 		Endpoint: "https://example.test/unused", DeliveryMode: "batch", IntervalSeconds: 60,
 		StartAt: time.Now().UTC().Add(-time.Hour).Truncate(time.Minute).Format(time.RFC3339),

@@ -29,14 +29,14 @@ func TestSharedHostedPostgresPITR(t *testing.T) {
 	}
 	fixture := nativeS3Fixture(t)
 	pg := newPITRPostgres(t, bin)
-	admin := pg.admin()
-	if _, err := admin.ExecContext(t.Context(), "CREATE DATABASE hosted"); err != nil {
+	postgresAdmin := pg.admin()
+	if _, err := postgresAdmin.ExecContext(t.Context(), "CREATE DATABASE hosted"); err != nil {
 		t.Fatal(err)
 	}
 	// The base backup predates all service records and migrations.
 	pg.backup()
 	hostedConfig := hostedJourneyConfig(t, pg.dsn("hosted"), fixture)
-	hostedConfig.OAuth = &OAuthConfig{Issuer: "https://porcupine-pitr-hosted.invalid", AllowLegacyKeys: true}
+	hostedConfig.OAuth = &OAuthConfig{Issuer: "https://porcupine-pitr-hosted.invalid"}
 	hostedConfig.DuckLake.MaintenanceInterval = time.Hour
 	hostedConfig.DuckLake.CleanupGrace = 72 * time.Hour
 	hostedConfig.DuckLake.RestoreWindow = 24 * time.Hour
@@ -50,23 +50,24 @@ func TestSharedHostedPostgresPITR(t *testing.T) {
 	}
 	hosted, hostedHTTP, closeHosted := hostedCleanupWorker(t, hostedConfig)
 	primary := pitrWorker{hostedHTTP, hosted}
-	projectA, _ := sharedJourneyProject(t, primary.URL, defaultTenantID, "original project")
-	tenant := sharedJourneyHTTP(t, primary.URL, http.MethodPost, "/api/v1/tenants", adminToken, []byte(`{"name":"PITR neighbor"}`), nil, 201)
+	admin := accountTestToken(t, hosted)
+	projectA, _ := sharedJourneyProjectAs(t, primary.URL, admin, defaultTenantID, "original project")
+	tenant := sharedJourneyHTTP(t, primary.URL, http.MethodPost, "/api/v1/tenants", admin, []byte(`{"name":"PITR neighbor"}`), nil, 201)
 	otherTenant := tenant["tenant"].(map[string]any)["id"].(string)
-	projectB, _ := sharedJourneyProject(t, primary.URL, otherTenant, "isolated project")
-	projectC, _ := sharedJourneyProject(t, primary.URL, defaultTenantID, "hosted output project")
-	scope := pitrCreateHostedOutput(t, primary, projectC)
+	projectB, _ := sharedJourneyProjectAs(t, primary.URL, admin, otherTenant, "isolated project")
+	projectC, _ := sharedJourneyProjectAs(t, primary.URL, admin, defaultTenantID, "hosted output project")
+	scope, outputReader := pitrCreateHostedOutput(t, primary, admin, projectC)
 	deliveryID := pitrReadHostedOutput(t, primary, scope)
-	pitrAssertEvent(t, primary.URL, projectC, adminToken, "hosted")
-	revokedID, revoked := sharedJourneyKey(t, primary.URL, projectA, []string{"events:read"})
-	_, editor := sharedJourneyKey(t, primary.URL, projectA, []string{"events:read", "events:edit", "events:delete"})
-	_, foreign := sharedJourneyKey(t, primary.URL, projectB, []string{"events:read"})
+	pitrAssertEvent(t, primary.URL, projectC, outputReader, "hosted")
+	revokedID, revoked := sharedJourneyServiceKey(t, primary.URL, admin, defaultTenantID, "revoked reader", projectA, []string{"events:read"})
+	_, editor := sharedJourneyServiceKey(t, primary.URL, admin, defaultTenantID, "editor", projectA, []string{"events:read", "events:edit", "events:delete"})
+	_, foreign := sharedJourneyServiceKey(t, primary.URL, admin, otherTenant, "neighbor reader", projectB, []string{"events:read"})
 	uuid := hostedCleanupWrite(t, hosted, projectA, "original")
 	hostedCleanupWrite(t, hosted, projectB, "neighbor")
 	pitrAssertEvent(t, primary.URL, projectA, revoked, "original")
 	pitrAssertEvent(t, primary.URL, projectB, foreign, "neighbor")
-	hostedProject, _ := sharedJourneyProject(t, primary.URL, defaultTenantID, "hosted project under deletion")
-	pitrCreateHostedOutput(t, primary, hostedProject)
+	hostedProject, _ := sharedJourneyProjectAs(t, primary.URL, admin, defaultTenantID, "hosted project under deletion")
+	_, hostedReader := pitrCreateHostedOutput(t, primary, admin, hostedProject)
 	hostedKeys := fixture.keys(t, fixture.projectPrefix(t, hosted.hosted.native, hostedProject))
 	if len(hostedKeys) < 2 {
 		t.Fatal("hosted recovery target must include Parquet and an immutable live manifest")
@@ -77,7 +78,7 @@ func TestSharedHostedPostgresPITR(t *testing.T) {
 	}
 	restoreAt := time.Now()
 	restoreFloor.Store(&restoreAt)
-	if _, err := admin.ExecContext(t.Context(), "SELECT pg_create_restore_point($1)", pitrRestorePoint); err != nil {
+	if _, err := postgresAdmin.ExecContext(t.Context(), "SELECT pg_create_restore_point($1)", pitrRestorePoint); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +112,7 @@ func TestSharedHostedPostgresPITR(t *testing.T) {
 	if expired == 0 {
 		t.Fatal("history cleanup did not expire any snapshots before PITR")
 	}
-	sharedJourneyHTTP(t, primary.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, adminToken, nil, nil, 204)
+	sharedJourneyHTTP(t, primary.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, admin, nil, nil, 204)
 	pitrAssertEvent(t, primary.URL, projectA, editor, "")
 	sharedJourneyQuery(t, primary.URL, projectA, revoked, "SELECT event FROM events", 401)
 
@@ -143,16 +144,18 @@ func TestSharedHostedPostgresPITR(t *testing.T) {
 	hostedConfig.DuckLake.Directory = t.TempDir()
 	restoredHosted, restoredHTTP, _ := hostedCleanupWorker(t, hostedConfig)
 	restored := pitrWorker{restoredHTTP, restoredHosted}
-	pitrAssertEvent(t, restored.URL, hostedProject, adminToken, "hosted")
+	pitrAssertEvent(t, restored.URL, hostedProject, hostedReader, "hosted")
+	pitrAssertEvent(t, restored.URL, projectA, revoked, "original")
 
 	// Reapply the post-target revocation over the private fixture listener.
-	sharedJourneyHTTP(t, restored.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, adminToken, nil, nil, 204)
+	restoredAdmin := accountTestToken(t, restoredHosted)
+	sharedJourneyHTTP(t, restored.URL, http.MethodDelete, "/api/v1/access-keys/"+revokedID, restoredAdmin, nil, nil, 204)
 	sharedJourneyQuery(t, restored.URL, projectA, revoked, "SELECT event FROM events", 401)
 	sharedJourneyQuery(t, restored.URL, projectA, foreign, "SELECT event FROM events", 403)
 	sharedJourneyQuery(t, restored.URL, projectB, editor, "SELECT event FROM events", 403)
 	pitrAssertEvent(t, restored.URL, projectA, editor, "original")
 	pitrAssertEvent(t, restored.URL, projectB, foreign, "neighbor")
-	pitrAssertEvent(t, restored.URL, projectC, adminToken, "hosted")
+	pitrAssertEvent(t, restored.URL, projectC, outputReader, "hosted")
 	if id := pitrReadHostedOutput(t, restored, scope); id != deliveryID {
 		t.Fatalf("restored output changed delivery identity: %s != %s", id, deliveryID)
 	}

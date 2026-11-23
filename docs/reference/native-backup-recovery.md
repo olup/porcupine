@@ -1,6 +1,6 @@
 # Remote backups and offline recovery
 
-Native backups use the two-database `porcupine-native-v2` format introduced in v0.15.0. Restore single-database v0.14.0 bundles with the v0.14.0 CLI and image. For local scheduling, see [local backups](native-backups.md).
+Native backups use the two-database `porcupine-native-v2` format introduced in v0.15.0. Offline restore requires a numbered SQLite schema version in both databases. Restore single-database v0.14.0 bundles with the v0.14.0 CLI and image. For local scheduling, see [local backups](native-backups.md).
 
 ## Choose a backup destination
 
@@ -94,7 +94,7 @@ porcupine restore \
   --reset-access
 ```
 
-The offline JSON request uses `auth_mode: "external"` and no `bootstrap_token`. A destination authentication configuration takes precedence; a conflicting request or archived mode is rejected before credential reset. An omitted mode defaults to builtin only when no destination mode is provided. Restore does not convert authentication modes.
+For direct offline JSON requests, set `auth_mode` to `builtin` or `external` when the destination configuration supplies no mode. The CLI defaults `--auth-mode` to `builtin`. For external mode, omit `bootstrap_token`. The destination mode takes precedence, and restore rejects a conflicting request or archived mode before resetting credentials.
 
 External restore creates no local recovery administrator and does not prune builtin human, browser, or consent state. Reconfigure the trusted external issuer on the destination and recover administration with its operator JWT. Native machine keys are revoked, public ingestion keys are rotated, pipelines are paused, and exports and pending imports are canceled. Finite external execution snapshots are removed. Recreate native service keys explicitly.
 

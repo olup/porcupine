@@ -38,7 +38,7 @@ var operations = []operation{
 	},
 	{
 		ID: "create-access-key", Method: "POST", Path: "/api/v1/access-keys",
-		Summary:     "Issue a scoped key as an instance administrator and return its secret once. Tenant administrators can issue single-project ingestion keys.",
+		Summary:     "Issue a scoped key and return its secret once. With OAuth or external auth, instance and tenant administrators can issue only single-project ingestion keys.",
 		ContentType: "application/json", BodyRequired: true,
 		BodyFields: []string{
 			"name (string, required)",

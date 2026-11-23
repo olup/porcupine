@@ -69,8 +69,6 @@ The default image puts managed analytical state under `/data/ducklake`. The `POR
 
 See [retention and deletion](../storage.md#retention-and-deletion), [receipt pruning](receipts.md#bounded-receipts), and [readiness and delivery checks](instance-status.md#verify-delivery-before-routing-traffic).
 
-<a id="unreleased-interactive-query-ceilings"></a><!-- Legacy URL fragment. -->
-
 ### Interactive query ceilings
 
 See the [query settings](configuration.md#interactive-query-ceilings) for deployment defaults and ranges, [tenant budgets](tenants.md#interactive-query-limits) for effective limits and permissions, and [worker supervision](shared-deployment.md#native-timeouts-and-worker-supervision) for hosted timeouts, reservations, and quarantine.

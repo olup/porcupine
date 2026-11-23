@@ -3,6 +3,7 @@ package porcupine
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -23,17 +24,20 @@ func TestMetadataNativeSQLColumnsAndProjectionRoundTrip(t *testing.T) {
 	projectID, ingest := project(t, s)
 	request(t, s, "POST", "/capture/", "", `{"api_key":"`+ingest+`","uuid":"producer","event":"$pageview","distinct_id":"anonymous","timestamp":"2026-01-01T00:00:00Z","properties":{"$current_url":"https://example.test/"}}`, 200)
 	duckLakeJourneyDrain(t, s)
-	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT id,event_id,source_id,message_id,event_type,json_extract_string(context,'$.page.url') AS url FROM events", nil)
+	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT id,source_id,message_id,event_type,json_extract_string(context,'$.page.url') AS url FROM events", nil)
 	if len(rows) != 1 {
 		t.Fatal("missing native metadata projection")
 	}
 	row := rows[0].(map[string]any)
-	if row["id"] != row["event_id"] || row["source_id"] != "posthog" || row["message_id"] != "producer" || row["event_type"] != "pageview" || row["url"] != "https://example.test/" {
+	if row["source_id"] != "posthog" || row["message_id"] != "producer" || row["event_type"] != "pageview" || row["url"] != "https://example.test/" {
 		t.Fatal("metadata columns changed", row)
 	}
 	event, err := s.lake.Load(context.Background(), projectID, "producer")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if row["id"] != strconv.FormatInt(event.ID, 10) {
+		t.Fatalf("projected id = %v, want %d", row["id"], event.ID)
 	}
 	event.Revision = 1
 	event.IsDeleted = true

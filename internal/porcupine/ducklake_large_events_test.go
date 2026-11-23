@@ -103,7 +103,7 @@ func largeEventReceipts(t *testing.T, response map[string]any, count int, duplic
 
 func largeEventAssertIDs(t *testing.T, host *httptest.Server, state largeEventCrashState, deleted bool) {
 	t.Helper()
-	rows := largeEventQuery(t, host, state.Project, "SELECT event_id,uuid FROM events ORDER BY id")
+	rows := largeEventQuery(t, host, state.Project, "SELECT id,uuid FROM events ORDER BY id")
 	want := len(state.Receipts)
 	if deleted {
 		want--
@@ -115,7 +115,7 @@ func largeEventAssertIDs(t *testing.T, host *httptest.Server, state largeEventCr
 	uuids := map[string]string{}
 	for _, value := range rows {
 		row := value.(map[string]any)
-		id := row["event_id"].(string)
+		id := row["id"].(string)
 		if seen[id] {
 			t.Fatalf("duplicate analytical event ID %s", id)
 		}
@@ -236,12 +236,12 @@ func TestDuckLakeLargeEventsCrashHelper(t *testing.T) {
 		if row["total"] != "999" || row["identified"] != "999" || row["traits"] != "999" || row["smallest"] != "15360" || row["largest"] != "15360" {
 			t.Fatalf("recovery changed payloads or identity: %v", row)
 		}
-		edited := largeEventQuery(t, host, state.Project, "SELECT event_id,event,revision FROM events WHERE uuid='"+state.Receipts[0].UUID+"'")
-		if len(edited) != 1 || edited[0].(map[string]any)["event"] != "corrected_large_event" || edited[0].(map[string]any)["revision"] != "1" || edited[0].(map[string]any)["event_id"] != state.Receipts[0].ID {
+		edited := largeEventQuery(t, host, state.Project, "SELECT id,event,revision FROM events WHERE uuid='"+state.Receipts[0].UUID+"'")
+		if len(edited) != 1 || edited[0].(map[string]any)["event"] != "corrected_large_event" || edited[0].(map[string]any)["revision"] != "1" || edited[0].(map[string]any)["id"] != state.Receipts[0].ID {
 			t.Fatalf("late original replaced queued edit: %v", edited)
 		}
-		other := largeEventQuery(t, host, state.OtherProject, "SELECT event_id FROM events")
-		if len(other) != 1 || other[0].(map[string]any)["event_id"] != state.Other.ID {
+		other := largeEventQuery(t, host, state.OtherProject, "SELECT id FROM events")
+		if len(other) != 1 || other[0].(map[string]any)["id"] != state.Other.ID {
 			t.Fatalf("large-event recovery changed healthy project: %v", other)
 		}
 		if pending, _ := queueUsage(t, s); pending != 0 {

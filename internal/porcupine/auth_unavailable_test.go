@@ -152,7 +152,7 @@ func TestNativeMachineAuthenticationControlOutageIsRetryable(t *testing.T) {
 func TestOAuthAuthenticationControlOutageIsRetryable(t *testing.T) {
 	t.Parallel()
 	s, clock := oauthProtocolService(t)
-	id, _ := project(t, s)
+	id, _ := oauthProject(t, s, accountTestToken(t, s))
 	client, secret := oauthProtocolClient(t, s, []string{"events:read", "events:write"}, []string{id})
 	apiToken := oauthProtocolRequest(t, s, client, secret, oauthGrantForm(), 200)["access_token"].(string)
 	form := oauthGrantForm()

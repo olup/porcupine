@@ -170,14 +170,14 @@ func TestQuarantineHTTPAndMCPOperatorRecovery(t *testing.T) {
 		t.Fatal("successful recovery crossed quarantine or project boundary")
 	}
 	var analytics map[string]any
-	f.call(t, "POST", "/api/v1/projects/"+a+"/query", readAPI.AccessToken, map[string]any{"sql": "SELECT event_id,uuid,received_at FROM events ORDER BY id"}, 200, &analytics)
+	f.call(t, "POST", "/api/v1/projects/"+a+"/query", readAPI.AccessToken, map[string]any{"sql": "SELECT id,uuid,received_at FROM events ORDER BY id"}, 200, &analytics)
 	accepted := analytics["result"].(map[string]any)["data"].([]any)
 	if len(accepted) != 2 {
 		t.Fatal("native recovery changed the analytical row count")
 	}
 	for index, value := range accepted {
 		row := value.(map[string]any)
-		if row["event_id"] != strconv.FormatInt(originals[index].ID, 10) || row["uuid"] != originals[index].UUID || row["received_at"] != originals[index].ReceivedAt {
+		if row["id"] != strconv.FormatInt(originals[index].ID, 10) || row["uuid"] != originals[index].UUID || row["received_at"] != originals[index].ReceivedAt {
 			t.Fatal("recovery changed identity, duplicated, or lost accepted originals", row)
 		}
 	}

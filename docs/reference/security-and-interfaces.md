@@ -18,17 +18,14 @@ authority intersects token scope and issued projects with current permissions
 and projects. A later expansion of parent grants cannot expand an old token.
 Client revocation invalidates subsequent uses of its opaque access tokens. Interactive MCP uses rotating refresh tokens and per-consent grants with either login method.
 
-A configured issuer rejects legacy API and MCP Bearer keys by default. Explicit
-legacy allowance supports migration. Without OAuth configuration, legacy mode
-remains available for offline use. Public single-project PostHog ingestion keys
-stay separate, write-only browser credentials and are not OAuth clients.
+On a builtin standalone server without OAuth, static access keys authenticate
+HTTP and MCP Bearer requests. Public PostHog ingestion keys authorize capture
+for one `mixed` project with or without OAuth.
 
 Huma provides typed management requests, validation, and generated OpenAPI.
 The control database stores client credentials, token hashes, memberships, and project grants. It uses local SQLite by default or PostgreSQL in hosted. Explicit permission checks run inside the Go process; there is no external policy server.
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
-
-<a id="tenant-roles-and-project-permissions-unreleased"></a><!-- Legacy URL fragment. -->
 
 ## Tenant roles and project permissions
 
@@ -138,8 +135,6 @@ Public statistics expose elapsed time without physical scan totals. Delivery sta
 Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Analytical S3 is configured before initializing a fresh archive.
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
-
-<a id="unreleased-shared-deployment-boundary"></a><!-- Legacy URL fragment. -->
 
 ### Hosted deployment boundary
 

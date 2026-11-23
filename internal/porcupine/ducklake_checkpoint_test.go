@@ -102,8 +102,8 @@ func TestDuckLakeCheckpointStageRestore(t *testing.T) {
 	if err != nil || restored != source {
 		t.Fatal("recovery source identity changed", err)
 	}
-	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT event_id,event FROM events ORDER BY id", nil)
-	if len(rows) != 2 || rows[0].(map[string]any)["event_id"] != firstID || rows[1].(map[string]any)["event_id"] != queueID {
+	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT id,event FROM events ORDER BY id", nil)
+	if len(rows) != 2 || rows[0].(map[string]any)["id"] != firstID || rows[1].(map[string]any)["id"] != queueID {
 		t.Fatalf("checkpoint lost accepted events: %+v", rows)
 	}
 	retry := nativeRequest(t, s, ingest, first, 200)

@@ -127,7 +127,7 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 	control := sharedPostgresDSN(t)
 	config := hostedJourneyConfig(t, control, fixture)
 	config.DuckLake.Encrypted = encrypted
-	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+	config.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999"}
 	config.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
 	service, host, _ := hostedCleanupWorker(t, config)
 	service.pipelines.Stop()
@@ -141,16 +141,13 @@ func TestDuckLakeS3SharedPostgresHostedFlushCost(t *testing.T) {
 
 	flusher := service.hosted.flusher
 	store := flusher.native
-	project, _ := sharedJourneyProject(t, host.URL, defaultTenantID, "flush cost")
+	admin := accountTestToken(t, service)
+	project, _ := sharedJourneyProjectAs(t, host.URL, admin, defaultTenantID, "flush cost")
 	key := lakeapi.ProjectWriteKey{SourceID: store.Config.SharedSourceID, ProjectID: project}
 	if _, err := store.InitializeHostedProject(ctx, key); err != nil {
 		t.Fatal(err)
 	}
-	permissions := []string{"pipelines:write", "events:read"}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "flush cost webhook", Projects: []string{project}, Permissions: permissions})
-	account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "flush cost webhook key", Audience: "api", Projects: []string{project}, Permissions: permissions})
-	creator := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["token"].(string)
+	_, creator := sharedJourneyServiceKey(t, host.URL, admin, defaultTenantID, "flush cost webhook", project, []string{"pipelines:write", "events:read"})
 	body, _ := json.Marshal(PipelineCreateBody{Name: "all events", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{
 		Endpoint: "https://example.test/unused", DeliveryMode: "event",
 	}})

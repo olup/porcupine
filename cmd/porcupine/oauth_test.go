@@ -3,21 +3,22 @@ package main
 import "testing"
 
 func TestOAuthOperatorConfiguration(t *testing.T) {
-	for _, name := range []string{"PORCUPINE_OAUTH_ISSUER", "PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS", "PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP", "PORCUPINE_OIDC_ISSUER", "PORCUPINE_OIDC_CLIENT_ID", "PORCUPINE_OIDC_CLIENT_SECRET_FILE", "PORCUPINE_OIDC_BINDINGS_FILE"} {
+	for _, name := range []string{"PORCUPINE_OAUTH_ISSUER", "PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP", "PORCUPINE_OIDC_ISSUER", "PORCUPINE_OIDC_CLIENT_ID", "PORCUPINE_OIDC_CLIENT_SECRET_FILE", "PORCUPINE_OIDC_BINDINGS_FILE"} {
 		t.Setenv(name, "")
 	}
 	config, err := (settings{}).oauthConfiguration()
 	if err != nil || config != nil {
-		t.Fatal("legacy/offline configuration changed")
+		t.Fatalf("expected OAuth to be disabled with no settings: %+v %v", config, err)
 	}
-	t.Setenv("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS", "false")
+	t.Setenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "600")
 	if _, err := (settings{}).oauthConfiguration(); err == nil {
-		t.Fatal("ignored OAuth mode without pinned issuer")
+		t.Fatal("accepted a token lifetime without an issuer")
 	}
-	t.Setenv("PORCUPINE_OAUTH_ISSUER", "https://analytics.example.test")
+	const issuer = "https://analytics.example.test"
+	t.Setenv("PORCUPINE_OAUTH_ISSUER", issuer)
 	config, err = (settings{}).oauthConfiguration()
-	if err != nil || config.AllowLegacyKeys {
-		t.Fatalf("OAuth must reject legacy keys by default: %+v %v", config, err)
+	if err != nil || config == nil || config.Issuer != issuer || config.AccessTokenLifetimeSeconds != 600 {
+		t.Fatalf("expected configured OAuth issuer and token lifetime: %+v %v", config, err)
 	}
 	t.Setenv("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS", "3601")
 	if _, err := (settings{}).oauthConfiguration(); err == nil {

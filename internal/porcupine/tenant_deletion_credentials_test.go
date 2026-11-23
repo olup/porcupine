@@ -14,46 +14,57 @@ import (
 func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 	t.Parallel()
 	skipInShort(t)
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example", AllowLegacyKeys: true}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	a, b := tenantTestCreate(t, s, "A"), tenantTestCreate(t, s, "B")
-	pa1, _ := tenantJourneyProject(t, s, a)
-	pa2, _ := tenantJourneyProject(t, s, a)
-	pb1, _ := tenantJourneyProject(t, s, b)
-	pb2, _ := tenantJourneyProject(t, s, b)
-	namedKey := func(name string, permissions, projects []string) (string, string) {
-		created := request(t, s, "POST", "/api/v1/access-keys", adminToken, tenantTestBody(t, map[string]any{"name": name, "permissions": permissions, "projects": projects}), 201)
+	admin := accountTestToken(t, s)
+	createTenant := func(name string) string {
+		created := request(t, s, "POST", "/api/v1/tenants", admin, tenantTestBody(t, map[string]string{"name": name}), 201)
+		return created["tenant"].(map[string]any)["id"].(string)
+	}
+	createProject := func(tenant string) string {
+		created := request(t, s, "POST", "/api/v1/projects", admin, tenantTestBody(t, map[string]string{"name": "Tenant project", "tenant_id": tenant}), 201)
+		return created["project"].(map[string]any)["id"].(string)
+	}
+	a, b := createTenant("A"), createTenant("B")
+	pa1, pa2 := createProject(a), createProject(a)
+	pb1, pb2 := createProject(b), createProject(b)
+	read := []string{"events:read", "management:read"}
+	createClient := func(name string, projects []string) map[string]any {
+		return request(t, s, "POST", "/api/v1/oauth-clients", admin, tenantTestBody(t, map[string]any{"name": name, "permissions": read, "projects": projects, "grant_types": []string{"client_credentials"}}), 201)
+	}
+	createKey := func(parent, name string, permissions, projects []string) (string, string) {
+		body := ServiceKeySpec{Name: name, Audience: "api", Permissions: permissions, Projects: projects}
+		created := request(t, s, "POST", "/api/v1/oauth-clients/"+parent+"/api-keys", admin, tenantTestBody(t, body), 201)
 		return created["id"].(string), created["token"].(string)
 	}
 	type machine struct{ id, secret, token, keyID, key string }
 	operatorClient := func(name string, projects []string) machine {
-		created := request(t, s, "POST", "/api/v1/oauth-clients", adminToken, tenantTestBody(t, map[string]any{"name": name, "permissions": []string{"events:read", "management:read"}, "projects": projects, "grant_types": []string{"client_credentials"}}), 201)
+		created := createClient(name, projects)
 		m := machine{id: created["client_id"].(string), secret: created["client_secret"].(string)}
 		m.token = oauthProtocolRequest(t, s, m.id, m.secret, url.Values{"grant_type": {"client_credentials"}, "resource": {s.resources.apiResource}}, 200)["access_token"].(string)
-		static := request(t, s, "POST", "/api/v1/oauth-clients/"+m.id+"/api-keys", adminToken, tenantTestBody(t, ServiceKeySpec{Name: name + " static", Audience: "api", Permissions: []string{"events:read"}, Projects: projects}), 201)
-		m.keyID, m.key = static["id"].(string), static["token"].(string)
+		m.keyID, m.key = createKey(m.id, name+" static", []string{"events:read"}, projects)
 		return m
 	}
-	read := []string{"events:read", "management:read"}
-	keyA, rawA := namedKey("A multi key", read, []string{pa1, pa2})
-	keyB, rawB := namedKey("B multi key", read, []string{pb1, pb2})
-	crossID, rawCross := namedKey("Cross tenant key", read, []string{pa1, pb1})
-	instanceID, rawInstance := namedKey("Instance reader", read, []string{"*"})
+	keyParent := createClient("Instance reader account", []string{"*"})["client_id"].(string)
+	keyA, rawA := createKey(keyParent, "A multi key", read, []string{pa1, pa2})
+	keyB, rawB := createKey(keyParent, "B multi key", read, []string{pb1, pb2})
+	crossID, rawCross := createKey(keyParent, "Cross tenant key", read, []string{pa1, pb1})
+	instanceID, rawInstance := createKey(keyParent, "Instance reader", read, []string{"*"})
 	clientA, clientB := operatorClient("A machine client", []string{pa1, pa2}), operatorClient("B machine client", []string{pb1, pb2})
 	crossClient := operatorClient("Cross tenant machine client", []string{pa1, pb1})
-	previousProject, _ := tenantJourneyProject(t, s, a)
-	prunedID, _ := namedKey("A key for previously deleted project", read, []string{previousProject})
+	previousProject := createProject(a)
+	prunedID, _ := createKey(keyParent, "A key for previously deleted project", read, []string{previousProject})
 	const legacyID = "a-pruned-legacy"
 	sharedDeletionPrincipal(t, s.control, legacyID, []string{previousProject})
-	request(t, s, "DELETE", "/api/v1/projects/"+previousProject, adminToken, "", 204)
+	request(t, s, "DELETE", "/api/v1/projects/"+previousProject, admin, "", 204)
 	for _, credential := range []string{rawA, rawInstance, clientA.token, clientA.key} {
 		request(t, s, "GET", "/api/v1/projects/"+pa2+"/schema", credential, "", 200)
 	}
 
-	request(t, s, "DELETE", "/api/v1/tenants/"+a, adminToken, "", 202)
+	request(t, s, "DELETE", "/api/v1/tenants/"+a, admin, "", 202)
 	waitTenantDeletion(t, s, a, "logically_deleted")
 
 	for _, credential := range []string{rawA, clientA.token, clientA.key} {
@@ -71,6 +82,8 @@ func TestTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing.T) {
 		{`SELECT count(*) FROM oauth_clients WHERE secret_hash=$1`, hash(clientA.secret)},
 		{`SELECT count(*) FROM oauth_tokens WHERE client_id=$1`, clientA.id},
 		{`SELECT count(*) FROM service_api_keys WHERE client_id=$1`, clientA.id},
+		{`SELECT count(*) FROM service_api_keys WHERE principal_id=$1`, keyA},
+		{`SELECT count(*) FROM service_api_keys WHERE principal_id=$1`, prunedID},
 		{`SELECT count(*) FROM tenant_credentials WHERE tenant_id=$1`, a},
 	} {
 		var count int

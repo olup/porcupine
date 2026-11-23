@@ -247,24 +247,27 @@ func TestImportUploadAuthorizationAndManifestBounds(t *testing.T) {
 
 func TestImportUploadOAuthRequiresAPIAudience(t *testing.T) {
 	t.Parallel()
-	f := newOAuthIntegration(t)
-	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
-	project, _ := f.project(t, admin.AccessToken)
-	client := f.createClient(t, admin.AccessToken, []string{"imports:write", "events:write"}, []string{project})
-	access := f.token(t, client.ClientID, client.ClientSecret, f.s.resources.apiResource)
-	mcp := f.token(t, client.ClientID, client.ClientSecret, f.s.resources.mcpResource)
-	body := map[string]any{"idempotency_key": "oauth", "files": []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}}
+	s, _ := oauthProtocolService(t)
+	project, _ := oauthProject(t, s, accountTestToken(t, s))
+	clientID, secret := oauthProtocolClient(t, s, []string{"imports:write", "events:write"}, []string{project})
+	form := oauthGrantForm()
+	form.Set("resource", s.resources.apiResource)
+	access := oauthProtocolRequest(t, s, clientID, secret, form, 200)["access_token"].(string)
+	form.Set("resource", s.resources.mcpResource)
+	mcp := oauthProtocolRequest(t, s, clientID, secret, form, 200)["access_token"].(string)
+	files := []importer.ImportUploadFileSpec{{Path: "empty.jsonl", Kind: "events", SHA256: importTestSHA(nil)}}
+	body, _ := json.Marshal(map[string]any{"idempotency_key": "oauth", "files": files})
 	base := "/api/v1/projects/" + project + "/imports"
-	f.call(t, "POST", base, mcp.AccessToken, body, 401, nil)
-	var job importer.ImportUploadJob
-	f.call(t, "POST", base, access.AccessToken, body, 201, &job)
+	importTestRequest(t, s, "POST", base, mcp, body, nil, 401)
+	job := importTestJob(t, importTestRequest(t, s, "POST", base, access, body, nil, 201))
 	if job.ID == "" {
 		t.Fatal("project API OAuth import failed")
 	}
-	f.s.oauth.config.AllowLegacyKeys = true
-	var legacy AccessKeyCreated
-	f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "legacy importer", "permissions": []string{"imports:write", "events:write"}, "projects": []string{project}}, 201, &legacy)
-	f.call(t, "GET", base, legacy.Token, nil, 401, nil)
+	legacy := token()
+	if _, err := s.control.Exec(`INSERT INTO access_keys(id,name,token_hash,permissions,projects,created_at) VALUES('legacy-importer','Legacy importer',?,'["imports:write","events:write"]',?,?)`, hash(legacy), tenantTestBody(t, []string{project}), now()); err != nil {
+		t.Fatal(err)
+	}
+	importTestRequest(t, s, "GET", base, legacy, nil, nil, 401)
 }
 
 func TestImportUploadOversizedRowsRemainBoundedAndResume(t *testing.T) {

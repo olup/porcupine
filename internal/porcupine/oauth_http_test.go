@@ -15,7 +15,7 @@ func TestOAuthIssuerAndBearerBoundaries(t *testing.T) {
 		}
 	}
 	cfg, err := normalizeOAuthConfig(OAuthConfig{Issuer: "https://analytics.example.test/"})
-	if err != nil || cfg.issuer != "https://analytics.example.test" || cfg.config.AccessTokenLifetimeSeconds != 900 || cfg.config.AllowLegacyKeys {
+	if err != nil || cfg.issuer != "https://analytics.example.test" || cfg.config.AccessTokenLifetimeSeconds != 900 {
 		t.Fatalf("config %+v %v", cfg, err)
 	}
 	r := httptest.NewRequest("GET", "http://localhost/api/v1/projects", nil)

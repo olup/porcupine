@@ -238,7 +238,7 @@ func verifyImageAPI(ctx context.Context, api *http.Client, origin string, storag
 				} `json:"result"`
 			}
 			err := imageCall(ctx, api, origin, "POST", "/api/v1/projects/"+reply.Project.ID+"/query", bootstrap,
-				map[string]any{"sql": "SELECT event_id,event FROM events"}, 200, &result)
+				map[string]any{"sql": "SELECT id,event FROM events"}, 200, &result)
 			return err == nil && len(result.Result.Data) == 1 && result.Result.Data[0]["event"] == "TLS image event", nil
 		}); err != nil {
 			return errors.New("nonroot image could not query its native TLS-backed events")

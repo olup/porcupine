@@ -14,7 +14,7 @@ import (
 func TestOAuthAccessTokenSurvivesRestartWithoutBootstrapReset(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "oauth.db")
-	config := Config{DBPath: path, BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example", AllowLegacyKeys: true}}
+	config := Config{DBPath: path, BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "https://oauth.example"}}
 	s, err := Open(config)
 	if err != nil {
 		t.Fatal(err)

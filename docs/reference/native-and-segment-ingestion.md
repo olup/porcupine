@@ -124,11 +124,11 @@ For example, these three members of a Segment batch describe the same two analyt
 ## Query any input
 
 ```sql
-SELECT event_id, source_id, message_id, event_type, event, distinct_id, person_id,
+SELECT id, source_id, message_id, event_type, event, distinct_id, person_id,
        json_extract_string(context, '$.page.url') AS page_url
 FROM events
 WHERE person_id = $user
 ORDER BY id
 ```
 
-Bind `user` to `user-42`. The pageview keeps its original actor `browser-7` and resolves to the same person as the purchase. `event_id` is an alias for the existing SQL `id`. The `event` column keeps `$pageview` for compatibility. `event_type` gives agents the normalized category. `context` is a JSON object encoded as a string and holds fields supplied at capture time. Browser, session and page data can be absent on backend events. `person_properties` represents the current projected profile. For read-after-write checks, wait for asynchronous delivery. [Analytics API](analytics.md)
+Bind `user` to `user-42`. The pageview keeps its original actor `browser-7` and resolves to the same person as the purchase. The `event` column keeps `$pageview` for compatibility. `event_type` gives agents the normalized category. `context` is a JSON object encoded as a string and holds fields supplied at capture time. Browser, session and page data can be absent on backend events. `person_properties` represents the current projected profile. For read-after-write checks, wait for asynchronous delivery. [Analytics API](analytics.md)

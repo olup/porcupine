@@ -30,7 +30,7 @@ func Build(ctx context.Context, root string) error {
 	if err := os.RemoveAll(output); err != nil {
 		return err
 	}
-	documents, relocated, err := loadDocuments(root)
+	documents, err := loadDocuments(root)
 	if err != nil {
 		return err
 	}
@@ -47,13 +47,9 @@ func Build(ctx context.Context, root string) error {
 		}
 	}
 	for _, doc := range documents {
-		canonical := doc.URI
-		if alias := relocated[canonical]; alias != "" {
-			canonical = alias
-		}
-		params := map[string]any{"nav_uri": canonical}
+		params := map[string]any{"nav_uri": doc.URI}
 		for i, item := range flat {
-			if item.Page == canonical {
+			if item.Page == doc.URI {
 				if i > 0 {
 					params["previous"] = flat[i-1]
 				}

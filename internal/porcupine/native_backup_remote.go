@@ -28,7 +28,7 @@ func (s *Service) createNativeS3Backup(ctx context.Context, writerID string) (re
 		return err
 	}
 	defer func() { result = errors.Join(result, checkpoint.Close()) }()
-	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage, false); err != nil {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(checkpoint.Storage); err != nil {
 		return err
 	}
 	destination, err := lakeapi.NewNativeBackupS3(ctx, *runtime.config.S3, checkpoint.SourceID)

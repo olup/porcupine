@@ -10,19 +10,18 @@ For interactive applications, Porcupine supports [email sign-in for CLI and MCP]
 | --- | --- | --- |
 | `PORCUPINE_OAUTH_ISSUER` | Empty | Fixed public origin; enables OAuth when set |
 | `PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS` | `900` | Access-token lifetime, 60 through 3,600 seconds |
-| `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS` | `false` when enabled | Explicit migration allowance for old API and MCP Bearer keys |
 
 The issuer is an origin with no path, credentials, query, or fragment. HTTPS is required except for HTTP on localhost or a loopback IP. A trailing slash normalizes away. Set the real external HTTPS origin behind a reverse proxy. Discovery URLs use this pinned issuer, never the request Host header.
 
-Set the equivalent `oauth.issuer`, `oauth.token_lifetime_seconds`, and `oauth.allow_legacy_keys` in the [private server configuration](configuration.md). Auth configuration is deployment-only; no HTTP or MCP operation changes it. Preserve SQLite, because it stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
+The equivalent settings in the [private server configuration](configuration.md) are `oauth.issuer` and `oauth.token_lifetime_seconds`. Authentication configuration belongs to the deployment. The control database stores client grants, secret hashes, access-token hashes, and bootstrap alias metadata.
 
-A configured issuer disables legacy API and MCP Bearer keys by default. Leaving OAuth entirely unconfigured retains legacy authentication for offline use and migration; it does not enable OAuth endpoints. Set `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS=true` only for an explicit migration period. Public PostHog ingestion keys remain separate and continue to work without OAuth for `mixed` projects. Projects with `server_only` ingestion require an API-resource OAuth token or a private [service key](service-keys.md).
+A builtin standalone instance without an OAuth issuer accepts static Bearer access keys for the HTTP API and MCP. With builtin OAuth enabled, each endpoint requires an access token or a native service key for its audience. See [service key audiences](service-keys.md).
 
 ## Bootstrap and registered clients
 
 The original bootstrap administrator is available at the token endpoint as client ID `bootstrap`, using the original `PORCUPINE_BOOTSTRAP_TOKEN` as its exchange secret. This alias is pinned to that first administrator. It does not switch to a later administrator. Changing an environment value does not reset an existing database credential.
 
-In OAuth mode, exchange the bootstrap secret before calling management APIs. Its raw secret is not accepted as API or MCP Bearer authorization unless legacy migration mode is explicitly enabled. Create separate clients for services and agents, then use their limited grants rather than distributing bootstrap access.
+In OAuth mode, exchange the bootstrap secret for an access token. The HTTP API and MCP each require a token for their own resource. Create clients with scoped grants for services and agents.
 
 | Operation ID | Endpoint | Authority |
 | --- | --- | --- |
@@ -40,11 +39,11 @@ Creation accepts this body through HTTP or `porcupine_call`:
 }
 ```
 
-The `201` response contains `client_id`, one-time `client_secret`, `name`, `permissions`, `projects`, and `created_at`. Save the secret privately. SQLite stores a separate secret hash; the client secret does not become a legacy Bearer key or ingestion key. Names contain 1 through 200 bytes and cannot be blank. Project IDs must exist, with `*` reserved for instance scope. `instance:admin` requires `*` scope. Tenant administrators use the [team service-account operations](service-keys.md) to provision credentials for their teams.
+The `201` response contains `client_id`, one-time `client_secret`, `name`, `permissions`, `projects`, and `created_at`. Save the secret privately for token exchange. The control database stores its hash. Names contain 1 through 200 bytes and cannot be blank. Project IDs must exist, with `*` reserved for instance scope. `instance:admin` requires `*` scope. Tenant administrators use the [team service-account operations](service-keys.md) to provision credentials for their teams.
 
 Listing returns `enabled` and `oauth_clients`. Items contain client ID, name, permissions, projects, creation time, and nullable revocation time. They contain no secret or hash. A client spanning projects A and B is omitted from a caller restricted to A. The bootstrap alias is not a registered client and does not appear in this list.
 
-Revocation returns `204` and disables the principal and all its access tokens for subsequent authentication. The last active instance administrator remains protected with `409`. There is no secret recovery or dedicated rotation endpoint. Create a replacement client and revoke the old one to rotate access.
+Revocation returns `204` and disables the principal and all its access tokens for subsequent authentication. Revoking the last independent instance administrator returns `409`. In builtin OAuth mode, the bootstrap administrator and machine clients with `instance:admin` and the `client_credentials` grant count as independent administrators. Create a replacement client and revoke the old one to rotate access.
 
 ## Token exchange
 
@@ -102,7 +101,7 @@ Token issuance is limited to five authenticated valid exchanges per second with 
 
 ## Browser and backend ingestion
 
-For `mixed` projects, PostHog browser SDKs keep their public write-only single-project ingestion key in the documented payload field. They do not receive OAuth client secrets. With OAuth enabled and legacy keys disabled, new `/access-keys` credentials are restricted to `events:write` and exactly one project. Use OAuth clients or [audience-bound service keys owned by machine clients](service-keys.md) for read, edit, delete, management and agent access.
+PostHog browser SDKs send a public `mixed` project ingestion key in the payload. The key grants capture for that project with or without OAuth. With OAuth enabled, `POST /api/v1/access-keys` issues only ingestion keys with `events:write` and exactly one project. Management and agent access use access tokens or native keys with the corresponding audience. See [service keys](service-keys.md).
 
 A backend can send an API-resource OAuth access token with `events:write` in Authorization. A token granting exactly one project needs no payload selector. A token spanning projects must also supply a valid single-project public ingestion key as the payload selector. That key must resolve to a project the token may write; an arbitrary payload project ID cannot choose scope. An invalid Authorization header cannot fall back to an otherwise valid payload key.
 
@@ -128,7 +127,7 @@ Create a project for confidential server collection with this body:
 }
 ```
 
-Creating a `server_only` project requires configured OAuth and returns `503` when OAuth is disabled. A persisted `server_only` policy continues to reject writes if OAuth is later disabled. Enabling legacy API keys does not relax the policy. Public payload keys, legacy Bearer keys, client secrets, expired tokens, and MCP-audience tokens cannot authenticate server-only captures.
+Creating a `server_only` project requires a builtin or external issuer and returns `503` when neither is configured. An existing `server_only` project requires an API-resource access token or a private API-audience service key in the Authorization header for every capture.
 
 The policy applies to the PostHog, [native and Segment ingestion endpoints](native-and-segment-ingestion.md). Batches retain atomic validation and project isolation. A payload `project_id` cannot select a project. Prefer a client scoped to one project so its API-resource token needs no payload selector. A token spanning projects still needs a separately issued valid project key as its selector. On a `server_only` project, that selector grants no write authority without a private API credential.
 

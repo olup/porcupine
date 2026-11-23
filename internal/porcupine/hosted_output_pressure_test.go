@@ -33,7 +33,7 @@ func TestDuckLakeS3SharedPostgresHostedOutputPressure(t *testing.T) {
 			t.Parallel()
 			ctx := t.Context()
 			cfg := hostedJourneyConfig(t, sharedPostgresDSN(t), nativeS3Fixture(t))
-			cfg.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+			cfg.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999"}
 			cfg.MetricsEnabled = true
 			cfg.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32), WebhookProjectMaxQueuedEvents: tc.projectRefs}
 			bufferCfg := acceptance.DefaultBufferConfig()
@@ -41,12 +41,9 @@ func TestDuckLakeS3SharedPostgresHostedOutputPressure(t *testing.T) {
 			s, host, _ := hostedCleanupWorkerWithBuffer(t, cfg, bufferCfg)
 			s.pipelines.Stop()
 
-			project, ingest := sharedJourneyProject(t, host.URL, defaultTenantID, tc.reason)
-			permissions := []string{"pipelines:write", "events:read"}
-			accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "pressure webhook", Projects: []string{project}, Permissions: permissions})
-			account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-			keyBody, _ := json.Marshal(ServiceKeySpec{Name: "pressure webhook key", Audience: "api", Projects: []string{project}, Permissions: permissions})
-			creator := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)["token"].(string)
+			admin := accountTestToken(t, s)
+			project, ingest := sharedJourneyProjectAs(t, host.URL, admin, defaultTenantID, tc.reason)
+			_, creator := sharedJourneyServiceKey(t, host.URL, admin, defaultTenantID, "pressure webhook", project, []string{"pipelines:write", "events:read"})
 			pipelines := "/api/v1/projects/" + project + "/pipelines"
 			for i := range 2 {
 				body, _ := json.Marshal(PipelineCreateBody{Name: fmt.Sprintf("catch-all %d", i), Kind: "webhook", Webhook: &output.WebhookPipelineSpec{

@@ -3,7 +3,6 @@ package porcupine
 import (
 	"database/sql"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 	"github.com/olup/porcupine/internal/output"
 )
 
-func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lakeapi.HostedProjectScope {
+func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, admin, project string) (lakeapi.HostedProjectScope, string) {
 	t.Helper()
 	ctx := t.Context()
 	s := worker.service
@@ -32,11 +31,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 	if err != nil {
 		t.Fatal(err)
 	}
-	permissions := []string{"pipelines:write", "events:read"}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "PITR output creator", Projects: []string{project}, Permissions: permissions})
-	account := sharedJourneyHTTP(t, worker.URL, http.MethodPost, "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "PITR output key", Audience: "api", Projects: []string{project}, Permissions: permissions})
-	creator := sharedJourneyHTTP(t, worker.URL, http.MethodPost, "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)
+	creatorID, creator := sharedJourneyServiceKey(t, worker.URL, admin, defaultTenantID, "output creator", project, []string{"pipelines:write", "events:read"})
 	rule, _ := json.Marshal(delivery.WebhookRule{DeliveryMode: "event"})
 	ref, err := store.Remote.PutImmutableEffectObject(ctx, scope, eventapi.NewID(), rule)
 	if err != nil {
@@ -55,7 +50,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 		}
 		return flusher.publisher.effects.CompareAndSwapDefinitionTx(ctx, tx, nil, output.PipelineDefinition{
 			TenantID: defaultTenantID, ProjectID: project, State: "active",
-			Target: output.PipelineTarget{ID: "pitr-webhook", Incarnation: "pitr-incarnation", RuleRevision: "pitr-rule", DestinationRevision: "pitr-destination", CreatorID: creator["id"].(string), Rule: pipelineRef(ref)},
+			Target: output.PipelineTarget{ID: "pitr-webhook", Incarnation: "pitr-incarnation", RuleRevision: "pitr-rule", DestinationRevision: "pitr-destination", CreatorID: creatorID, Rule: pipelineRef(ref)},
 		})
 	})
 	session.Release()
@@ -74,7 +69,7 @@ func pitrCreateHostedOutput(t *testing.T, worker pitrWorker, project string) lak
 		Events: []acceptance.BufferedEvent{{Input: input, AdmittedAt: now}}}); err != nil {
 		t.Fatal(err)
 	}
-	return scope
+	return scope, creator
 }
 
 func pitrReadHostedOutput(t *testing.T, worker pitrWorker, scope lakeapi.HostedProjectScope) string {

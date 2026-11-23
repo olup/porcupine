@@ -58,7 +58,7 @@ func (s *Service) getEventInputContract(_ context.Context, _ *ProjectIDInput) (*
 		Version: nativeContractVersion, LiveEndpoint: "/ingest/v1/events", LiveSchema: live,
 		HistoricalImport: true, HistoricalStatus: "stable", HistoricalSchema: history,
 		ServerManagedFields: []string{"project_id", "source_id", "event_id", "uuid", "received_at", "revision", "is_imported"},
-		Documentation:       "https://olup.github.io/porcupine/docs/native-event-contract.md",
+		Documentation:       "https://olup.github.io/porcupine/docs/reference/native-event-contract.md",
 	}}, nil
 }
 

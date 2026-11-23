@@ -17,7 +17,8 @@ import (
 func TestConfigFileStrictDecoding(t *testing.T) {
 	t.Parallel()
 	for _, body := range []string{
-		`{"unexpected":"secret-value"}`, `{"query":{"max_rowz":1}}`,
+		`{"unexpected":"secret-value"}`, `{"query":{"secret-value":1}}`,
+		`{"oauth":{"allow_legacy_keys":true},"bootstrap_token":"secret-value"}`,
 		`{"query":{"max_rows":"secret-value"}}`, `{} {}`, `null`, `[]`,
 		`{"ducklake":{"encrypted":"secret-value"}}`,
 		`{"bootstrap_token":secret-value}`, strings.Repeat("x", (1<<20)+1),
@@ -67,9 +68,14 @@ func TestConfigEnvironmentOverrideAndUnknownVariable(t *testing.T) {
 	if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || !strings.Contains(err.Error(), "PORCUPINE_DUCKLAKE_ENCRYPTED") || strings.Contains(err.Error(), "secret-value") || output.Len() != 0 {
 		t.Fatalf("invalid DuckLake encryption override: %v", err)
 	}
-	t.Setenv("PORCUPINE_QUERY_MAX_ROWZ", "private-secret")
-	if _, err := loadSettings(path, true); err == nil || !strings.Contains(err.Error(), "PORCUPINE_QUERY_MAX_ROWZ") || strings.Contains(err.Error(), "private-secret") {
-		t.Fatalf("unknown setting: %v", err)
+	for _, name := range []string{"PORCUPINE_QUERY_MAX_ROWZ", "PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "private-secret")
+			var output bytes.Buffer
+			if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || err.Error() != "unknown environment variable "+name || output.Len() != 0 {
+				t.Fatalf("unknown setting: %v", err)
+			}
+		})
 	}
 }
 
@@ -398,43 +404,5 @@ func TestListenDefaultFileAndEnvironmentPrecedence(t *testing.T) {
 	address, _, err := (settings{"PORCUPINE_ADDR": "127.0.0.1:9090"}).serviceConfig()
 	if err != nil || address != "0.0.0.0:9191" {
 		t.Fatalf("environment did not win: %q %v", address, err)
-	}
-}
-
-func TestConfigRejectsLegacyOwnerRouting(t *testing.T) {
-	t.Parallel()
-	for _, key := range []string{"worker_id", "worker_url", "routing_secret", "routing_secret_file"} {
-		t.Run(key, func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "porcupine.json")
-			const original = "{}"
-			if err := os.WriteFile(path, []byte(original), 0600); err != nil {
-				t.Fatal(err)
-			}
-			legacy := `{"shared":{"` + key + `":"private-routing-value"}}`
-			var output bytes.Buffer
-			err := run([]string{"config", "install", "--config", path}, strings.NewReader(legacy), &output)
-			if err == nil || !strings.Contains(err.Error(), "owner routing has been removed") || strings.Contains(err.Error(), "private-routing-value") {
-				t.Fatalf("invalid owner routing diagnostic: %v", err)
-			}
-			body, err := os.ReadFile(path)
-			if err != nil || string(body) != original || output.Len() != 0 {
-				t.Fatal("legacy settings were installed")
-			}
-		})
-	}
-}
-
-func TestConfigRejectsLegacyOwnerRoutingEnvironment(t *testing.T) {
-	for _, name := range []string{"PORCUPINE_WORKER_ID", "PORCUPINE_WORKER_URL", "PORCUPINE_SHARED_ROUTING_SECRET", "PORCUPINE_SHARED_ROUTING_SECRET_FILE"} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv(name, "private-routing-value")
-			path := filepath.Join(t.TempDir(), "porcupine.json")
-			var output bytes.Buffer
-			err := run([]string{"config", "check", "--config", path}, nil, &output)
-			if err == nil || !strings.Contains(err.Error(), name+" is obsolete") || strings.Contains(err.Error(), "private-routing-value") || output.Len() != 0 {
-				t.Fatalf("invalid obsolete environment diagnostic: %v", err)
-			}
-		})
 	}
 }

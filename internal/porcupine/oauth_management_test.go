@@ -235,21 +235,30 @@ func TestOAuthClientManagementDisabledDiscovery(t *testing.T) {
 
 func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
 	t.Parallel()
-	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oauth.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "http://localhost", AllowLegacyKeys: true}})
+	s, err := Open(Config{DBPath: filepath.Join(t.TempDir(), "oauth.db"), BootstrapToken: adminToken, OAuth: &OAuthConfig{Issuer: "http://localhost"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	a, _ := project(t, s)
-	b, _ := project(t, s)
-	_, metadataReader := key(t, s, []string{"management:read"}, []string{a})
-	_, manager := key(t, s, []string{"management:write", "events:read"}, []string{a})
+	admin := accountTestToken(t, s)
+	a, _ := oauthProject(t, s, admin)
+	b, _ := oauthProject(t, s, admin)
+	parent := request(t, s, "POST", "/api/v1/oauth-clients", admin, tenantTestBody(t, map[string]any{
+		"name": "Management key parent", "permissions": []string{"management:read", "management:write", "events:read"}, "projects": []string{a, b},
+	}), 201)
+	keyPath := "/api/v1/oauth-clients/" + parent["client_id"].(string) + "/api-keys"
+	managementKey := func(name string, permissions ...string) string {
+		body := ServiceKeySpec{Name: name, Audience: "api", Permissions: permissions, Projects: []string{a}}
+		return request(t, s, "POST", keyPath, admin, tenantTestBody(t, body), 201)["token"].(string)
+	}
+	metadataReader := managementKey("Metadata reader", "management:read")
+	manager := managementKey("Project manager", "management:write", "events:read")
 	input, _ := json.Marshal(map[string]any{"name": "OAuth HTTP reader", "permissions": []string{"events:read"}, "projects": []string{a}})
 	request(t, s, "POST", "/api/v1/oauth-clients", metadataReader, string(input), 403)
 	request(t, s, "POST", "/api/v1/oauth-clients", manager, string(input), 403)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/v1/oauth-clients", strings.NewReader(string(input)))
-	r.Header.Set("Authorization", "Bearer "+adminToken)
+	r.Header.Set("Authorization", "Bearer "+admin)
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 201 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("client creation failed or exposed a cacheable secret", w.Code)
@@ -262,7 +271,7 @@ func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
 	request(t, s, "POST", "/capture/", "", captureBody(created.ClientSecret, "secret-is-not-ingestion-key"), 401)
 	request(t, s, "DELETE", "/api/v1/oauth-clients/"+created.ClientID, metadataReader, "", 403)
 	hiddenBody, _ := json.Marshal(map[string]any{"name": "cross-project client", "permissions": []string{"events:read"}, "projects": []string{a, b}})
-	hidden := request(t, s, "POST", "/api/v1/oauth-clients", adminToken, string(hiddenBody), 201)
+	hidden := request(t, s, "POST", "/api/v1/oauth-clients", admin, string(hiddenBody), 201)
 	listed := request(t, s, "GET", "/api/v1/oauth-clients", metadataReader, "", 200)
 	encoded, _ := json.Marshal(listed)
 	if len(listed["oauth_clients"].([]any)) != 1 || strings.Contains(string(encoded), created.ClientSecret) || strings.Contains(string(encoded), hidden["client_id"].(string)) || strings.Contains(string(encoded), `"client_secret":`) {
@@ -284,6 +293,6 @@ func TestOAuthClientHTTPManagementLifecycle(t *testing.T) {
 		t.Fatal("invalid token response")
 	}
 	request(t, s, "GET", "/api/v1/projects/"+a+"/events", token.AccessToken, "", 200)
-	request(t, s, "DELETE", "/api/v1/oauth-clients/"+created.ClientID, adminToken, "", 204)
+	request(t, s, "DELETE", "/api/v1/oauth-clients/"+created.ClientID, admin, "", 204)
 	request(t, s, "GET", "/api/v1/projects/"+a+"/events", token.AccessToken, "", 401)
 }
