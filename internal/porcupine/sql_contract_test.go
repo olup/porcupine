@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	currentSQLContract = "testdata/sql_contract.json"
-	// No release has recorded a SQL contract yet. The first release sets this to its versioned copy.
-	releasedSQLContract = ""
+	currentSQLContract  = "testdata/sql_contract.json"
+	releasedSQLContract = "testdata/sql_contract_v0.22.0.json"
 )
 
 var updateSQLContract = flag.Bool("update-sql-contract", false, "regenerate the current SQL contract from schema discovery")
