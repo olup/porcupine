@@ -33,16 +33,13 @@ func TestSharedHostedLeaseRecoversAfterPostgresOutage(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := hostedJourneyConfig(t, pg.dsn("hosted"), fixture)
-	config.OAuth = &OAuthConfig{Issuer: "https://porcupine-lease-outage.invalid", AllowLegacyKeys: true}
+	config.OAuth = &OAuthConfig{Issuer: "https://porcupine-lease-outage.invalid"}
 	config.Pipelines = &output.PipelineConfig{Key: bytes.Repeat([]byte{1}, 32)}
 	worker, host, _ := hostedCleanupWorker(t, config)
 	worker.pipelines.Stop()
-	project, ingest := sharedJourneyProject(t, host.URL, defaultTenantID, "lease outage")
-	permissions := []string{"pipelines:write", "events:read"}
-	accountSpec, _ := json.Marshal(TenantServiceAccountSpec{Name: "outage webhook", Projects: []string{project}, Permissions: permissions})
-	account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountSpec, nil, 201)
-	keySpec, _ := json.Marshal(ServiceKeySpec{Name: "outage webhook key", Audience: "api", Projects: []string{project}, Permissions: permissions})
-	creator := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keySpec, nil, 201)["token"].(string)
+	admin := accountTestToken(t, worker)
+	project, ingest := sharedJourneyProjectAs(t, host.URL, admin, defaultTenantID, "lease outage")
+	_, creator := sharedJourneyServiceKey(t, host.URL, admin, defaultTenantID, "outage webhook", project, []string{"pipelines:write", "events:read"})
 	spec, _ := json.Marshal(PipelineCreateBody{Name: "outage webhook", Kind: "webhook", Webhook: &output.WebhookPipelineSpec{
 		Endpoint: "https://example.test/webhook", DeliveryMode: "event",
 	}})

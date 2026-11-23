@@ -18,6 +18,7 @@ func TestConfigFileStrictDecoding(t *testing.T) {
 	t.Parallel()
 	for _, body := range []string{
 		`{"unexpected":"secret-value"}`, `{"query":{"secret-value":1}}`,
+		`{"oauth":{"allow_legacy_keys":true},"bootstrap_token":"secret-value"}`,
 		`{"query":{"max_rows":"secret-value"}}`, `{} {}`, `null`, `[]`,
 		`{"ducklake":{"encrypted":"secret-value"}}`,
 		`{"bootstrap_token":secret-value}`, strings.Repeat("x", (1<<20)+1),
@@ -67,9 +68,14 @@ func TestConfigEnvironmentOverrideAndUnknownVariable(t *testing.T) {
 	if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || !strings.Contains(err.Error(), "PORCUPINE_DUCKLAKE_ENCRYPTED") || strings.Contains(err.Error(), "secret-value") || output.Len() != 0 {
 		t.Fatalf("invalid DuckLake encryption override: %v", err)
 	}
-	t.Setenv("PORCUPINE_QUERY_MAX_ROWZ", "private-secret")
-	if _, err := loadSettings(path, true); err == nil || err.Error() != "unknown environment variable PORCUPINE_QUERY_MAX_ROWZ" {
-		t.Fatalf("unknown setting: %v", err)
+	for _, name := range []string{"PORCUPINE_QUERY_MAX_ROWZ", "PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "private-secret")
+			var output bytes.Buffer
+			if err := run([]string{"config", "check", "--config", path}, nil, &output); err == nil || err.Error() != "unknown environment variable "+name || output.Len() != 0 {
+				t.Fatalf("unknown setting: %v", err)
+			}
+		})
 	}
 }
 

@@ -147,7 +147,16 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	request(t, s, "POST", "/api/v1/access-keys", projectWriter, ingestionGrant, 403)
 	request(t, s, "POST", "/api/v1/oauth-clients", projectWriter, ingestionGrant, 403)
 	request(t, s, "POST", "/api/v1/oauth-clients", admin, ingestionGrant, 403)
-	request(t, s, "POST", "/api/v1/access-keys", admin, ingestionGrant, 201)
+	for _, grant := range []map[string]any{
+		{"name": "reader", "permissions": []string{"events:read"}, "projects": []string{idA}},
+		{"name": "wildcard writer", "permissions": []string{"events:write"}, "projects": []string{"*"}},
+		{"name": "multi-project writer", "permissions": []string{"events:write"}, "projects": []string{idA, peerID}},
+	} {
+		request(t, s, "POST", "/api/v1/access-keys", operator, externalBody(t, grant), 400)
+	}
+	ingestionKey := request(t, s, "POST", "/api/v1/access-keys", admin, ingestionGrant, 201)["token"].(string)
+	request(t, s, "GET", "/api/v1/projects", ingestionKey, "", 401)
+	request(t, s, "POST", "/mcp", ingestionKey, "", 401)
 	client := request(t, s, "POST", "/api/v1/tenants/"+a+"/service-accounts", admin, externalBody(t, map[string]any{"name": "Team", "permissions": []string{"events:read", "events:write", "pipelines:write"}, "projects": []string{idA}}), 201)
 	if client["client_secret"] != nil {
 		t.Fatal("unusable builtin OAuth secret exposed in external mode")
@@ -177,6 +186,7 @@ func TestExternalAuthRoutesTenantIsolationAndMachineKeys(t *testing.T) {
 	// An external-AS outage never enters the public SDK acceptance path.
 	f.broken.Store(true)
 	request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"event":"click","distinct_id":"person"}`, pa["ingest_token"]), 200)
+	request(t, s, "POST", "/capture/", "", captureBody(ingestionKey, "external-ingestion-key"), 200)
 	var humans int
 	if e := s.control.QueryRow(`SELECT count(*) FROM email_humans`).Scan(&humans); e != nil || humans != 0 {
 		t.Fatal("external mode persisted human account", e)

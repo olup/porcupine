@@ -21,7 +21,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | `queue` | `max_events`, `max_bytes`, and `receipt_retention`. Use `"0"` to keep local receipts (the default) or a duration such as `"720h"` for optional pruning. Standalone also supports `project_max_events` and `project_max_bytes`. [Queue limits](reliability.md#acceptance-and-queue-limits) |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `usage` | `retention_days` (365), `max_snapshots` (16), `max_snapshot_bytes` (134217728): [numerical history and report capacity](usage.md) |
-| `oauth` | `issuer`, `token_lifetime_seconds`, `allow_legacy_keys`, `restore_identity_bootstrap` |
+| `oauth` | `issuer`, `token_lifetime_seconds`, `restore_identity_bootstrap`. See [OAuth configuration](oauth.md#operator-configuration). |
 | `auth` | `mode` defaults to `builtin`; `external` selects a resource server with `public_url` and the explicit issuer, JWKS, audiences, algorithms, token types, clock tolerance, and token lifetime in `auth.external`. See the [external contract](external-auth.md). |
 | `email` | `admin_email`, `host`, `port`, `tls`, `from`, `username`, `password_file` |
 | `oidc` | `issuer`, `client_id`, and either `client_secret` or `client_secret_file` |

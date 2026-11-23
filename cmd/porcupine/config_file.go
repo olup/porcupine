@@ -74,7 +74,6 @@ type FileConfig struct {
 	OAuth struct {
 		Issuer                   string `json:"issuer,omitempty" env:"PORCUPINE_OAUTH_ISSUER"`
 		TokenLifetimeSeconds     *int   `json:"token_lifetime_seconds,omitempty" env:"PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS"`
-		AllowLegacyKeys          *bool  `json:"allow_legacy_keys,omitempty" env:"PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"`
 		RestoreIdentityBootstrap *bool  `json:"restore_identity_bootstrap,omitempty" env:"PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP"`
 	} `json:"oauth"`
 	Auth struct {

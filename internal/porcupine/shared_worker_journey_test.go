@@ -63,8 +63,13 @@ func sharedJourneyHTTP(t *testing.T, origin, method, path, credential string, bo
 
 func sharedJourneyProject(t *testing.T, origin, tenant, name string) (string, string) {
 	t.Helper()
+	return sharedJourneyProjectAs(t, origin, adminToken, tenant, name)
+}
+
+func sharedJourneyProjectAs(t *testing.T, origin, admin, tenant, name string) (string, string) {
+	t.Helper()
 	raw, _ := json.Marshal(map[string]any{"name": name, "tenant_id": tenant})
-	created := sharedJourneyHTTP(t, origin, "POST", "/api/v1/projects", adminToken, raw, nil, 201)
+	created := sharedJourneyHTTP(t, origin, "POST", "/api/v1/projects", admin, raw, nil, 201)
 	return created["project"].(map[string]any)["id"].(string), created["ingest_token"].(string)
 }
 
@@ -73,6 +78,17 @@ func sharedJourneyKey(t *testing.T, origin, project string, permissions []string
 	raw, _ := json.Marshal(map[string]any{"name": "shared journey reader", "permissions": permissions, "projects": []string{project}})
 	created := sharedJourneyHTTP(t, origin, "POST", "/api/v1/access-keys", adminToken, raw, nil, 201)
 	return created["id"].(string), created["token"].(string)
+}
+
+func sharedJourneyServiceKey(t *testing.T, origin, admin, tenant, name, project string, permissions []string) (string, string) {
+	t.Helper()
+	projects := []string{project}
+	accounts := "/api/v1/tenants/" + tenant + "/service-accounts"
+	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: name, Projects: projects, Permissions: permissions})
+	account := sharedJourneyHTTP(t, origin, "POST", accounts, admin, accountBody, nil, 201)
+	keyBody, _ := json.Marshal(TenantServiceKeySpec{Name: name + " key", Audience: "api", Projects: projects, Permissions: permissions})
+	key := sharedJourneyHTTP(t, origin, "POST", accounts+"/"+account["client_id"].(string)+"/api-keys", admin, keyBody, nil, 201)
+	return key["id"].(string), key["token"].(string)
 }
 
 func sharedJourneyNative(t *testing.T, origin, token, body string, want int) map[string]any {

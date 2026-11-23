@@ -19,11 +19,10 @@ type EmailConfig struct {
 type OIDCConfig struct{ Issuer, ClientID, ClientSecret string }
 
 // OAuthConfig is operator-controlled authorization configuration.
-// A nil configuration retains legacy key authentication for migration/offline use.
+// A nil configuration leaves builtin OAuth disabled.
 type OAuthConfig struct {
 	Issuer                         string
 	AccessTokenLifetimeSeconds     int
-	AllowLegacyKeys                bool
 	AllowRestoredIdentityBootstrap bool
 	OIDC                           *OIDCConfig
 	Email                          *EmailConfig

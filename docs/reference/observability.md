@@ -219,9 +219,9 @@ Create a dedicated project. Issue two [API-audience service keys](service-keys.m
 scoped to that project. Grant the writer `events:write` and the reader
 `events:read`.
 
-On a builtin instance with OAuth unconfigured, use a `mixed` project. An
-instance administrator can issue separate project-scoped bearer keys with
-`create-access-key`. [OAuth and legacy keys](oauth.md#operator-configuration)
+On a builtin standalone instance without OAuth, use a `mixed` project. An
+instance administrator can issue separate project-scoped keys with
+`create-access-key`. [Authentication and scope](management-api.md#authentication-and-scope)
 
 ```sh
 porcupine create-access-key --body '{"name":"Visibility probe writer","permissions":["events:write"],"projects":["PROJECT_ID"]}'

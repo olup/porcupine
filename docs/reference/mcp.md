@@ -22,9 +22,9 @@ embedded images from `site/assets/favicon.svg`, install `rsvg-convert` and run
 | --- | --- |
 | Local endpoint | `http://127.0.0.1:8080/mcp` |
 | Transport | Streamable HTTP, stateless, JSON responses |
-| Authentication header | `Authorization: Bearer MCP_ACCESS_TOKEN` for the MCP resource |
+| Authentication header | `Authorization: Bearer CREDENTIAL` |
 | Permissions | Same project and operation permissions as the native API |
-| Supported client setup | Audience-scoped service keys, builtin OAuth, or external issuer tokens |
+| Supported client setup | Builtin OAuth, MCP-audience service keys, external issuer tokens, or static access keys on a builtin standalone server without OAuth |
 
 For email OTP, Codex setup, and the optional deployment admin mailbox, see [Connect your team](connect-your-team.md). An operator configures each hosted client once. For upstream OIDC, see the [OIDC setup](mcp-interactive-oauth.md).
 
@@ -34,7 +34,11 @@ Access tokens expire after 15 minutes by default. Machine clients repeat the tok
 
 In [external mode](external-auth.md#connect-tools), send a compatible access token from the configured issuer with the MCP audience. Native MCP service keys remain available.
 
-Unauthorized requests include the discovery URL `ISSUER/.well-known/oauth-protected-resource/mcp`. [OAuth configuration](oauth.md) controls the issuer and optional legacy-key migration. Public browser write keys authorize ingestion only.
+With a builtin or external issuer, `401` responses include the server's
+`/.well-known/oauth-protected-resource/mcp` discovery URL in `WWW-Authenticate`.
+A builtin standalone server without OAuth accepts a scoped static access key
+in the Bearer header.
+Public browser write keys authorize ingestion only.
 
 The endpoint rejects cross-origin browser requests. When a reverse proxy forwards to a loopback listener, set its upstream Host header to the loopback host. Clients connect to the public HTTPS URL.
 

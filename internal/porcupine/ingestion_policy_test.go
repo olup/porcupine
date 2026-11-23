@@ -11,111 +11,106 @@ import (
 	eventapi "github.com/olup/porcupine/internal/event"
 )
 
-func TestServerOnlyProjectRequiresActualOAuthOnEveryCaptureRoute(t *testing.T) {
+func TestServerOnlyProjectOAuthCapturePolicy(t *testing.T) {
 	t.Parallel()
-	for _, legacy := range []bool{false, true} {
-		t.Run(fmt.Sprintf("allow_legacy_%t", legacy), func(t *testing.T) {
-			f := newOAuthIntegration(t)
-			f.s.oauth.config.AllowLegacyKeys = legacy
-			admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
-			var created map[string]any
-			f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]string{"name": "Confidential server events", "ingestion_mode": "server_only"}, 201, &created)
-			project := created["project"].(map[string]any)
-			id := project["id"].(string)
-			if project["ingestion_mode"] != ingestionServerOnly {
-				t.Fatal("server ingestion mode absent from project response")
-			}
-			if _, present := created["ingest_token"]; present {
-				t.Fatal("server-only project minted a public ingestion key")
-			}
-			clientKeyPath := "/api/v1/projects/" + id + "/client-ingestion-key"
-			f.call(t, "GET", clientKeyPath, admin.AccessToken, nil, 404, nil)
-			f.call(t, "POST", clientKeyPath, admin.AccessToken, nil, 409, nil)
-			var credentials int
-			if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
-				t.Fatal("server-only creation stored an ingestion credential")
-			}
-			var listed ProjectList
-			f.call(t, "GET", "/api/v1/projects", admin.AccessToken, nil, 200, &listed)
-			if len(listed.Projects) != 1 || listed.Projects[0].IngestionMode != ingestionServerOnly {
-				t.Fatal("project listing lost ingestion policy")
-			}
-			writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id})
-			writeToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.apiResource)
-			mcpToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.mcpResource)
-			reader := f.createClient(t, admin.AccessToken, []string{"events:read"}, []string{id})
-			readToken := f.token(t, reader.ClientID, reader.ClientSecret, f.s.resources.apiResource)
-			var oldKey AccessKeyCreated
-			f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "Legacy project selector", "permissions": []string{"events:write"}, "projects": []string{id}}, 201, &oldKey)
-			event := func(uuid string) map[string]any {
-				return map[string]any{"uuid": uuid, "event": "confidential server event", "distinct_id": "application-user", "properties": map[string]any{"unicode": "東京 🦔"}}
-			}
-			for index, route := range []string{"/capture/", "/batch/", "/i/v0/e/", "/e/"} {
-				one := event(fmt.Sprintf("route-%d", index))
-				var body any = one
-				if route == "/batch/" {
-					body = map[string]any{"batch": []any{one}}
-				}
-				if route == "/i/v0/e/" {
-					body = []any{one}
-				}
-				publicBody := map[string]any{"api_key": oldKey.Token, "batch": []any{one}}
-				f.call(t, "POST", route, "", publicBody, 401, nil)
-				f.call(t, "POST", route, oldKey.Token, body, 401, nil)
-				f.call(t, "POST", route, "pc_at_not-a-real-token", publicBody, 401, nil)
-				f.call(t, "POST", route, writer.ClientSecret, publicBody, 401, nil)
-				f.call(t, "POST", route, mcpToken.AccessToken, body, 401, nil)
-				f.call(t, "POST", route, readToken.AccessToken, body, 403, nil)
-				if count := eventCount(t, f.s); count != index {
-					t.Fatal("rejected server-only request stored events")
-				}
-				f.call(t, "POST", route, writeToken.AccessToken, body, 200, nil)
-			}
-			before := eventCount(t, f.s)
-			invalid := event("invalid-batch-row")
-			invalid["distinct_id"] = ""
-			f.call(t, "POST", "/batch/", writeToken.AccessToken, map[string]any{"batch": []any{event("valid-atomic-row"), invalid}}, 400, nil)
-			if eventCount(t, f.s) != before {
-				t.Fatal("invalid server-only batch partially committed")
-			}
-			other, otherPublic := f.project(t, admin.AccessToken)
-			wrong := event("wrong-project-selector")
-			wrong["api_key"] = otherPublic
-			f.call(t, "POST", "/capture/", writeToken.AccessToken, wrong, 401, nil)
-			conflict := event("conflicting-batch-token")
-			conflict["api_key"] = otherPublic
-			f.call(t, "POST", "/batch/", writeToken.AccessToken, map[string]any{"api_key": oldKey.Token, "batch": []any{event("first"), conflict}}, 400, nil)
-			if eventCount(t, f.s) != before {
-				t.Fatal("cross-project server-only request stored events")
-			}
-			multi := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id, other})
-			multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.resources.apiResource)
-			f.call(t, "POST", "/capture/", multiToken.AccessToken, event("ambiguous-server-project"), 403, nil)
-			selected := event("oauth-selected-server-project")
-			selected["api_key"] = oldKey.Token
-			f.call(t, "POST", "/capture/", multiToken.AccessToken, selected, 200, nil)
-			// A payload project ID never changes the authenticated project's scope.
-			spoof := event("body-project-ignored")
-			spoof["project_id"] = other
-			f.call(t, "POST", "/capture/", writeToken.AccessToken, spoof, 200, nil)
-			var savedProject string
-			if err := f.s.db.QueryRow(`SELECT project_id FROM events WHERE uuid='body-project-ignored'`).Scan(&savedProject); err != nil || savedProject != id {
-				t.Fatal("payload overrode authenticated project")
-			}
-			var serverEvents EventList
-			f.call(t, "GET", "/api/v1/projects/"+id+"/events", readToken.AccessToken, nil, 200, &serverEvents)
-			if len(serverEvents.Events) != 6 {
-				t.Fatal("wrong number of authenticated server events")
-			}
-			for _, stored := range serverEvents.Events {
-				if stored.DistinctID != "application-user" {
-					t.Fatal("OAuth principal replaced visitor distinct ID")
-				}
-			}
-			f.now.Add(int64(61 * time.Second))
-			f.call(t, "POST", "/capture/", writeToken.AccessToken, selected, 401, nil)
-		})
+	f := newOAuthIntegration(t)
+	admin := f.token(t, "bootstrap", adminToken, f.s.resources.apiResource)
+	var created map[string]any
+	f.call(t, "POST", "/api/v1/projects", admin.AccessToken, map[string]string{"name": "Confidential server events", "ingestion_mode": "server_only"}, 201, &created)
+	project := created["project"].(map[string]any)
+	id := project["id"].(string)
+	if project["ingestion_mode"] != ingestionServerOnly {
+		t.Fatal("server ingestion mode absent from project response")
 	}
+	if _, present := created["ingest_token"]; present {
+		t.Fatal("server-only project minted a public ingestion key")
+	}
+	clientKeyPath := "/api/v1/projects/" + id + "/client-ingestion-key"
+	f.call(t, "GET", clientKeyPath, admin.AccessToken, nil, 404, nil)
+	f.call(t, "POST", clientKeyPath, admin.AccessToken, nil, 409, nil)
+	var credentials int
+	if err := f.s.control.QueryRow(`SELECT count(*) FROM access_keys,json_each(access_keys.projects) WHERE json_each.value=?`, id).Scan(&credentials); err != nil || credentials != 0 {
+		t.Fatal("server-only creation stored an ingestion credential")
+	}
+	var listed ProjectList
+	f.call(t, "GET", "/api/v1/projects", admin.AccessToken, nil, 200, &listed)
+	if len(listed.Projects) != 1 || listed.Projects[0].IngestionMode != ingestionServerOnly {
+		t.Fatal("project listing lost ingestion policy")
+	}
+	writer := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id})
+	writeToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.apiResource)
+	mcpToken := f.token(t, writer.ClientID, writer.ClientSecret, f.s.resources.mcpResource)
+	reader := f.createClient(t, admin.AccessToken, []string{"events:read"}, []string{id})
+	readToken := f.token(t, reader.ClientID, reader.ClientSecret, f.s.resources.apiResource)
+	var selector AccessKeyCreated
+	f.call(t, "POST", "/api/v1/access-keys", admin.AccessToken, map[string]any{"name": "Project selector", "permissions": []string{"events:write"}, "projects": []string{id}}, 201, &selector)
+	event := func(uuid string) map[string]any {
+		return map[string]any{"uuid": uuid, "event": "confidential server event", "distinct_id": "application-user", "properties": map[string]any{"unicode": "東京 🦔"}}
+	}
+	for index, route := range []string{"/capture/", "/batch/", "/i/v0/e/", "/e/"} {
+		one := event(fmt.Sprintf("route-%d", index))
+		var body any = one
+		if route == "/batch/" {
+			body = map[string]any{"batch": []any{one}}
+		}
+		if route == "/i/v0/e/" {
+			body = []any{one}
+		}
+		publicBody := map[string]any{"api_key": selector.Token, "batch": []any{one}}
+		f.call(t, "POST", route, "", publicBody, 401, nil)
+		f.call(t, "POST", route, selector.Token, body, 401, nil)
+		f.call(t, "POST", route, "pc_at_not-a-real-token", publicBody, 401, nil)
+		f.call(t, "POST", route, writer.ClientSecret, publicBody, 401, nil)
+		f.call(t, "POST", route, mcpToken.AccessToken, body, 401, nil)
+		f.call(t, "POST", route, readToken.AccessToken, body, 403, nil)
+		if count := eventCount(t, f.s); count != index {
+			t.Fatal("rejected server-only request stored events")
+		}
+		f.call(t, "POST", route, writeToken.AccessToken, body, 200, nil)
+	}
+	before := eventCount(t, f.s)
+	invalid := event("invalid-batch-row")
+	invalid["distinct_id"] = ""
+	f.call(t, "POST", "/batch/", writeToken.AccessToken, map[string]any{"batch": []any{event("valid-atomic-row"), invalid}}, 400, nil)
+	if eventCount(t, f.s) != before {
+		t.Fatal("invalid server-only batch partially committed")
+	}
+	other, otherPublic := f.project(t, admin.AccessToken)
+	wrong := event("wrong-project-selector")
+	wrong["api_key"] = otherPublic
+	f.call(t, "POST", "/capture/", writeToken.AccessToken, wrong, 401, nil)
+	conflict := event("conflicting-batch-token")
+	conflict["api_key"] = otherPublic
+	f.call(t, "POST", "/batch/", writeToken.AccessToken, map[string]any{"api_key": selector.Token, "batch": []any{event("first"), conflict}}, 400, nil)
+	if eventCount(t, f.s) != before {
+		t.Fatal("cross-project server-only request stored events")
+	}
+	multi := f.createClient(t, admin.AccessToken, []string{"events:write"}, []string{id, other})
+	multiToken := f.token(t, multi.ClientID, multi.ClientSecret, f.s.resources.apiResource)
+	f.call(t, "POST", "/capture/", multiToken.AccessToken, event("ambiguous-server-project"), 403, nil)
+	selected := event("oauth-selected-server-project")
+	selected["api_key"] = selector.Token
+	f.call(t, "POST", "/capture/", multiToken.AccessToken, selected, 200, nil)
+	// A payload project ID never changes the authenticated project's scope.
+	spoof := event("body-project-ignored")
+	spoof["project_id"] = other
+	f.call(t, "POST", "/capture/", writeToken.AccessToken, spoof, 200, nil)
+	var savedProject string
+	if err := f.s.db.QueryRow(`SELECT project_id FROM events WHERE uuid='body-project-ignored'`).Scan(&savedProject); err != nil || savedProject != id {
+		t.Fatal("payload overrode authenticated project")
+	}
+	var serverEvents EventList
+	f.call(t, "GET", "/api/v1/projects/"+id+"/events", readToken.AccessToken, nil, 200, &serverEvents)
+	if len(serverEvents.Events) != 6 {
+		t.Fatal("wrong number of authenticated server events")
+	}
+	for _, stored := range serverEvents.Events {
+		if stored.DistinctID != "application-user" {
+			t.Fatal("OAuth principal replaced visitor distinct ID")
+		}
+	}
+	f.now.Add(int64(61 * time.Second))
+	f.call(t, "POST", "/capture/", writeToken.AccessToken, selected, 401, nil)
 }
 
 func TestProjectIngestionModeDefaultsAndConfiguration(t *testing.T) {

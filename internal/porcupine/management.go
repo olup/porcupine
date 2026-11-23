@@ -282,7 +282,7 @@ func (s *Service) registerManagement(m *http.ServeMux) huma.API {
 	huma.Register(api, op("rename-project", "PATCH", "/api/v1/projects/{id}", "Set a project's display name, preserving its ID, data and credentials", auth.OperationAccess{Permission: "management:write", ProjectParameter: "id"}, 200), s.managementRenameProject)
 	huma.Register(api, op("delete-project", "DELETE", "/api/v1/projects/{id}", "Permanently delete a project, its analytics data and its Porcupine-managed exports. Retry the same ID if cleanup is interrupted.", auth.OperationAccess{Permission: tenantAdminScope, ProjectParameter: "id", TenantAdmin: true}, 204), s.managementDeleteProject)
 	huma.Register(api, op("list-access-keys", "GET", "/api/v1/access-keys", "List in-scope key metadata without secrets", auth.OperationAccess{Permission: "management:read"}, 200), s.managementListKeys)
-	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Issue a scoped key as an instance administrator and return its secret once. Tenant administrators can issue single-project ingestion keys.", auth.OperationAccess{Permission: "management:write", TenantAdmin: true}, 201), s.managementCreateKey)
+	huma.Register(api, op("create-access-key", "POST", "/api/v1/access-keys", "Issue a scoped key and return its secret once. With OAuth or external auth, instance and tenant administrators can issue only single-project ingestion keys.", auth.OperationAccess{Permission: "management:write", TenantAdmin: true}, 201), s.managementCreateKey)
 	huma.Register(api, op("revoke-access-key", "DELETE", "/api/v1/access-keys/{id}", "Revoke an owned team key; operators may revoke global keys and the last independent operator is protected", auth.OperationAccess{Permission: tenantAdminScope, TenantAdmin: true}, 204), s.managementRevokeKey)
 	huma.Register(api, op("list-project-events", "GET", "/api/v1/projects/{id}/events", "Inspect recent events in the configured storage profile; use query-events for analytical history", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.managementListEvents)
 	huma.Register(api, op("get-event-schema", "GET", "/api/v1/projects/{id}/schema", "Discover the project SQL schema, query limits and delivery status", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200), s.analyticsSchema)
@@ -547,7 +547,7 @@ func (s *Service) managementCreateKey(ctx context.Context, input *AccessKeyCreat
 		return nil, err
 	}
 	body.SourceID = sourceID
-	if s.resources != nil && (s.oauth == nil || !s.oauth.config.AllowLegacyKeys) && !singleProjectWriter {
+	if s.resources != nil && !singleProjectWriter {
 		return nil, apierr.New(400, "use create-oauth-client for service access; keys are public single-project ingestion credentials")
 	}
 	id, raw := eventapi.NewID(), token()
@@ -635,9 +635,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	if slices.Contains(granted, "instance:admin") && !s.externalAuthEnabled() {
 		// Human grants, interactive-only client registrations, and service keys are
 		// dependent credentials. Keep an independent recovery administrator.
-		static := s.oauth == nil || s.oauth.config.AllowLegacyKeys
-		replacement, replacementErr := independentAdminAvailable(ctx, tx, input.ID, s.oauth != nil, static)
-		err = replacementErr
+		replacement, err := independentAdminAvailable(ctx, tx, input.ID, s.oauth != nil)
 		if err != nil {
 			return nil, apierr.New(500, "storage error")
 		}
@@ -654,7 +652,7 @@ func (s *Service) managementRevokeKey(ctx context.Context, input *AccessKeyDelet
 	return nil, nil
 }
 
-func independentAdminAvailable(ctx context.Context, tx *sql.Tx, excluded string, oauth, static bool) (bool, error) {
+func independentAdminAvailable(ctx context.Context, tx *sql.Tx, excluded string, oauthEnabled bool) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT k.id,k.permissions,coalesce(c.grant_types,''),
 k.id=coalesce((SELECT value FROM metadata WHERE key='oauth_bootstrap_id'),''),
 EXISTS(SELECT 1 FROM oauth_clients WHERE client_id=k.id)
@@ -681,7 +679,7 @@ FROM access_keys k LEFT JOIN oauth_clients c ON c.client_id=k.id WHERE k.id<>$1 
 				return false, err
 			}
 		}
-		if slices.Contains(parsedPermissions, "instance:admin") && (bootstrap || oauth && slices.Contains(parsedGrants, "client_credentials") || static && !dependent) {
+		if slices.Contains(parsedPermissions, "instance:admin") && (bootstrap || oauthEnabled && slices.Contains(parsedGrants, "client_credentials") || !oauthEnabled && !dependent) {
 			return true, nil
 		}
 	}

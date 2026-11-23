@@ -36,7 +36,7 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 			},
 			Pipelines: &output.PipelineConfig{Key: bytes.Repeat([]byte{2}, 32), AllowedS3Endpoints: []string{remote.URL},
 				ExportLimits: output.ExportConfig{MaxExecutionSeconds: 45}},
-			OAuth: &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true},
+			OAuth: &OAuthConfig{Issuer: "http://127.0.0.1:42999"},
 		}
 		s, err := openHostedProfile(cfg, acceptance.DefaultBufferConfig())
 		if err != nil {
@@ -53,19 +53,17 @@ func TestDuckLakeS3SharedPostgresHostedScheduledPipeline(t *testing.T) {
 	}
 	a := openWorker()
 	b := openWorker()
-	scope, _ := project(t, a)
-	other, _ := project(t, a)
 	host := httptest.NewServer(a.Handler())
 	t.Cleanup(host.Close)
-	status := sharedJourneyHTTP(t, host.URL, "GET", "/api/v1/status", adminToken, nil, nil, 200)
+	admin := accountTestToken(t, a)
+	scope, _ := sharedJourneyProjectAs(t, host.URL, admin, defaultTenantID, "scheduled report")
+	other, _ := sharedJourneyProjectAs(t, host.URL, admin, defaultTenantID, "other project")
+	status := sharedJourneyHTTP(t, host.URL, "GET", "/api/v1/status", admin, nil, nil, 200)
 	if status["configuration"].(map[string]any)["s3_query_pipelines"] != true {
 		t.Fatal("guarded hosted worker did not advertise scheduled S3")
 	}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "scheduled creator", Projects: []string{scope}, Permissions: []string{"pipelines:write", "events:read"}})
-	account := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "scheduled key", Audience: "api", Projects: []string{scope}, Permissions: []string{"pipelines:write", "events:read"}})
-	credential := sharedJourneyHTTP(t, host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)
-	creator := auth.Principal{ID: credential["id"].(string)}
+	creatorID, _ := sharedJourneyServiceKey(t, host.URL, admin, defaultTenantID, "scheduled creator", scope, []string{"pipelines:write", "events:read"})
+	creator := auth.Principal{ID: creatorID}
 	start := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
 	flush := func(s *Service, project, name string, at time.Time) {
 		t.Helper()

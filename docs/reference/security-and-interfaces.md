@@ -18,10 +18,9 @@ authority intersects token scope and issued projects with current permissions
 and projects. A later expansion of parent grants cannot expand an old token.
 Client revocation invalidates subsequent uses of its opaque access tokens. Interactive MCP uses rotating refresh tokens and per-consent grants with either login method.
 
-A configured issuer rejects legacy API and MCP Bearer keys by default. Explicit
-legacy allowance supports migration. Without OAuth configuration, legacy mode
-remains available for offline use. Public single-project PostHog ingestion keys
-stay separate, write-only browser credentials and are not OAuth clients.
+On a builtin standalone server without OAuth, static access keys authenticate
+HTTP and MCP Bearer requests. Public PostHog ingestion keys authorize capture
+for one `mixed` project with or without OAuth.
 
 Huma provides typed management requests, validation, and generated OpenAPI.
 The control database stores client credentials, token hashes, memberships, and project grants. It uses local SQLite by default or PostgreSQL in hosted. Explicit permission checks run inside the Go process; there is no external policy server.

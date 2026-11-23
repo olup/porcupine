@@ -122,7 +122,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	fixture.storage.Endpoint = proxy.URL
 	fixture.storage.CACertFile = ""
 
-	a, b := sharedNativeJourneyPair(t, fixture, func(c *Config) { c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true} })
+	a, b := sharedNativeJourneyPair(t, fixture, func(c *Config) { c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999"} })
 	for _, n := range []*sharedJourneyNode{a, b} {
 		if n.service.pipelines == nil || n.service.pipelines.Enabled() {
 			t.Fatal("expected hosted pipeline jobs with pipelines disabled")
@@ -135,7 +135,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		<-n.service.usage.done
 	}
 
-	project, ingest := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted flush")
+	admin := accountTestToken(t, a.service)
+	project, ingest := sharedJourneyProjectAs(t, a.host.URL, admin, defaultTenantID, "hosted flush")
 	sa := a.service.lake
 	sb := b.service.lake
 	key := lakeapi.ProjectWriteKey{SourceID: sa.Config.SharedSourceID, ProjectID: project}
@@ -231,9 +232,9 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 	}
 
 	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "pipeline creator", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
-	account := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
+	account := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts", admin, accountBody, nil, 201)
 	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "pipeline native credential", Audience: "api", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
-	nativeKey := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)
+	nativeKey := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", admin, keyBody, nil, 201)
 	creator := nativeKey["id"].(string)
 
 	// The same authority adapter must reject parent/key revocation, grant
@@ -754,7 +755,7 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal("paused targets received new jobs", n, err)
 	}
 
-	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, limits)
+	assertFirstImportIgnoresWebhookOvershoot(t, fa, a, admin, limits)
 
 	if err = fb.FlushLive(t.Context(), body); err != nil {
 		t.Fatal("duplicate at full quota", err)
@@ -763,8 +764,8 @@ func runHostedFlusherFixture(t *testing.T, versioned bool) {
 		t.Fatal(err)
 	}
 	tenantBody, _ := json.Marshal(map[string]string{"name": "Other progressing tenant"})
-	otherTenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", adminToken, tenantBody, nil, 201)["tenant"].(map[string]any)["id"].(string)
-	otherProject, _ := sharedJourneyProject(t, a.host.URL, otherTenant, "other bounded tenant")
+	otherTenant := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants", admin, tenantBody, nil, 201)["tenant"].(map[string]any)["id"].(string)
+	otherProject, _ := sharedJourneyProjectAs(t, a.host.URL, admin, otherTenant, "other bounded tenant")
 	otherKey := lakeapi.ProjectWriteKey{SourceID: key.SourceID, ProjectID: otherProject}
 	if _, err = sa.InitializeHostedProject(t.Context(), otherKey); err != nil {
 		t.Fatal(err)

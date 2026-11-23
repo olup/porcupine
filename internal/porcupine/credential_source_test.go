@@ -45,22 +45,23 @@ func TestCredentialSourceIDValidation(t *testing.T) {
 func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 	t.Parallel()
 	s, _ := oauthProtocolService(t)
-	projectID, _ := project(t, s)
+	admin := accountTestToken(t, s)
+	projectID, _ := oauthProject(t, s, admin)
 	sourceID := "Orders.Backend:v1"
 	body := sourceCredentialBody("native key", sourceID, []string{"events:write"}, []string{projectID})
-	first := request(t, s, "POST", "/api/v1/access-keys", adminToken, body, 201)
-	second := request(t, s, "POST", "/api/v1/access-keys", adminToken, body, 201)
+	first := request(t, s, "POST", "/api/v1/access-keys", admin, body, 201)
+	second := request(t, s, "POST", "/api/v1/access-keys", admin, body, 201)
 	for _, created := range []map[string]any{first, second} {
 		if created["source_id"] != sourceID {
 			t.Fatal("missing source metadata", created)
 		}
-		a, err := s.authenticate(context.Background(), created["token"].(string))
+		a, err := s.authenticateIngestionKey(context.Background(), created["token"].(string))
 		if err != nil || a.SourceID != sourceID {
 			t.Fatal("key binding not authenticated", a, err)
 		}
 	}
 	oauthBody := sourceCredentialBody("segment writer", sourceID, []string{"events:write"}, []string{projectID})
-	client := request(t, s, "POST", "/api/v1/oauth-clients", adminToken, oauthBody, 201)
+	client := request(t, s, "POST", "/api/v1/oauth-clients", admin, oauthBody, 201)
 	if client["source_id"] != sourceID {
 		t.Fatal("missing OAuth binding metadata", client)
 	}
@@ -73,20 +74,20 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 	if err != nil || tokenActor.SourceID != sourceID || len(tokenActor.Projects) != 1 || tokenActor.Projects[0] != projectID {
 		t.Fatal("OAuth access token lost bound source/project", tokenActor, err)
 	}
-	keys := request(t, s, "GET", "/api/v1/access-keys", adminToken, "", 200)
-	clients := request(t, s, "GET", "/api/v1/oauth-clients", adminToken, "", 200)
+	keys := request(t, s, "GET", "/api/v1/access-keys", admin, "", 200)
+	clients := request(t, s, "GET", "/api/v1/oauth-clients", admin, "", 200)
 	for _, listing := range []map[string]any{keys, clients} {
 		encoded, _ := json.Marshal(listing)
 		if !strings.Contains(string(encoded), sourceID) || strings.Contains(string(encoded), first["token"].(string)) || strings.Contains(string(encoded), client["client_secret"].(string)) {
 			t.Fatal("binding listing missing or secret leak")
 		}
 	}
-	blank := request(t, s, "POST", "/api/v1/access-keys", adminToken, sourceCredentialBody("default", "", []string{"events:write"}, []string{projectID}), 201)
-	defaultActor, err := s.authenticate(context.Background(), blank["token"].(string))
+	blank := request(t, s, "POST", "/api/v1/access-keys", admin, sourceCredentialBody("default", "", []string{"events:write"}, []string{projectID}), 201)
+	defaultActor, err := s.authenticateIngestionKey(context.Background(), blank["token"].(string))
 	if err != nil || defaultActor.SourceID != "" {
 		t.Fatal("default source changed", err)
 	}
-	request(t, s, "DELETE", "/api/v1/oauth-clients/"+client["client_id"].(string), adminToken, "", 204)
+	request(t, s, "DELETE", "/api/v1/oauth-clients/"+client["client_id"].(string), admin, "", 204)
 	if _, err = s.authenticateOAuthToken(context.Background(), issued["access_token"].(string), s.resources.apiResource); err == nil {
 		t.Fatal("revoked source credential still authenticates")
 	}
@@ -95,22 +96,25 @@ func TestCredentialSourceKeysAndOAuthShareAuthenticatedBinding(t *testing.T) {
 func TestCredentialSourceGrantAndProvisioningBoundaries(t *testing.T) {
 	t.Parallel()
 	s, _ := oauthProtocolService(t)
-	projectID, _ := project(t, s)
-	other, _ := project(t, s)
+	admin := accountTestToken(t, s)
+	projectID, _ := oauthProject(t, s, admin)
+	other, _ := oauthProject(t, s, admin)
 	for _, endpoint := range []string{"/api/v1/access-keys", "/api/v1/oauth-clients"} {
 		for _, grant := range []struct{ permissions, projects []string }{
 			{[]string{"events:read"}, []string{projectID}},
 			{[]string{"events:write"}, []string{"*"}},
 			{[]string{"events:write"}, []string{projectID, other}},
 		} {
-			request(t, s, "POST", endpoint, adminToken, sourceCredentialBody("invalid", "producer", grant.permissions, grant.projects), 400)
+			request(t, s, "POST", endpoint, admin, sourceCredentialBody("invalid", "producer", grant.permissions, grant.projects), 400)
 		}
-		request(t, s, "POST", endpoint, adminToken, sourceCredentialBody("invalid", "bad/source", []string{"events:write"}, []string{projectID}), 422)
-		request(t, s, "POST", endpoint, adminToken, sourceCredentialBody("reserved", "posthog", []string{"events:write"}, []string{projectID}), 400)
+		request(t, s, "POST", endpoint, admin, sourceCredentialBody("invalid", "bad/source", []string{"events:write"}, []string{projectID}), 422)
+		request(t, s, "POST", endpoint, admin, sourceCredentialBody("reserved", "posthog", []string{"events:write"}, []string{projectID}), 400)
 	}
-	manager := request(t, s, "POST", "/api/v1/access-keys", adminToken, sourceCredentialBody("bound manager", "producer", []string{"management:write", "events:write", "events:read"}, []string{projectID}), 201)["token"].(string)
+	permissions := []string{"management:write", "events:write", "events:read"}
+	manager := request(t, s, "POST", "/api/v1/oauth-clients", admin, sourceCredentialBody("bound manager", "producer", permissions, []string{projectID}), 201)
+	managerToken := oauthProtocolRequest(t, s, manager["client_id"].(string), manager["client_secret"].(string), oauthGrantForm(), 200)["access_token"].(string)
 	for _, endpoint := range []string{"/api/v1/access-keys", "/api/v1/oauth-clients"} {
-		request(t, s, "POST", endpoint, manager, sourceCredentialBody("same source", "producer", []string{"events:write"}, []string{projectID}), 403)
-		request(t, s, "POST", endpoint, manager, sourceCredentialBody("read only", "", []string{"events:read"}, []string{projectID}), 403)
+		request(t, s, "POST", endpoint, managerToken, sourceCredentialBody("same source", "producer", []string{"events:write"}, []string{projectID}), 403)
+		request(t, s, "POST", endpoint, managerToken, sourceCredentialBody("read only", "", []string{"events:read"}, []string{projectID}), 403)
 	}
 }

@@ -2,12 +2,12 @@ package main
 
 import (
 	"errors"
-	"github.com/olup/porcupine/internal/auth"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/porcupine"
 )
 
@@ -31,7 +31,7 @@ func (s settings) oauthConfiguration() (*porcupine.OAuthConfig, error) {
 	}
 	issuer := s.get("PORCUPINE_OAUTH_ISSUER")
 	if issuer == "" {
-		if s.get("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || s.get("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS") != "" || s.get("PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP") != "" {
+		if s.get("PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS") != "" || s.get("PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP") != "" {
 			return nil, errors.New("PORCUPINE_OAUTH_ISSUER is required when OAuth is configured")
 		}
 		return nil, nil
@@ -43,13 +43,6 @@ func (s settings) oauthConfiguration() (*porcupine.OAuthConfig, error) {
 			return nil, errors.New("invalid PORCUPINE_OAUTH_TOKEN_LIFETIME_SECONDS")
 		}
 		config.AccessTokenLifetimeSeconds = value
-	}
-	if raw := s.get("PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS"); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
-			return nil, errors.New("invalid PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS")
-		}
-		config.AllowLegacyKeys = value
 	}
 	if raw := s.get("PORCUPINE_RESTORE_IDENTITY_BOOTSTRAP"); raw != "" {
 		value, err := strconv.ParseBool(raw)

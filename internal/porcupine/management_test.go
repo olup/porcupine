@@ -3,6 +3,7 @@ package porcupine
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -75,6 +76,61 @@ func TestManagementCannotEscalateAndPreventsAdminLockout(t *testing.T) {
 	request(t, s, "DELETE", "/api/v1/access-keys/"+bootstrapID, newAdmin, "", 204)
 	request(t, s, "GET", "/api/v1/access-keys", adminToken, "", 401)
 	request(t, s, "DELETE", "/api/v1/access-keys/"+newAdminID, newAdmin, "", 409)
+}
+
+func TestEnablingOAuthRejectsStaticManagementKeys(t *testing.T) {
+	t.Parallel()
+	config := Config{DBPath: filepath.Join(t.TempDir(), "events.db"), BootstrapToken: adminToken}
+	standalone, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if standalone != nil {
+			standalone.Close()
+		}
+	})
+	projectID, _ := project(t, standalone)
+	staticID, staticAdmin := key(t, standalone, []string{"instance:admin"}, []string{"*"})
+	request(t, standalone, "GET", "/api/v1/access-keys", staticAdmin, "", 200)
+	err = standalone.Close()
+	standalone = nil
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config.OAuth = &OAuthConfig{Issuer: "https://oauth.example"}
+	s, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	for _, raw := range []string{adminToken, staticAdmin} {
+		request(t, s, "GET", "/api/v1/access-keys", raw, "", 401)
+		request(t, s, "POST", "/mcp", raw, "", 401)
+	}
+	admin := oauthProtocolRequest(t, s, "bootstrap", adminToken, oauthGrantForm(), 200)["access_token"].(string)
+	request(t, s, "GET", "/api/v1/access-keys", admin, "", 200)
+	request(t, s, "POST", "/api/v1/access-keys", admin, `{"name":"reader","permissions":["events:read"],"projects":["`+projectID+`"]}`, 400)
+	publicKey := request(t, s, "POST", "/api/v1/access-keys", admin, `{"name":"ingestion","permissions":["events:write"],"projects":["`+projectID+`"]}`, 201)["token"].(string)
+	request(t, s, "POST", "/capture/", "", captureBody(publicKey, "builtin-ingestion-key"), 200)
+	request(t, s, "GET", "/api/v1/access-keys", publicKey, "", 401)
+
+	var bootstrapID string
+	if err := s.control.QueryRow(`SELECT value FROM metadata WHERE key='oauth_bootstrap_id'`).Scan(&bootstrapID); err != nil {
+		t.Fatal(err)
+	}
+	request(t, s, "DELETE", "/api/v1/access-keys/"+bootstrapID, admin, "", 409)
+	request(t, s, "DELETE", "/api/v1/access-keys/"+staticID, admin, "", 204)
+	client := request(t, s, "POST", "/api/v1/oauth-clients", admin, `{"name":"OAuth administrator","permissions":["instance:admin"],"projects":["*"]}`, 201)
+	clientID, clientSecret := client["client_id"].(string), client["client_secret"].(string)
+	nativeKey := request(t, s, "POST", "/api/v1/oauth-clients/"+clientID+"/api-keys", admin, `{"name":"API administrator","audience":"api","permissions":["instance:admin"],"projects":["*"]}`, 201)["token"].(string)
+	request(t, s, "GET", "/api/v1/access-keys", nativeKey, "", 200)
+	replacement := oauthProtocolRequest(t, s, clientID, clientSecret, oauthGrantForm(), 200)["access_token"].(string)
+	request(t, s, "DELETE", "/api/v1/access-keys/"+bootstrapID, replacement, "", 204)
+	request(t, s, "GET", "/api/v1/access-keys", admin, "", 401)
+	request(t, s, "GET", "/api/v1/access-keys", replacement, "", 200)
+	request(t, s, "DELETE", "/api/v1/oauth-clients/"+clientID, replacement, "", 409)
 }
 
 func TestManagementJournalAnchorsDoNotAuthorizeRequests(t *testing.T) {

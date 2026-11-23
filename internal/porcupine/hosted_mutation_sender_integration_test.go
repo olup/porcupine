@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/olup/porcupine/internal/acceptance"
-	"github.com/olup/porcupine/internal/auth"
 	"github.com/olup/porcupine/internal/delivery"
 	eventapi "github.com/olup/porcupine/internal/event"
 	lakeapi "github.com/olup/porcupine/internal/lake"
@@ -25,9 +24,10 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 	ctx := t.Context()
 	fixture := nativeS3Fixture(t)
 	a, _ := sharedNativeJourneyPair(t, fixture, func(c *Config) {
-		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999", AllowLegacyKeys: true}
+		c.OAuth = &OAuthConfig{Issuer: "http://127.0.0.1:42999"}
 	})
-	project, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "hosted send")
+	admin := accountTestToken(t, a.service)
+	project, _ := sharedJourneyProjectAs(t, a.host.URL, admin, defaultTenantID, "hosted send")
 	native := a.service.lake
 	key := lakeapi.ProjectWriteKey{SourceID: native.Config.SharedSourceID, ProjectID: project}
 	scope, err := native.InitializeHostedProject(ctx, key)
@@ -48,11 +48,7 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountBody, _ := json.Marshal(TenantServiceAccountSpec{Name: "webhook creator", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
-	account := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts", adminToken, accountBody, nil, 201)
-	keyBody, _ := json.Marshal(ServiceKeySpec{Name: "webhook key", Audience: "api", Projects: []string{project}, Permissions: []string{"pipelines:write", "events:read"}})
-	token := sharedJourneyHTTP(t, a.host.URL, "POST", "/api/v1/tenants/default/service-accounts/"+account["client_id"].(string)+"/api-keys", adminToken, keyBody, nil, 201)
-	creator := token["id"].(string)
+	creator, _ := sharedJourneyServiceKey(t, a.host.URL, admin, defaultTenantID, "webhook creator", project, []string{"pipelines:write", "events:read"})
 	raw, _ := json.Marshal(delivery.WebhookRule{DeliveryMode: "event"})
 	ref, err := native.Remote.PutImmutableEffectObject(ctx, scope, eventapi.NewID(), raw)
 	if err != nil {
@@ -75,8 +71,12 @@ func TestDuckLakeS3SharedPostgresHostedMutationSenderOrdering(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.service.hostedMutations = f
-	actor, _ := sharedJourneyKey(t, a.host.URL, project, []string{"events:delete"})
-	actorContext := context.WithValue(ctx, actorContextKey{}, auth.Principal{ID: actor, Projects: []string{project}, Permissions: []string{"events:delete"}})
+	_, token := sharedJourneyServiceKey(t, a.host.URL, admin, defaultTenantID, "event deleter", project, []string{"events:delete"})
+	actor, err := a.service.authenticateResource(ctx, token, a.service.resources.apiResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actorContext := context.WithValue(ctx, actorContextKey{}, actor)
 	acceptDelete := func(uuid string) {
 		t.Helper()
 		accepted, err := a.service.deleteEvent(actorContext, &EventDeleteInput{ID: project, UUID: uuid, Body: EventDeleteBody{IdempotencyKey: "delete-" + uuid, ExpectedRevision: "0"}})
