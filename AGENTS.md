@@ -38,6 +38,7 @@ Agents connecting to a running instance should start with the
 - Assign each new task or implementation unit to a fresh agent with `fork_turns="none"` and a short handoff of files, constraints and test evidence. Do not reuse an existing worker for a different domain. Corrections within the current unit stay with its current owner.
 - Avoid speculative abstractions, new services, a UI, or a broker without a measured need.
 - Keep release labels generated from `VERSION`. Follow docs/design/releasing.md before tagging; run the release-version check and the documentation build. Feature claims still need review.
+- Keep the [public SQL contract](docs/reference/analytics.md#sql-stability) additive unless a release deprecates an entry.
 - SQL, MCP, identity projection and exports must enforce the same project boundaries.
 - Test project lifecycle changes with two projects. Check scoped grants,
   retries, restart recovery, and cleanup of the selected analytical store and export objects.
