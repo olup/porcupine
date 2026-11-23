@@ -88,6 +88,10 @@ cli-check:
 	cd cli && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...
 	@test -z "$$(gofmt -l cli/cmd)" || (echo 'Run make fmt'; exit 1)
 
+.PHONY: sql-contract-generate
+sql-contract-generate:
+	CGO_ENABLED=1 go test ./internal/porcupine -run '^TestSQLContractDiscovery$$' -count=1 -update-sql-contract
+
 .PHONY: docs docs-preview
 docs:
 	CGO_ENABLED=0 go run ./internal/cmd/docsite build

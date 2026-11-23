@@ -9,7 +9,7 @@ var functions = strings.Fields(`
 	count count_star count_if sum avg min max first last any_value arg_min arg_max
 	bool_and bool_or list array_agg string_agg median quantile_cont quantile_disc quantile
 	approx_count_distinct approx_quantile stddev_pop stddev_samp var_pop var_samp
-	abs ceil ceiling floor round trunc sqrt cbrt pow power exp exp2 ln log log2 log10
+	abs ceil ceiling floor round trunc sqrt cbrt pow power exp ln log log2 log10
 	greatest least if ifnull nullif coalesce isnan isfinite isinf
 	length char_length lower upper trim ltrim rtrim concat concat_ws substring substr
 	left right starts_with ends_with contains strpos position replace reverse
@@ -23,7 +23,7 @@ var functions = strings.Fields(`
 	row_number rank dense_rank percent_rank cume_dist ntile lag lead first_value last_value nth_value
 	list_count list_sum list_avg list_min list_max list_distinct list_contains list_extract
 	array_length array_contains struct_extract
-	+ - * / // % ** -> ->> ~~ !~~ ~~* !~~* ~ !~ || ~~_escape !~~_escape
+	+ - * / // % ** ->> ~~ !~~ ~~* !~~* ~ !~ || like_escape
 `)
 
 // Functions returns a sorted copy of the allowed function inventory.

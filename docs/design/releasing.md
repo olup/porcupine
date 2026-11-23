@@ -9,9 +9,10 @@
 3. Review the feature descriptions, supported inputs, storage limitations, permissions, and migration instructions. Update the relevant guides. Version checks cannot verify these claims.
 4. Run `CGO_ENABLED=0 go run ./internal/cmd/docsite check-release --tag v$(cat VERSION)`.
 5. Run `CGO_ENABLED=0 go test ./internal/docsite ./internal/cmd/docsite` and `make docs`. The build uses a pinned Hugo binary, downloaded once and verified against its SHA256 checksum. It checks local links and anchors as well as release labels.
-6. Add an entry headed `## X.Y.Z` to `CHANGELOG.md`. The release workflow includes that entry in the published notes.
-7. Merge the reviewed changes to `main`. Wait for the complete Check workflow to pass on the exact candidate revision. Verify that the approved hosted startup and recovery evidence covers the code that will ship.
-8. Create and verify the annotated tag on that revision, then push that tag alone.
+6. [Check and record the SQL contract](#check-and-record-the-sql-contract) against the previous stable baseline.
+7. Add an entry headed `## X.Y.Z` to `CHANGELOG.md`. Include any SQL deprecations in that entry. The release workflow includes the entry in the published notes.
+8. Merge the reviewed changes to `main`. Wait for the complete Check workflow to pass on the exact candidate revision. Verify that the approved hosted startup and recovery evidence covers the code that will ship.
+9. Create and verify the annotated tag on that revision, then push that tag alone.
 
 ```sh
 release_sha=APPROVED_MAIN_COMMIT
@@ -22,6 +23,13 @@ git push origin "refs/tags/$tag"
 ```
 
 The release workflow rejects a tag that differs from `VERSION` or current installation pointers. It builds the documentation before building release artifacts. The build also checks the generated landing and each HTML guide for the expected version.
+
+### Check and record the SQL contract
+
+1. Run `make sql-contract-generate` to refresh `internal/porcupine/testdata/sql_contract.json` from HTTP schema discovery.
+2. Add each new deprecation to the current fixture's `deprecated` object. Use the key `events.<column>`, `function.<name>`, or `feature.<name>` and the stable release tag that announces the deprecation. Keep deprecation entries in the current fixture and future baselines after the affected entries are retired.
+3. Run `make test PKG=./internal/porcupine RUN=TestSQLContract` and `make test PKG=./internal/lake RUN=TestSQLContract` while `releasedSQLContract` in `internal/porcupine/sql_contract_test.go` still points to the previous baseline. Removal or an incompatible change requires a release-tagged deprecation. Until a release records the first baseline, `releasedSQLContract` is empty and the additive check is skipped.
+4. Once both checks pass, copy `sql_contract.json` to `sql_contract_vX.Y.Z.json` in `internal/porcupine/testdata`. Update `releasedSQLContract` to point to the new baseline. Keep previous versioned fixtures intact.
 
 ## Verify publication
 

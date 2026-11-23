@@ -136,6 +136,14 @@ Writes, qualified tables, private columns, external sources, table functions, re
 
 DuckDB placeholders use `$name`. Parameters have at most 32 names, each at most 64 ASCII letters, digits, or underscores and starting with a letter or underscore. Each supplied value is a string of at most 4,096 bytes. Names must exactly match the query, with no missing or extra values. Use an explicit cast when SQL requires a numeric or temporal type. Values are bound separately from SQL.
 
+### SQL stability
+
+The SQL contract covers the names and DuckDB types of public `events` columns, the functions listed in `sql.functions`, named `$name` bindings, and support for a single read-only `SELECT`. Releases can add columns, functions, and SQL features. Use an explicit column list when the result needs a fixed set and order of columns.
+
+Private tables, physical storage layout, query plans, performance, and functions outside the published allowlist can change between releases.
+
+Porcupine announces deprecations in the release notes. Removing an entry or changing it incompatibly requires a deprecation recorded with a stable release tag.
+
 ## Large result exports
 
 Use a [one-off export](../query-events.md#export-a-result) for large files. The [export API](export-api.md) defines admission, output limits, and profile-specific consistency.
