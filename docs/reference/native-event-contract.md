@@ -117,8 +117,6 @@ The first accepted message wins. A retry with changed properties does not edit t
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
-<a id="unreleased-acknowledgment-metadata"></a><!-- Legacy URL fragment. -->
-
 ### Acknowledgment metadata
 
 In standalone, `durability: "durable"` confirms that the SQLite acceptance transaction committed. Readers check analytical delivery separately.

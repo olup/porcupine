@@ -47,7 +47,7 @@ func TestDuckLakeEventSourcesMatch(t *testing.T) {
 		{"natural join", `WITH x AS (SELECT 'identified' AS person_id) SELECT count(*) AS n FROM events NATURAL JOIN x`, true},
 		{"person join key", `WITH x AS (SELECT 'identified' AS person_id) SELECT count(*) AS n FROM events JOIN x USING ("PERSON_ID")`, true},
 		{"distinct join key", `WITH x AS (SELECT 'identified' AS distinct_id) SELECT count(*) AS n FROM events JOIN x USING (distinct_id)`, false},
-		{"column aliases", `SELECT p FROM events e(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,p) ORDER BY c1 DESC LIMIT 4`, true},
+		{"column aliases", `SELECT p FROM events e(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,p) ORDER BY c1 DESC LIMIT 4`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checked, err := nativequery.Inspect(ctx, p.DB, tc.sql)
@@ -82,7 +82,9 @@ func TestDuckLakeEventSourcesMatch(t *testing.T) {
 		{`SELECT count(*) FROM main._pc_events_core`, "unsupported_sql"},
 		{`SELECT identity_snapshot FROM events`, "unsupported_sql"},
 		{`WITH "EvEnTs" AS (SELECT 1 AS id) SELECT id FROM "EvEnTs"`, "unsupported_sql"},
-		{`SELECT main.events.event_id FROM events`, "unsupported_sql"},
+		{`SELECT main.events.id FROM events`, "unsupported_sql"},
+		{`SELECT event_id FROM events`, "unknown_column"},
+		{`SELECT event_id, person_id FROM events`, "unknown_column"},
 		{`SELECT main.events.* FROM events`, "invalid_sql"},
 	} {
 		_, err := store.Query(ctx, project, tc.sql, nil, DefaultQueryExecutionLimits())

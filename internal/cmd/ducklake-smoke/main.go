@@ -165,7 +165,7 @@ func run(ctx context.Context, serverPath, cliPath string) error {
 	if len(first.Receipts) != 1 || first.Receipts[0].EventID == "" || first.Receipts[0].UUID == "" {
 		return errors.New("native ingestion omitted its stable receipt")
 	}
-	query := map[string]any{"sql": "SELECT event_id,event FROM events WHERE event=$name", "parameters": map[string]string{"name": "compiled-smoke"}}
+	query := map[string]any{"sql": "SELECT id,event FROM events WHERE event=$name", "parameters": map[string]string{"name": "compiled-smoke"}}
 	base := "/api/v1/projects/" + created.Project.ID
 	if err := poll(ctx, func() (bool, error) {
 		var schema schemaResponse
@@ -398,7 +398,7 @@ func checkTelemetry(ctx context.Context, client *http.Client, origin, logsPath s
 }
 
 func matches(result queryResponse, id string) bool {
-	return result.Result.Rows == 1 && len(result.Result.Data) == 1 && result.Result.Data[0]["event_id"] == id && result.Result.Data[0]["event"] == "compiled-smoke"
+	return result.Result.Rows == 1 && len(result.Result.Data) == 1 && result.Result.Data[0]["id"] == id && result.Result.Data[0]["event"] == "compiled-smoke"
 }
 
 func environment(values map[string]string) []string {

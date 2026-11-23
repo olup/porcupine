@@ -23,7 +23,7 @@ import (
 func nativeRestoreTarget(t *testing.T, id, bundle, source string) NativeRestoreRequest {
 	t.Helper()
 	root := t.TempDir()
-	return NativeRestoreRequest{BackupID: id, SourceID: source, LocalBundlePath: bundle, TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("private-recovery-bootstrap", 2)}
+	return NativeRestoreRequest{BackupID: id, SourceID: source, LocalBundlePath: bundle, AuthMode: "builtin", TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("private-recovery-bootstrap", 2)}
 }
 
 func TestDuckLakeEncryptedNativeRestoreReplaysJournal(t *testing.T) {
@@ -101,14 +101,14 @@ func TestDuckLakeEncryptedNativeRestoreReplaysJournal(t *testing.T) {
 	t.Cleanup(func() { restored.Close() })
 	duckLakeJourneyDrain(t, restored)
 	reader := request(t, restored, "POST", "/api/v1/access-keys", r.BootstrapToken, fmt.Sprintf(`{"name":"recovery reader","permissions":["events:read"],"projects":[%q]}`, a), 201)["token"].(string)
-	const query = "SELECT event_id FROM events ORDER BY event"
+	const query = "SELECT id FROM events ORDER BY event"
 	rows := duckLakeJourneyQuery(t, restored, a, reader, query, nil)
-	if len(rows) != 2 || rows[0].(map[string]any)["event_id"] != committedID || rows[1].(map[string]any)["event_id"] != pendingID {
+	if len(rows) != 2 || rows[0].(map[string]any)["id"] != committedID || rows[1].(map[string]any)["id"] != pendingID {
 		t.Fatal("restored project lost its committed or journaled event", rows)
 	}
-	request(t, restored, "POST", "/api/v1/projects/"+b+"/query", reader, `{"sql":"SELECT event_id FROM events"}`, 403)
+	request(t, restored, "POST", "/api/v1/projects/"+b+"/query", reader, `{"sql":"SELECT id FROM events"}`, 403)
 	rows = duckLakeJourneyQuery(t, restored, b, r.BootstrapToken, query, nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != otherID {
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != otherID {
 		t.Fatal("restored second project lost its event", rows)
 	}
 	retry := nativeRequest(t, restored, rotated, pending, 200)
@@ -205,12 +205,12 @@ func TestDuckLakeNativeRestoreIsolatedCurrentStateAndCredentialReset(t *testing.
 	duckLakeJourneyDrain(t, restored)
 	// Lifecycle verifier uses the source fixture bootstrap token, so query these
 	// preserved fields directly with the new recovery credential.
-	rows := duckLakeJourneyQuery(t, restored, a, r.BootstrapToken, "SELECT event_id,event,revision,person_id,person_properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": state.receipts[0]["uuid"].(string)})
+	rows := duckLakeJourneyQuery(t, restored, a, r.BootstrapToken, "SELECT id,event,revision,person_id,person_properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": state.receipts[0]["uuid"].(string)})
 	if len(rows) != 1 {
 		t.Fatal("restored edit missing", rows)
 	}
 	row := rows[0].(map[string]any)
-	if row["event_id"] != state.receipts[0]["event_id"] || row["revision"] != state.revision || row["event"] != "lifecycle-corrected" || row["person_id"] != "restore-person" || !strings.Contains(row["person_properties"].(string), `"plan":"team"`) {
+	if row["id"] != state.receipts[0]["event_id"] || row["revision"] != state.revision || row["event"] != "lifecycle-corrected" || row["person_id"] != "restore-person" || !strings.Contains(row["person_properties"].(string), `"plan":"team"`) {
 		t.Fatal("restored event/edit/identity changed", row)
 	}
 	bulk := duckLakeJourneyQuery(t, restored, a, r.BootstrapToken, "SELECT count(*) AS total,min(length(properties)) AS width FROM events WHERE event='bulk-restore'", nil)
@@ -461,8 +461,8 @@ func TestDuckLakeS3NativeRestoreRebuildsIndependentTargetAndCleanup(t *testing.T
 	nativeRequest(t, restored, ingest, pending, 401)
 	request(t, restored, "GET", "/api/v1/projects", adminToken, "", 401)
 	duckLakeJourneyDrain(t, restored)
-	rows := duckLakeJourneyQuery(t, restored, a, r.BootstrapToken, "SELECT event_id,event,revision,person_id,person_properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": state.receipts[0]["uuid"].(string)})
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != state.receipts[0]["event_id"] || rows[0].(map[string]any)["revision"] != state.revision || rows[0].(map[string]any)["person_id"] != "s3-restore-person" || !strings.Contains(rows[0].(map[string]any)["person_properties"].(string), `"plan":"team"`) {
+	rows := duckLakeJourneyQuery(t, restored, a, r.BootstrapToken, "SELECT id,event,revision,person_id,person_properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": state.receipts[0]["uuid"].(string)})
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != state.receipts[0]["event_id"] || rows[0].(map[string]any)["revision"] != state.revision || rows[0].(map[string]any)["person_id"] != "s3-restore-person" || !strings.Contains(rows[0].(map[string]any)["person_properties"].(string), `"plan":"team"`) {
 		t.Fatal("S3 restore changed edit, identity or IDs", rows)
 	}
 	deleted, err := restored.lake.Load(context.Background(), a, state.receipts[1]["uuid"].(string))
@@ -581,18 +581,17 @@ func TestDuckLakeNativeRestoreRefusesCanonicalRemoteOverlap(t *testing.T) {
 func TestDuckLakeNativeRestoreRefusesMissingAndOriginalSourceStorage(t *testing.T) {
 	t.Parallel()
 	target := lakeapi.DuckLakeS3Config{Bucket: "porcupine-fixture", Prefix: "original-source/nested", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"}
-	if err := validateNativeRestoreSourceStorage(&target, lakeapi.NativeBackupStorageIdentity{}, false); err == nil {
-		t.Fatal("remote target without original storage identity accepted")
-	}
-	if err := validateNativeRestoreSourceStorage(nil, lakeapi.NativeBackupStorageIdentity{}, true); err == nil {
-		t.Fatal("remote archive without original storage identity accepted")
+	for _, destination := range []*lakeapi.DuckLakeS3Config{nil, &target} {
+		if err := validateNativeRestoreSourceStorage(destination, lakeapi.NativeBackupStorageIdentity{}); err == nil {
+			t.Fatal("restore target without original storage identity accepted")
+		}
 	}
 	source := lakeapi.NativeBackupStorageIdentity{Mode: "s3", Bucket: target.Bucket, Prefix: "original-source", Region: target.Region, Endpoint: "http://127.0.0.1:2"}
-	if err := validateNativeRestoreSourceStorage(&target, source, true); err == nil {
+	if err := validateNativeRestoreSourceStorage(&target, source); err == nil {
 		t.Fatal("original source namespace overlap through an endpoint alias accepted")
 	}
 	source.Prefix = "other-source"
-	if err := validateNativeRestoreSourceStorage(&target, source, true); err != nil {
+	if err := validateNativeRestoreSourceStorage(&target, source); err != nil {
 		t.Fatal("independent target refused", err)
 	}
 }

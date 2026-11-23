@@ -216,10 +216,6 @@ func validateEnvironment() error {
 	for _, item := range os.Environ() {
 		name, _, _ := strings.Cut(item, "=")
 		if strings.HasPrefix(name, "PORCUPINE_") && !known[name] {
-			switch name {
-			case "PORCUPINE_WORKER_ID", "PORCUPINE_WORKER_URL", "PORCUPINE_SHARED_ROUTING_SECRET", "PORCUPINE_SHARED_ROUTING_SECRET_FILE":
-				return fmt.Errorf("%s is obsolete because owner routing has been removed", name)
-			}
 			return fmt.Errorf("unknown environment variable %s", name)
 		}
 	}
@@ -261,13 +257,7 @@ func readSettings(input io.Reader) (settings, error) {
 		if errors.As(err, &valueType) {
 			return nil, fmt.Errorf("invalid configuration type for %s at byte %d", valueType.Field, valueType.Offset)
 		}
-		// Match only complete errors for known legacy keys. Other decoder errors
-		// can quote secret input, so their text must stay out of diagnostics.
-		switch err.Error() {
-		case `json: unknown field "worker_id"`, `json: unknown field "worker_url"`,
-			`json: unknown field "routing_secret"`, `json: unknown field "routing_secret_file"`:
-			return nil, errors.New("owner routing has been removed; remove worker_id, worker_url, routing_secret, and routing_secret_file from configuration")
-		}
+		// Decoder errors can quote input, including unknown field names.
 		return nil, errors.New("invalid configuration: use the documented JSON keys and value types")
 	}
 	if dec.Decode(&struct{}{}) != io.EOF {

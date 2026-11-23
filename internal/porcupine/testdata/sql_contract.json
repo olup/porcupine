@@ -196,11 +196,6 @@
           "type": "BIGINT"
         },
         {
-          "description": "Alias of id.",
-          "name": "event_id",
-          "type": "BIGINT"
-        },
-        {
           "description": "Stable event identifier within the project.",
           "name": "uuid",
           "type": "VARCHAR"

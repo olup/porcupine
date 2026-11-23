@@ -109,8 +109,8 @@ func TestDuckLakeBackupRecoveryLifecycleAndAgentStatus(t *testing.T) {
 	defer restored.Close()
 	duckLakeJourneyDrain(t, restored)
 	lakeMaintenanceVerify(t, restored, a, lifecycle)
-	rows := duckLakeJourneyQuery(t, restored, a, reader, "SELECT event_id FROM events WHERE event='pending'", nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != pendingID {
+	rows := duckLakeJourneyQuery(t, restored, a, reader, "SELECT id FROM events WHERE event='pending'", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != pendingID {
 		t.Fatal("restored pending event lost its ID", rows)
 	}
 	retry := nativeRequest(t, restored, ingest, lakeMaintenancePages("backup"), 200)

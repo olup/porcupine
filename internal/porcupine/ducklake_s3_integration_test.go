@@ -200,7 +200,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	if len(cleanupParquetFiles(t, config.DuckLake.Directory)) != 0 {
 		t.Fatal("S3-backed analytical Parquet unexpectedly remained on local disk")
 	}
-	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT uuid,event_id,person_id,person_properties FROM events ORDER BY id", nil)
+	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT uuid,id,person_id,person_properties FROM events ORDER BY id", nil)
 	if len(rows) != 3 {
 		t.Fatalf("unexpected S3 logical events: %d", len(rows))
 	}
@@ -217,8 +217,8 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	if retry["duplicates"] != float64(1) || receiptFrom(t, retry, 0)["event_id"] != first["event_id"] {
 		t.Fatal("S3 delivery changed native retry identity")
 	}
-	rows = duckLakeJourneyQuery(t, s, a, reader, "SELECT event_id,event,properties FROM events WHERE event='Corrected purchase'", nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != first["event_id"] {
+	rows = duckLakeJourneyQuery(t, s, a, reader, "SELECT id,event,properties FROM events WHERE event='Corrected purchase'", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != first["event_id"] {
 		t.Fatal("S3 correction lost the durable event ID")
 	}
 	request(t, s, "POST", "/api/v1/projects/"+b+"/query", reader, `{"sql":"SELECT * FROM events"}`, 403)
@@ -254,7 +254,7 @@ func TestDuckLakeS3HTTPJourneyRestartAndProjectDeletion(t *testing.T) {
 	if deletedRetry["duplicates"] != float64(1) || receiptFrom(t, deletedRetry, 0)["event_id"] != removed["event_id"] {
 		t.Fatal("S3 restart lost deletion retry identity")
 	}
-	rows = duckLakeJourneyQuery(t, s, a, reader, "SELECT event_id,event FROM events ORDER BY id", nil)
+	rows = duckLakeJourneyQuery(t, s, a, reader, "SELECT id,event FROM events ORDER BY id", nil)
 	if len(rows) != 2 {
 		t.Fatal("S3 restart resurrected a deleted event or lost live history")
 	}

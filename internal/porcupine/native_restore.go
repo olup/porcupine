@@ -58,14 +58,14 @@ func (r NativeRestoreRequest) GoString() string { return r.String() }
 
 func nativeRestoreAuthMode(request NativeRestoreRequest, destination *AuthConfig) (string, error) {
 	mode := request.AuthMode
-	if destination != nil {
+	if destination != nil && destination.Mode != "" {
 		if mode != "" && mode != destination.Mode {
 			return "", errors.New("restore auth_mode differs from destination authentication configuration")
 		}
 		mode = destination.Mode
 	}
-	if mode == "" && destination == nil {
-		mode = "builtin"
+	if mode == "" {
+		return "", errors.New("restore auth_mode is required when the destination authentication mode is unset")
 	}
 	if mode != "builtin" && mode != "external" {
 		return "", errors.New("restore auth_mode must be builtin or external")
@@ -245,18 +245,15 @@ func verifyRestoreDatabaseSchema(ctx context.Context, store schemaStore, source 
 	if err := source.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
+	if version < 1 {
+		return fmt.Errorf("backup SQLite schema version %d is unsupported; a numbered schema version is required", version)
+	}
 	if version > len(store.steps) {
 		return schemaTooNew("backup "+store.name, version, len(store.steps))
 	}
 	actual, err := nativeRestoreTableSchemas(ctx, source)
 	if err != nil {
 		return err
-	}
-	if version == 0 {
-		// Pre-versioning backups equal version 1, except for a table that
-		// was created on first project deletion.
-		version = 1
-		delete(actual, "project_deletion_files")
 	}
 	reference, err := openLocalSQLite(":memory:")
 	if err != nil {

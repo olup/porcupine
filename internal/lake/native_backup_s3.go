@@ -158,9 +158,6 @@ func (s *NativeBackupS3) Manifest(ctx context.Context, id string) (NativeBackupM
 	if err := ValidateNativeBackupManifest(m); err != nil {
 		return m, err
 	}
-	if err := ValidateNativeBackupStorageIdentity(m.SourceStorage, false); err != nil {
-		return m, err
-	}
 	if m.ID != id || s.Namespace != s.config.Prefix+"/native-backups/"+m.SourceID+"/" {
 		return m, errors.New("backup source identity mismatch")
 	}
@@ -231,9 +228,6 @@ func (s *NativeBackupS3) Verify(ctx context.Context, id string, f BackupFile) er
 }
 func (s *NativeBackupS3) Publish(ctx context.Context, m NativeBackupManifest) error {
 	if err := ValidateNativeBackupManifest(m); err != nil {
-		return err
-	}
-	if err := ValidateNativeBackupStorageIdentity(m.SourceStorage, false); err != nil {
 		return err
 	}
 	body, err := json.Marshal(m)

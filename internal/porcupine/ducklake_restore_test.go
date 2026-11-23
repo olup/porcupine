@@ -63,7 +63,7 @@ func TestDuckLakeStoppedVolumeRestore(t *testing.T) {
 	if err != nil || restoredSource != source {
 		t.Fatalf("archive identity changed: %v", err)
 	}
-	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT event_id,event FROM events ORDER BY id", nil)
+	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT id,event FROM events ORDER BY id", nil)
 	if len(rows) != 2 {
 		t.Fatalf("restored history and queue: %v", rows)
 	}
@@ -73,7 +73,7 @@ func TestDuckLakeStoppedVolumeRestore(t *testing.T) {
 	}{{firstID, "page_viewed"}, {secondID, "signup_completed"}}
 	for i, want := range expected {
 		got := rows[i].(map[string]any)
-		if got["event_id"] != want.id || got["event"] != want.event {
+		if got["id"] != want.id || got["event"] != want.event {
 			t.Fatalf("restored event changed: %v", got)
 		}
 	}

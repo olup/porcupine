@@ -225,10 +225,6 @@
             "format": "int64",
             "type": "integer"
           },
-          "max_execution_seconds": {
-            "format": "int64",
-            "type": "integer"
-          },
           "max_memory_bytes": {
             "description": "Configured memory budget shared by queries on each resident project engine. DuckDB allocations can exceed this; it is not a per-query limit or hard process RSS ceiling.",
             "format": "int64",
@@ -271,7 +267,6 @@
           "max_rows",
           "max_result_bytes",
           "max_execution_ms",
-          "max_execution_seconds",
           "request_timeout_seconds",
           "max_memory_bytes",
           "memory_scope",

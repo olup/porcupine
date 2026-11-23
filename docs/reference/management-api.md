@@ -72,8 +72,6 @@ PostHog ingestion keys are separate and remain valid for capture.
 
 For managed SQL exports, see the [export job operations](export-api.md#api-operations). The [pipeline operations](pipeline-api.md#permissions-and-api) configure recurring deliveries. [Historical imports](posthog-import.md) use HTTP or the CLI for the entire import, including binary chunk uploads.
 
-<a id="unreleased-tenant-operations"></a><!-- Legacy URL fragment. -->
-
 ### Tenant operations
 
 [Tenant administrators](tenant-access.md) manage their own tenant with `tenant:admin`. Instance operators retain deployment-wide authority, including [recovery of upstream sign-in identities](identity-recovery.md). HTTP, CLI, and MCP use the same operation registry and permission checks. Project readers can inspect configured `tenant_budgets`, `deployment_limits`, and effective `limits` through `get-event-schema`, including the configured ingestion allowance but no tenant-wide consumption.

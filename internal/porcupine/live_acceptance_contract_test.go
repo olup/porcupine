@@ -85,6 +85,9 @@ func TestLiveAcceptanceNativeAndVendorContractsByMode(t *testing.T) {
 			}
 			_, reader := key(t, s, []string{"events:read"}, []string{projectID})
 			discovery := request(t, s, "GET", "/api/v1/projects/"+projectID+"/input-contract", reader, "", 200)
+			if discovery["documentation"] != "https://olup.github.io/porcupine/docs/reference/native-event-contract.md" {
+				t.Fatalf("unexpected contract documentation URL: %v", discovery["documentation"])
+			}
 			ack := discovery["live_acknowledgment"].(map[string]any)
 			if ack["durability"] != mode || ack["meaning"] == "" {
 				t.Fatal("instance discovery omits actual acknowledgment", discovery)

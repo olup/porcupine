@@ -2,8 +2,6 @@
 
 Use a service account for a backend, scheduled job, or agent owned by the team. Its keys work independently of the human who configured it. A team service account is tied to one project. Each key can use one audience and a subset of the account's permissions for that project. In builtin mode, configure `PORCUPINE_OAUTH_ISSUER`. In [external mode](external-auth.md#native-machine-accounts-and-deferred-work), machine accounts use static API or MCP keys.
 
-<a id="create-a-team-service-account-unreleased"></a><!-- Legacy URL fragment. -->
-
 ## Create a team service account
 
 Create a machine account with fixed project permissions as a tenant administrator. For builtin sign-in, see [Connect as the tenant administrator](tenant-access.md#connect-as-the-tenant-administrator).

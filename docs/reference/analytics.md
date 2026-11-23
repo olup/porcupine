@@ -21,7 +21,7 @@ The queryable table is `events`. Schema discovery returns exact `tables`, `sql`,
 
 | Column | DuckDB type | Meaning |
 | --- | --- | --- |
-| `id`, `event_id` | `BIGINT` | Durable event ID, stable across retries with a stable producer message ID |
+| `id` | `BIGINT` | Durable event ID, stable across retries with a stable producer message ID |
 | `uuid` | `VARCHAR` | Stable event identifier within the project |
 | `project_id` | `VARCHAR` | Owning project |
 | `source_id`, `message_id` | `VARCHAR` | Authenticated producer namespace and original producer message ID |
@@ -102,7 +102,7 @@ For example:
 
 ### Fresh queries
 
-Every query executes against delivered data without a result cache. Servers from v0.15.0 onward reject the former `use_cache` field. See [delivery consistency](#delivery-consistency-and-errors) before checking a recent capture.
+Every query executes against delivered data without a result cache. See [delivery consistency](#delivery-consistency-and-errors) before checking a recent capture.
 
 ### Group a custom property by day
 

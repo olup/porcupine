@@ -107,7 +107,7 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT event_id,uuid,event,distinct_id,person_id,person_properties,properties FROM events ORDER BY id", nil)
+	rows := duckLakeJourneyQuery(t, s, a, reader, "SELECT id,uuid,event,distinct_id,person_id,person_properties,properties FROM events ORDER BY id", nil)
 	if len(rows) != 3 {
 		t.Fatalf("identity control or retry changed ordinary event count: %d", len(rows))
 	}
@@ -116,7 +116,7 @@ func TestDuckLakeJourneyAdaptersIdentityMutationsAndIsolation(t *testing.T) {
 		if row["person_id"] != "person" || !strings.Contains(row["person_properties"].(string), `"plan":"pro"`) {
 			t.Fatalf("cross-adapter anonymous activity did not resolve its person: %v", row)
 		}
-		if row["uuid"] == firstReceipt["uuid"] && (row["event_id"] != firstReceipt["event_id"] || !strings.Contains(row["properties"].(string), "9007199254740993")) {
+		if row["uuid"] == firstReceipt["uuid"] && (row["id"] != firstReceipt["event_id"] || !strings.Contains(row["properties"].(string), "9007199254740993")) {
 			t.Fatal("native provenance or custom integer precision changed")
 		}
 	}
@@ -217,8 +217,8 @@ func TestDuckLakeJourneyConfiguredRestart(t *testing.T) {
 	if retry["duplicates"] != float64(1) || receiptFrom(t, retry, 0)["event_id"] != first["event_id"] {
 		t.Fatal("configured service restart changed native retry identity")
 	}
-	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT event_id,event FROM events", nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != first["event_id"] || rows[0].(map[string]any)["event"] != "Restart" {
+	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT id,event FROM events", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != first["event_id"] || rows[0].(map[string]any)["event"] != "Restart" {
 		t.Fatal("configured service restart lost its projected event")
 	}
 }
@@ -249,8 +249,8 @@ func TestDuckLakeJourneyLostAcknowledgment(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT (SELECT count(*) FROM events),(SELECT count(*) FROM event_receipts)`).Scan(&pending, &receipts); err != nil || pending != 1 || receipts != 0 {
 		t.Fatalf("failed acknowledgment removed its payload or committed a receipt: pending=%d receipts=%d err=%v", pending, receipts, err)
 	}
-	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT event_id FROM events", nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != first["event_id"] {
+	rows := duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT id FROM events", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != first["event_id"] {
 		t.Fatal("analytical commit did not precede the failed acknowledgment")
 	}
 	if err := s.Close(); err != nil {
@@ -269,8 +269,8 @@ func TestDuckLakeJourneyLostAcknowledgment(t *testing.T) {
 		t.Fatal(err)
 	}
 	duckLakeJourneyDrain(t, s)
-	rows = duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT event_id FROM events", nil)
-	if len(rows) != 1 || rows[0].(map[string]any)["event_id"] != first["event_id"] {
+	rows = duckLakeJourneyQuery(t, s, projectID, adminToken, "SELECT id FROM events", nil)
+	if len(rows) != 1 || rows[0].(map[string]any)["id"] != first["event_id"] {
 		t.Fatal("retry of the uncertain analytical commit changed its logical event")
 	}
 	retry := nativeRequest(t, s, ingest, native, 200)

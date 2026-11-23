@@ -53,6 +53,12 @@ func TestSQLContractDuckLakeEvents(t *testing.T) {
 	assertSQLContractColumns(t, "DuckLake events view", describeSQLContractEvents(t, store, project), want)
 
 	const query = "SELECT * FROM events"
+	interactive, err := store.Query(ctx, project, query, nil, DefaultQueryExecutionLimits())
+	if err != nil || interactive.Rows != 1 {
+		t.Fatalf("interactive query returned %d rows, error %v", interactive.Rows, err)
+	}
+	assertSQLContractColumns(t, "interactive events", interactive.Meta, want)
+
 	var exportColumns []AnalyticsResultColumn
 	callbacks := ExportStreamCallbacks{
 		Columns: func(columns []AnalyticsResultColumn) error {

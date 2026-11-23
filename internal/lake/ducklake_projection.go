@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS lake.identity_links (
 const duckLakeEventsView = `CREATE OR REPLACE VIEW events AS ` + duckLakeEventsSelect + `;
 CREATE OR REPLACE VIEW _pc_events_core AS ` + duckLakeCoreEventsSelect + `;`
 
-const duckLakeEventColumns = `SELECT e.id,e.id AS event_id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
+const duckLakeEventColumns = `SELECT e.id,e.is_imported,e.source_id,e.message_id,e.event_type,e.context,
  e.revision,e.project_id,e.uuid,e.event,e.distinct_id,`
 const duckLakeEventPayload = `e.properties,e.timestamp,e.timestamp_ms,e.event_time,e.received_at,e.received_at_ms FROM lake.current_events e`
 const duckLakeVisibleEvents = ` WHERE e.identity_snapshot=''`

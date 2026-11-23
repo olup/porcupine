@@ -2,7 +2,6 @@
 
 Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.21.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
-<a id="choose-local-sqlite-or-shared-postgresql-unreleased"></a><!-- Legacy URL fragment. -->
 <a id="choose-a-storage-mode"></a>
 
 ## Pick a deployment

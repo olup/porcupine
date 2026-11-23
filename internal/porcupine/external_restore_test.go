@@ -16,8 +16,11 @@ func TestExternalRestoreModeAndPrivateRequest(t *testing.T) {
 		configured                       bool
 		invalid                          bool
 	}{
-		{name: "offline default", want: "builtin"},
+		{name: "missing offline mode", invalid: true},
+		{name: "missing mode with unset destination", configured: true, invalid: true},
+		{name: "offline builtin", request: "builtin", want: "builtin"},
 		{name: "offline external", request: "external", want: "external"},
+		{name: "request with unset destination", request: "external", configured: true, want: "external"},
 		{name: "configured external", destination: "external", configured: true, want: "external"},
 		{name: "configured builtin", destination: "builtin", configured: true, want: "builtin"},
 		{name: "request differs from builtin", request: "external", destination: "builtin", configured: true, invalid: true},

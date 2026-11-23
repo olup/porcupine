@@ -63,8 +63,7 @@ func RestoreNativeBackup(ctx context.Context, c NativeRestoreConfig) (result Nat
 	if err = lakeapi.ValidateNativeBackupManifest(manifest); err != nil {
 		return result, err
 	}
-	_, remoteArchive := reader.(*lakeapi.NativeBackupS3)
-	if err = validateNativeRestoreSourceStorage(c.DuckLake.S3, manifest.SourceStorage, remoteArchive); err != nil {
+	if err = validateNativeRestoreSourceStorage(c.DuckLake.S3, manifest.SourceStorage); err != nil {
 		return result, err
 	}
 	if err = validateNativeRestoreS3Target(ctx, c.DuckLake.S3, c.Backup.S3); err != nil {
@@ -310,34 +309,18 @@ func validateNativeRestoreS3Target(ctx context.Context, target, backup *lakeapi.
 	return nil
 }
 
-func validateNativeRestoreSourceStorage(target *lakeapi.DuckLakeS3Config, source lakeapi.NativeBackupStorageIdentity, remoteArchive bool) error {
-	if source.Mode == "" {
-		if target != nil || remoteArchive {
-			return errors.New("remote native restore requires the backup's original analytical storage identity")
-		}
-		return nil
+func validateNativeRestoreSourceStorage(target *lakeapi.DuckLakeS3Config, source lakeapi.NativeBackupStorageIdentity) error {
+	if err := lakeapi.ValidateNativeBackupStorageIdentity(source); err != nil {
+		return err
 	}
-	if source.Mode == "local" {
-		if source.Bucket != "" || source.Prefix != "" || source.Region != "" || source.Endpoint != "" {
-			return errors.New("invalid local backup source storage identity")
-		}
-		return nil
-	}
-	if source.Mode != "s3" {
-		return errors.New("unsupported backup source storage mode")
-	}
-	original, err := lakeapi.NormalizeDuckLakeS3(&lakeapi.DuckLakeS3Config{Bucket: source.Bucket, Prefix: source.Prefix, Region: source.Region, Endpoint: source.Endpoint})
-	if err != nil {
-		return errors.New("invalid backup original analytical storage identity")
-	}
-	if target == nil {
+	if target == nil || source.Mode == "local" {
 		return nil
 	}
 	normalized, err := lakeapi.NormalizeDuckLakeS3(target)
 	if err != nil {
 		return err
 	}
-	if original.Bucket == normalized.Bucket && nativeRestorePrefixesOverlap(original.Prefix, normalized.Prefix) {
+	if source.Bucket == normalized.Bucket && nativeRestorePrefixesOverlap(source.Prefix, normalized.Prefix) {
 		return errors.New("restore target overlaps the original analytical S3 namespace")
 	}
 	return nil

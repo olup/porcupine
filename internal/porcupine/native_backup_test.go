@@ -143,7 +143,7 @@ func minimalNativeBackupBundle(t *testing.T) string {
 
 func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"valid", "legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "source-mismatch", "control-mismatch", "missing-control", "legacy-format", "missing-catalog"} {
+	for _, scenario := range []string{"valid", "legacy-paths", "escape", "absolute", "duplicate", "missing", "extra", "symlink", "missing-storage-identity", "source-mismatch", "control-mismatch", "missing-control", "legacy-format", "missing-catalog"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := minimalNativeBackupBundle(t)
 			manifest := readNativeManifest(t, directory)
@@ -154,6 +154,8 @@ func TestNativeBackupVerificationRejectsUnsafeOrIncompleteInventory(t *testing.T
 				manifest.DuckLakeDirectory = "/original/source/lake"
 			case "legacy-format":
 				manifest.Format = "porcupine-native-v1"
+			case "missing-storage-identity":
+				manifest.SourceStorage = lakeapi.NativeBackupStorageIdentity{}
 			case "missing-control":
 				if err := os.Remove(filepath.Join(directory, "control.sqlite")); err != nil {
 					t.Fatal(err)
@@ -318,16 +320,13 @@ func TestNativeBackupStorageIdentityValidation(t *testing.T) {
 	t.Parallel()
 	valid := []lakeapi.NativeBackupStorageIdentity{{Mode: "local"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "http://127.0.0.1:9000"}}
 	for _, identity := range valid {
-		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity, false); err != nil {
+		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, identity := range []lakeapi.NativeBackupStorageIdentity{{}, {Mode: "local", Bucket: "backup-test"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics/", Region: "us-east-1"}, {Mode: "s3", Bucket: "backup-test", Prefix: "analytics", Region: "us-east-1", Endpoint: "https://secret:password@example.test"}, {Mode: "unexpected"}} {
-		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity, false); err == nil {
+		if err := lakeapi.ValidateNativeBackupStorageIdentity(identity); err == nil {
 			t.Fatalf("invalid storage identity accepted: %+v", identity)
 		}
-	}
-	if err := lakeapi.ValidateNativeBackupStorageIdentity(lakeapi.NativeBackupStorageIdentity{}, true); err != nil {
-		t.Fatal("legacy local v1 identity rejected", err)
 	}
 }

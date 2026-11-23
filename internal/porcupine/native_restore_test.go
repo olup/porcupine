@@ -16,7 +16,7 @@ import (
 func TestNativeRestoreRequiresFreshTargetsAndPrivateReset(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	valid := NativeRestoreRequest{BackupID: "pc_backup_test", TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("fresh-private-bootstrap", 2)}
+	valid := NativeRestoreRequest{BackupID: "pc_backup_test", AuthMode: "builtin", TargetDBPath: filepath.Join(root, "target", "queue.db"), TargetDuckLakeDirectory: filepath.Join(root, "target", "lake"), ResetCredentialsAcknowledged: true, BootstrapToken: strings.Repeat("fresh-private-bootstrap", 2)}
 	if err := validateNativeRestoreRequest(valid); err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +137,36 @@ func TestNativeRestoreRejectsSQLiteSchemaChanges(t *testing.T) {
 	}
 	if err := verifyRestoreSQLiteSchema(context.Background(), s.db, s.control); err == nil {
 		t.Fatal("future schema accepted")
+	}
+}
+
+func TestNativeRestoreRejectsUnnumberedSQLiteSchema(t *testing.T) {
+	t.Parallel()
+	for _, store := range []schemaStore{journalSchema, localControlSchema} {
+		t.Run(store.name, func(t *testing.T) {
+			t.Parallel()
+			db, err := openLocalSQLite(filepath.Join(t.TempDir(), store.name+".sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			v1 := store
+			v1.steps = store.steps[:1]
+			if err := migrateSQLite(t.Context(), db, v1); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyRestoreDatabaseSchema(t.Context(), store, db); err != nil {
+				t.Fatal("version 1 backup rejected:", err)
+			}
+			for _, version := range []string{"0", "-1"} {
+				if _, err := db.ExecContext(t.Context(), "PRAGMA user_version="+version); err != nil {
+					t.Fatal(err)
+				}
+				if err := verifyRestoreDatabaseSchema(t.Context(), store, db); err == nil || !strings.Contains(err.Error(), "schema version "+version+" is unsupported") {
+					t.Fatalf("expected restore to reject schema version %s, got %v", version, err)
+				}
+			}
+		})
 	}
 }
 

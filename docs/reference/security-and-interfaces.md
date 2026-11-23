@@ -28,8 +28,6 @@ The control database stores client credentials, token hashes, memberships, and p
 
 Instance scope is an explicit administrative grant. A project credential cannot create an instance credential, target another project, or grant permissions outside its own authority. Credential creation must validate both requested scope and permissions. An event payload cannot override the project determined by authentication.
 
-<a id="tenant-roles-and-project-permissions-unreleased"></a><!-- Legacy URL fragment. -->
-
 ## Tenant roles and project permissions
 
 Instance and tenant administrators have distinct authority.
@@ -138,8 +136,6 @@ Public statistics expose elapsed time without physical scan totals. Delivery sta
 Local data paths and engine resource settings belong to deployment configuration. Project credentials cannot change them through HTTP or MCP. Analytical S3 is configured before initializing a fresh archive.
 
 [Analytical S3](ducklake-s3.md) uses operator-controlled bucket endpoints, credentials, and project prefixes. These settings remain outside the management API. Destination pipelines and one-time query exports use separate credentials and retention policies.
-
-<a id="unreleased-shared-deployment-boundary"></a><!-- Legacy URL fragment. -->
 
 ### Hosted deployment boundary
 

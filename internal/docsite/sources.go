@@ -18,11 +18,7 @@ type document struct {
 var markdownLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 var heading = regexp.MustCompile(`(?m)^# (.+)$`)
 
-func loadDocuments(root string) ([]document, map[string]string, error) {
-	relocated := map[string]string{}
-	if err := readJSON(filepath.Join(root, "docs-theme/relocated-guides.json"), &relocated); err != nil {
-		return nil, nil, err
-	}
+func loadDocuments(root string) ([]document, error) {
 	var documents []document
 	err := filepath.WalkDir(filepath.Join(root, "docs"), func(file string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || filepath.Ext(file) != ".md" {
@@ -37,22 +33,19 @@ func loadDocuments(root string) ([]document, map[string]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	generated := map[string]string{"quickstart.md": "README.md", "cli.md": "cli/README.md"}
-	for old, current := range relocated {
-		generated[old] = "docs/" + current
-	}
 	for uri, source := range generated {
 		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(source)))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		markdown := string(body)
 		if uri == "quickstart.md" {
 			_, section, found := strings.Cut(markdown, "\n## Quickstart\n")
 			if !found {
-				return nil, nil, fmt.Errorf("README.md is missing its Quickstart section")
+				return nil, fmt.Errorf("README.md is missing its Quickstart section")
 			}
 			section, _, _ = strings.Cut(section, "\n## ")
 			markdown = "# Quickstart\n" + strings.ReplaceAll(section, "\n### ", "\n## ")
@@ -61,12 +54,12 @@ func loadDocuments(root string) ([]document, map[string]string, error) {
 		documents = append(documents, document{URI: uri, Source: filepath.Join(root, filepath.FromSlash(source)), Markdown: markdown})
 	}
 	for i := range documents {
-		documents[i].Markdown = rewriteLinks(root, documents[i], relocated)
+		documents[i].Markdown = rewriteLinks(root, documents[i])
 	}
-	return documents, relocated, nil
+	return documents, nil
 }
 
-func rewriteLinks(root string, doc document, relocated map[string]string) string {
+func rewriteLinks(root string, doc document) string {
 	return markdownLink.ReplaceAllStringFunc(doc.Markdown, func(match string) string {
 		href := markdownLink.FindStringSubmatch(match)[1]
 		parsed, err := url.Parse(href)
@@ -88,9 +81,6 @@ func rewriteLinks(root string, doc document, relocated map[string]string) string
 		default:
 			if strings.HasPrefix(relative, "docs/") && strings.HasSuffix(relative, ".md") {
 				mapped = strings.TrimPrefix(relative, "docs/")
-				if canonical := relocated[mapped]; canonical != "" {
-					mapped = canonical
-				}
 			}
 		}
 		if mapped != "" {

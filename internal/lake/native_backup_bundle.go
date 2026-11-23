@@ -380,7 +380,7 @@ func ValidateNativeBackupManifest(m NativeBackupManifest) error {
 	if m.Format != "porcupine-native-v2" || !ValidNativeBackupID(m.ID) || m.SourceID == "" || !LakePrefixSegmentPattern.MatchString(m.SourceID) || len(m.Files) > NativeBackupFileLimit {
 		return errors.New("unsupported native backup manifest")
 	}
-	if err := ValidateNativeBackupStorageIdentity(m.SourceStorage, false); err != nil {
+	if err := ValidateNativeBackupStorageIdentity(m.SourceStorage); err != nil {
 		return err
 	}
 	files := map[string]bool{}
@@ -405,12 +405,9 @@ func ValidateNativeBackupManifest(m NativeBackupManifest) error {
 	return nil
 }
 
-func ValidateNativeBackupStorageIdentity(storage NativeBackupStorageIdentity, allowLegacy bool) error {
+func ValidateNativeBackupStorageIdentity(storage NativeBackupStorageIdentity) error {
 	switch storage.Mode {
 	case "":
-		if allowLegacy && storage == (NativeBackupStorageIdentity{}) {
-			return nil
-		}
 		return errors.New("native backup is missing its original analytical storage identity")
 	case "local":
 		if storage == (NativeBackupStorageIdentity{Mode: "local"}) {

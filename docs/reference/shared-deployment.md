@@ -23,7 +23,7 @@ The hosted profile runs replaceable Porcupine workers behind an ingress. Postgre
    }
    ```
 
-   Set the PostgreSQL URL through `shared.control_database_url_file` or `shared.control_database_url`. If you also set `ducklake.postgres_url` or its file variant, it must resolve to the same URL. Use the same deployment configuration and pipeline encryption key on all workers. Set `storage.ducklake` if you need a specific disposable scratch directory. The hosted profile rejects local journal and control paths, receipt retention, owner routing settings, and native backup settings.
+   Set the PostgreSQL URL through `shared.control_database_url_file` or `shared.control_database_url`. If you also set `ducklake.postgres_url` or its file variant, it must resolve to the same URL. Use the same deployment configuration and pipeline encryption key on all workers. Set `storage.ducklake` if you need a specific disposable scratch directory. The hosted profile rejects local journal and control paths, receipt retention, and native backup settings.
 
    `acceptance.mode: "buffered"` explicitly accepts the hosted acknowledgment policy. The `profile` selects the runtime.
 

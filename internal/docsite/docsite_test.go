@@ -155,24 +155,22 @@ func TestPublishedRelease(t *testing.T) {
 func TestLinkRewriting(t *testing.T) {
 	t.Parallel()
 	root := repository(t)
-	relocated := map[string]string{"analytics.md": "reference/analytics.md"}
 	for _, test := range []struct{ uri, source, input, want string }{
 		{"reference/mcp.md", "docs/reference/mcp.md", "[Start](../README.md) [SQL](analytics.md)", "[Start](../README.md) [SQL](analytics.md)"},
-		{"mcp.md", "docs/reference/mcp.md", "[Start](../README.md) [SQL](analytics.md)", "[Start](README.md) [SQL](reference/analytics.md)"},
 		{"quickstart.md", "README.md", "[Host](docs/hosting.md#start) [CLI](cli/README.md)", "[Host](hosting.md#start) [CLI](cli.md)"},
 		{"design/releasing.md", "docs/design/releasing.md", "[Config](../../compose.yaml)", "[Config](https://github.com/olup/porcupine/blob/main/compose.yaml)"},
 		{"reference/mcp.md", "docs/reference/mcp.md", "[External](https://example.com/x.md#y) [Anchor](#section)", "[External](https://example.com/x.md#y) [Anchor](#section)"},
 	} {
-		got := rewriteLinks(root, document{URI: test.uri, Source: filepath.Join(root, test.source), Markdown: test.input}, relocated)
+		got := rewriteLinks(root, document{URI: test.uri, Source: filepath.Join(root, test.source), Markdown: test.input})
 		if got != test.want {
 			t.Errorf("%s: %s, want %s", test.uri, got, test.want)
 		}
 	}
 }
 
-func TestGeneratedDocumentsAndPublicAliases(t *testing.T) {
+func TestGeneratedDocuments(t *testing.T) {
 	t.Parallel()
-	docs, _, err := loadDocuments(repository(t))
+	docs, err := loadDocuments(repository(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +178,10 @@ func TestGeneratedDocumentsAndPublicAliases(t *testing.T) {
 	for _, doc := range docs {
 		documents[doc.URI] = doc
 	}
-	for _, uri := range []string{"reference/mcp.md", "design/ducklake-validation.md", "native-event-contract.md", "cli.md", "quickstart.md"} {
+	for _, uri := range []string{"reference/mcp.md", "design/ducklake-validation.md", "reference/native-event-contract.md", "cli.md", "quickstart.md"} {
 		if documents[uri].Markdown == "" {
 			t.Errorf("missing generated document %s", uri)
 		}
-	}
-	if !strings.Contains(documents["mcp.md"].Markdown, "reference/analytics.md") {
-		t.Fatal("alias relative links did not use source directory")
 	}
 	if !strings.HasPrefix(documents["quickstart.md"].Markdown, "# Quickstart\n") || strings.Contains(documents["quickstart.md"].Markdown, "## Quickstart") {
 		t.Fatal("quickstart includes repeated title or introduction")

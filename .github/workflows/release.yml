@@ -105,13 +105,13 @@ jobs:
           first="$(curl --fail --silent --show-error "$origin/ingest/v1/events" \
             -H "X-Porcupine-Key: $ingest" -H 'Content-Type: application/json' --data "$payload")"
           event_id="$(printf '%s' "$first" | jq -er '.receipts[0].event_id | select(type == "string" and length > 0)')"
-          query='{"sql":"SELECT event_id,event FROM events WHERE event=$name","parameters":{"name":"release-smoke"}}'
+          query='{"sql":"SELECT id,event FROM events WHERE event=$name","parameters":{"name":"release-smoke"}}'
           visible=false
           for attempt in $(seq 1 120); do
             if result="$(curl --fail --silent --show-error "$origin/api/v1/projects/$project/query" \
               -H "Authorization: Bearer $PORCUPINE_BOOTSTRAP_TOKEN" -H 'Content-Type: application/json' --data "$query")"; then
               if printf '%s' "$result" | jq -e --arg id "$event_id" \
-                '.result.rows == 1 and (.result.data | length) == 1 and .result.data[0].event_id == $id and .result.data[0].event == "release-smoke"' >/dev/null; then
+                '.result.rows == 1 and (.result.data | length) == 1 and .result.data[0].id == $id and .result.data[0].event == "release-smoke"' >/dev/null; then
                 visible=true
                 break
               fi

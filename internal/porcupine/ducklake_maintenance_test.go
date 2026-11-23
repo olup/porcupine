@@ -124,13 +124,13 @@ func lakeMaintenanceLifecycle(t *testing.T, s *Service, project, ingest, prefix 
 func lakeMaintenanceVerify(t *testing.T, s *Service, project string, state maintenanceLifecycleState) {
 	t.Helper()
 	prefix, editReceipt, deleteReceipt := state.prefix, state.receipts[0], state.receipts[1]
-	rows := lakeMaintenanceQuery(t, s, project, "SELECT event_id,event,revision,person_id,person_properties,properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": editReceipt["uuid"].(string)})
+	rows := lakeMaintenanceQuery(t, s, project, "SELECT id,event,revision,person_id,person_properties,properties FROM events WHERE uuid=$uuid", map[string]string{"uuid": editReceipt["uuid"].(string)})
 	if len(rows) != 1 {
 		t.Fatal("concurrent correction missing")
 	}
 	row := rows[0].(map[string]any)
 	var traits, properties map[string]any
-	if json.Unmarshal([]byte(row["person_properties"].(string)), &traits) != nil || json.Unmarshal([]byte(row["properties"].(string)), &properties) != nil || properties["amount"] != float64(42) || row["event_id"] != editReceipt["event_id"] || row["event"] != "lifecycle-corrected" || row["revision"] != state.revision || row["person_id"] != prefix+"-person" || traits["plan"] != "team" {
+	if json.Unmarshal([]byte(row["person_properties"].(string)), &traits) != nil || json.Unmarshal([]byte(row["properties"].(string)), &properties) != nil || properties["amount"] != float64(42) || row["id"] != editReceipt["event_id"] || row["event"] != "lifecycle-corrected" || row["revision"] != state.revision || row["person_id"] != prefix+"-person" || traits["plan"] != "team" {
 		t.Fatalf("concurrent identity/edit changed: %v", row)
 	}
 	deleted := lakeMaintenanceQuery(t, s, project, "SELECT count(*) AS total FROM events WHERE uuid=$uuid", map[string]string{"uuid": deleteReceipt["uuid"].(string)})

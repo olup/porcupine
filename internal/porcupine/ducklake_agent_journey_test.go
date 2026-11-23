@@ -145,7 +145,7 @@ func TestDuckLakeAgentDiscoveryRecoveryAndRecipes(t *testing.T) {
 	if repaired["result"].(map[string]any)["data"].([]any)[0].(map[string]any)["total"] != "4" {
 		t.Fatal("agent could not recover using error hint")
 	}
-	limited := mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "query-events", Path: path, Body: map[string]any{"sql": "SELECT a.event_id FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d LIMIT 1001"}}, 429)
+	limited := mcpTestCall(t, ctx, session, mcpCallInput{OperationID: "query-events", Path: path, Body: map[string]any{"sql": "SELECT a.id FROM events a CROSS JOIN events b CROSS JOIN events c CROSS JOIN events d LIMIT 1001"}}, 429)
 	if limited["code"] != "result_row_limit" || !strings.Contains(limited["hint"].(string), "create-event-export") {
 		t.Fatalf("missing export recovery: %v", limited)
 	}
