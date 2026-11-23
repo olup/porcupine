@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.21.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.22.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-a-storage-mode"></a>
 
@@ -63,6 +63,20 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.21.0
+
+v0.22.0 uses the v0.21.0 storage schemas in both deployment profiles.
+
+1. Keep the v0.21.0 image and private configuration for rollback. Remove `oauth.allow_legacy_keys` and unset its environment override even if set to `false`. Run `config check` with the v0.22.0 server to validate the updated settings. [Removed setting and override](https://github.com/olup/porcupine/blob/v0.22.0/CHANGELOG.md#0220) · [Server configuration](reference/configuration.md)
+2. With builtin OAuth enabled, move integrations using legacy Bearer keys to OAuth access tokens or native service keys for the API or MCP audience. Verify operator access before cutover. [OAuth configuration](reference/oauth.md#operator-configuration)
+3. Replace `events.event_id` with `events.id` in SQL queries, exports, and deletion predicates. If callers need a result field named `event_id`, use `id AS event_id`. Replace `limits.max_execution_seconds` in schema discovery clients with `limits.max_execution_ms`, in milliseconds. [SQL contract](reference/analytics.md#sql-stability)
+4. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and resolve shutdown errors before continuing.
+5. Stop v0.21.0 and start v0.22.0 with the updated configuration and existing storage. Update the CLI. Check readiness, verify access and representative queries, and confirm that a new test event becomes queryable before resuming producers.
+
+For offline native restore, use the CLI and server image that match the bundle version. The v0.22.0 restorer requires the original analytical storage identity and numbered schemas in both SQLite files. Direct restore requests must supply `auth_mode` if the destination configuration leaves it unset. [Offline recovery](reference/native-backup-recovery.md)
+
+To roll back, drain and stop v0.22.0, then start v0.21.0 with its original configuration and the same storage. Use the v0.21.0 CLI and verify readiness and delivery before resuming producers.
 
 ### Upgrade from v0.20.0
 

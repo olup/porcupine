@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.0
+
+- Recorded the first versioned public SQL contract for the `events` columns and DuckDB types, function allowlist, and SQL features. Schema discovery no longer lists the unavailable entries `exp2`, `->`, `~~_escape`, and `!~~_escape`. `LIKE ... ESCAPE` and `NOT LIKE ... ESCAPE` are supported. (#200) [SQL stability](https://github.com/olup/porcupine/blob/v0.22.0/docs/reference/analytics.md#sql-stability)
+- The public SQL view drops the `events.event_id` alias. Use `events.id` in queries, exports, and deletion predicates. Ingestion receipts still use `event_id`. Schema discovery drops `limits.max_execution_seconds`. Use `limits.max_execution_ms` for the query deadline. (#201)
+- Builtin OAuth removes `oauth.allow_legacy_keys` and `PORCUPINE_OAUTH_ALLOW_LEGACY_KEYS`. Use OAuth access tokens or native service keys for API and MCP access. With OAuth enabled, `create-access-key` issues only single-project ingestion keys. (#201) [OAuth configuration](https://github.com/olup/porcupine/blob/v0.22.0/docs/reference/oauth.md#operator-configuration)
+- Offline native restore requires the original analytical storage identity and numbered SQLite schemas. Supply `auth_mode` in direct restore requests when the destination configuration leaves it unset. (#201) [Offline recovery](https://github.com/olup/porcupine/blob/v0.22.0/docs/reference/native-backup-recovery.md)
+- Removed legacy documentation redirects and anchors. API discovery links to the canonical native event contract. (#201) [Native event contract](https://github.com/olup/porcupine/blob/v0.22.0/docs/reference/native-event-contract.md)
+
+v0.22.0 uses the v0.21.0 storage schemas. [Upgrade from v0.21.0](https://github.com/olup/porcupine/blob/v0.22.0/docs/hosting.md#upgrade-from-v0210)
+
 ## 0.21.0
 
 - The first Porcupine browser SDK release includes an npm-installable tarball, a standalone script, and its subresource integrity value. The SDK captures events without cookies or browser storage. Call `initCloud` to send events to `https://api.getporcupine.eu`, or use `init` with your self-hosted URL. (#196, #198) [Install the browser SDK](https://github.com/olup/porcupine/blob/v0.21.0/sdk/browser/README.md#install-from-a-release)
