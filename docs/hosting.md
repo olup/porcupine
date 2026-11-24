@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.22.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.23.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-a-storage-mode"></a>
 
@@ -63,6 +63,17 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.22.0
+
+Startup adds private source-map storage. Standalone SQLite control advances from version 10 to 11. Hosted PostgreSQL control advances from version 28 to 29.
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and resolve shutdown errors before continuing.
+2. Stop all v0.22.0 server processes and keep the v0.22.0 image and private configuration.
+3. Take a complete recovery point. For standalone, capture both SQLite databases and the DuckLake storage together, including any analytical objects in S3. For hosted, coordinate the PostgreSQL recovery point with S3 object versions. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+4. Start v0.23.0 with the existing configuration and storage, then update the CLI. Check readiness and verify that a new test event becomes queryable before resuming producers.
+
+v0.22.0 refuses the newer control schema in either profile. To roll back, drain and stop v0.23.0, restore the complete pre-upgrade recovery point, and start v0.22.0 with its original configuration. Reconcile writes accepted after cutover before resuming producers.
 
 ### Upgrade from v0.21.0
 
