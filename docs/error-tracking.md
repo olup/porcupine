@@ -38,13 +38,14 @@ You can retry an upload with the same artifacts. Porcupine compares the digest o
 
 ### Upload PostHog artifacts
 
-Run PostHog-compatible chunk ID injection as part of your build and deploy the injected JavaScript. Then omit `--build` and `--asset-base` when uploading:
+Use the PostHog CLI to inject chunk IDs into the build. Then upload the maps with the Porcupine CLI. [PostHog CLI injection](https://posthog.com/changelog?id=2105)
 
 ```sh
+posthog-cli sourcemap inject --directory dist
 porcupine upload-source-maps --id "$PROJECT_ID" --dir dist
 ```
 
-The CLI reads a chunk ID from the map's `chunk_id` or `chunkId` field, or from a `//# chunkId=` comment in the generated bundle. Injection is a separate build step. The SDK's captured stack frames must carry those chunk IDs for lookup.
+Deploy the injected JavaScript. Keep the `.map` files out of your public assets. The Porcupine CLI reads a chunk ID from the map's `chunk_id` or `chunkId` field, or from a `//# chunkId=` comment in the generated bundle. Injection is a separate build step. The SDK's captured stack frames must carry those chunk IDs for lookup.
 
 ## Find an exception and read its stack
 
