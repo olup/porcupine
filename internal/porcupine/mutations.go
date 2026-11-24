@@ -12,6 +12,7 @@ import (
 
 	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/apierr"
+	"github.com/olup/porcupine/internal/errtrack"
 	"github.com/olup/porcupine/internal/output"
 
 	eventapi "github.com/olup/porcupine/internal/event"
@@ -294,7 +295,10 @@ func prepareMutation(current lakeapi.EventProjection, pending bool, operation st
 		if current.SourceID == "posthog" {
 			delete(snapshot.Properties, "token")
 		}
-		properties, _ := json.Marshal(snapshot.Properties)
+		if snapshot.Event == "$exception" {
+			errtrack.NormalizeStoredFields(snapshot.Properties)
+		}
+		var properties json.RawMessage
 		if originalProperties["cookieless"] == true && (current.SourceID == "posthog" || strings.HasPrefix(current.DistinctID, "cookieless_")) {
 			if snapshot.DistinctID != current.DistinctID {
 				return lakeapi.EventProjection{}, apierr.New(400, "cookieless distinct_id cannot be changed")
@@ -303,7 +307,8 @@ func prepareMutation(current lakeapi.EventProjection, pending bool, operation st
 			if !ok || day == "" {
 				return lakeapi.EventProjection{}, apierr.New(503, "cookieless identity metadata is unavailable")
 			}
-			properties = acceptance.CookielessProperties(properties, current.DistinctID, day)
+			raw, _ := json.Marshal(snapshot.Properties)
+			properties = acceptance.CookielessProperties(raw, current.DistinctID, day)
 		} else {
 			if current.SourceID == "posthog" {
 				delete(snapshot.Properties, "cookieless")

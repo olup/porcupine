@@ -794,6 +794,172 @@
         },
         "type": "object"
       },
+      "ErrorGroupBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Occurrence count as a decimal string.",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "count"
+        ],
+        "type": "object"
+      },
+      "ErrorGroupOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "event_id": {
+            "description": "Decimal analytics event ID.",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "release": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "occurred_at"
+        ],
+        "type": "object"
+      },
+      "ErrorGroupOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "bucket_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "distribution": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorGroupBucket"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "group": {
+            "$ref": "#/components/schemas/ErrorGroupSummary"
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorGroupOccurrence"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "group",
+          "bucket_seconds",
+          "distribution",
+          "occurrences"
+        ],
+        "type": "object"
+      },
+      "ErrorGroupSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Occurrence count as a decimal string.",
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "first_seen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_seen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "latest_event_id": {
+            "description": "Decimal analytics event ID.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "count",
+          "first_seen",
+          "last_seen",
+          "latest_event_id"
+        ],
+        "type": "object"
+      },
+      "ErrorGroupsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorGroupSummary"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "groups"
+        ],
+        "type": "object"
+      },
       "ErrorModel": {
         "additionalProperties": false,
         "properties": {
@@ -22555,6 +22721,1534 @@
           }
         ],
         "summary": "Get or create the active public client ingestion key for a mixed project in a tenant administered by this caller"
+      }
+    },
+    "/api/v1/projects/{id}/error-groups": {
+      "get": {
+        "operationId": "list-error-groups",
+        "parameters": [
+          {
+            "description": "Project identifier",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Project identifier",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.",
+            "explode": false,
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.",
+            "explode": false,
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "format": "int64",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Sort by latest occurrence or descending count.",
+            "explode": false,
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "default": "recent",
+              "description": "Sort by latest occurrence or descending count.",
+              "enum": [
+                "recent",
+                "count"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Case-insensitive literal substring of an exception type or message in the group.",
+            "explode": false,
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "description": "Case-insensitive literal substring of an exception type or message in the group.",
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorGroupsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "oauth2": [
+              "events:read"
+            ]
+          },
+          {
+            "serviceKey": []
+          }
+        ],
+        "summary": "List delivered exception groups in an occurrence time window"
+      }
+    },
+    "/api/v1/projects/{id}/error-groups/{fingerprint}": {
+      "get": {
+        "operationId": "get-error-group",
+        "parameters": [
+          {
+            "description": "Project identifier",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Project identifier",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.",
+            "explode": false,
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.",
+            "explode": false,
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "format": "int64",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Lowercase hexadecimal exception fingerprint.",
+            "in": "path",
+            "name": "fingerprint",
+            "required": true,
+            "schema": {
+              "description": "Lowercase hexadecimal exception fingerprint.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorGroupOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "properties": {
+                    "code": {
+                      "description": "Stable error category when available.",
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "Query identifier or parameter involved, when safe to return.",
+                      "type": "string"
+                    },
+                    "hint": {
+                      "description": "Safe recovery guidance when available.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "oauth2": [
+              "events:read"
+            ]
+          },
+          {
+            "serviceKey": []
+          }
+        ],
+        "summary": "Read a delivered exception group, its time distribution and recent occurrences"
       }
     },
     "/api/v1/projects/{id}/errors/{event_id}/stack": {

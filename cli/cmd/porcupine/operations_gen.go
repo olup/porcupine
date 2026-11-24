@@ -245,6 +245,18 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-error-group", Method: "GET", Path: "/api/v1/projects/{id}/error-groups/{fingerprint}",
+		Summary: "Read a delivered exception group, its time distribution and recent occurrences",
+		Params: []parameter{
+			{Name: "fingerprint", In: "path", Type: "string", Description: "Lowercase hexadecimal exception fingerprint.", Required: true},
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+			{Name: "from", In: "query", Type: "string", Description: "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+			{Name: "to", In: "query", Type: "string", Description: "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.", Required: false},
+		},
+	},
+	{
 		ID: "get-error-stack", Method: "GET", Path: "/api/v1/projects/{id}/errors/{event_id}/stack",
 		Summary: "Read a delivered exception and resolve its stack frames against uploaded private source maps",
 		Params: []parameter{
@@ -421,6 +433,19 @@ var operations = []operation{
 	{
 		ID: "list-access-keys", Method: "GET", Path: "/api/v1/access-keys",
 		Summary: "List in-scope key metadata without secrets",
+	},
+	{
+		ID: "list-error-groups", Method: "GET", Path: "/api/v1/projects/{id}/error-groups",
+		Summary: "List delivered exception groups in an occurrence time window",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+			{Name: "from", In: "query", Type: "string", Description: "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.", Required: false},
+			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
+			{Name: "q", In: "query", Type: "string", Description: "Case-insensitive literal substring of an exception type or message in the group.", Required: false},
+			{Name: "sort", In: "query", Type: "string", Description: "Sort by latest occurrence or descending count. (server default: recent)", Required: false},
+			{Name: "to", In: "query", Type: "string", Description: "Exclusive RFC3339 occurrence time. Supply with from. Defaults to the current time. Maximum window is 31 days.", Required: false},
+		},
 	},
 	{
 		ID: "list-event-export-files", Method: "GET", Path: "/api/v1/projects/{id}/exports/{export_id}/files",

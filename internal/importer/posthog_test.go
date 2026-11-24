@@ -25,3 +25,17 @@ func TestImportRowsActualPostHogJSONLines(t *testing.T) {
 		t.Fatal("archived cookieless data reconstructed identity or kept known identifiers")
 	}
 }
+
+func TestPostHogImportNormalizesExceptionGrouping(t *testing.T) {
+	t.Parallel()
+	raw := `{"uuid":"archived-error","event":"$exception","distinct_id":"archived-visitor","timestamp":"2026-11-20T13:00:00Z","properties":{"$exception_fingerprint":"external-fingerprint","$exception_list":[{"type":"TypeError","value":"failed token=private"}],"invoice":9007199254740993}}`
+	row, err := ParsePostHog([]byte(raw), "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	properties := string(row.Event.Properties)
+	if strings.Contains(properties, "external-fingerprint") || strings.Contains(properties, "private") ||
+		!strings.Contains(properties, `"$exception_fingerprint":"`) || !strings.Contains(properties, `"invoice":9007199254740993`) {
+		t.Fatalf("incorrect stored exception metadata: %s", properties)
+	}
+}

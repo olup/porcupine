@@ -134,6 +134,25 @@ func Normalize(input map[string]any) Properties {
 	return p
 }
 
+// NormalizeStoredFields updates exception metadata without dropping unrelated
+// properties on historical imports and full event corrections.
+func NormalizeStoredFields(properties map[string]any) {
+	p := Normalize(properties)
+	properties["$exception_list"] = p.List
+	properties["$exception_fingerprint"] = p.Fingerprint
+	for key, value := range map[string]string{"$exception_build_id": p.BuildID, "$exception_release": p.Release} {
+		if value == "" {
+			delete(properties, key)
+		} else {
+			properties[key] = value
+		}
+	}
+	delete(properties, "$exception_degraded")
+	if p.Degraded {
+		properties["$exception_degraded"] = true
+	}
+}
+
 func normalizeException(item any) (Exception, bool) {
 	raw, _ := item.(map[string]any)
 	errorType, _ := raw["type"].(string)

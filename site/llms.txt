@@ -47,9 +47,9 @@ For history, use `porcupine import --project PROJECT_ID --format native FILE_OR_
 
 [Event contract](https://olup.github.io/porcupine/docs/reference/native-event-contract.md) · [Import guide](https://olup.github.io/porcupine/docs/imports.md)
 
-## Read an exception stack
+## Explore errors
 
-If the running instance exposes `get-error-stack`, query `$exception` events for the decimal `id`. Use `porcupine get-error-stack --id PROJECT_ID --event-id EVENT_ID` or call the operation through MCP. Both require project `events:read`. [Error tracking guide](https://olup.github.io/porcupine/docs/error-tracking.md)
+Use `list-error-groups` to find a fingerprint, `get-error-group` for its time distribution and occurrence IDs, and `get-error-stack` for the generated and mapped frames of one occurrence. Discover each operation with `porcupine_docs` and call it with `porcupine_call`, or use the matching CLI commands. These operations require project `events:read`. Reuse the same date bounds when paging. [Error tracking guide](https://olup.github.io/porcupine/docs/error-tracking.md)
 
 ## Deploy
 
