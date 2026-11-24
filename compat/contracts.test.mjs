@@ -42,7 +42,7 @@ const safeFetch = async (url, options) => {
   return fetch(url, options);
 };
 async function management(path, { method = 'GET', body, token = admin } = {}) {
-  const response = await fetch(api + path, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await fetch(api + path, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   assert.equal(response.status, method === 'POST' && !path.endsWith('/query') ? 201 : 200, 'management HTTP status');
   return response.json();
 }
@@ -91,11 +91,12 @@ async function sdkSend(tab, name, operation, argument) {
   return { value, payload, sent: payload.batch.find(item => item.event === name) };
 }
 const sdkCapture = (tab, name) => sdkSend(tab, name, name => ({ distinct: posthog.get_distinct_id(), uuid: posthog.capture(name, { synthetic: true }, { send_instantly: true }).uuid }), name);
-async function routeBrowser(route) {
+const posthogBrowserPaths = ['/i/v0/e/', '/e/', '/capture/'];
+async function routeBrowser(route, capturePaths) {
   const request = route.request();
   const url = new URL(request.url());
   if (![api, origin].includes(url.origin)) { blocked.push('browser external request'); await route.abort(); return; }
-  if (url.origin === api && !['/i/v0/e/', '/e/', '/capture/'].includes(url.pathname)) { unexpected.push(`browser ${url.pathname}`); await route.abort(); return; }
+  if (url.origin === api && !capturePaths.includes(url.pathname)) { unexpected.push(`browser ${url.pathname}`); await route.abort(); return; }
   if (url.origin === api && request.method() === 'POST') browserWires.push({ path: url.pathname, headers: request.headers(), body: request.postDataBuffer(), query: Object.fromEntries(url.searchParams) });
   await route.continue();
 }
@@ -147,6 +148,12 @@ before(async () => {
   site = createServer(async (request, response) => {
     if (request.url === '/') { response.setHeader('content-type', 'text/html'); response.end('<!doctype html><title>Porcupine SDK contract</title><script src="/sdk.js"></script>'); }
     else if (request.url === '/sdk.js') { response.setHeader('content-type', 'text/javascript'); response.end(await readFile(join(here, 'node_modules/posthog-js/dist/array.no-external.js'))); }
+    else if (request.url === '/errors') { response.setHeader('content-type', 'text/html'); response.end('<!doctype html><title>Browser error contract</title><script src="/error-fixture.js"></script>'); }
+    else if (request.url === '/sdk-full.js') { response.setHeader('content-type', 'text/javascript'); response.end(await readFile(join(here, 'node_modules/posthog-js/dist/array.full.no-external.js'))); }
+    else if (request.url === '/error-fixture.js') {
+      response.setHeader('content-type', 'text/javascript');
+      response.end("(globalThis._posthogChunkIds ??= {})[new Error().stack] = 'compat-test-chunk';\nglobalThis.throwFixture = function throwFixture() { throw new Error('Browser fixture exception'); };");
+    }
     else if (request.url === '/favicon.ico') { response.writeHead(204).end(); }
     else { unexpected.push('page route'); response.writeHead(404).end(); }
   });
@@ -205,7 +212,7 @@ before(async () => {
   browser = await chromium.launch({ headless: true });
   report.browser = { name: "chromium", version: browser.version() };
   context = await browser.newContext({ serviceWorkers: 'block' });
-  await context.route('**/*', routeBrowser);
+  await context.route('**/*', route => routeBrowser(route, posthogBrowserPaths));
   page = await context.newPage();
   page.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
   await page.goto(origin);
@@ -440,7 +447,7 @@ contract('browser.offline-queue', async () => {
   const name = 'browser offline queue';
   const interval = 10 * 60 * 1000;
   const isolated = await browser.newContext({ serviceWorkers: 'block' });
-  await isolated.route('**/*', routeBrowser);
+  await isolated.route('**/*', route => routeBrowser(route, posthogBrowserPaths));
   const tab = await isolated.newPage();
   try {
     await tab.clock.install({ time: new Date() });
@@ -781,6 +788,88 @@ contract('porcupine-browser.capture-and-retry', async () => {
     await isolated.close();
   }
 });
+
+async function browserErrorJourney(capturePaths, run) {
+  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Browser error contract' } });
+  const isolated = await browser.newContext({ serviceWorkers: 'block' });
+  try {
+    await isolated.route('**/*', route => routeBrowser(route, capturePaths));
+    const tab = await isolated.newPage();
+    tab.on('requestfailed', request => browserFailures.push(new URL(request.url()).pathname));
+    await tab.goto(origin + '/errors');
+    await run(tab, scoped);
+  } finally {
+    await isolated.close();
+  }
+}
+
+async function assertMappedBrowserError(projectID, expectedGenerated, expectedMetadata = {}) {
+  const path = `/api/v1/projects/${projectID}`;
+  const filename = 'src/browser-error.ts';
+  const [saved] = await event('$exception', 1, projectID);
+  const lookup = () => management(path + `/errors/${saved.id}/stack`);
+  const before = await lookup();
+  assert.match(before.fingerprint, /^[a-f0-9]+$/);
+  assert.equal(before.event_id, String(saved.id));
+  assert.deepEqual({ build_id: before.build_id, release: before.release }, { build_id: undefined, release: undefined, ...expectedMetadata });
+  const [exception] = before.exceptions;
+  assert.equal(exception.type, 'Error');
+  assert.equal(exception.value, 'Browser fixture exception');
+  const frame = exception.frames.find(frame => frame.generated.filename === origin + '/error-fixture.js' && frame.generated.lineno === 2);
+  assert.ok(frame, 'browser asset frame is present');
+  assert.ok(frame.generated.colno > 0);
+  for (const [key, value] of Object.entries(expectedGenerated)) assert.equal(frame.generated[key], value);
+  assert.equal(frame.original, undefined);
+
+  const artifacts = await mkdtemp(join(directory, 'error-build-'));
+  const sourceMap = { version: 3, sources: [filename], names: ['originalThrow'], mappings: ';AAAAA' };
+  if (expectedGenerated.chunk_id) sourceMap.chunk_id = expectedGenerated.chunk_id;
+  await writeFile(join(artifacts, 'error-fixture.js.map'), JSON.stringify(sourceMap));
+  const key = await management('/api/v1/access-keys', {
+    method: 'POST', body: { name: 'Source map CI', permissions: ['sourcemaps:write'], projects: [projectID] },
+  });
+  const args = ['run', './cmd/porcupine', 'upload-source-maps', '--id', projectID, '--dir', artifacts, '--url', api];
+  if (expectedMetadata.build_id) {
+    args.push('--build', expectedMetadata.build_id, '--asset-base', origin + '/');
+  }
+  execFileSync('go', args, {
+    cwd: join(root, 'cli'),
+    env: { ...process.env, CGO_ENABLED: '0', PORCUPINE_API_KEY: key.token },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10000,
+  });
+  const after = await lookup();
+  assert.equal(after.fingerprint, before.fingerprint);
+  const mappedFrame = after.exceptions[0].frames.find(item => item.generated.filename === frame.generated.filename && item.generated.lineno === frame.generated.lineno);
+  assert.deepEqual(mappedFrame.generated, frame.generated);
+  assert.deepEqual(mappedFrame.original, { filename, lineno: 1, colno: 1, function: 'originalThrow' });
+}
+
+contract('browser.exception-chunk-map', () => browserErrorJourney(posthogBrowserPaths, async (tab, scoped) => {
+  await tab.addScriptTag({ url: origin + '/sdk-full.js' });
+  await tab.evaluate(({ host, token, profile }) => posthog.init(token, { ...profile, api_host: host }),
+    { host: api, token: scoped.ingest_token, profile: cookielessProfile });
+  const { sent } = await sdkSend(tab, '$exception', () => {
+    try { window.throwFixture(); } catch (error) { posthog.captureException(error); }
+  });
+  assert.ok(sent.properties.$exception_list[0].stacktrace.frames.some(frame =>
+    frame.filename.endsWith('/error-fixture.js') && frame.chunk_id === 'compat-test-chunk'
+  ), 'pinned PostHog SDK sends the injected chunk ID');
+  await assertMappedBrowserError(scoped.project.id, { chunk_id: 'compat-test-chunk' });
+}));
+
+contract('porcupine-browser.exception-build-map', () => browserErrorJourney(['/batch/'], async (tab, scoped) => {
+  await tab.addScriptTag({ path: join(root, 'sdk/browser/dist/porcupine.js') });
+  const build = 'compat-browser-build';
+  const release = 'compat-browser-release';
+  await tab.evaluate(({ host, key, build, release }) => {
+    window.firstPartyAnalytics = window.Porcupine.init(key, {
+      api_host: host, build_id: build, release, capture_exceptions: true, capture_pageview: false,
+    });
+  }, { host: api, key: scoped.ingest_token, build, release });
+  await tab.addScriptTag({ content: 'setTimeout(window.throwFixture, 0);' });
+  await assertMappedBrowserError(scoped.project.id, {}, { build_id: build, release });
+}));
 
 contract('isolation-and-network', async () => {
   const otherEvents = await events(otherProject.project.id);

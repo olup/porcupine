@@ -31,7 +31,7 @@ func TestCatalogSummaryMigrationSQLite(t *testing.T) {
 	if err := initializeLocalControl(t.Context(), db, adminToken, limits, false); err != nil {
 		t.Fatal(err)
 	}
-	assertCatalogMigration(t, db, `PRAGMA user_version`, 10)
+	assertCatalogMigration(t, db, `PRAGMA user_version`, len(localControlSchema.steps))
 }
 
 func TestSharedCatalogSummaryMigrationAndHostedFence(t *testing.T) {

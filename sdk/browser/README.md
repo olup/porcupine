@@ -93,3 +93,10 @@ one minute. Permanent client errors drop the active batch.
 A standalone server acknowledges after it commits to its journal. A hosted
 server acknowledges admission to its in-memory buffer. Events can take
 additional time to appear in SQL in either profile.
+
+## Capture exceptions
+
+In builds that include error tracking, set `capture_exceptions: true` to capture
+uncaught errors and unhandled promise rejections. Use `captureException(error)`
+to report an error from your own handler. Set `build_id` to match the ID used to
+upload your source maps. See the [error tracking guide](../../docs/error-tracking.md).

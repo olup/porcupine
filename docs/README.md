@@ -10,6 +10,7 @@
 ## Use your data
 
 - [Collect events](collect-events.md) and [understand users and sessions](data-and-identity.md).
+- [Capture browser exceptions and resolve stacks](error-tracking.md).
 - [Import history](imports.md) or [correct and delete events](events.md).
 - [Query or export events](query-events.md) or [deliver them to another system](pipelines.md).
 

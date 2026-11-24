@@ -424,3 +424,98 @@ test('classic bundle exposes the same public interface', async () => {
   runInNewContext(source, context)
   assert.deepEqual(Object.keys(context.Porcupine).sort(), ['init', 'initCloud'])
 })
+
+test('captureException uses the cookieless queue with bounded, sanitized stack frames', async t => {
+  const { calls, connect, tick, window } = page(t)
+  const client = connect({ build_id: 'web-42', release: 'v1.2.3' })
+  const error = new TypeError('Could not load https://user:password@example.test/assets/app.js?token=hidden#private')
+  error.stack = [
+    'TypeError: Could not load',
+    '    at render (https://user:password@example.test/assets/app.js?token=hidden#private:12:34)',
+    'start@https://cdn.example.test/assets/entry.js#private:2:1',
+    '    at data:text/javascript,private:1:2',
+  ].join('\n')
+  window.dispatchEvent(Object.assign(new Event('error'), { error }))
+  assert.equal(client.captureException(error), true)
+  await tick(1000)
+  const [event] = calls[0].payload.batch
+  assert.equal(calls[0].payload.batch.length, 1)
+  assert.equal(event.event, '$exception')
+  assert.equal(event.distinct_id, '$posthog_cookieless')
+  assert.deepEqual(event.properties, {
+    $exception_build_id: 'web-42',
+    $exception_release: 'v1.2.3',
+    $exception_list: [{
+      type: 'TypeError',
+      value: 'Could not load [url]',
+      stacktrace: { type: 'raw', frames: [
+        { function: 'start', filename: 'https://cdn.example.test/assets/entry.js', lineno: 2, colno: 1 },
+        { function: 'render', filename: 'https://example.test/assets/app.js', lineno: 12, colno: 34 },
+      ] },
+    }],
+  })
+})
+
+test('captures window errors and promise rejections only when enabled and removes both listeners on disable', async t => {
+  const { calls, connect, tick, window } = page(t)
+  const add = t.mock.method(window, 'addEventListener')
+  const remove = t.mock.method(window, 'removeEventListener')
+  const client = connect({ capture_exceptions: true })
+  const error = Object.assign(new Event('error', { cancelable: true }), {
+    message: 'Script failed', filename: '/assets/app.js?secret#fragment', lineno: 2, colno: 5,
+  })
+  const rejection = Object.assign(new Event('unhandledrejection', { cancelable: true }), {
+    reason: '/profile?private=yes',
+  })
+  window.dispatchEvent(new Event('error'))
+  assert.equal(window.dispatchEvent(error), true)
+  assert.equal(window.dispatchEvent(rejection), true)
+  await tick(1000)
+  assert.deepEqual(calls[0].payload.batch.map(event => event.properties.$exception_list[0]), [
+    {
+      type: 'Error',
+      value: 'Script failed',
+      stacktrace: { type: 'raw', frames: [{ filename: '/assets/app.js', lineno: 2, colno: 5 }] },
+    },
+    { type: 'Error', value: '[redacted]' },
+  ])
+  client.disable()
+  for (const name of ['error', 'unhandledrejection']) {
+    const [, listener] = add.mock.calls.find(call => call.arguments[0] === name).arguments
+    assert.ok(remove.mock.calls.some(call => call.arguments[0] === name && call.arguments[1] === listener))
+  }
+  assert.equal(client.captureException(new Error('disabled')), false)
+  window.dispatchEvent(error)
+  window.dispatchEvent(rejection)
+  await tick(1000)
+  assert.equal(calls.length, 1)
+})
+
+test('bounds exception bursts, skips arbitrary object fields, and guards reentrant error getters', async t => {
+  const { calls, connect, tick } = page(t)
+  const client = connect({ build_id: 'https://example.test?private' })
+  let reads = 0
+  const object = { get message() { reads++; return 'private' }, toString() { reads++; return 'private' } }
+  const error = new Error('error')
+  let reentered
+  Object.defineProperty(error, 'message', { get() {
+    reentered = client.captureException('recursive')
+    throw new Error('blocked')
+  } })
+  error.stack = Array.from({ length: 30 }, (_, i) => `at assets/app.js:${i + 1}:2`).join('\n')
+  assert.equal(client.captureException(object), true)
+  assert.equal(client.captureException(error), true)
+  assert.equal(reentered, false)
+  assert.equal(reads, 0)
+  for (let i = 0; i < 8; i++) assert.equal(client.captureException('x'.repeat(3000)), true)
+  assert.equal(client.captureException('rate limited'), false)
+  assert.equal(client.capture('still_available'), true)
+  await tick(1000)
+  const batch = calls[0].payload.batch
+  assert.equal(batch.length, 11)
+  assert.deepEqual(batch[0].properties, { $exception_list: [{ type: 'Error', value: 'Non-Error thrown' }] })
+  assert.equal(batch[1].properties.$exception_list[0].stacktrace.frames.length, 12)
+  assert.equal(batch[2].properties.$exception_list[0].value.length, 1024)
+  await tick(59_000)
+  assert.equal(client.captureException('window reset'), true)
+})

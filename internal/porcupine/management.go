@@ -327,6 +327,7 @@ Queries see only this project's delivered logical events. The optional time_rang
 	s.registerTenantMembers(api, op)
 	s.registerTenantServiceCredentials(api, op)
 	s.registerImportUploads(api, op)
+	s.registerSourceMaps(api, op)
 	s.registerExports(api, op)
 	s.registerOAuthClients(api, op)
 	s.registerServiceKeys(api, op)
