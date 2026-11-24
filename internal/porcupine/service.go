@@ -115,6 +115,7 @@ type Service struct {
 	hostedReader          query.HostedReader
 	captureSlots          chan struct{}
 	importSlots           chan struct{}
+	sourceMapSlots        chan struct{}
 	tokenSlots            chan struct{}
 	statusSlots           chan struct{}
 	mutationMu            sync.Mutex
@@ -180,6 +181,7 @@ func newServiceRuntime(c Config, interactiveConfig query.InteractiveQueryConfig)
 	s.deliveryMaxEvents = 100
 	s.deliveryMaxBytes = 4 << 20
 	s.importSlots = make(chan struct{}, 2)
+	s.sourceMapSlots = make(chan struct{}, 2)
 	s.tokenSlots = make(chan struct{}, 8)
 	s.statusSlots = make(chan struct{}, 1)
 	return s, nil

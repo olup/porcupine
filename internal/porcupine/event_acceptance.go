@@ -11,6 +11,7 @@ import (
 
 	"github.com/olup/porcupine/internal/acceptance"
 	"github.com/olup/porcupine/internal/apierr"
+	"github.com/olup/porcupine/internal/errtrack"
 	eventapi "github.com/olup/porcupine/internal/event"
 	identityapi "github.com/olup/porcupine/internal/identity"
 	ingestfmt "github.com/olup/porcupine/internal/ingest"
@@ -88,7 +89,11 @@ func prepareLiveBatch(projectID, source string, batch eventBatch, receiptTime ti
 			delete(e.Properties, "cookieless")
 			delete(e.Properties, "identity_day")
 		}
-		props, err := json.Marshal(e.Properties)
+		var properties any = e.Properties
+		if e.Event == "$exception" {
+			properties = errtrack.Normalize(e.Properties)
+		}
+		props, err := json.Marshal(properties)
 		if err != nil {
 			return acceptance.Batch{}, errors.New("invalid properties")
 		}

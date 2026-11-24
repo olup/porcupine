@@ -1,7 +1,13 @@
+import { buildMetadata, exception } from './exceptions.js'
+
 export interface BrowserOptions {
   api_host: string
   /** Queue one $pageview during browser init. Defaults to true. */
   capture_pageview?: boolean
+  /** Capture window errors and unhandled promise rejections. Defaults to false. */
+  capture_exceptions?: boolean
+  build_id?: string
+  release?: string
 }
 
 export type CloudBrowserOptions = Omit<BrowserOptions, 'api_host'>
@@ -9,6 +15,8 @@ export type CloudBrowserOptions = Omit<BrowserOptions, 'api_host'>
 export interface BrowserClient {
   /** Return whether the event entered the local queue. */
   capture(event: string, properties?: Readonly<Record<string, unknown>>): boolean
+  /** Return whether the exception entered the local queue. */
+  captureException(error: unknown): boolean
   /** Drop pending events and stop this client. */
   disable(): void
 }
@@ -24,6 +32,8 @@ const maxRetries = 3
 const maxRetryDelayMs = 30_000
 const retryJitterMs = 250
 const quotaCooldownMs = 60_000
+const maxExceptionsPerWindow = 10
+const exceptionWindowMs = 60_000
 const browserEvents = new Set(['$pageview', '$pageleave', '$autocapture', '$screen', '$exception'])
 
 type QueuedEvent = { json: string; bytes: number; expiresAt: number }
@@ -120,6 +130,11 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
   let delivery: Delivery = { kind: 'idle' }
   let retryBatch: RetryBatch | undefined
   let notBefore = 0
+  const buildId = buildMetadata(options.build_id)
+  const release = buildMetadata(options.release)
+  let exceptionWindowEnds = 0
+  let exceptionCount = 0
+  let capturingException = false
 
   function batchBody(sentAt: string, events: string): string {
     return `{"api_key":${keyJson},"sent_at":"${sentAt}","batch":[${events}]}`
@@ -265,6 +280,46 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     return true
   }
 
+  function queueException(error: unknown, location?: Parameters<typeof exception>[1]): boolean {
+    if (capturingException || !hasSpace()) return false
+    const now = performance.now()
+    if (now >= exceptionWindowEnds) {
+      exceptionWindowEnds = now + exceptionWindowMs
+      exceptionCount = 0
+    }
+    if (exceptionCount >= maxExceptionsPerWindow) return false
+
+    capturingException = true
+    try {
+      const queued = capture('$exception', {
+        $exception_list: [exception(error, location)],
+        $exception_build_id: buildId,
+        $exception_release: release,
+      })
+      if (queued) exceptionCount++
+      return queued
+    } catch {
+      return false
+    } finally {
+      capturingException = false
+    }
+  }
+
+  function captureException(error: unknown): boolean {
+    return queueException(error)
+  }
+
+  function onError(event: ErrorEvent): void {
+    if (event.error == null && !event.message) return
+    queueException(event.error ?? event.message, {
+      filename: event.filename, lineno: event.lineno, colno: event.colno,
+    })
+  }
+
+  function onUnhandledRejection(event: PromiseRejectionEvent): void {
+    queueException(event.reason)
+  }
+
   function onVisibilityChange(): void {
     if (pageDocument?.visibilityState === 'hidden') flush()
   }
@@ -276,13 +331,19 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     discard(queue.length)
     if (previous.kind === 'sending') previous.controller.abort()
     if (previous.kind === 'scheduled') clearTimeout(previous.timer)
+    pageWindow?.removeEventListener('error', onError)
+    pageWindow?.removeEventListener('unhandledrejection', onUnhandledRejection)
     pageWindow?.removeEventListener('pagehide', flush)
     pageDocument?.removeEventListener('visibilitychange', onVisibilityChange)
   }
 
+  if (options.capture_exceptions === true) {
+    pageWindow?.addEventListener('error', onError)
+    pageWindow?.addEventListener('unhandledrejection', onUnhandledRejection)
+  }
   pageWindow?.addEventListener('pagehide', flush)
   pageDocument?.addEventListener('visibilitychange', onVisibilityChange)
   if (pageWindow && pageDocument && options.capture_pageview !== false) capture('$pageview')
 
-  return { capture, disable }
+  return { capture, captureException, disable }
 }

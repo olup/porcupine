@@ -19,7 +19,7 @@ type Principal struct {
 	Projects           []string
 }
 
-var projectPermissionNames = []string{"management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "imports:write", "identity:write", "pipelines:read", "pipelines:write"}
+var projectPermissionNames = []string{"management:read", "management:write", "events:read", "events:write", "events:edit", "events:delete", "imports:write", "identity:write", "pipelines:read", "pipelines:write", "sourcemaps:write"}
 
 var validPermissions = append([]string{"instance:admin", "tenant:admin"}, projectPermissionNames...)
 

@@ -245,6 +245,14 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-error-stack", Method: "GET", Path: "/api/v1/projects/{id}/errors/{event_id}/stack",
+		Summary: "Read a delivered exception and resolve its stack frames against uploaded private source maps",
+		Params: []parameter{
+			{Name: "event_id", In: "path", Type: "string", Description: "Decimal id of a delivered exception event", Required: true},
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+		},
+	},
+	{
 		ID: "get-event", Method: "GET", Path: "/api/v1/projects/{id}/events/{uuid}",
 		Summary: "Read the current accepted event and revision, including a pending correction",
 		Params: []parameter{
@@ -570,6 +578,18 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 			{Name: "pipeline_id", In: "path", Type: "string", Description: "", Required: true},
 		},
+	},
+	{
+		ID: "put-source-map", Method: "PUT", Path: "/api/v1/projects/{id}/source-maps",
+		Summary: "Upload a private Source Map v3 for a build asset or a PostHog chunk ID",
+		Params: []parameter{
+			{Name: "X-Source-Map-Asset-URL", In: "header", Type: "string", Description: "", Required: false},
+			{Name: "X-Source-Map-Build-ID", In: "header", Type: "string", Description: "", Required: false},
+			{Name: "X-Source-Map-Chunk-ID", In: "header", Type: "string", Description: "", Required: false},
+			{Name: "X-Source-Map-Release", In: "header", Type: "string", Description: "", Required: false},
+			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
+		},
+		ContentType: "application/octet-stream", BodyRequired: true,
 	},
 	{
 		ID: "query-events", Method: "POST", Path: "/api/v1/projects/{id}/query",

@@ -117,7 +117,8 @@ WHERE kind='client_ingestion' AND revoked_at IS NULL;`
 // 8: tenant ownership of operator credentials.
 // 9: explicit public client ingestion credentials.
 // 10: durable event catalog summaries and refresh claims.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 11: private source maps.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema, sourceMapSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -142,6 +143,7 @@ var hostedImportSchema string
 // 26: shared retry deadline for scheduled hosted recovery.
 // 27: durable event catalog summaries and refresh claims.
 // 28: distinguish hosted query deletions from single-event mutations.
+// 29: private source maps.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -184,6 +186,7 @@ CREATE TRIGGER hosted_recovery_reset_retry BEFORE UPDATE OF generation ON hosted
 FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCTION reset_hosted_recovery_retry();`,
 	catalog.ControlSchema,
 	hostedEventDeletionSchema,
+	sourceMapSchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

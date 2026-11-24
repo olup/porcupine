@@ -86,6 +86,20 @@
       "configuration": "Porcupine browser SDK defaults"
     },
     {
+      "id": "browser.exception-chunk-map",
+      "required": true,
+      "status": "implemented",
+      "scope": "Pinned PostHog JS captureException sends an injected chunk ID. A private map resolves the delivered browser frame by chunk ID.",
+      "configuration": "cookielessProfile with the full PostHog JS browser bundle"
+    },
+    {
+      "id": "porcupine-browser.exception-build-map",
+      "required": true,
+      "status": "implemented",
+      "scope": "Opt-in Porcupine browser error collection sends an uncaught exception with build and release metadata. A private map resolves the delivered browser frame by build ID and asset URL.",
+      "configuration": "Porcupine browser SDK with capture_exceptions enabled"
+    },
+    {
       "id": "isolation-and-network",
       "required": true,
       "status": "implemented",
