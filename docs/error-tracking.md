@@ -1,6 +1,6 @@
 # Capture browser exceptions and resolve stacks
 
-This guide applies to server, CLI, and browser SDK builds that include error tracking. Check the server's `/openapi.json` for `get-error-stack` and `list-error-groups` and run `porcupine upload-source-maps --help` to check your CLI.
+Error tracking requires Porcupine v0.23.0 or later. Install matching server, CLI, and browser SDK versions.
 
 ## Capture exceptions
 

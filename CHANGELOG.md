@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.0
+
+- The browser SDK can capture uncaught exceptions and unhandled promise rejections with `capture_exceptions`, and applications can report handled errors with `captureException`. Upload private source maps from CI with `porcupine upload-source-maps` to resolve stack frames for a build. The CLI strips embedded source text before uploading. (#203) [Capture exceptions and upload maps](https://github.com/olup/porcupine/blob/v0.23.0/docs/error-tracking.md)
+- List and search project error groups through HTTP, CLI, or MCP. Group details include occurrence IDs and a UTC timeline with hourly buckets for ranges up to 48 hours and daily buckets for longer ranges. (#204) [Explore error groups](https://github.com/olup/porcupine/blob/v0.23.0/docs/error-tracking.md#explore-error-groups)
+
+Startup applies SQLite control migration 11 in standalone mode and PostgreSQL control migration 29 in hosted mode. Drain and stop the deployment, then take a complete recovery point before upgrading. [Upgrade from v0.22.0](https://github.com/olup/porcupine/blob/v0.23.0/docs/hosting.md#upgrade-from-v0220)
+
 ## 0.22.0
 
 - Recorded the first versioned public SQL contract for the `events` columns and DuckDB types, function allowlist, and SQL features. Schema discovery no longer lists the unavailable entries `exp2`, `->`, `~~_escape`, and `!~~_escape`. `LIKE ... ESCAPE` and `NOT LIKE ... ESCAPE` are supported. (#200) [SQL stability](https://github.com/olup/porcupine/blob/v0.22.0/docs/reference/analytics.md#sql-stability)
