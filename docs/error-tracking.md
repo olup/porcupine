@@ -30,9 +30,9 @@ porcupine upload-source-maps --id "$PROJECT_ID" --dir dist \
   --build "$GIT_SHA" --asset-base https://app.example.com/assets/
 ```
 
-Set `--asset-base` to the public URL that corresponds to the root of `--dir`. In this example, `dist/chunks/app.js.map` matches a stack frame for `https://app.example.com/assets/chunks/app.js`. If the build reports a release label, you can pass it with `--release`. Map lookup uses the build ID and asset URL or a PostHog chunk ID.
+Set `--asset-base` to the public URL that corresponds to the root of `--dir`. In this example, `dist/chunks/app.js.map` matches a stack frame for `https://app.example.com/assets/chunks/app.js`. Map lookup uses the build ID and asset URL or a PostHog chunk ID.
 
-Porcupine accepts Source Map v3 JSON up to 2 MiB per map, including indexed maps with inline sections. It drops `sourcesContent` before storing compressed maps in the private control database, which uses SQLite or PostgreSQL depending on the deployment. Porcupine resolves stacks from uploaded maps without fetching assets or maps over the network. Project deletion removes its maps.
+The CLI reads Source Map v3 files up to 16 MiB and strips embedded source text before upload, including in inline sections of indexed maps. Each upload must fit within 2 MiB after stripping. Porcupine stores only mapping fields in the private control database, compressed, using SQLite or PostgreSQL depending on the deployment. Porcupine resolves stacks from uploaded maps without fetching assets or maps over the network. Project deletion removes its maps.
 
 You can retry an upload with the same artifacts. Porcupine compares the digest of the sanitized map and returns HTTP `409` if the same selector already holds a different map. Use a new build ID for a rebuilt bundle with changed mappings.
 

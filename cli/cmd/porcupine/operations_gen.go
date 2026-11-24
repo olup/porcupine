@@ -586,7 +586,6 @@ var operations = []operation{
 			{Name: "X-Source-Map-Asset-URL", In: "header", Type: "string", Description: "", Required: false},
 			{Name: "X-Source-Map-Build-ID", In: "header", Type: "string", Description: "", Required: false},
 			{Name: "X-Source-Map-Chunk-ID", In: "header", Type: "string", Description: "", Required: false},
-			{Name: "X-Source-Map-Release", In: "header", Type: "string", Description: "", Required: false},
 			{Name: "id", In: "path", Type: "string", Description: "", Required: true},
 		},
 		ContentType: "application/octet-stream", BodyRequired: true,

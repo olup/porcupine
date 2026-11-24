@@ -830,7 +830,7 @@ async function assertMappedBrowserError(projectID, expectedGenerated, expectedMe
   });
   const args = ['run', './cmd/porcupine', 'upload-source-maps', '--id', projectID, '--dir', artifacts, '--url', api];
   if (expectedMetadata.build_id) {
-    args.push('--build', expectedMetadata.build_id, '--asset-base', origin + '/', '--release', expectedMetadata.release);
+    args.push('--build', expectedMetadata.build_id, '--asset-base', origin + '/');
   }
   execFileSync('go', args, {
     cwd: join(root, 'cli'),

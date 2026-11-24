@@ -84,9 +84,13 @@ func TestNormalizeDegradesMalformedAndExcessInput(t *testing.T) {
 	for i := range list {
 		list[i] = exception
 	}
+	list[0] = map[string]any{"type": "ThrownError", "stacktrace": exception["stacktrace"]}
 	bounded := Normalize(map[string]any{"$exception_list": list})
 	if !bounded.Degraded || len(bounded.List) != maxExceptions {
 		t.Fatalf("bounded = %+v", bounded)
+	}
+	if bounded.List[0].Type != "ThrownError" {
+		t.Fatal("the root error was dropped while truncating the cause list")
 	}
 	got := bounded.List[0].Stacktrace.Frames
 	if len(got) != maxFrames || got[0].Line != 5 || got[len(got)-1].Line != len(frames)-1 {

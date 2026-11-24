@@ -21,6 +21,7 @@ import (
 
 const (
 	maxSourceMapBytes    = 2 << 20
+	maxSourceMapInput    = 16 << 20
 	maxSourceBundleBytes = 32 << 20
 )
 
@@ -36,7 +37,6 @@ func uploadSourceMapsCommand() *cli.Command {
 			&cli.StringFlag{Name: "dir", Usage: "Directory containing the built source maps", Required: true},
 			&cli.StringFlag{Name: "build", Usage: "Build ID reported by the browser SDK"},
 			&cli.StringFlag{Name: "asset-base", Usage: "Public URL prefix corresponding to --dir"},
-			&cli.StringFlag{Name: "release", Usage: "Release name"},
 		},
 		Action: uploadSourceMaps,
 	}
@@ -51,9 +51,9 @@ func uploadSourceMaps(ctx context.Context, c *cli.Command) error {
 	if project == "" || project == "." || project == ".." || strings.ContainsAny(project, "/\\") || strings.ContainsFunc(project, unicode.IsControl) {
 		return fmt.Errorf("--id requires a single path segment")
 	}
-	build, release := c.String("build"), c.String("release")
-	if !validSourceMapHeader(build) || !validSourceMapHeader(release) {
-		return fmt.Errorf("--build and --release cannot contain control characters or surrounding whitespace")
+	build := c.String("build")
+	if !validSourceMapHeader(build) {
+		return fmt.Errorf("--build must contain 1 to 128 ASCII letters, digits, dots, underscores, or hyphens")
 	}
 	assetBase := c.String("asset-base")
 	if (build == "") != (assetBase == "") {
@@ -91,22 +91,15 @@ func uploadSourceMaps(ctx context.Context, c *cli.Command) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		raw, err := readSourceArtifact(root, name, maxSourceMapBytes)
+		raw, err := readSourceArtifact(root, name, maxSourceMapInput)
 		if err != nil {
 			return err
 		}
-		var metadata struct {
-			Version int    `json:"version"`
-			ChunkID string `json:"chunk_id"`
-			CamelID string `json:"chunkId"`
-		}
+		var metadata sourceMapMetadata
 		if json.Unmarshal(raw, &metadata) != nil || metadata.Version != 3 {
 			return fmt.Errorf("%q is not a version 3 JSON source map", name)
 		}
 		headers := http.Header{}
-		if release != "" {
-			headers.Set("X-Source-Map-Release", release)
-		}
 		selectors := []string{""}
 		if base != nil {
 			assetName := strings.TrimSuffix(name, ".map")
@@ -134,6 +127,13 @@ func uploadSourceMaps(ctx context.Context, c *cli.Command) error {
 				selectors = []string{chunk}
 			}
 		}
+		body, err := sourceMapUploadBody(raw, 0)
+		if err != nil {
+			return fmt.Errorf("%q: %w", name, err)
+		}
+		if len(body) > maxSourceMapBytes {
+			return fmt.Errorf("%q exceeds %d bytes after removing embedded sources", name, maxSourceMapBytes)
+		}
 		for _, chunk := range selectors {
 			if chunk != "" {
 				if !validSourceMapHeader(chunk) {
@@ -147,7 +147,7 @@ func uploadSourceMaps(ctx context.Context, c *cli.Command) error {
 					return err
 				}
 			}
-			if err := putSourceMap(ctx, client, endpoint, token, headers, raw); err != nil {
+			if err := putSourceMap(ctx, client, endpoint, token, headers, body); err != nil {
 				return fmt.Errorf("%q: %w", name, err)
 			}
 			count++
@@ -160,8 +160,62 @@ func uploadSourceMaps(ctx context.Context, c *cli.Command) error {
 	return err
 }
 
+type sourceMapMetadata struct {
+	Version int    `json:"version"`
+	ChunkID string `json:"chunk_id"`
+	CamelID string `json:"chunkId"`
+}
+
+// Keep only mapping fields, including for inline sections, before sending the file.
+func sourceMapUploadBody(raw []byte, depth int) ([]byte, error) {
+	if depth >= 16 {
+		return nil, fmt.Errorf("source map sections are nested too deeply")
+	}
+	var body struct {
+		Version    json.RawMessage `json:"version"`
+		Sources    json.RawMessage `json:"sources,omitempty"`
+		SourceRoot json.RawMessage `json:"sourceRoot,omitempty"`
+		Names      json.RawMessage `json:"names,omitempty"`
+		Mappings   json.RawMessage `json:"mappings,omitempty"`
+		Sections   json.RawMessage `json:"sections,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, fmt.Errorf("invalid source map JSON")
+	}
+	if len(body.Sections) > 0 && string(body.Sections) != "null" {
+		var sections []struct {
+			Offset json.RawMessage `json:"offset"`
+			Map    json.RawMessage `json:"map"`
+			URL    json.RawMessage `json:"url,omitempty"`
+		}
+		if json.Unmarshal(body.Sections, &sections) != nil {
+			return nil, fmt.Errorf("invalid source map sections")
+		}
+		for i := range sections {
+			if len(sections[i].URL) != 0 {
+				return nil, fmt.Errorf("external source map sections are unsupported")
+			}
+			sanitized, err := sourceMapUploadBody(sections[i].Map, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			sections[i].Map = sanitized
+		}
+		body.Sections, _ = json.Marshal(sections)
+	}
+	return json.Marshal(body)
+}
+
 func validSourceMapHeader(value string) bool {
-	return value == strings.TrimSpace(value) && !strings.ContainsFunc(value, unicode.IsControl)
+	if len(value) > 128 {
+		return false
+	}
+	for _, c := range value {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("._-", c)) {
+			return false
+		}
+	}
+	return true
 }
 
 func sourceMapAssetBase(raw string) (*url.URL, error) {
@@ -201,6 +255,13 @@ func findSourceMaps(ctx context.Context, root *os.Root, posthog bool) ([]string,
 			mapNames[name] = true
 		case ".js", ".mjs", ".cjs":
 			if !posthog {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if info.Size() > maxSourceBundleBytes {
 				return nil
 			}
 			raw, err := readSourceArtifact(root, name, maxSourceBundleBytes)

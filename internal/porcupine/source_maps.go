@@ -23,7 +23,6 @@ import (
 const sourceMapSchema = `CREATE TABLE project_source_maps(
 	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 	selector TEXT NOT NULL,
-	release TEXT NOT NULL,
 	sha256 TEXT NOT NULL,
 	content BYTEA NOT NULL,
 	PRIMARY KEY(project_id,selector)
@@ -34,7 +33,6 @@ type SourceMapUploadInput struct {
 	BuildID  string `header:"X-Source-Map-Build-ID" maxLength:"128"`
 	AssetURL string `header:"X-Source-Map-Asset-URL" maxLength:"2048"`
 	ChunkID  string `header:"X-Source-Map-Chunk-ID" maxLength:"128"`
-	Release  string `header:"X-Source-Map-Release" maxLength:"128"`
 	RawBody  []byte `contentType:"application/octet-stream"`
 }
 
@@ -73,26 +71,26 @@ type ErrorStackOutput struct {
 }
 
 func (s *Service) registerSourceMaps(api huma.API, op func(string, string, string, string, auth.OperationAccess, int) huma.Operation) {
-	capacity := func(ctx huma.Context, next func(huma.Context)) {
-		select {
-		case s.sourceMapSlots <- struct{}{}:
-			defer func() { <-s.sourceMapSlots }()
-			next(ctx)
-		default:
-			_, w := humago.Unwrap(ctx)
-			w.Header().Set("Retry-After", "1")
-			problem(w, 429, "source map request concurrency limit reached")
+	capacity := func(slots chan struct{}) func(huma.Context, func(huma.Context)) {
+		return func(ctx huma.Context, next func(huma.Context)) {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+				next(ctx)
+			default:
+				_, w := humago.Unwrap(ctx)
+				w.Header().Set("Retry-After", "1")
+				problem(w, 429, "source map request concurrency limit reached")
+			}
 		}
 	}
 	upload := op("put-source-map", http.MethodPut, "/api/v1/projects/{id}/source-maps", "Upload a private Source Map v3 for a build asset or a PostHog chunk ID", auth.OperationAccess{Permission: "sourcemaps:write", ProjectParameter: "id"}, 200)
 	upload.MaxBodyBytes = errtrack.MaxSourceMapBytes
-	upload.Errors = append(upload.Errors, 409, 413, 429)
 	upload.Metadata["http_only"] = true
-	upload.Middlewares = append(upload.Middlewares, capacity)
+	upload.Middlewares = append(upload.Middlewares, capacity(s.sourceMapUploadSlots))
 	huma.Register(api, upload, s.putSourceMap)
 	stack := op("get-error-stack", http.MethodGet, "/api/v1/projects/{id}/errors/{event_id}/stack", "Read a delivered exception and resolve its stack frames against uploaded private source maps", auth.OperationAccess{Permission: "events:read", ProjectParameter: "id"}, 200)
-	stack.Errors = append(stack.Errors, 429)
-	stack.Middlewares = append(stack.Middlewares, capacity)
+	stack.Middlewares = append(stack.Middlewares, capacity(s.sourceMapReadSlots))
 	huma.Register(api, stack, s.getErrorStack)
 }
 
@@ -114,9 +112,6 @@ func (s *Service) putSourceMap(ctx context.Context, input *SourceMapUploadInput)
 	default:
 		return nil, apierr.New(400, "supply either a chunk ID or a build ID and asset URL")
 	}
-	if input.Release != "" && !errtrack.ValidID(input.Release) {
-		return nil, apierr.New(400, "invalid source map release")
-	}
 	canonical, err := errtrack.PrepareSourceMap(input.RawBody)
 	if err != nil {
 		return nil, apierr.New(400, "invalid or unsupported Source Map v3")
@@ -132,7 +127,7 @@ func (s *Service) putSourceMap(ctx context.Context, input *SourceMapUploadInput)
 	if err := errors.Join(err, writer.Close()); err != nil {
 		return nil, err
 	}
-	if err := s.storeSourceMap(ctx, input.ID, selector, input.Release, digest, compressed.Bytes()); err != nil {
+	if err := s.storeSourceMap(ctx, input.ID, selector, digest, compressed.Bytes()); err != nil {
 		return nil, err
 	}
 	result := &SourceMapUploadOutput{}
@@ -140,7 +135,7 @@ func (s *Service) putSourceMap(ctx context.Context, input *SourceMapUploadInput)
 	return result, nil
 }
 
-func (s *Service) storeSourceMap(ctx context.Context, project, selector, release, digest string, content []byte) error {
+func (s *Service) storeSourceMap(ctx context.Context, project, selector, digest string, content []byte) error {
 	tx, err := s.control.BeginTx(ctx, nil)
 	if err != nil {
 		return apierr.New(503, "source map storage unavailable")
@@ -155,11 +150,11 @@ func (s *Service) storeSourceMap(ctx context.Context, project, selector, release
 		}
 	}
 	// The conditional insert also synchronizes with deletion on SQLite.
-	_, err = tx.ExecContext(ctx, `INSERT INTO project_source_maps(project_id,selector,release,sha256,content)
-SELECT p.id,$2,$3,$4,$5 FROM projects p WHERE p.id=$1
+	_, err = tx.ExecContext(ctx, `INSERT INTO project_source_maps(project_id,selector,sha256,content)
+SELECT p.id,$2,$3,$4 FROM projects p WHERE p.id=$1
 AND NOT EXISTS(SELECT 1 FROM project_deletions WHERE project_id=p.id)
 AND NOT EXISTS(SELECT 1 FROM tenant_deletions WHERE tenant_id=p.tenant_id)
-ON CONFLICT(project_id,selector) DO NOTHING`, project, selector, release, digest, content)
+ON CONFLICT(project_id,selector) DO NOTHING`, project, selector, digest, content)
 	if err != nil {
 		return apierr.New(503, "source map storage unavailable")
 	}

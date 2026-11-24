@@ -103,7 +103,7 @@ func TestErrorTrackingDuckLakeJourney(t *testing.T) {
 		t.Fatal("map resolved before upload")
 	}
 	uploadTestSourceMap(t, s, a, writer, exceptionTestMap, map[string]string{
-		"X-Source-Map-Build-ID": "build-a", "X-Source-Map-Asset-URL": asset, "X-Source-Map-Release": "release-a",
+		"X-Source-Map-Build-ID": "build-a", "X-Source-Map-Asset-URL": asset,
 	}, 200)
 	uploadTestSourceMap(t, s, b, adminToken, exceptionTestMap, map[string]string{"X-Source-Map-Chunk-ID": "posthog-chunk"}, 200)
 	if frame(stack("posthog-exception"))["original"] != nil {
@@ -146,7 +146,7 @@ func TestSharedSourceMapMigrationAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { otherControl.Close() })
-	first := &Service{control: control, shared: &sharedRuntime{}, sourceMapSlots: make(chan struct{}, 2)}
+	first := &Service{control: control, shared: &sharedRuntime{}, sourceMapUploadSlots: make(chan struct{}, 2)}
 	other := &Service{control: otherControl, shared: &sharedRuntime{}}
 	const a, b = "map-project", "other-project"
 	if _, err := control.Exec(`INSERT INTO projects(id,tenant_id,name,created_at) VALUES($1,'default',$1,$3),($2,'default',$2,$3)`, a, b, now()); err != nil {

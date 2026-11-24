@@ -26,6 +26,10 @@ type Properties struct {
 	Release     string      `json:"$exception_release,omitempty"`
 	Fingerprint string      `json:"$exception_fingerprint"`
 	Degraded    bool        `json:"$exception_degraded,omitempty"`
+	SDK         string      `json:"$lib,omitempty"`
+	SDKVersion  string      `json:"$lib_version,omitempty"`
+	SessionID   string      `json:"$session_id,omitempty"`
+	PageURL     string      `json:"$current_url,omitempty"`
 }
 
 type Exception struct {
@@ -97,6 +101,14 @@ func AssetURL(s string) (string, bool) {
 // Normalize keeps only bounded exception fields and derives the grouping key from them.
 func Normalize(input map[string]any) Properties {
 	p := Properties{List: make([]Exception, 0)}
+	for key, target := range map[string]*string{"$lib": &p.SDK, "$lib_version": &p.SDKVersion, "$session_id": &p.SessionID} {
+		if value, _ := input[key].(string); ValidID(value) {
+			*target = value
+		}
+	}
+	if value, _ := input["$current_url"].(string); value != "" {
+		p.PageURL, _ = AssetURL(value)
+	}
 	if buildID, _ := input["$exception_build_id"].(string); ValidID(buildID) {
 		p.BuildID = buildID
 	}
@@ -105,7 +117,7 @@ func Normalize(input map[string]any) Properties {
 	}
 	list, _ := input["$exception_list"].([]any)
 	if len(list) > maxExceptions {
-		list = list[len(list)-maxExceptions:]
+		list = list[:maxExceptions]
 		p.Degraded = true
 	}
 	for _, item := range list {

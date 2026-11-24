@@ -12,6 +12,8 @@ import (
 	"testing"
 )
 
+const sourceMapUploadFixture = `{"version":3,"sources":["src/app.ts"],"names":[],"mappings":"AAAA"}`
+
 const sourceMapFixture = "{ \"version\": 3, \"sources\": [\"src/app.ts\"], \"names\": [], \"mappings\": \"AAAA\" }\n"
 
 func TestUploadSourceMaps(t *testing.T) {
@@ -30,7 +32,7 @@ func TestUploadSourceMaps(t *testing.T) {
 		}
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, err := io.ReadAll(r.Body)
-			if err != nil || string(raw) != sourceMapFixture {
+			if err != nil || string(raw) != sourceMapUploadFixture {
 				t.Errorf("unexpected upload body %q, %v", raw, err)
 			}
 			for name, expected := range map[string]string{
@@ -38,7 +40,6 @@ func TestUploadSourceMaps(t *testing.T) {
 				"Content-Type":           "application/octet-stream",
 				"X-Source-Map-Build-ID":  "commit-1",
 				"X-Source-Map-Asset-URL": "https://cdn.example.com/prefix%20name/assets/app%20%23%25.js",
-				"X-Source-Map-Release":   "prod",
 				"X-Source-Map-Chunk-ID":  "",
 			} {
 				if r.Header.Get(name) != expected {
@@ -51,7 +52,7 @@ func TestUploadSourceMaps(t *testing.T) {
 			_, _ = io.WriteString(w, "{}")
 		}))
 		defer s.Close()
-		output, err := invoke(t, s.URL, "upload-source-maps", "--id", "project one", "--dir", dir, "--build", "commit-1", "--asset-base", "https://cdn.example.com/prefix%20name", "--release", "prod")
+		output, err := invoke(t, s.URL, "upload-source-maps", "--id", "project one", "--dir", dir, "--build", "commit-1", "--asset-base", "https://cdn.example.com/prefix%20name")
 		if err != nil || output != "Uploaded 1 source map(s).\n" {
 			t.Fatalf("upload result %q, %v", output, err)
 		}
@@ -81,7 +82,7 @@ func TestUploadSourceMaps(t *testing.T) {
 			mu.Lock()
 			uploads[chunk]++
 			mu.Unlock()
-			if r.Header.Get("X-Source-Map-Build-ID") != "" || r.Header.Get("X-Source-Map-Asset-URL") != "" || r.Header.Get("X-Source-Map-Release") != "" {
+			if r.Header.Get("X-Source-Map-Build-ID") != "" || r.Header.Get("X-Source-Map-Asset-URL") != "" {
 				t.Error("PostHog request sent extra selector or release headers")
 			}
 			_, _ = io.WriteString(w, "{}")
@@ -122,7 +123,7 @@ func TestUploadSourceMaps(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		writeSourceMapFixture(t, dir, "huge.js.map", sourceMapFixture)
-		if err := os.Truncate(filepath.Join(dir, "huge.js.map"), maxSourceMapBytes+1); err != nil {
+		if err := os.Truncate(filepath.Join(dir, "huge.js.map"), maxSourceMapInput+1); err != nil {
 			t.Fatal(err)
 		}
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +136,7 @@ func TestUploadSourceMaps(t *testing.T) {
 		}{
 			{[]string{"--build", "commit-1"}, "must be supplied together"},
 			{[]string{"--build", "commit-1", "--asset-base", "https://user:secret@cdn.example.com"}, "requires an absolute HTTP"},
-			{[]string{"--build", "commit-1", "--asset-base", "https://cdn.example.com"}, "2097152 bytes"},
+			{[]string{"--build", "commit-1", "--asset-base", "https://cdn.example.com"}, "16777216 bytes"},
 		} {
 			_, err := invoke(t, s.URL, append([]string{"upload-source-maps", "--id", "project", "--dir", dir}, tc.args...)...)
 			if err == nil || !strings.Contains(err.Error(), tc.message) || strings.Contains(err.Error(), "secret") {
@@ -152,6 +153,27 @@ func writeSourceMapFixture(t *testing.T, dir, name, contents string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filename, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSourceMapUploadStripsEmbeddedSourcesBeforeApplyingWireLimit(t *testing.T) {
+	t.Setenv("PORCUPINE_API_KEY", "scoped-key")
+	dir := t.TempDir()
+	source := strings.TrimSpace(sourceMapFixture)
+	source = strings.TrimSuffix(source, "}") + `,"sourcesContent":["` + strings.Repeat("source text ", 200000) + `"]}`
+	indexed := `{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":` + source + `}]}`
+	writeSourceMapFixture(t, dir, "app.js.map", indexed)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		want := `{"version":3,"sections":[{"offset":{"line":0,"column":0},"map":` + sourceMapUploadFixture + `}]}`
+		if err != nil || string(body) != want {
+			t.Errorf("unexpected sanitized upload of %d bytes: %v", len(body), err)
+		}
+		_, _ = io.WriteString(w, "{}")
+	}))
+	defer s.Close()
+	if _, err := invoke(t, s.URL, "upload-source-maps", "--id", "project", "--dir", dir, "--build", "build", "--asset-base", "https://cdn.example.com/"); err != nil {
 		t.Fatal(err)
 	}
 }
