@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/errtrack"
 	"github.com/olup/porcupine/internal/ingest"
 )
 
@@ -96,6 +97,14 @@ func ParsePostHog(raw []byte, kind string) (Row, error) {
 			}
 		}
 		e.Properties, _ = json.Marshal(properties)
+		if e.Event == "$exception" {
+			var normalized map[string]any
+			if err := ingest.DecodeJSON(e.Properties, &normalized); err != nil {
+				return row, ErrRow
+			}
+			errtrack.NormalizeStoredFields(normalized)
+			e.Properties, _ = json.Marshal(normalized)
+		}
 		return row, nil
 	}
 	if kind != "persons" {

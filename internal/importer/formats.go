@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/olup/porcupine/internal/errtrack"
 	"github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/ingest"
 )
@@ -58,6 +59,12 @@ func ParseRow(raw []byte, kind, format string) (Row, error) {
 	timestamp, err := time.Parse(time.RFC3339Nano, message.Timestamp)
 	if err != nil || strings.TrimSpace(input.Event) == "" || len(input.Event) > 500 || len(input.DistinctID) > 1000 || input.DistinctID == ingest.CookielessSentinel {
 		return Row{}, ErrRow
+	}
+	if input.Event == "$exception" {
+		if input.Properties == nil {
+			input.Properties = map[string]any{}
+		}
+		errtrack.NormalizeStoredFields(input.Properties)
 	}
 	properties, err := json.Marshal(input.Properties)
 	if err != nil {

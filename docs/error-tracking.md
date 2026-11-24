@@ -1,6 +1,6 @@
 # Capture browser exceptions and resolve stacks
 
-This guide applies to server, CLI, and browser SDK builds that include error tracking. Check the server's `/openapi.json` for `get-error-stack` and run `porcupine upload-source-maps --help` to check your CLI.
+This guide applies to server, CLI, and browser SDK builds that include error tracking. Check the server's `/openapi.json` for `get-error-stack` and `list-error-groups` and run `porcupine upload-source-maps --help` to check your CLI.
 
 ## Capture exceptions
 
@@ -47,23 +47,20 @@ porcupine upload-source-maps --id "$PROJECT_ID" --dir dist
 
 Deploy the injected JavaScript. Keep the `.map` files out of your public assets. The Porcupine CLI reads a chunk ID from the map's `chunk_id` or `chunkId` field, or from a `//# chunkId=` comment in the generated bundle. Injection is a separate build step. The SDK's captured stack frames must carry those chunk IDs for lookup.
 
-## Find an exception and read its stack
+## Explore error groups
 
-Use a credential with `events:read` on the project. Run this SQL against delivered events to find recent exceptions. The fingerprint groups similar exceptions.
-
-```sql
-SELECT id, event_time,
-       json_extract_string(properties, '$."$exception_fingerprint"') AS fingerprint
-FROM events
-WHERE event = '$exception'
-ORDER BY event_time DESC
-LIMIT 20
-```
-
-Take the decimal `id` from a result row. See [Run an interactive query](query-events.md#run-an-interactive-query) for CLI and MCP query instructions.
+Use a credential with `events:read` on the project. List groups and pick a fingerprint. Read the group to see its distribution and occurrence IDs.
 
 ```sh
+porcupine list-error-groups --id "$PROJECT_ID" --sort count
+porcupine get-error-group --id "$PROJECT_ID" --fingerprint "$FINGERPRINT"
 porcupine get-error-stack --id "$PROJECT_ID" --event-id "$EVENT_ID"
 ```
 
-The HTTP operation is `GET /api/v1/projects/{id}/errors/{event_id}/stack`. Each frame includes its `generated` position and, when a map resolves it, an `original` position. A missing map leaves the generated frame available. If an exception has just been captured, wait for it to appear in SQL before looking up its stack.
+The HTTP operations are `GET /api/v1/projects/{id}/error-groups`, `GET /api/v1/projects/{id}/error-groups/{fingerprint}` and `GET /api/v1/projects/{id}/errors/{event_id}/stack`. Use the same operation IDs with `porcupine_docs` and `porcupine_call` in MCP.
+
+Groups include the count and first and last occurrence within the requested range. Use `q` to search by error type or message. The default range is the last seven days. To pin it across pages, pass both `from` and `to` as RFC3339 timestamps, using an inclusive start and exclusive end. The range can cover up to 31 days. When `next_offset` is present, use it with the same range and filters to read another page.
+
+The distribution lists UTC buckets, including zero-count buckets. Ranges of up to 48 hours use hourly buckets. Longer ranges use daily buckets. The first and last bucket can cover only part of their calendar interval. Counts and event IDs are decimal strings. Counts reflect delivered events with a stored error fingerprint in the requested range.
+
+The stack response includes its `generated` positions and, where a source map resolves them, `original` positions. Builds and release labels appear when the producer supplied them. If an exception has just been captured, wait for it to appear in the group before looking up its stack.
