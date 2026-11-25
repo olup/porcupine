@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.24.0
+
+- Teams can acknowledge, mute, resolve, and reopen project error issues through HTTP, CLI, or MCP. Link up to 32 fingerprints to share triage state across builds. A delivered exception that occurs and arrives after resolution marks the issue as seen again on a subsequent read. (#207) [Triage an issue](https://github.com/olup/porcupine/blob/v0.24.0/docs/error-tracking.md#triage-an-issue)
+- Tenant usage reports count accepted exceptions within the monthly event total. Operators can set a separate exception allowance. Standalone enforces it during durable acceptance. Hosted workers can overshoot it while usage is buffered or unpublished. Exception counts start at upgrade, so the first UTC month can be partial. (#207) [Tenant ingestion limits](https://github.com/olup/porcupine/blob/v0.24.0/docs/reference/tenants.md#monthly-ingestion-allowance)
+- The browser SDK batches exceptions separately from analytics events. An exception-only quota response pauses the exception queue while analytics can continue. (#207) [Browser SDK delivery](https://github.com/olup/porcupine/blob/v0.24.0/sdk/browser/README.md#capture-an-event)
+
+Startup applies SQLite journal migration 12 and control migrations 12 and 13 in standalone mode, or PostgreSQL control migrations 30 and 31 in hosted mode. Drain and stop the deployment, then take a complete recovery point before upgrading. [Upgrade from v0.23.0](https://github.com/olup/porcupine/blob/v0.24.0/docs/hosting.md#upgrade-from-v0230)
+
 ## 0.23.0
 
 - The browser SDK can capture uncaught exceptions and unhandled promise rejections with `capture_exceptions`, and applications can report handled errors with `captureException`. Upload private source maps from CI with `porcupine upload-source-maps` to resolve stack frames for a build. The CLI strips embedded source text before uploading. (#203) [Capture exceptions and upload maps](https://github.com/olup/porcupine/blob/v0.23.0/docs/error-tracking.md)

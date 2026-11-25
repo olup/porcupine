@@ -463,7 +463,7 @@ func (p *hostedEffectPublisher) publishEvidence(ctx context.Context, b output.Pi
 		count := e.AcceptedLive + e.AcceptedImport
 		if advanced && count > 0 {
 			start, _ := tenantMonth(e.AccountedAt)
-			if err := addTenantEventsTx(ctx, tx, e.TenantID, start.Format(time.RFC3339), count); err != nil {
+			if err := addTenantEventsTx(ctx, tx, e.TenantID, start.Format(time.RFC3339), count, e.AcceptedExceptions); err != nil {
 				return err
 			}
 		}

@@ -35,9 +35,9 @@ func (s *Service) ensureProjectLocal(ctx context.Context, project string, a auth
 		return apierr.New(503, "local project journal unavailable")
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	_, err = tx.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_allowed=excluded.ingestion_allowed,ingestion_monthly_events=excluded.ingestion_monthly_events,
-hot_query_max_concurrent=excluded.hot_query_max_concurrent,hot_query_timeout_ms=excluded.hot_query_timeout_ms,hot_query_max_rows=excluded.hot_query_max_rows,hot_query_max_result_bytes=excluded.hot_query_max_result_bytes`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(t.Budgets.IngestionMonthlyEvents), t.Budgets.HotQueryMaxConcurrent, t.Budgets.HotQueryTimeoutMS, t.Budgets.HotQueryMaxRows, t.Budgets.HotQueryMaxResultBytes)
+hot_query_max_concurrent=excluded.hot_query_max_concurrent,hot_query_timeout_ms=excluded.hot_query_timeout_ms,hot_query_max_rows=excluded.hot_query_max_rows,hot_query_max_result_bytes=excluded.hot_query_max_result_bytes,ingestion_monthly_exceptions=excluded.ingestion_monthly_exceptions`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(t.Budgets.IngestionMonthlyEvents), t.Budgets.HotQueryMaxConcurrent, t.Budgets.HotQueryTimeoutMS, t.Budgets.HotQueryMaxRows, t.Budgets.HotQueryMaxResultBytes, monthlyAllowanceValue(t.Budgets.IngestionMonthlyExceptions))
 	if err != nil {
 		return apierr.New(503, "local tenant metadata unavailable")
 	}
@@ -68,7 +68,7 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,ingestion_mode=excluded.ingesti
 func needsJournalAnchor(operation string) bool {
 	switch operation {
 	case "query-events", "get-event-catalog", "get-event-catalog-refresh", "refresh-event-catalog", "set-catalog-description", "get-event-profile", "get-event-input-contract", "rename-project",
-		"get-client-ingestion-key", "ensure-client-ingestion-key", "delete-events", "get-event-deletion", "put-source-map", "get-error-stack", "list-error-groups", "get-error-group":
+		"get-client-ingestion-key", "ensure-client-ingestion-key", "delete-events", "get-event-deletion", "put-source-map", "get-error-stack", "list-error-groups", "get-error-group", "get-error-issue", "triage-error-group":
 		return false
 	default:
 		return true

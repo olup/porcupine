@@ -357,9 +357,9 @@ func (s *Service) finishTenantControlDeletion(ctx context.Context, tenant string
 	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=value WHERE key='initialized'`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_deletion_usage(tenant_id,period_start,accepted_events)
-SELECT tenant_id,period_start,accepted_events FROM tenant_usage WHERE tenant_id=$1
-ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_deletion_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_deletion_usage.accepted_events END`, tenant); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_deletion_usage(tenant_id,period_start,accepted_events,accepted_exceptions)
+SELECT tenant_id,period_start,accepted_events,accepted_exceptions FROM tenant_usage WHERE tenant_id=$1
+ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_deletion_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_deletion_usage.accepted_events END, accepted_exceptions=CASE WHEN tenant_deletion_usage.accepted_exceptions<excluded.accepted_exceptions THEN excluded.accepted_exceptions ELSE tenant_deletion_usage.accepted_exceptions END`, tenant); err != nil {
 		return err
 	}
 	// These predicates follow explicit credential ownership and tenant-admin

@@ -147,7 +147,7 @@ func validateImportOutcome(o ImportChunkOutcome) error {
 // The integration caller must preflight its shared PG cursor before this call.
 // The outcome, imported canonical records, identity and common usage/proof commit
 // together. It publishes no output and never advances the control cursor itself.
-func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWriteFence, input ImportChunkInput, ids EventIDReservation) (NativeCommitEvidence, error) {
+func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWriteFence, input ImportChunkInput, ids EventIDReservation, checkExceptions func(context.Context, int64) error) (NativeCommitEvidence, error) {
 	fingerprint, err := validateImportInput(fence, input, ids)
 	if err != nil {
 		return NativeCommitEvidence{}, err
@@ -197,6 +197,7 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 		at := s.liveCommitTime()
 		outcome := ImportChunkOutcome{Key: input.Key, ManifestSHA256: input.ManifestSHA256, SourceID: input.SourceID, Format: input.Format, InputSHA256: input.InputSHA256, Previous: input.Previous, AccountedAt: at, Delta: input.Parsed, Rows: []ImportRowOutcome{}, Samples: append([]importer.ImportRowSample(nil), input.Samples...)}
 		outcome.Next = ImportFileCheckpoint{Generation: input.Previous.Generation + 1, Offset: input.Key.ExpectedEnd, LineNumber: input.LineNumber, Completed: input.Key.Phase == "finalize", Parser: input.Parser, Samples: append([]importer.ImportRowSample(nil), input.Previous.Samples...)}
+		var exceptions int64
 		for position, c := range input.Candidates {
 			rowResult := ImportRowOutcome{Position: c.Position, UUID: c.Row.Event.UUID, ReceivedAt: at, Counts: importer.ImportCounts{Rows: 1}}
 			var existing int64
@@ -250,6 +251,9 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 					if err = insertCanonicalEvents(ctx, tx, []PreparedLakeProjection{prepared}); err != nil {
 						return err
 					}
+					if canonical.Event == "$exception" {
+						exceptions++
+					}
 					rowResult.EventID = canonical.ID
 				} else if decision.Person != nil {
 					if err = saveNativeImportedPerson(ctx, tx, target, *decision.Person, 0); err != nil {
@@ -273,6 +277,11 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 			}
 			outcome.Rows = append(outcome.Rows, rowResult)
 		}
+		if exceptions > 0 && checkExceptions != nil {
+			if err := checkExceptions(ctx, exceptions); err != nil {
+				return err
+			}
+		}
 		for _, failure := range input.Failures {
 			outcome.Rows = append(outcome.Rows, ImportRowOutcome{Position: failure.Position, Reason: failure.Reason, Counts: importer.ImportCounts{Rows: 1, Invalid: 1}, ReceivedAt: at})
 		}
@@ -292,7 +301,7 @@ func (s *DuckLakeStore) CommitImportChunk(ctx context.Context, fence ProjectWrit
 		if err != nil {
 			return err
 		}
-		result = NativeCommitEvidence{Kind: NativeCommitImport, Scope: input.Key.Scope, TenantID: input.TenantID, Sequence: sequence, OperationID: input.Key.ID(), InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: at, AcceptedImport: outcome.Delta.Accepted, Import: &outcome, Totals: totals}
+		result = NativeCommitEvidence{Kind: NativeCommitImport, Scope: input.Key.Scope, TenantID: input.TenantID, Sequence: sequence, OperationID: input.Key.ID(), InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: at, AcceptedImport: outcome.Delta.Accepted, AcceptedExceptions: exceptions, Import: &outcome, Totals: totals}
 		result.ProofFingerprint, err = nativeEvidenceFingerprint(result)
 		if err != nil {
 			return err

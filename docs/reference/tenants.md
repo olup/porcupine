@@ -61,6 +61,7 @@ With MCP, first request an operation's contract using `porcupine_docs`. Call it 
   "path": {"tenant_id": "TENANT_ID"},
   "body": {
     "ingestion_monthly_events": 100000,
+    "ingestion_monthly_exceptions": 5000,
     "hot_query_max_concurrent": 1,
     "hot_query_timeout_ms": 3000,
     "hot_query_max_rows": 500,
@@ -83,6 +84,8 @@ Use the running server's `/openapi.json` for request and response schemas. Test 
 
 `ingestion_monthly_events` counts new unique canonical rows durably accepted across all projects in the tenant. A supported identity control or accepted historical person snapshot also consumes a row. Duplicate retries, ignored snapshots, invalid rows, and rolled-back work consume nothing. A later edit, event deletion, or project deletion does not refund usage.
 
+`ingestion_monthly_exceptions` sets an additional allowance for canonical rows named `$exception`. Each accepted exception uses one place in the shared event allowance and one place in the exception allowance. Omit this setting or pass `null` to remove the additional limit. A value of `0` prevents new exception acceptance while other events can still use the shared allowance.
+
 Use `null` for unlimited ingestion and `0` to disallow new events. Zero still permits retries of events already accepted. Porcupine records usage in the same SQLite transaction as durable acceptance; it does not wait for analytical delivery. A quota refusal does not leave a partially charged acceptance transaction. In default standalone mode, this transaction also enforces the tenant's complete allowance exactly.
 
 In [hosted mode](shared-deployment.md#shared-budgets), workers admit live events against cached policy and published usage. Counts can lag while a worker has buffered events or unpublished durable effects, so concurrent workers can exceed an allowance. Authentication revocation uses current authority.
@@ -97,12 +100,19 @@ Call `get-tenant-usage` without `period` for the current month, or pass `period=
   "period_start": "2026-11-01T00:00:00Z",
   "period_end": "2026-12-01T00:00:00Z",
   "accepted_events": "75000",
+  "accepted_exceptions": "2500",
   "remaining_events": "25000",
-  "ingestion_allowed": true
+  "remaining_exceptions": "2500",
+  "ingestion_allowed": true,
+  "exception_ingestion_allowed": true
 }
 ```
 
 Counts are decimal strings. `remaining_events` is `null` for an unlimited allowance. Reducing a budget below existing consumption leaves zero remaining; it does not rewrite the counter. The usage response's `ingestion_allowed` combines the operator switch with the selected period's remaining allowance, using the current budget configuration. It is not a historical record of past budget settings.
+
+`accepted_exceptions` counts exceptions recorded since the upgrade that enabled exception metering. The first UTC month can be partial, and earlier months show zero metered exceptions. The shared event totals still include all rows previously counted.
+
+`remaining_exceptions` is the balance under the exception budget alone. It is `null` with no exception budget. `exception_ingestion_allowed` is true when ingestion is enabled and both the shared and exception budgets allow new acceptance.
 
 Hosted aggregate usage reflects published durable counters. It can lag memory admission and the DuckLake commit. The report is not a hard cross-worker quota or spending cap.
 
@@ -117,6 +127,8 @@ When a tenant is suspended or its ingestion allowance is exhausted:
 - Native and Segment ingestion return `429` without event receipts for rejected work.
 - PostHog compatibility ingestion returns an intentional terminal `200` with `quota_limited`. This does not mean the rejected events were stored. Queue and storage failures remain errors.
 - Historical imports retain their checkpoint. Resume the same import after raising the allowance or after the next month starts; accepted rows are not charged again.
+
+Exception quota refusals use `exception_ingestion_budget_exceeded`. An exception-only PostHog request returns `200` with `quota_limited: ["exceptionEvent"]`, the batch key used by the supported browser SDK's `captureException` method. A mixed live batch that exceeds the exception allowance receives `429` and commits no new events. Resend the analytics events separately with the original IDs. An import chunk that reaches the exception limit keeps its existing checkpoint and can resume after the limit increases or a new month begins.
 
 ## Delete a tenant
 

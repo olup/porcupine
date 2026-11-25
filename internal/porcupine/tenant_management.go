@@ -54,12 +54,15 @@ type TenantUsageInput struct {
 	Period   string `query:"period" maxLength:"7" doc:"UTC calendar month, YYYY-MM. Defaults to the current month. Prior months remain available; there is no manual reset operation."`
 }
 type TenantUsage struct {
-	TenantID         string  `json:"tenant_id"`
-	PeriodStart      string  `json:"period_start"`
-	PeriodEnd        string  `json:"period_end"`
-	AcceptedEvents   string  `json:"accepted_events" doc:"Unique canonical rows durably accepted during this UTC month, encoded as a decimal string. Includes accepted imports and identity controls; excludes duplicate, invalid and rejected rows. Edits and deletions never refund usage."`
-	RemainingEvents  *string `json:"remaining_events" nullable:"true" doc:"Remaining monthly allowance, or null for unlimited. An operator may reduce the budget below consumption; the remaining allowance is then zero."`
-	IngestionAllowed bool    `json:"ingestion_allowed" doc:"Effective permission for new events after applying operator suspension and this month's budget. Retries of accepted events remain valid."`
+	TenantID                  string  `json:"tenant_id"`
+	PeriodStart               string  `json:"period_start"`
+	PeriodEnd                 string  `json:"period_end"`
+	AcceptedEvents            string  `json:"accepted_events" doc:"Unique canonical rows durably accepted during this UTC month, encoded as a decimal string. Includes accepted imports and identity controls; excludes duplicate, invalid and rejected rows. Edits and deletions never refund usage."`
+	AcceptedExceptions        string  `json:"accepted_exceptions" doc:"Accepted $exception rows included in accepted_events, encoded as a decimal string. Exception counting starts when this metering version is enabled."`
+	RemainingEvents           *string `json:"remaining_events" nullable:"true" doc:"Remaining monthly allowance, or null for unlimited. An operator may reduce the budget below consumption; the remaining allowance is then zero."`
+	RemainingExceptions       *string `json:"remaining_exceptions" nullable:"true" doc:"Remaining exception allowance, or null when no additional exception quota is configured."`
+	ExceptionIngestionAllowed bool    `json:"exception_ingestion_allowed" doc:"Effective permission for new $exception rows under both budgets and the ingestion suspension switch."`
+	IngestionAllowed          bool    `json:"ingestion_allowed" doc:"Effective permission for new events after applying operator suspension and this month's budget. Retries of accepted events remain valid."`
 }
 type TenantUsageOutput struct{ Body TenantUsage }
 
@@ -228,7 +231,7 @@ func (s *Service) managementUpdateTenantBudgets(ctx context.Context, input *Tena
 		return nil, err
 	}
 	defer tx.Rollback()
-	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5 WHERE id=$6 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, input.TenantID))
+	t, err := scanTenant(tx.QueryRowContext(ctx, `UPDATE tenants SET ingestion_monthly_events=$1,hot_query_max_concurrent=$2,hot_query_timeout_ms=$3,hot_query_max_rows=$4,hot_query_max_result_bytes=$5,ingestion_monthly_exceptions=$6 WHERE id=$7 RETURNING `+tenantColumns, monthlyAllowanceValue(b.IngestionMonthlyEvents), b.HotQueryMaxConcurrent, b.HotQueryTimeoutMS, b.HotQueryMaxRows, b.HotQueryMaxResultBytes, monthlyAllowanceValue(b.IngestionMonthlyExceptions), input.TenantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apierr.New(404, "tenant not found")
 	}
@@ -261,20 +264,26 @@ func (s *Service) managementTenantUsage(ctx context.Context, input *TenantUsageI
 	// Read budget and counter from one statement so a concurrent policy change
 	// cannot produce a remaining allowance from mismatched snapshots.
 	var allowed bool
-	var limit sql.NullInt64
-	var used int64
-	err := s.control.QueryRowContext(ctx, `SELECT t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE t.id=$2`, start.Format(time.RFC3339), input.TenantID).Scan(&allowed, &limit, &used)
+	var limit, exceptionLimit sql.NullInt64
+	var used, exceptions int64
+	err := s.control.QueryRowContext(ctx, `SELECT t.ingestion_allowed,t.ingestion_monthly_events,t.ingestion_monthly_exceptions,coalesce(u.accepted_events,0),coalesce(u.accepted_exceptions,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1 WHERE t.id=$2`, start.Format(time.RFC3339), input.TenantID).Scan(&allowed, &limit, &exceptionLimit, &used, &exceptions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apierr.New(404, "tenant not found")
 	}
 	if err != nil {
 		return nil, apierr.New(503, "tenant usage unavailable")
 	}
-	usage := TenantUsage{TenantID: input.TenantID, PeriodStart: start.Format(time.RFC3339), PeriodEnd: start.AddDate(0, 1, 0).Format(time.RFC3339), AcceptedEvents: strconv.FormatInt(used, 10), IngestionAllowed: allowed}
+	usage := TenantUsage{TenantID: input.TenantID, PeriodStart: start.Format(time.RFC3339), PeriodEnd: start.AddDate(0, 1, 0).Format(time.RFC3339), AcceptedEvents: strconv.FormatInt(used, 10), AcceptedExceptions: strconv.FormatInt(exceptions, 10), IngestionAllowed: allowed}
 	if limit.Valid {
 		remaining := strconv.FormatInt(max(int64(0), limit.Int64-used), 10)
 		usage.RemainingEvents = &remaining
 		usage.IngestionAllowed = allowed && used < limit.Int64
+	}
+	usage.ExceptionIngestionAllowed = usage.IngestionAllowed
+	if exceptionLimit.Valid {
+		remaining := strconv.FormatInt(max(int64(0), exceptionLimit.Int64-exceptions), 10)
+		usage.RemainingExceptions = &remaining
+		usage.ExceptionIngestionAllowed = usage.IngestionAllowed && exceptions < exceptionLimit.Int64
 	}
 	return &TenantUsageOutput{Body: usage}, nil
 }

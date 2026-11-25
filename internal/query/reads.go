@@ -20,19 +20,25 @@ type HostedReader interface {
 }
 
 func (r *Runtime) SQL(ctx context.Context, reader Reader, project, sql string, params map[string]string, timeRange *lake.QueryTimeRange) (result lake.AnalyticsResult, bounds ResponseBounds, err error) {
-	return r.sql(ctx, reader, project, sql, params, timeRange, 0)
+	return r.sql(ctx, reader, project, sql, params, timeRange, 0, "")
+}
+
+// SQLWithInternalParameter uses the same read budget with one larger server-supplied value.
+func (r *Runtime) SQLWithInternalParameter(ctx context.Context, reader Reader, project, sql string, params map[string]string, timeRange *lake.QueryTimeRange, internalParameter string) (lake.AnalyticsResult, ResponseBounds, error) {
+	return r.sql(ctx, reader, project, sql, params, timeRange, 0, internalParameter)
 }
 
 func (r *Runtime) EventDeletionSelection(ctx context.Context, reader Reader, project, predicate string, params map[string]string, timeRange *lake.QueryTimeRange, maxMatches int) (lake.AnalyticsResult, error) {
-	result, _, err := r.sql(ctx, reader, project, predicate, params, timeRange, maxMatches)
+	result, _, err := r.sql(ctx, reader, project, predicate, params, timeRange, maxMatches, "")
 	return result, err
 }
 
-func (r *Runtime) sql(ctx context.Context, reader Reader, project, sql string, params map[string]string, timeRange *lake.QueryTimeRange, maxMatches int) (result lake.AnalyticsResult, bounds ResponseBounds, err error) {
+func (r *Runtime) sql(ctx context.Context, reader Reader, project, sql string, params map[string]string, timeRange *lake.QueryTimeRange, maxMatches int, internalParameter string) (result lake.AnalyticsResult, bounds ResponseBounds, err error) {
 	bounds, err = r.run(ctx, project, opSQL, func(ctx context.Context, limits InteractiveQueryConfig) error {
 		execution := limits.executionLimits()
 		execution.TimeRange = timeRange
 		execution.EventSelectionMax = maxMatches
+		execution.InternalParameter = internalParameter
 		result, err = reader.Query(ctx, project, sql, params, execution)
 		return err
 	})

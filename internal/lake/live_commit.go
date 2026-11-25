@@ -143,6 +143,7 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 		if err != nil {
 			return err
 		}
+		var exceptions int64
 		selected := make([]PreparedLakeProjection, 0, len(batch.Inputs))
 		eligible := make([]event.Event, 0, len(batch.Inputs))
 		for position, input := range batch.Inputs {
@@ -164,6 +165,9 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			}
 			if input.Identity == nil {
 				eligible = append(eligible, prepared.projection.Event)
+			}
+			if canonical.Event == "$exception" {
+				exceptions++
 			}
 			selected = append(selected, prepared)
 		}
@@ -192,7 +196,7 @@ func (s *DuckLakeStore) commitLive(ctx context.Context, fence ProjectWriteFence,
 			return err
 		}
 		started = time.Now()
-		evidence := NativeCommitEvidence{Kind: NativeCommitLive, Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, OperationID: batch.ID, InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), Effects: effects, Totals: totals}
+		evidence := NativeCommitEvidence{Kind: NativeCommitLive, Scope: batch.Scope, TenantID: batch.TenantID, Sequence: sequence, OperationID: batch.ID, InputFingerprint: fingerprint, FenceEpoch: fence.Epoch, AccountedAt: accountedAt, AcceptedLive: int64(len(selected)), AcceptedExceptions: exceptions, Effects: effects, Totals: totals}
 		evidence.ProofFingerprint, err = nativeEvidenceFingerprint(evidence)
 		if err == nil {
 			err = insertNativeCommitProof(ctx, tx, evidence)

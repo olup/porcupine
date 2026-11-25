@@ -74,9 +74,16 @@ idempotency_key_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
 UNIQUE(project_id,idempotency_key_hash)) WITHOUT ROWID;
 ALTER TABLE mutation_audit ADD COLUMN deletion_id TEXT REFERENCES event_deletions(mutation_id);
 CREATE INDEX mutation_audit_deletion_members ON mutation_audit(deletion_id,seq) WHERE deletion_id IS NOT NULL;`,
+	// 12: count accepted exceptions within the monthly event ledger.
+	tenantExceptionUsageSchema + tenantExceptionBudgetSchema,
 }, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
+
+const tenantExceptionUsageSchema = `ALTER TABLE tenant_usage ADD COLUMN accepted_exceptions BIGINT NOT NULL DEFAULT 0 CHECK(accepted_exceptions>=0 AND accepted_exceptions<=accepted_events);`
+const tenantExceptionBudgetSchema = `ALTER TABLE tenants ADD COLUMN ingestion_monthly_exceptions BIGINT CHECK(ingestion_monthly_exceptions IS NULL OR ingestion_monthly_exceptions>=0);`
+const tenantExceptionControlSchema = tenantExceptionUsageSchema + tenantExceptionBudgetSchema + `
+ALTER TABLE tenant_deletion_usage ADD COLUMN accepted_exceptions BIGINT NOT NULL DEFAULT 0 CHECK(accepted_exceptions>=0 AND accepted_exceptions<=accepted_events);`
 
 const tenantDeletionSchema = `CREATE TABLE tenant_deletions (
 tenant_id TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('deleting','logically_deleted','purged')),
@@ -118,7 +125,9 @@ WHERE kind='client_ingestion' AND revoked_at IS NULL;`
 // 9: explicit public client ingestion credentials.
 // 10: durable event catalog summaries and refresh claims.
 // 11: private source maps.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema, sourceMapSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 12: durable error issues and fingerprint mappings.
+// 13: monthly exception usage.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema, sourceMapSchema, errorIssueSchema, tenantExceptionControlSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -144,6 +153,8 @@ var hostedImportSchema string
 // 27: durable event catalog summaries and refresh claims.
 // 28: distinguish hosted query deletions from single-event mutations.
 // 29: private source maps.
+// 30: durable error issues and fingerprint mappings.
+// 31: monthly exception usage.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -187,6 +198,8 @@ FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCT
 	catalog.ControlSchema,
 	hostedEventDeletionSchema,
 	sourceMapSchema,
+	errorIssueSchema,
+	tenantExceptionControlSchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

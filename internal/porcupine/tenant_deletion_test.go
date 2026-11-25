@@ -314,7 +314,7 @@ func TestSharedHostedTenantDeletionFencesAndReportsCleanupPending(t *testing.T) 
 	s.eventRules = &eventRules{clock: time.Now}
 	s.hosted = &hostedRuntime{}
 	s.sealHostedProject = func(context.Context, string) error { return nil }
-	if _, err := s.control.Exec(`INSERT INTO tenants SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default'; UPDATE projects SET tenant_id='B' WHERE id='kept'`); err != nil {
+	if _, err := s.control.Exec(`INSERT INTO tenants(id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default'; UPDATE projects SET tenant_id='B' WHERE id='kept'`); err != nil {
 		t.Fatal(err)
 	}
 	sharedDeletionPrincipal(t, s.control, "tenant-key", []string{"removed"})

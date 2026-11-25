@@ -284,6 +284,46 @@ test('a quota refusal drops the active batch and pauses new captures through pag
   assert.deepEqual(calls.map(call => call.payload.batch.map(event => event.event)), [['first'], ['second']])
 })
 
+test('an exception quota refusal leaves analytics batches running', async t => {
+  const { calls, connect, tick, window } = page(t, call => call.payload.batch[0].event === '$exception'
+    ? Response.json({ status: 1, accepted: 0, duplicates: 0, identity_ignored: 0,
+      code: 'exception_ingestion_budget_exceeded', quota_limited: ['exceptionEvent'] })
+    : durable(call.payload.batch.length))
+  const client = connect()
+  client.captureException(new Error('quota blocked'))
+  client.capture('analytics before refusal')
+  await tick(1000)
+  client.captureException(new Error('new exception during cooldown'))
+  client.capture('analytics after refusal')
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(1000)
+  assert.deepEqual(calls.map(call => call.payload.batch.map(event => event.event)), [
+    ['$exception'], ['analytics before refusal'], ['analytics after refusal'],
+  ])
+  await tick(59_000)
+  assert.equal(calls.length, 4)
+  assert.equal(calls[3].payload.batch[0].event, '$exception')
+  assert.notEqual(calls[3].payload.batch[0].uuid, calls[0].payload.batch[0].uuid)
+})
+
+test('a full exception queue reserves capacity and keepalive for analytics', async t => {
+  const { calls, connect, tick, window } = page(t, () => new Promise(() => {}))
+  const client = connect()
+  const large = { value: 'x'.repeat(40 * 1024) }
+  assert.equal(client.capture('$exception', large), true)
+  assert.equal(client.capture('$exception', large), true)
+  assert.equal(client.capture('$exception', large), true)
+  assert.equal(client.capture('$exception', large), false)
+  assert.equal(client.capture('analytics', large), true)
+  window.dispatchEvent(new Event('pagehide'))
+  await tick(0)
+  assert.equal(calls.length, 2)
+  const analytics = calls.find(call => call.payload.batch[0].event === 'analytics')
+  const exceptions = calls.find(call => call.payload.batch[0].event === '$exception')
+  assert.equal(analytics.options.keepalive, true)
+  assert.equal(exceptions.options.keepalive, false)
+})
+
 test('an empty quota array does not delay later batches', async t => {
   const { calls, connect, tick, window } = page(t, () => Response.json({
     status: 1, durability: 'buffered', received: 1, quota_limited: [],
@@ -511,8 +551,10 @@ test('bounds exception bursts, skips arbitrary object fields, and guards reentra
   assert.equal(client.captureException('rate limited'), false)
   assert.equal(client.capture('still_available'), true)
   await tick(1000)
-  const batch = calls[0].payload.batch
-  assert.equal(batch.length, 11)
+  const [errors, analytics] = calls
+  assert.deepEqual(analytics.payload.batch.map(event => event.event), ['still_available'])
+  const batch = errors.payload.batch
+  assert.equal(batch.length, 10)
   assert.deepEqual(batch[0].properties, { $exception_list: [{ type: 'Error', value: 'Non-Error thrown' }] })
   assert.equal(batch[1].properties.$exception_list[0].stacktrace.frames.length, 12)
   assert.equal(batch[2].properties.$exception_list[0].value.length, 1024)

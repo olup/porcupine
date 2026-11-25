@@ -351,3 +351,87 @@ func TestTenantIngestionInvalidAndQueueRejectedRowsNotCharged(t *testing.T) {
 		t.Fatal(used)
 	}
 }
+
+func TestTenantExceptionAllowancePreservesAnalyticsAndRetries(t *testing.T) {
+	t.Parallel()
+	s := service(t, 100)
+	at := time.Date(2026, 11, 30, 23, 59, 59, 0, time.UTC)
+	s.clock = func() time.Time { return at }
+	_, token := project(t, s)
+	_, sibling := project(t, s)
+	tenantPath := "/api/v1/tenants/" + defaultTenantID
+	if got := request(t, s, "GET", tenantPath+"/usage", adminToken, "", 200); got["accepted_exceptions"] != "0" || got["remaining_exceptions"] != nil || got["exception_ingestion_allowed"] != true {
+		t.Fatal(got)
+	}
+	saved := request(t, s, "PUT", tenantPath+"/budgets", adminToken, `{"ingestion_monthly_events":2,"ingestion_monthly_exceptions":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":1000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`, 200)
+	if saved["tenant"].(map[string]any)["budgets"].(map[string]any)["ingestion_monthly_exceptions"] != float64(1) {
+		t.Fatal(saved)
+	}
+	exception := fmt.Sprintf(`{"api_key":%q,"event":"$exception","distinct_id":"u","uuid":"first"}`, token)
+	if got := request(t, s, "POST", "/capture/", "", exception, 200); got["accepted"] != float64(1) {
+		t.Fatal(got)
+	}
+	if got := request(t, s, "POST", "/capture/", "", exception, 200); got["duplicates"] != float64(1) {
+		t.Fatal(got)
+	}
+	blocked := request(t, s, "POST", "/capture/", "", fmt.Sprintf(`{"api_key":%q,"event":"$exception","distinct_id":"u","uuid":"blocked"}`, sibling), 200)
+	if blocked["code"] != exceptionBudgetExceeded || len(blocked["quota_limited"].([]any)) != 1 || blocked["quota_limited"].([]any)[0] != "exceptionEvent" {
+		t.Fatal(blocked)
+	}
+	mixed := request(t, s, "POST", "/batch/", "", fmt.Sprintf(`{"api_key":%q,"batch":[{"uuid":"analytics","event":"analytics","distinct_id":"u"},{"uuid":"blocked","event":"$exception","distinct_id":"u"}]}`, sibling), 429)
+	if mixed["code"] != exceptionBudgetExceeded || !strings.Contains(mixed["hint"].(string), "Resend the non-exception events separately") || eventCount(t, s) != 1 {
+		t.Fatal(mixed)
+	}
+	path := tenantPath + "/usage"
+	if got := request(t, s, "GET", path, adminToken, "", 200); got["accepted_events"] != "1" || got["accepted_exceptions"] != "1" || got["remaining_exceptions"] != "0" || got["ingestion_allowed"] != true || got["exception_ingestion_allowed"] != false {
+		t.Fatal(got)
+	}
+	if got := request(t, s, "POST", "/capture/", "", captureBody(sibling, "analytics"), 200); got["accepted"] != float64(1) {
+		t.Fatal(got)
+	}
+	if got := nativeRequest(t, s, token, `{"type":"track","message_id":"new","actor_id":"u","name":"analytics"}`, 429); got["code"] != "ingestion_budget_exceeded" {
+		t.Fatal(got)
+	}
+	at = at.Add(time.Second)
+	if got := request(t, s, "POST", "/capture/", "", exception, 200); got["duplicates"] != float64(1) {
+		t.Fatal(got)
+	}
+	if got := request(t, s, "GET", path, adminToken, "", 200); got["accepted_events"] != "0" || got["accepted_exceptions"] != "0" || got["remaining_exceptions"] != "1" || got["exception_ingestion_allowed"] != true {
+		t.Fatal(got)
+	}
+	if got := request(t, s, "GET", path+"?period=2026-11", adminToken, "", 200); got["accepted_events"] != "2" || got["accepted_exceptions"] != "1" || got["remaining_events"] != "0" {
+		t.Fatal(got)
+	}
+}
+
+func TestTenantExceptionAllowanceImportChunkAndReplay(t *testing.T) {
+	t.Parallel()
+	s := service(t, 100)
+	p, _ := project(t, s)
+	_, token := key(t, s, []string{"imports:write", "events:write"}, []string{p})
+	regular := importTestRow("analytics")
+	exception := []byte(strings.ReplaceAll(string(importTestRow("archived")), "imported purchase", "$exception"))
+	data := append(append([]byte(nil), regular...), exception...)
+	job := importTestCreate(t, s, p, token, "exception-quota", []importer.ImportUploadFileSpec{{Path: "events.jsonl", Kind: "events", SizeBytes: int64(len(data)), SHA256: importTestSHA(data)}})
+	setLimit := func(limit int) {
+		t.Helper()
+		if _, err := s.control.Exec(`UPDATE tenants SET ingestion_monthly_exceptions=$1 WHERE id=$2`, limit, defaultTenantID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setLimit(0)
+	blocked := importTestPut(t, s, p, job, job.Files[0], token, 0, data, 429)
+	if !strings.Contains(blocked.Body.String(), exceptionBudgetExceeded) || eventCount(t, s) != 0 {
+		t.Fatal(blocked.Body.String())
+	}
+	setLimit(1)
+	for range 2 {
+		got := importTestJob(t, importTestPut(t, s, p, job, job.Files[0], token, 0, data, 200))
+		if got.Counts.Accepted != 2 {
+			t.Fatal(got)
+		}
+	}
+	if got := request(t, s, "GET", "/api/v1/tenants/"+defaultTenantID+"/usage", adminToken, "", 200); got["accepted_events"] != "2" || got["accepted_exceptions"] != "1" || got["remaining_exceptions"] != "0" {
+		t.Fatal(got)
+	}
+}

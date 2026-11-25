@@ -93,6 +93,7 @@ For managed SQL exports, see the [export job operations](export-api.md#api-opera
 | Budget field | Accepted value |
 | --- | --- |
 | `ingestion_monthly_events` | `null` for unlimited, or a nonnegative integer; zero prevents new acceptance |
+| `ingestion_monthly_exceptions` | Omit or pass `null` for no additional limit, or set a nonnegative integer to cap `$exception` rows within the shared allowance |
 | `hot_query_max_concurrent` | 1–64 |
 | `hot_query_timeout_ms` | 1–60,000 |
 | `hot_query_max_rows` | 1–100,000 |
@@ -100,7 +101,9 @@ For managed SQL exports, see the [export job operations](export-api.md#api-opera
 
 Query limits are further bounded by the deployment's configured ceilings. Creating a tenant without `budgets` selects unlimited ingestion and deployment-default interactive limits.
 
-`get-tenant-usage` accepts an optional `period=YYYY-MM`, defaulting to the current UTC calendar month. It returns `tenant_id`, `period_start`, `period_end`, decimal-string `accepted_events`, nullable decimal-string `remaining_events`, and effective `ingestion_allowed`. Usage counts new unique canonical rows at durable acceptance, including imports and identity controls. Rejected, ignored, duplicate, and rolled-back rows consume nothing. Deletes do not refund usage. Reading an earlier month applies the current budget to that month's recorded counter; it does not recover historical budget settings. Deletes do not reset retained usage.
+`get-tenant-usage` accepts an optional `period=YYYY-MM`, defaulting to the current UTC calendar month. It returns `tenant_id`, `period_start`, `period_end`, decimal-string `accepted_events`, nullable decimal-string `remaining_events`, and effective `ingestion_allowed`. It also returns decimal-string `accepted_exceptions`, nullable decimal-string `remaining_exceptions`, and effective `exception_ingestion_allowed`. The exception count is part of `accepted_events`. The exception balance applies only to the exception quota. The effective flag also checks the shared quota and the tenant ingestion switch. Exception accounting begins at upgrade, so the first UTC month can be partial.
+
+Usage counts new unique canonical rows at durable acceptance, including imports and identity controls. Rejected, ignored, duplicate, and rolled-back rows consume nothing. Deletes do not refund usage. Reading an earlier month applies the current budget to that month's recorded counter; it does not recover historical budget settings. Deletes do not reset retained usage.
 
 `create-project` accepts optional `tenant_id`, defaulting to `default`, and requires administration of that tenant or instance administration. The same tenant authority permits project deletion and deletion retries. Project responses include immutable `tenant_id`. `list-projects` accepts an optional tenant filter but still returns only authorized projects. Explicit project grants may span tenants; `*` remains deployment-wide.
 

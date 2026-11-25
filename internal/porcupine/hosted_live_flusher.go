@@ -314,7 +314,9 @@ func (f *hostedLiveFlusher) commitImportHeld(ctx context.Context, session *lakea
 			return lakeapi.NativeCommitEvidence{}, err
 		}
 	}
-	result, err := f.native.CommitImportChunk(ctx, fence, input, ids)
+	result, err := f.native.CommitImportChunk(ctx, fence, input, ids, func(ctx context.Context, exceptions int64) error {
+		return f.policy.admit(ctx, input.TenantID, exceptions)
+	})
 	if err != nil {
 		return lakeapi.NativeCommitEvidence{}, err
 	}
@@ -429,9 +431,9 @@ func (f *hostedLiveFlusher) releaseAbsentLiveReservation(ctx context.Context, se
 }
 
 type hostedPolicySnapshot struct {
-	allowed bool
-	limit   sql.NullInt64
-	used    int64
+	allowed               bool
+	limit, exceptionLimit sql.NullInt64
+	used, exceptions      int64
 }
 type hostedIngestionPolicy struct {
 	db        *sql.DB
@@ -441,15 +443,15 @@ type hostedIngestionPolicy struct {
 	tenants   map[string]hostedPolicySnapshot
 }
 
-func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error {
+func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string, exceptions int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now().UTC()
-	start, _ := tenantMonth(now)
+	start, end := tenantMonth(now)
 	month := start.Format(time.RFC3339)
 	if p.month != month || time.Since(p.refreshed) >= hostedPolicyRefreshInterval {
 		// One grouped shared read, never a per-event control call or escrow.
-		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1`, month)
+		rows, err := p.db.QueryContext(ctx, `SELECT t.id,t.ingestion_allowed,t.ingestion_monthly_events,coalesce(u.accepted_events,0),t.ingestion_monthly_exceptions,coalesce(u.accepted_exceptions,0) FROM tenants t LEFT JOIN tenant_usage u ON u.tenant_id=t.id AND u.period_start=$1`, month)
 		if err != nil {
 			return err
 		}
@@ -457,7 +459,7 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 		for rows.Next() {
 			var id string
 			var v hostedPolicySnapshot
-			if err = rows.Scan(&id, &v.allowed, &v.limit, &v.used); err != nil {
+			if err = rows.Scan(&id, &v.allowed, &v.limit, &v.used, &v.exceptionLimit, &v.exceptions); err != nil {
 				rows.Close()
 				return err
 			}
@@ -481,5 +483,5 @@ func (p *hostedIngestionPolicy) admit(ctx context.Context, tenant string) error 
 	if v.limit.Valid && v.used >= v.limit.Int64 {
 		return &tenantIngestionError{code: "ingestion_budget_exceeded", message: "tenant monthly ingestion budget exceeded"}
 	}
-	return nil
+	return checkExceptionAllowance(v.exceptionLimit, v.exceptions, exceptions, end)
 }

@@ -23,6 +23,7 @@ export interface BrowserClient {
 
 const maxBatchEvents = 20
 const maxBatchBytes = 48 * 1024
+const maxKeepaliveBytes = 64 * 1024
 const maxQueueEvents = 200
 const maxQueueBytes = 256 * 1024
 const maxEventAgeMs = 120_000
@@ -83,7 +84,7 @@ function isCount(value: unknown): value is number {
 
 function acknowledgment(value: unknown, count: number): Outcome {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'retry'
-  if ('code' in value && (value.code === 'ingestion_budget_exceeded' || value.code === 'ingestion_suspended')) {
+  if ('code' in value && (value.code === 'ingestion_budget_exceeded' || value.code === 'exception_ingestion_budget_exceeded' || value.code === 'ingestion_suspended')) {
     return 'quota'
   }
   if ('quota_limited' in value) {
@@ -125,11 +126,15 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
   const envelopeBytes = encoder.encode(batchBody('2000-01-01T00:00:00.000Z', '')).length
   const pageWindow = typeof window === 'undefined' ? undefined : window
   const pageDocument = typeof document === 'undefined' ? undefined : document
-  const queue: QueuedEvent[] = []
-  let queueBytes = 0
-  let delivery: Delivery = { kind: 'idle' }
-  let retryBatch: RetryBatch | undefined
-  let notBefore = 0
+  let pendingEvents = 0
+  let pendingBytes = 0
+  let enabled = true
+  const analytics = deliveryQueue({ keepaliveBytes: maxBatchBytes, maxEvents: maxQueueEvents, maxBytes: maxQueueBytes })
+  const exceptions = deliveryQueue({
+    keepaliveBytes: maxKeepaliveBytes - maxBatchBytes,
+    maxEvents: maxQueueEvents / 2,
+    maxBytes: maxQueueBytes / 2,
+  })
   const buildId = buildMetadata(options.build_id)
   const release = buildMetadata(options.release)
   let exceptionWindowEnds = 0
@@ -140,119 +145,159 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     return `{"api_key":${keyJson},"sent_at":"${sentAt}","batch":[${events}]}`
   }
 
-  function discard(count: number): void {
-    for (const entry of queue.splice(0, count)) queueBytes -= entry.bytes + 1
-  }
+  function deliveryQueue({ keepaliveBytes, maxEvents, maxBytes }: { keepaliveBytes: number; maxEvents: number; maxBytes: number }) {
+    const queue: QueuedEvent[] = []
+    let queueBytes = 0
+    let delivery: Delivery = { kind: 'idle' }
+    let retryBatch: RetryBatch | undefined
+    let notBefore = 0
 
-  function discardExpired(now: number): number {
-    let count = 0
-    for (const entry of queue) {
-      if (entry.expiresAt > now) break
-      count++
+    function discard(count: number): void {
+      const removed = queue.splice(0, count)
+      pendingEvents -= removed.length
+      for (const entry of removed) {
+        queueBytes -= entry.bytes + 1
+        pendingBytes -= entry.bytes + 1
+      }
     }
-    discard(count)
-    return count
+
+    function discardExpired(now: number): number {
+      let count = 0
+      for (const entry of queue) {
+        if (entry.expiresAt > now) break
+        count++
+      }
+      discard(count)
+      return count
+    }
+
+    function flush(): void {
+      if (delivery.kind === 'scheduled') clearTimeout(delivery.timer)
+      else if (delivery.kind !== 'idle') return
+      delivery = { kind: 'idle' }
+      const now = performance.now()
+      const expired = discardExpired(now)
+      if (retryBatch) {
+        retryBatch.count -= expired
+        if (retryBatch.count <= 0) retryBatch = undefined
+      }
+      if (queue.length === 0) return
+      if (now < notBefore) {
+        // Wake for expiration even when the server asks for a much longer wait.
+        const delay = Math.ceil(Math.min(notBefore, queue[0].expiresAt) - now)
+        delivery = { kind: 'scheduled', timer: setTimeout(flush, delay) }
+        return
+      }
+      if (retryBatch) {
+        const { count, retries } = retryBatch
+        retryBatch = undefined
+        void send(count, retries)
+        return
+      }
+      let count = 0
+      let bytes = envelopeBytes
+      for (const entry of queue) {
+        bytes += entry.bytes + (count === 0 ? 0 : 1)
+        if (count === maxBatchEvents || bytes > maxBatchBytes) break
+        count++
+      }
+      if (count > 0) void send(count, 0)
+    }
+
+    function scheduleFlush(): void {
+      if ((delivery.kind !== 'idle' && delivery.kind !== 'scheduled') || queue.length === 0) return
+      if (performance.now() < notBefore) {
+        if (delivery.kind === 'idle') flush()
+      } else if (queue.length >= maxBatchEvents || queueBytes + envelopeBytes >= maxBatchBytes) {
+        flush()
+      } else if (delivery.kind === 'idle') {
+        delivery = { kind: 'scheduled', timer: setTimeout(flush, flushDelayMs) }
+      }
+    }
+
+    function finish(count: number, retries: number, outcome: Outcome, retryAfterMs: number): void {
+      if (delivery.kind === 'disabled') return
+      const now = performance.now()
+      if (outcome === 'quota') {
+        notBefore = now + Math.max(quotaCooldownMs, retryAfterMs)
+      } else if (outcome === 'retry') {
+        const backoff = 1_000 * 2 ** retries + Math.floor(Math.random() * retryJitterMs)
+        const delay = Math.max(backoff, retryAfterMs)
+        notBefore = now + delay
+        if (retries < maxRetries && delay <= maxRetryDelayMs) {
+          retryBatch = { count, retries: retries + 1 }
+        }
+      }
+      if (!retryBatch) discard(count)
+      delivery = { kind: 'idle' }
+      scheduleFlush()
+    }
+
+    async function send(count: number, retries: number): Promise<void> {
+      const controller = new AbortController()
+      delivery = { kind: 'sending', controller }
+      const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
+      let outcome: Outcome
+      let retryAfterMs = 0
+      try {
+        const batch = queue.slice(0, count).map(entry => entry.json).join(',')
+        const body = batchBody(new Date().toISOString(), batch)
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body,
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+          redirect: 'error',
+          keepalive: encoder.encode(body).length <= keepaliveBytes,
+          signal: controller.signal,
+        })
+        retryAfterMs = retryAfter(response.headers.get('Retry-After')) ?? 0
+        if (response.status === 200) {
+          outcome = acknowledgment(await response.json(), count)
+        } else {
+          void response.body?.cancel().catch(() => {})
+          outcome = response.status === 408 || response.status === 429 || response.status >= 500
+            ? 'retry'
+            : 'refused'
+        }
+      } catch {
+        outcome = 'retry'
+      } finally {
+        clearTimeout(timeout)
+      }
+      finish(count, retries, outcome, retryAfterMs)
+    }
+
+    function enqueue(entry: QueuedEvent): boolean {
+      if (queue.length >= maxEvents || queueBytes + entry.bytes + 1 > maxBytes) return false
+      queue.push(entry)
+      queueBytes += entry.bytes + 1
+      pendingEvents++
+      pendingBytes += entry.bytes + 1
+      scheduleFlush()
+      return true
+    }
+
+    function disable(): void {
+      const previous = delivery
+      delivery = { kind: 'disabled' }
+      retryBatch = undefined
+      discard(queue.length)
+      if (previous.kind === 'sending') previous.controller.abort()
+      if (previous.kind === 'scheduled') clearTimeout(previous.timer)
+    }
+
+    return { enqueue, flush, disable }
   }
 
   function flush(): void {
-    if (delivery.kind === 'scheduled') clearTimeout(delivery.timer)
-    else if (delivery.kind !== 'idle') return
-    delivery = { kind: 'idle' }
-    const now = performance.now()
-    const expired = discardExpired(now)
-    if (retryBatch) {
-      retryBatch.count -= expired
-      if (retryBatch.count <= 0) retryBatch = undefined
-    }
-    if (queue.length === 0) return
-    if (now < notBefore) {
-      // Wake for expiration even when the server asks for a much longer wait.
-      const delay = Math.ceil(Math.min(notBefore, queue[0].expiresAt) - now)
-      delivery = { kind: 'scheduled', timer: setTimeout(flush, delay) }
-      return
-    }
-    if (retryBatch) {
-      const { count, retries } = retryBatch
-      retryBatch = undefined
-      void send(count, retries)
-      return
-    }
-    let count = 0
-    let bytes = envelopeBytes
-    for (const entry of queue) {
-      bytes += entry.bytes + (count === 0 ? 0 : 1)
-      if (count === maxBatchEvents || bytes > maxBatchBytes) break
-      count++
-    }
-    if (count > 0) void send(count, 0)
-  }
-
-  function scheduleFlush(): void {
-    if ((delivery.kind !== 'idle' && delivery.kind !== 'scheduled') || queue.length === 0) return
-    if (performance.now() < notBefore) {
-      if (delivery.kind === 'idle') flush()
-    } else if (queue.length >= maxBatchEvents || queueBytes + envelopeBytes >= maxBatchBytes) {
-      flush()
-    } else if (delivery.kind === 'idle') {
-      delivery = { kind: 'scheduled', timer: setTimeout(flush, flushDelayMs) }
-    }
-  }
-
-  function finish(count: number, retries: number, outcome: Outcome, retryAfterMs: number): void {
-    if (delivery.kind === 'disabled') return
-    const now = performance.now()
-    if (outcome === 'quota') {
-      notBefore = now + Math.max(quotaCooldownMs, retryAfterMs)
-    } else if (outcome === 'retry') {
-      const backoff = 1_000 * 2 ** retries + Math.floor(Math.random() * retryJitterMs)
-      const delay = Math.max(backoff, retryAfterMs)
-      notBefore = now + delay
-      if (retries < maxRetries && delay <= maxRetryDelayMs) {
-        retryBatch = { count, retries: retries + 1 }
-      }
-    }
-    if (!retryBatch) discard(count)
-    delivery = { kind: 'idle' }
-    scheduleFlush()
-  }
-
-  async function send(count: number, retries: number): Promise<void> {
-    const controller = new AbortController()
-    delivery = { kind: 'sending', controller }
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
-    let outcome: Outcome
-    let retryAfterMs = 0
-    try {
-      const batch = queue.slice(0, count).map(entry => entry.json).join(',')
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: batchBody(new Date().toISOString(), batch),
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer',
-        redirect: 'error',
-        keepalive: true,
-        signal: controller.signal,
-      })
-      retryAfterMs = retryAfter(response.headers.get('Retry-After')) ?? 0
-      if (response.status === 200) {
-        outcome = acknowledgment(await response.json(), count)
-      } else {
-        void response.body?.cancel().catch(() => {})
-        outcome = response.status === 408 || response.status === 429 || response.status >= 500
-          ? 'retry'
-          : 'refused'
-      }
-    } catch {
-      outcome = 'retry'
-    } finally {
-      clearTimeout(timeout)
-    }
-    finish(count, retries, outcome, retryAfterMs)
+    analytics.flush()
+    exceptions.flush()
   }
 
   function hasSpace(): boolean {
-    return delivery.kind !== 'disabled' && queue.length < maxQueueEvents && queueBytes < maxQueueBytes
+    return enabled && pendingEvents < maxQueueEvents && pendingBytes < maxQueueBytes
   }
 
   function capture(event: string, properties: Readonly<Record<string, unknown>> = {}): boolean {
@@ -273,11 +318,9 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
     }
     if (json.length + envelopeBytes > maxBatchBytes) return false
     const bytes = encoder.encode(json).length
-    if (!hasSpace() || bytes + envelopeBytes > maxBatchBytes || queueBytes + bytes + 1 > maxQueueBytes) return false
-    queue.push({ json, bytes, expiresAt: performance.now() + maxEventAgeMs })
-    queueBytes += bytes + 1
-    scheduleFlush()
-    return true
+    if (!hasSpace() || bytes + envelopeBytes > maxBatchBytes || pendingBytes + bytes + 1 > maxQueueBytes) return false
+    const destination = event === '$exception' ? exceptions : analytics
+    return destination.enqueue({ json, bytes, expiresAt: performance.now() + maxEventAgeMs })
   }
 
   function queueException(error: unknown, location?: Parameters<typeof exception>[1]): boolean {
@@ -325,12 +368,9 @@ export function init(publicKey: string, options: BrowserOptions): BrowserClient 
   }
 
   function disable(): void {
-    const previous = delivery
-    delivery = { kind: 'disabled' }
-    retryBatch = undefined
-    discard(queue.length)
-    if (previous.kind === 'sending') previous.controller.abort()
-    if (previous.kind === 'scheduled') clearTimeout(previous.timer)
+    enabled = false
+    analytics.disable()
+    exceptions.disable()
     pageWindow?.removeEventListener('error', onError)
     pageWindow?.removeEventListener('unhandledrejection', onUnhandledRejection)
     pageWindow?.removeEventListener('pagehide', flush)

@@ -211,7 +211,7 @@ func (m *importManager) commitHostedImportChunk(ctx context.Context, project, jo
 			return err
 		}
 		if len(input.Candidates) > 0 {
-			return m.hosted.policy.admit(ctx, p.tenant)
+			return m.hosted.policy.admit(ctx, p.tenant, 0)
 		}
 		return nil
 	})

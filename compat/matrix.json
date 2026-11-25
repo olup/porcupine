@@ -93,6 +93,13 @@
       "configuration": "cookielessProfile with the full PostHog JS browser bundle"
     },
     {
+      "id": "browser.exception-quota-isolation",
+      "required": true,
+      "status": "implemented",
+      "scope": "An exhausted exception quota only throttles the pinned PostHog browser SDK's exception queue.",
+      "configuration": "cookielessProfile with request batching and a zero monthly exception budget"
+    },
+    {
       "id": "porcupine-browser.exception-build-map",
       "required": true,
       "status": "implemented",

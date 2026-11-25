@@ -10,7 +10,7 @@ import (
 // PrepareEventSelection parses one expression and places it in a fixed SELECT's
 // WHERE clause before applying the same policy and bindings as an analytics query.
 func PrepareEventSelection(ctx context.Context, db *sql.DB, predicate string, parameters map[string]string) (string, []any, Statement, error) {
-	return prepareQuery(ctx, db, predicate, parameters, inspectEventSelection)
+	return prepareQuery(ctx, db, predicate, parameters, "", inspectEventSelection)
 }
 
 const selectionPrefix = "SELECT uuid, revision, id, received_at, is_imported, "

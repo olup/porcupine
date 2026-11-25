@@ -128,7 +128,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 					return e
 				}
 			}
-			result, e = sa.CommitImportChunk(ctx, fence, input, ids)
+			result, e = sa.CommitImportChunk(ctx, fence, input, ids, nil)
 			return e
 		})
 		return result, e
@@ -365,7 +365,7 @@ func runNativeImportPublication(t *testing.T, versioned bool) {
 		}
 		// Simulate a native operation already dispatched by the lost session
 		// which returns after the coordinator declares it stale.
-		nextProof, err = sa.CommitImportChunk(t.Context(), oldFence, next, lakeapi.EventIDReservation{})
+		nextProof, err = sa.CommitImportChunk(t.Context(), oldFence, next, lakeapi.EventIDReservation{}, nil)
 		if err != nil {
 			return err
 		}

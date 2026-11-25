@@ -61,7 +61,7 @@ For a fleet-wide upgrade, pause producers, wait for expected events to become qu
 
 ## Hosted budgets {#shared-budgets}
 
-Hosted live admission checks a short-lived snapshot of policy and usage before buffering. Workers can admit events ahead of the published usage ledger. [Hosted usage accounting](../design/hosted-architecture.md#usage) · [Interactive query limits](tenants.md#interactive-query-limits)
+Hosted live admission checks a short-lived snapshot of policy and usage before buffering. Workers can admit events ahead of the published usage ledger and exceed the shared event or exception allowance. Exception counts reflect unique rows from published native commits. [Hosted usage accounting](../design/hosted-architecture.md#usage) · [Interactive query limits](tenants.md#interactive-query-limits)
 
 ## Native timeouts and worker supervision
 
