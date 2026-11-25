@@ -21,7 +21,7 @@ const errorIssueSchema = `CREATE TABLE error_issues (
 	project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 	id TEXT NOT NULL,
 	status TEXT NOT NULL CHECK(status IN ('open','acknowledged','resolved','seen_again')),
-	muted BOOLEAN NOT NULL,
+	muted BIGINT NOT NULL CHECK(muted IN (0,1)),
 	revision BIGINT NOT NULL CHECK(revision > 0),
 	updated_at TEXT NOT NULL,
 	resolved_at TEXT NOT NULL DEFAULT '',
@@ -39,7 +39,7 @@ CREATE TABLE error_issue_fingerprints (
 	FOREIGN KEY(project_id,issue_id) REFERENCES error_issues(project_id,id) ON DELETE CASCADE
 );
 CREATE INDEX error_issue_fingerprints_by_issue ON error_issue_fingerprints(project_id,issue_id);
-CREATE INDEX error_issues_muted ON error_issues(project_id,id) WHERE muted;`
+CREATE INDEX error_issues_muted ON error_issues(project_id,id) WHERE muted=1;`
 
 const maxErrorIssueFingerprints = 32
 
@@ -171,7 +171,7 @@ func (s *Service) mutedErrorGroupFingerprints(ctx context.Context, project strin
 	const maxFingerprints = (nativequery.MaxInternalParameterBytes - 2) / 69
 	rows, err := s.control.QueryContext(ctx, `SELECT f.fingerprint FROM error_issues i
 JOIN error_issue_fingerprints f ON f.project_id=i.project_id AND f.issue_id=i.id
-WHERE i.project_id=$1 AND i.muted LIMIT $2`, project, maxFingerprints+1)
+WHERE i.project_id=$1 AND i.muted=1 LIMIT $2`, project, maxFingerprints+1)
 	if err != nil {
 		return "", errorIssueUnavailable()
 	}
