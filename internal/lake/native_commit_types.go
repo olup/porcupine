@@ -16,7 +16,9 @@ const (
 )
 
 type NativeCommitEvidence struct {
-	Kind                                            NativeCommitKind
+	Kind NativeCommitKind
+	// Omit zero to preserve fingerprints of proofs written before exception metering.
+	AcceptedExceptions                              int64 `json:",omitempty"`
 	AcceptedImport                                  int64
 	Import                                          *ImportChunkOutcome
 	Mutation                                        *HostedMutationOutcome `json:",omitempty"`

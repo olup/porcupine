@@ -789,8 +789,8 @@ contract('porcupine-browser.capture-and-retry', async () => {
   }
 });
 
-async function browserErrorJourney(capturePaths, run) {
-  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Browser error contract' } });
+async function browserErrorJourney(capturePaths, run, tenantId) {
+  const scoped = await management('/api/v1/projects', { method: 'POST', body: { name: 'Browser error contract', tenant_id: tenantId } });
   const isolated = await browser.newContext({ serviceWorkers: 'block' });
   try {
     await isolated.route('**/*', route => routeBrowser(route, capturePaths));
@@ -857,6 +857,47 @@ contract('browser.exception-chunk-map', () => browserErrorJourney(posthogBrowser
   ), 'pinned PostHog SDK sends the injected chunk ID');
   await assertMappedBrowserError(scoped.project.id, { chunk_id: 'compat-test-chunk' });
 }));
+
+contract('browser.exception-quota-isolation', async () => {
+  const { tenant } = await management('/api/v1/tenants', {
+    method: 'POST',
+    body: { name: 'Browser quota contract', budgets: {
+      ingestion_monthly_events: null, ingestion_monthly_exceptions: 0,
+      hot_query_max_concurrent: 1, hot_query_timeout_ms: 1000, hot_query_max_rows: 100, hot_query_max_result_bytes: 65536,
+    } },
+  });
+  await browserErrorJourney(posthogBrowserPaths, async (tab, scoped) => {
+    await tab.addScriptTag({ url: origin + '/sdk-full.js' });
+    await tab.evaluate(({ host, token, profile }) => posthog.init(token, {
+      ...profile, api_host: host, request_batching: true, request_queue_config: { flush_interval_ms: 250 },
+    }), { host: api, token: scoped.ingest_token, profile: cookielessProfile });
+    const responseFor = name => tab.waitForResponse(response => {
+      const request = response.request();
+      if (new URL(response.url()).origin !== api || request.method() !== 'POST') return false;
+      const payload = decodeWire({ headers: request.headers(), body: request.postDataBuffer() });
+      return payload.batch.some(item => item.event === name);
+    });
+    const refused = responseFor('$exception');
+    const accepted = responseFor('analytics beside exception');
+    await tab.evaluate(() => {
+      try { window.throwFixture(); } catch (error) { posthog.captureException(error); }
+      posthog.capture('analytics beside exception');
+    });
+    const exceptionResponse = await refused;
+    assert.equal(exceptionResponse.status(), 200);
+    const quota = await exceptionResponse.json();
+    assert.equal(quota.code, 'exception_ingestion_budget_exceeded');
+    assert.deepEqual(quota.quota_limited, ['exceptionEvent']);
+    assert.equal((await (await accepted).json()).accepted, 1);
+    await event('analytics beside exception', 1, scoped.project.id);
+    const analyticsResponse = responseFor('analytics after refusal');
+    await tab.evaluate(() => posthog.capture('analytics after refusal'));
+    assert.equal((await (await analyticsResponse).json()).accepted, 1);
+    const usage = await management(`/api/v1/tenants/${tenant.id}/usage`);
+    assert.equal(usage.accepted_events, '2');
+    assert.equal(usage.accepted_exceptions, '0');
+  }, tenant.id);
+});
 
 contract('porcupine-browser.exception-build-map', () => browserErrorJourney(['/batch/'], async (tab, scoped) => {
   await tab.addScriptTag({ path: join(root, 'sdk/browser/dist/porcupine.js') });

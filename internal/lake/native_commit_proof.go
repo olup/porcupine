@@ -33,7 +33,7 @@ func ValidateNativeCommitEvidence(e NativeCommitEvidence) error {
 		return errors.New("invalid native commit envelope")
 	}
 	total := e.Totals[0]
-	if total.Day != e.AccountedAt.UTC().Format("2006-01-02T00:00:00Z") || total.Revision != e.Sequence || e.AcceptedLive < 0 || e.AcceptedImport < 0 || total.Live < e.AcceptedLive || total.Import < e.AcceptedImport {
+	if total.Day != e.AccountedAt.UTC().Format("2006-01-02T00:00:00Z") || total.Revision != e.Sequence || e.AcceptedLive < 0 || e.AcceptedImport < 0 || e.AcceptedExceptions < 0 || e.AcceptedExceptions > max(e.AcceptedLive, e.AcceptedImport) || total.Live < e.AcceptedLive || total.Import < e.AcceptedImport {
 		return errors.New("invalid native cumulative usage proof")
 	}
 	switch e.Kind {

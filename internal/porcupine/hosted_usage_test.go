@@ -109,7 +109,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	tenant := created["tenant"].(map[string]any)["id"].(string)
 	budget := func(events int) {
 		t.Helper()
-		body := `{"ingestion_monthly_events":` + strconv.Itoa(events) + `,"hot_query_max_concurrent":1,"hot_query_timeout_ms":1000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`
+		body := `{"ingestion_monthly_events":` + strconv.Itoa(events) + `,"ingestion_monthly_exceptions":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":1000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`
 		sharedJourneyHTTP(t, b.host.URL, http.MethodPut, "/api/v1/tenants/"+tenant+"/budgets", adminToken, []byte(body), nil, http.StatusOK)
 	}
 	budget(3)
@@ -117,7 +117,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	sibling, _ := sharedJourneyProject(t, b.host.URL, tenant, "Same tenant")
 	neighbor, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Other tenant")
 	at := a.service.clock()
-	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "accepted", DistinctID: "actor",
+	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "$exception", DistinctID: "actor",
 		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
 	batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project,
 		Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
@@ -150,7 +150,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	}
 
 	reported := sharedJourneyHTTP(t, b.host.URL, http.MethodGet, "/api/v1/tenants/"+tenant+"/usage", adminToken, nil, nil, http.StatusOK)
-	if reported["accepted_events"] != "3" || reported["remaining_events"] != "0" || reported["ingestion_allowed"] != false {
+	if reported["accepted_events"] != "3" || reported["accepted_exceptions"] != "1" || reported["remaining_exceptions"] != "0" || reported["remaining_events"] != "0" || reported["ingestion_allowed"] != false {
 		t.Fatalf("get-tenant-usage after three hosted acceptances: %v", reported)
 	}
 	for _, node := range []*sharedJourneyNode{a, b} {
@@ -159,7 +159,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 		policy.refreshed = time.Time{}
 		policy.mu.Unlock()
 		var denied *tenantIngestionError
-		if err := policy.admit(ctx, tenant); !errors.As(err, &denied) || denied.code != "ingestion_budget_exceeded" {
+		if err := policy.admit(ctx, tenant, 0); !errors.As(err, &denied) || denied.code != "ingestion_budget_exceeded" {
 			t.Fatalf("enforcement admitted past the reported budget: %v", err)
 		}
 		policy.mu.Lock()
@@ -168,7 +168,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 		if strconv.FormatInt(used, 10) != reported["accepted_events"] {
 			t.Fatalf("enforcement counted %d, get-tenant-usage reported %v", used, reported["accepted_events"])
 		}
-		if err := policy.admit(ctx, defaultTenantID); err != nil {
+		if err := policy.admit(ctx, defaultTenantID, 0); err != nil {
 			t.Fatal("another tenant's budget was charged", err)
 		}
 	}
@@ -176,15 +176,19 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 
 	budget(4)
 	reported = sharedJourneyHTTP(t, a.host.URL, http.MethodGet, "/api/v1/tenants/"+tenant+"/usage", adminToken, nil, nil, http.StatusOK)
-	if reported["accepted_events"] != "3" || reported["remaining_events"] != "1" || reported["ingestion_allowed"] != true {
+	if reported["accepted_events"] != "3" || reported["exception_ingestion_allowed"] != false || reported["remaining_events"] != "1" || reported["ingestion_allowed"] != true {
 		t.Fatalf("raising the budget changed consumption: %v", reported)
 	}
 	policy := &b.service.hosted.flusher.policy
 	policy.mu.Lock()
 	policy.refreshed = time.Time{}
 	policy.mu.Unlock()
-	if err := policy.admit(ctx, tenant); err != nil {
+	if err := policy.admit(ctx, tenant, 0); err != nil {
 		t.Fatal("enforcement rejected an allowance get-tenant-usage reports", err)
+	}
+	var denied *tenantIngestionError
+	if err := policy.admit(ctx, tenant, 1); !errors.As(err, &denied) || denied.code != exceptionBudgetExceeded {
+		t.Fatalf("exception enforcement admitted past the reported budget: %v", err)
 	}
 }
 

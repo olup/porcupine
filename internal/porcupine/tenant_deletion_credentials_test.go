@@ -122,7 +122,7 @@ func TestSharedTenantDeletionRemovesOperatorCredentialsScopedToTenant(t *testing
 	s := sharedDeletionFixture(t)
 	s.eventRules = &eventRules{clock: time.Now}
 	ctx := t.Context()
-	if _, err := s.control.Exec(`INSERT INTO tenants SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default';
+	if _, err := s.control.Exec(`INSERT INTO tenants(id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes) SELECT 'B','B',created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes FROM tenants WHERE id='default';
 INSERT INTO projects(id,tenant_id,name,created_at,ingestion_mode) VALUES('b1','B','B1','now','mixed'),('b2','B','B2','now','mixed'),('old-project','default','Old','now','mixed')`); err != nil {
 		t.Fatal(err)
 	}

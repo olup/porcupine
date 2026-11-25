@@ -165,7 +165,7 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 	}
 	accepted, duplicates, identityIgnored := 0, 0, 0
 	var receipts []acceptance.DurableReceipt
-	var acceptedBytes int64
+	var acceptedBytes, exceptions int64
 	var webhookEvents []eventapi.Event
 	for _, input := range batch.Events {
 		e := input.Event
@@ -237,10 +237,13 @@ func (a *durableAcceptance) Accept(ctx context.Context, batch acceptance.Batch, 
 		if withReceipts {
 			receipts = append(receipts, acceptance.DurableReceipt{MessageID: e.MessageID, EventID: strconv.FormatInt(e.ID, 10), UUID: e.UUID})
 		}
+		if e.Event == "$exception" {
+			exceptions++
+		}
 		accepted++
 		acceptedBytes += size
 	}
-	if err = consumeTenantEventsTx(ctx, tx, batch.ProjectID, acceptedAt, int64(accepted)); err != nil {
+	if err = consumeTenantEventsTx(ctx, tx, batch.ProjectID, acceptedAt, int64(accepted), exceptions); err != nil {
 		var budget *tenantIngestionError
 		if errors.As(err, &budget) {
 			return nil, err

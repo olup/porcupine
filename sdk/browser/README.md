@@ -82,13 +82,13 @@ send.
 
 `capture` returns `true` when it queues the event locally. The SDK sends
 batches of at most 20 events and 48 KiB, normally starting within a second.
-When the page hides, it attempts to send a batch if the client is idle. The
-queue holds up to 200 events and 256 KiB. An event expires after waiting two
-minutes in the queue. The SDK stops retrying a batch after three retries.
-For retryable responses, a visible `Retry-After` delays all batches. If that
-wait exceeds 30 seconds, the SDK also drops the active batch. A quota or
-suspension response drops the active batch and pauses the client for at least
-one minute. Permanent client errors drop the active batch.
+Analytics and exceptions have separate queues that together hold up to 200 events
+and 256 KiB. When the page hides, the SDK tries to send from either queue if it is
+idle. An event expires after waiting two minutes. The SDK stops retrying a batch
+after three retries. A visible `Retry-After` delays the affected queue and drops
+the active batch if the wait exceeds 30 seconds. A quota or suspension response
+drops the affected batch and pauses its queue for at least one minute. Permanent
+client errors drop the active batch.
 
 A standalone server acknowledges after it commits to its journal. A hosted
 server acknowledges admission to its in-memory buffer. Events can take

@@ -896,6 +896,13 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			return
 		}
 	}
+	var exceptions int64
+	for _, input := range prepared.Events {
+		if input.Event.Event == "$exception" {
+			exceptions++
+		}
+	}
+	mixed := exceptions > 0 && exceptions < int64(len(prepared.Events))
 	if s.hosted != nil {
 		for _, input := range prepared.Events {
 			if err := lakeapi.ValidateLiveProjection(input.Event); err != nil {
@@ -910,9 +917,9 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 			writeManagementProblem(w, err)
 			return
 		}
-		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID); err != nil {
+		if err := s.hosted.flusher.policy.admit(ctx, tenant.ID, exceptions); err != nil {
 			s.observeAcceptance(ctx, nil, err)
-			if !writeTenantIngestionError(w, r, err, nativeResponse) {
+			if !writeTenantIngestionError(w, err, nativeResponse, mixed) {
 				w.Header().Set("Retry-After", "1")
 				problem(w, 503, "tenant ingestion policy unavailable")
 			}
@@ -925,7 +932,7 @@ func (s *Service) captureNormalized(w http.ResponseWriter, r *http.Request, root
 	result, err := s.acceptance.Accept(ctx, prepared, peer, nativeResponse)
 	s.observeAcceptance(ctx, result, err)
 	if err != nil {
-		if writeTenantIngestionError(w, r, err, nativeResponse) {
+		if writeTenantIngestionError(w, err, nativeResponse, mixed) {
 			return
 		}
 		var managed *apierr.Error

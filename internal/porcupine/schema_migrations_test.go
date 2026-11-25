@@ -272,3 +272,38 @@ func TestSharedControlHostedEpochAppendsAfterAuthAndUsage(t *testing.T) {
 		})
 	}
 }
+
+func TestExceptionUsageMigrationKeepsLegacyEventTotals(t *testing.T) {
+	t.Parallel()
+	for _, store := range []schemaStore{journalSchema, localControlSchema} {
+		t.Run(store.name, func(t *testing.T) {
+			db, err := openLocalSQLite(filepath.Join(t.TempDir(), store.name+".db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			prior := store
+			prior.steps = prior.steps[:11]
+			if err := migrateSQLite(t.Context(), db, prior); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO tenants(id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes)
+VALUES('older','Older','2026-11-01T00:00:00Z',1,100,1,1000,100,65536);
+INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES('older','2026-11-01T00:00:00Z',17);`); err != nil {
+				t.Fatal(err)
+			}
+			if err := migrateSQLite(t.Context(), db, store); err != nil {
+				t.Fatal(err)
+			}
+			var events, exceptions int64
+			var allowance, exceptionAllowance sql.NullInt64
+			if err := db.QueryRow(`SELECT u.accepted_events,u.accepted_exceptions,t.ingestion_monthly_events,t.ingestion_monthly_exceptions
+FROM tenant_usage u JOIN tenants t ON t.id=u.tenant_id WHERE t.id='older'`).Scan(&events, &exceptions, &allowance, &exceptionAllowance); err != nil {
+				t.Fatal(err)
+			}
+			if events != 17 || exceptions != 0 || allowance != (sql.NullInt64{Int64: 100, Valid: true}) || exceptionAllowance.Valid {
+				t.Fatal(events, exceptions, allowance, exceptionAllowance)
+			}
+		})
+	}
+}

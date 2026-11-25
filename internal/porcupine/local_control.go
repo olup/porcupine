@@ -171,18 +171,18 @@ func (s *Service) publishLocalUsage(ctx context.Context) error {
 	if s.shared != nil {
 		return nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT tenant_id,period_start,accepted_events FROM tenant_usage ORDER BY tenant_id,period_start`)
+	rows, err := s.db.QueryContext(ctx, `SELECT tenant_id,period_start,accepted_events,accepted_exceptions FROM tenant_usage ORDER BY tenant_id,period_start`)
 	if err != nil {
 		return err
 	}
 	type usage struct {
-		tenant, period string
-		count          int64
+		tenant, period    string
+		count, exceptions int64
 	}
 	var reports []usage
 	for rows.Next() {
 		var report usage
-		if err := rows.Scan(&report.tenant, &report.period, &report.count); err != nil {
+		if err := rows.Scan(&report.tenant, &report.period, &report.count, &report.exceptions); err != nil {
 			rows.Close()
 			return err
 		}
@@ -204,14 +204,14 @@ func (s *Service) publishLocalUsage(ctx context.Context) error {
 			return err
 		}
 		if deleted {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_deletion_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
-ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_deletion_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_deletion_usage.accepted_events END`, report.tenant, report.period, report.count); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_deletion_usage(tenant_id,period_start,accepted_events,accepted_exceptions) VALUES($1,$2,$3,$4)
+ON CONFLICT(tenant_id,project_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_deletion_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_deletion_usage.accepted_events END, accepted_exceptions=CASE WHEN tenant_deletion_usage.accepted_exceptions<excluded.accepted_exceptions THEN excluded.accepted_exceptions ELSE tenant_deletion_usage.accepted_exceptions END`, report.tenant, report.period, report.count, report.exceptions); err != nil {
 				return err
 			}
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events) VALUES($1,$2,$3)
-ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_usage.accepted_events END`, report.tenant, report.period, report.count); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_usage(tenant_id,period_start,accepted_events,accepted_exceptions) VALUES($1,$2,$3,$4)
+ON CONFLICT(tenant_id,period_start) DO UPDATE SET accepted_events=CASE WHEN tenant_usage.accepted_events<excluded.accepted_events THEN excluded.accepted_events ELSE tenant_usage.accepted_events END, accepted_exceptions=CASE WHEN tenant_usage.accepted_exceptions<excluded.accepted_exceptions THEN excluded.accepted_exceptions ELSE tenant_usage.accepted_exceptions END`, report.tenant, report.period, report.count, report.exceptions); err != nil {
 			return err
 		}
 	}

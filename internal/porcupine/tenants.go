@@ -16,11 +16,12 @@ const defaultTenantID = "default"
 // TenantBudgets are operator policy. A nil ingestion allowance is unlimited;
 // query budgets are additionally bounded by the deployment's safety limits.
 type TenantBudgets struct {
-	IngestionMonthlyEvents *int64 `json:"ingestion_monthly_events" nullable:"true" minimum:"0" doc:"New canonical events accepted per UTC calendar month, including imports and identity controls. Null is unlimited; zero allows only retries of previously accepted events."`
-	HotQueryMaxConcurrent  int    `json:"hot_query_max_concurrent" minimum:"1" maximum:"64" doc:"Interactive operations shared by all projects in this tenant, further bounded by deployment capacity."`
-	HotQueryTimeoutMS      int    `json:"hot_query_timeout_ms" minimum:"1" maximum:"60000" doc:"Execution deadline in milliseconds, further bounded by the deployment ceiling."`
-	HotQueryMaxRows        int    `json:"hot_query_max_rows" minimum:"1" maximum:"100000" doc:"Maximum rows returned by an interactive SQL query."`
-	HotQueryMaxResultBytes int    `json:"hot_query_max_result_bytes" minimum:"256" maximum:"67108864" doc:"Maximum encoded interactive SQL result size, including metadata overhead."`
+	IngestionMonthlyEvents     *int64 `json:"ingestion_monthly_events" nullable:"true" minimum:"0" doc:"New canonical events accepted per UTC calendar month, including imports and identity controls. Null is unlimited; zero allows only retries of previously accepted events."`
+	IngestionMonthlyExceptions *int64 `json:"ingestion_monthly_exceptions,omitempty" nullable:"true" minimum:"0" doc:"Monthly allowance for new $exception rows within the shared event allowance. Omit or supply null for no additional limit."`
+	HotQueryMaxConcurrent      int    `json:"hot_query_max_concurrent" minimum:"1" maximum:"64" doc:"Interactive operations shared by all projects in this tenant, further bounded by deployment capacity."`
+	HotQueryTimeoutMS          int    `json:"hot_query_timeout_ms" minimum:"1" maximum:"60000" doc:"Execution deadline in milliseconds, further bounded by the deployment ceiling."`
+	HotQueryMaxRows            int    `json:"hot_query_max_rows" minimum:"1" maximum:"100000" doc:"Maximum rows returned by an interactive SQL query."`
+	HotQueryMaxResultBytes     int    `json:"hot_query_max_result_bytes" minimum:"256" maximum:"67108864" doc:"Maximum encoded interactive SQL result size, including metadata overhead."`
 }
 
 type Tenant struct {
@@ -31,22 +32,25 @@ type Tenant struct {
 	Budgets          TenantBudgets `json:"budgets"`
 }
 
-const tenantColumns = `id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes`
+const tenantColumns = `id,name,created_at,ingestion_allowed,ingestion_monthly_events,hot_query_max_concurrent,hot_query_timeout_ms,hot_query_max_rows,hot_query_max_result_bytes,ingestion_monthly_exceptions`
 
 type tenantScanner interface{ Scan(...any) error }
 
 func scanTenant(row tenantScanner) (Tenant, error) {
 	var t Tenant
-	var monthly sql.NullInt64
-	err := row.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.IngestionAllowed, &monthly, &t.Budgets.HotQueryMaxConcurrent, &t.Budgets.HotQueryTimeoutMS, &t.Budgets.HotQueryMaxRows, &t.Budgets.HotQueryMaxResultBytes)
+	var monthly, exceptions sql.NullInt64
+	err := row.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.IngestionAllowed, &monthly, &t.Budgets.HotQueryMaxConcurrent, &t.Budgets.HotQueryTimeoutMS, &t.Budgets.HotQueryMaxRows, &t.Budgets.HotQueryMaxResultBytes, &exceptions)
 	if monthly.Valid {
 		t.Budgets.IngestionMonthlyEvents = &monthly.Int64
+	}
+	if exceptions.Valid {
+		t.Budgets.IngestionMonthlyExceptions = &exceptions.Int64
 	}
 	return t, err
 }
 
 func validateTenantBudgets(b TenantBudgets) error {
-	if b.IngestionMonthlyEvents != nil && *b.IngestionMonthlyEvents < 0 || b.HotQueryMaxConcurrent < 1 || b.HotQueryMaxConcurrent > 64 || b.HotQueryTimeoutMS < 1 || b.HotQueryTimeoutMS > 60000 || b.HotQueryMaxRows < 1 || b.HotQueryMaxRows > 100000 || b.HotQueryMaxResultBytes < 256 || b.HotQueryMaxResultBytes > 64<<20 {
+	if b.IngestionMonthlyExceptions != nil && *b.IngestionMonthlyExceptions < 0 || b.IngestionMonthlyEvents != nil && *b.IngestionMonthlyEvents < 0 || b.HotQueryMaxConcurrent < 1 || b.HotQueryMaxConcurrent > 64 || b.HotQueryTimeoutMS < 1 || b.HotQueryTimeoutMS > 60000 || b.HotQueryMaxRows < 1 || b.HotQueryMaxRows > 100000 || b.HotQueryMaxResultBytes < 256 || b.HotQueryMaxResultBytes > 64<<20 {
 		return apierr.New(400, "invalid tenant budgets")
 	}
 	return nil
@@ -136,7 +140,7 @@ func (s *Service) insertTenant(ctx context.Context, name string, budgets TenantB
 		return Tenant{}, err
 	}
 	t := Tenant{ID: eventapi.NewID(), Name: name, CreatedAt: s.clock().UTC().Format(time.RFC3339Nano), IngestionAllowed: true, Budgets: budgets}
-	_, err = s.control.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes)
+	_, err = s.control.ExecContext(ctx, `INSERT INTO tenants(`+tenantColumns+`) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, t.ID, t.Name, t.CreatedAt, t.IngestionAllowed, monthlyAllowanceValue(budgets.IngestionMonthlyEvents), budgets.HotQueryMaxConcurrent, budgets.HotQueryTimeoutMS, budgets.HotQueryMaxRows, budgets.HotQueryMaxResultBytes, monthlyAllowanceValue(budgets.IngestionMonthlyExceptions))
 	if err != nil {
 		return Tenant{}, apierr.New(503, "tenant creation unavailable")
 	}

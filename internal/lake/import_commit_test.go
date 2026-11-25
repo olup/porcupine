@@ -47,7 +47,7 @@ func commitNativeImport(t *testing.T, s *DuckLakeStore, session *ProjectWriteSes
 	}
 	var result NativeCommitEvidence
 	err = session.RunNative(t.Context(), func(ctx context.Context) error {
-		result, err = s.CommitImportChunk(ctx, session.Fence(input.Key.Scope.StreamID), input, ids)
+		result, err = s.CommitImportChunk(ctx, session.Fence(input.Key.Scope.StreamID), input, ids, nil)
 		return err
 	})
 	if err != nil {
@@ -113,7 +113,7 @@ func TestDuckLakeS3SharedPostgresNativeImportOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.CommitImportChunk(ctx, fence, conflict, ids); !errors.Is(err, ErrImportChunkConflict) {
+	if _, err = a.CommitImportChunk(ctx, fence, conflict, ids, nil); !errors.Is(err, ErrImportChunkConflict) {
 		t.Fatal("different-end bypass", err)
 	}
 	conflict = first
@@ -122,7 +122,7 @@ func TestDuckLakeS3SharedPostgresNativeImportOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.CommitImportChunk(ctx, fence, conflict, ids); !errors.Is(err, ErrImportChunkConflict) {
+	if _, err = a.CommitImportChunk(ctx, fence, conflict, ids, nil); !errors.Is(err, ErrImportChunkConflict) {
 		t.Fatal("fingerprint conflict", err)
 	}
 	// Dedup includes tombstones and both live/import orders.
