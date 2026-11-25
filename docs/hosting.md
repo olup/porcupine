@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.23.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.24.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-a-storage-mode"></a>
 
@@ -63,6 +63,20 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.23.0
+
+Startup adds durable error issue state and monthly exception accounting. Standalone startup applies SQLite journal migration 12 and control migrations 12 and 13. Hosted startup applies PostgreSQL control migrations 30 and 31.
+
+1. Pause producers and wait for accepted events to become queryable. In hosted mode, drain every worker and resolve shutdown errors before continuing.
+2. Stop all v0.23.0 server processes. Keep the v0.23.0 image and private configuration for rollback.
+3. Take a complete recovery point. For standalone, capture both SQLite databases and the DuckLake storage together, including any analytical objects in S3. For hosted, coordinate the PostgreSQL recovery point with S3 object versions. [Backup and recovery methods](backup-and-restore.md#choose-a-method)
+4. Start v0.24.0 with the existing configuration and storage. In hosted mode, bring up one worker first and wait for readiness before starting the remaining v0.24.0 workers. Update the CLI.
+5. Verify that a new test event and a new test exception become queryable. Check the tenant's exception usage before resuming producers. In hosted mode, wait for the durable counters to publish.
+
+Exception counting begins at the upgrade. The first UTC month can be partial, and earlier months show zero metered exceptions. Existing event totals carry forward, and tenants start with no separate exception limit. Set the optional limit after checking usage. Standalone enforces it in the acceptance transaction. Hosted workers use cached policy and published usage, so concurrent workers can overshoot. [Tenant usage and limits](reference/tenants.md#monthly-ingestion-allowance)
+
+v0.23.0 refuses the newer storage schemas. To roll back, drain and stop v0.24.0, restore the complete pre-upgrade recovery point, and start v0.23.0 with its original configuration. Reconcile writes accepted after cutover before resuming producers.
 
 ### Upgrade from v0.22.0
 
