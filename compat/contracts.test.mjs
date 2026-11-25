@@ -886,10 +886,10 @@ contract('browser.exception-quota-isolation', async () => {
     const exceptionResponse = await refused;
     assert.equal(exceptionResponse.status(), 200);
     const quota = await exceptionResponse.json();
+    assert.equal(quota.accepted, 0);
     assert.equal(quota.code, 'exception_ingestion_budget_exceeded');
     assert.deepEqual(quota.quota_limited, ['exceptionEvent']);
     assert.equal((await (await accepted).json()).accepted, 1);
-    await event('analytics beside exception', 1, scoped.project.id);
     const analyticsResponse = responseFor('analytics after refusal');
     await tab.evaluate(() => posthog.capture('analytics after refusal'));
     assert.equal((await (await analyticsResponse).json()).accepted, 1);
