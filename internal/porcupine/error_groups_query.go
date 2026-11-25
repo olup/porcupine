@@ -3,12 +3,12 @@ package porcupine
 // DuckLake's event_time carries microseconds. The original canonical UTC timestamp
 // carries nanoseconds, and right-padding its fractional seconds preserves their order.
 const errorGroupRowsSQL = `WITH exception_events AS (
- SELECT id, event_time, timestamp,
+ SELECT id, event_time, timestamp, received_at, is_imported,
   concat(substr(timestamp, 1, 19), substr(concat(rtrim(substr(timestamp, 21), 'Z'), '000000000'), 1, 9)) AS occurrence_key,
   TRY_CAST(properties AS JSON) AS props
  FROM events WHERE event = '$exception'
 ), exception_fields AS (
- SELECT id, event_time, timestamp, occurrence_key,
+ SELECT id, event_time, timestamp, occurrence_key, received_at, is_imported,
   concat(occurrence_key, right(concat('0000000000000000000', CAST(id AS VARCHAR)), 19)) AS event_key,
   CASE WHEN json_type(props, '$."$exception_fingerprint"') = 'VARCHAR'
     THEN json_extract_string(props, '$."$exception_fingerprint"') END AS fingerprint,
@@ -57,7 +57,7 @@ const errorGroupsListSQL = errorGroupRowsSQL + `
 )
 SELECT fingerprint, error_type AS type, message,
  CAST(matches AS VARCHAR) AS count, first_seen, last_seen, CAST(latest_event_id AS VARCHAR) AS latest_event_id
- FROM summaries ORDER BY `
+ FROM summaries`
 
 const errorGroupDetailSQL = errorGroupRowsSQL + `
 , matched AS MATERIALIZED (
@@ -87,3 +87,19 @@ SELECT 'occurrence', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
  NULL, CAST(id AS VARCHAR), timestamp, build_id, release, degraded, occurrence_key, id
  FROM page
 ORDER BY occurrence_key DESC, sort_id DESC`
+
+const errorIssueFingerprintSQL = errorGroupRowsSQL + `
+SELECT fingerprint FROM exception_fields WHERE fingerprint=$fingerprint LIMIT 1`
+
+const errorIssueEvidenceSQL = errorGroupRowsSQL + `
+, watched AS (
+ SELECT id, timestamp, event_key, occurrence_key,
+  concat(substr(received_at, 1, 19), substr(concat(rtrim(substr(received_at, 21), 'Z'), '000000000'), 1, 9)) AS receipt_key,
+  json_extract_string(CAST($watches AS JSON), concat('/', fingerprint, '/issue_id')) AS issue_id,
+  json_extract_string(CAST($watches AS JSON), concat('/', fingerprint, '/cutoff')) AS cutoff
+ FROM exception_fields WHERE is_imported = 0
+ AND regexp_full_match(fingerprint, '` + errorGroupFingerprintPattern + `')
+)
+SELECT issue_id, CAST(arg_min(id, event_key) AS VARCHAR) AS event_id, arg_min(timestamp, event_key) AS occurred_at
+FROM watched WHERE issue_id IS NOT NULL AND occurrence_key > cutoff AND receipt_key > cutoff
+GROUP BY issue_id`

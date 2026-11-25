@@ -118,7 +118,8 @@ WHERE kind='client_ingestion' AND revoked_at IS NULL;`
 // 9: explicit public client ingestion credentials.
 // 10: durable event catalog summaries and refresh claims.
 // 11: private source maps.
-var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema, sourceMapSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
+// 12: durable error issues and fingerprint mappings.
+var localControlSchema = schemaStore{name: "control", steps: []string{controlSchema + localControlSchemaV1, tenantDeletionSchema, managedArtifactOwnershipSchema, restoredArtifactHoldSchema, externalAuthSQLiteTriggers, usage.ControlSchema, catalogDescriptionSchema, credentialOwnerSchema, clientIngestionKeySchema, catalog.ControlSchema, sourceMapSchema, errorIssueSchema}, adopt: func(ctx context.Context, tx *sql.Tx) (bool, error) {
 	return sqliteMetadataHas(ctx, tx, "local_control_source_id", "")
 }}
 
@@ -144,6 +145,7 @@ var hostedImportSchema string
 // 27: durable event catalog summaries and refresh claims.
 // 28: distinguish hosted query deletions from single-event mutations.
 // 29: private source maps.
+// 30: durable error issues and fingerprint mappings.
 var sharedControlSteps = []string{
 	controlSchema + sharedControlSchema,
 	tenantDeletionSchema,
@@ -187,6 +189,7 @@ FOR EACH ROW WHEN (OLD.generation IS DISTINCT FROM NEW.generation) EXECUTE FUNCT
 	catalog.ControlSchema,
 	hostedEventDeletionSchema,
 	sourceMapSchema,
+	errorIssueSchema,
 }
 
 // sqliteMetadataHas reports whether metadata holds key, and value when one is given.

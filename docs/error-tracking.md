@@ -64,3 +64,23 @@ Groups include the count and first and last occurrence within the requested rang
 The distribution lists UTC buckets, including zero-count buckets. Ranges of up to 48 hours use hourly buckets. Longer ranges use daily buckets. The first and last bucket can cover only part of their calendar interval. Counts and event IDs are decimal strings. Counts reflect delivered events with a stored error fingerprint in the requested range.
 
 The stack response includes its `generated` positions and, where a source map resolves them, `original` positions. Builds and release labels appear when the producer supplied them. If an exception has just been captured, wait for it to appear in the group before looking up its stack.
+
+## Triage an issue
+
+Each fingerprint starts open. Acknowledge, mute or resolve the group to give it a stable issue ID. The group response includes the current issue state and revision. Use `get-error-issue` with project `events:read` to read a tracked issue and all its linked fingerprints, even when the selected occurrence window is empty.
+
+Use project `management:write` to change team state. Send `expected_revision: 0` for an untracked fingerprint or use the current revision for a tracked issue. If another request changes the issue first, Porcupine returns HTTP `409`. Read the current state before trying again.
+
+```sh
+porcupine triage-error-group --id "$PROJECT_ID" --fingerprint "$FINGERPRINT" \
+  --body '{"action":"acknowledge","expected_revision":0}'
+porcupine get-error-issue --id "$PROJECT_ID" --issue-id "$ISSUE_ID"
+```
+
+To resume work on a resolved issue, use `reopen`. Use `mute` to hide it in lists that request `muted=exclude` and `unmute` to show it again. Use `muted=only` to find muted issues. Lists include all fingerprints by default. Mute applies independently of workflow state and keeps every occurrence available.
+
+On a read of a resolved issue, Porcupine checks the delivered analytics for a matching exception whose occurrence and server receipt are both after resolution. Historical imports and replays of older occurrences do not change the state. When a matching exception qualifies, Porcupine records `seen_again` with its event ID and occurrence time. A pinned occurrence window still uses current triage state.
+
+To track an exception across builds, use `link` on a delivered, untracked fingerprint and supply the target `issue_id` and its current revision. An issue can link up to 32 fingerprints. Use `unlink` with the linked issue's revision to detach a fingerprint when another remains. Detached fingerprints go back to open and can be tracked separately. Each fingerprint keeps its own deep link, count, distribution and occurrences. Linked fingerprints share team state, and only occurrences after the link can trigger Seen again for a newly attached fingerprint.
+
+The HTTP operations are `GET /api/v1/projects/{id}/error-issues/{issue_id}` and `POST /api/v1/projects/{id}/error-groups/{fingerprint}/triage`. The same operation IDs are available through MCP. Issue state is stored in the project control database, which is included in standalone control backups and hosted PostgreSQL recovery. Project deletion removes issue state and fingerprint links.

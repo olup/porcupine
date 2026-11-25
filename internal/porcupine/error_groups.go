@@ -23,6 +23,7 @@ type ErrorGroupWindowInput struct {
 type ErrorGroupsInput struct {
 	ErrorGroupWindowInput
 	Sort   string `query:"sort" default:"recent" enum:"recent,count" doc:"Sort by latest occurrence or descending count."`
+	Muted  string `query:"muted" enum:"exclude,only" doc:"Exclude muted issues or show only muted issues. Omit to include all fingerprints."`
 	Search string `query:"q" maxLength:"128" doc:"Case-insensitive literal substring of an exception type or message in the group."`
 }
 
@@ -32,13 +33,14 @@ type ErrorGroupInput struct {
 }
 
 type ErrorGroupSummary struct {
-	Fingerprint   string `json:"fingerprint"`
-	Type          string `json:"type,omitempty"`
-	Message       string `json:"message,omitempty"`
-	Count         string `json:"count" doc:"Occurrence count as a decimal string."`
-	FirstSeen     string `json:"first_seen" format:"date-time"`
-	LastSeen      string `json:"last_seen" format:"date-time"`
-	LatestEventID string `json:"latest_event_id" doc:"Decimal analytics event ID."`
+	Fingerprint   string     `json:"fingerprint"`
+	Type          string     `json:"type,omitempty"`
+	Message       string     `json:"message,omitempty"`
+	Count         string     `json:"count" doc:"Occurrence count as a decimal string."`
+	FirstSeen     string     `json:"first_seen" format:"date-time"`
+	LastSeen      string     `json:"last_seen" format:"date-time"`
+	LatestEventID string     `json:"latest_event_id" doc:"Decimal analytics event ID."`
+	Issue         ErrorIssue `json:"issue"`
 }
 
 type ErrorGroupOccurrence struct {
@@ -118,7 +120,22 @@ func (s *Service) listErrorGroups(ctx context.Context, input *ErrorGroupsInput) 
 	if input.Sort == "count" {
 		order = "matches DESC, " + order
 	}
-	data, maxBytes, err := s.readErrorGroups(ctx, input.ID, errorGroupsListSQL+order+errorGroupPageSQL, params, &window)
+	statement := errorGroupsListSQL
+	internalParameter := ""
+	if input.Muted != "" {
+		muted, err := s.mutedErrorGroupFingerprints(ctx, input.ID)
+		if err != nil {
+			return nil, err
+		}
+		params["muted"] = muted
+		internalParameter = "muted"
+		statement += " WHERE "
+		if input.Muted == "exclude" {
+			statement += "NOT "
+		}
+		statement += "json_exists(CAST($muted AS JSON), concat('/',fingerprint))"
+	}
+	data, maxBytes, err := s.readErrorGroupsWithInternalParameter(ctx, input.ID, statement+" ORDER BY "+order+errorGroupPageSQL, params, &window, internalParameter)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +148,9 @@ func (s *Service) listErrorGroups(ctx context.Context, input *ErrorGroupsInput) 
 			return nil, err
 		}
 		output.Body.Groups = append(output.Body.Groups, safeErrorGroupSummary(group))
+	}
+	if err := s.annotateErrorGroups(ctx, input.ID, output.Body.Groups); err != nil {
+		return nil, err
 	}
 	output.Body.NextOffset = input.nextOffset(len(data))
 	return output, checkErrorGroupsSize(output.Body, maxBytes)
@@ -198,10 +218,19 @@ func (s *Service) getErrorGroup(ctx context.Context, input *ErrorGroupInput) (*E
 	if len(output.Body.Occurrences) > input.Limit {
 		output.Body.Occurrences = output.Body.Occurrences[:input.Limit]
 	}
+	groups := []ErrorGroupSummary{output.Body.Group}
+	if err := s.annotateErrorGroups(ctx, input.ID, groups); err != nil {
+		return nil, err
+	}
+	output.Body.Group = groups[0]
 	return output, checkErrorGroupsSize(output.Body, maxBytes)
 }
 
 func (s *Service) readErrorGroups(ctx context.Context, project, statement string, params map[string]string, window *lake.QueryTimeRange) ([]map[string]json.RawMessage, int, error) {
+	return s.readErrorGroupsWithInternalParameter(ctx, project, statement, params, window, "")
+}
+
+func (s *Service) readErrorGroupsWithInternalParameter(ctx context.Context, project, statement string, params map[string]string, window *lake.QueryTimeRange, internalParameter string) ([]map[string]json.RawMessage, int, error) {
 	if err := s.analyticsProject(ctx, project); err != nil {
 		return nil, 0, err
 	}
@@ -209,7 +238,7 @@ func (s *Service) readErrorGroups(ctx context.Context, project, statement string
 	if reader == nil {
 		return nil, 0, apierr.New(503, "analytics storage is not configured")
 	}
-	result, bounds, err := s.queries.SQL(ctx, reader, project, statement, params, window)
+	result, bounds, err := s.queries.SQLWithInternalParameter(ctx, reader, project, statement, params, window, internalParameter)
 	return result.Data, bounds.MaxBytes, err
 }
 

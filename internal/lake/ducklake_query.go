@@ -2,6 +2,7 @@ package lake
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -36,6 +37,10 @@ func queryProject(ctx context.Context, lease analyticalProjectLease, project, ra
 	if limits.EventSelectionMax > 0 {
 		prepare = nativequery.PrepareEventSelection
 		maxRows = min(maxRows, limits.EventSelectionMax)
+	} else if limits.InternalParameter != "" {
+		prepare = func(ctx context.Context, db *sql.DB, raw string, params map[string]string) (string, []any, nativequery.Statement, error) {
+			return nativequery.PrepareQueryWithInternalParameter(ctx, db, raw, params, limits.InternalParameter)
+		}
 	}
 	canonical, args, statement, err := prepare(ctx, p.DB, rawSQL, parameters)
 	if err != nil {

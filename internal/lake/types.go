@@ -34,6 +34,8 @@ type QueryExecutionLimits struct {
 	MaxRows        int
 	MaxResultBytes int
 	TimeRange      *QueryTimeRange
+	// InternalParameter identifies an optional larger server-supplied parameter.
+	InternalParameter string
 	// EventSelectionMax makes the SQL input a deletion predicate and sets its match cap.
 	EventSelectionMax int
 }
