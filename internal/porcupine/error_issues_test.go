@@ -1,7 +1,9 @@
 package porcupine
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/olup/porcupine/internal/errtrack"
 	"github.com/olup/porcupine/internal/event"
+	"github.com/olup/porcupine/internal/lake"
+	"github.com/olup/porcupine/internal/query"
 )
 
 func TestErrorIssueTriageDuckLake(t *testing.T) {
@@ -141,6 +145,37 @@ func TestErrorIssueTriageDuckLake(t *testing.T) {
 		t.Fatalf("persisted revision = %d, error = %v", revision, err)
 	}
 
+	assertState(issue(change(first.Fingerprint, "resolve", 8, "", 200)), "resolved", false, 9)
+	clock = clock.Add(time.Second)
+	evidenceCalls := 0
+	s.standaloneReader = errorIssueEvidenceReader{Reader: s.lake, fail: func(ctx context.Context) error {
+		evidenceCalls++
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > time.Second {
+			t.Errorf("recurrence query deadline = %v, want at most one second from now", deadline)
+		}
+		return errors.New("recurrence evidence unavailable")
+	}}
+	page := request(t, s, "GET", groupsURL, reader, "", 200)
+	var listedIssue map[string]any
+	for _, value := range page["groups"].([]any) {
+		group := value.(map[string]any)
+		if group["fingerprint"] == first.Fingerprint {
+			listedIssue = issue(group)
+			break
+		}
+	}
+	assertState(listedIssue, "resolved", false, 9)
+	assertState(issue(getGroup(first.Fingerprint)), "resolved", false, 9)
+	assertState(issue(request(t, s, "GET", issueURL, reader, "", 200)), "resolved", false, 9)
+	if evidenceCalls != 3 {
+		t.Fatalf("recurrence queries = %d, want one per read", evidenceCalls)
+	}
+	assertState(issue(change(first.Fingerprint, "reopen", 9, "", 200)), "open", false, 10)
+	if evidenceCalls != 3 {
+		t.Fatalf("reopen ran a recurrence query")
+	}
+	assertState(issue(request(t, s, "GET", issueURL, reader, "", 200)), "open", false, 10)
+
 	otherGroupsURL := "/api/v1/projects/" + otherProject + "/error-groups"
 	otherIssue := issue(request(t, s, "POST", otherGroupsURL+"/"+first.Fingerprint+"/triage", adminToken, body("mute", 0, ""), 200))
 	if otherIssue["id"] == id {
@@ -155,4 +190,16 @@ func TestErrorIssueTriageDuckLake(t *testing.T) {
 	if err := s.control.QueryRow(deletion, otherProject).Scan(&left); err != nil || left != 2 {
 		t.Fatalf("other project has %d issue records, want an issue and link: %v", left, err)
 	}
+}
+
+type errorIssueEvidenceReader struct {
+	query.Reader
+	fail func(context.Context) error
+}
+
+func (r errorIssueEvidenceReader) Query(ctx context.Context, project, statement string, params map[string]string, limits lake.QueryExecutionLimits) (lake.AnalyticsResult, error) {
+	if statement == errorIssueEvidenceSQL {
+		return lake.AnalyticsResult{}, r.fail(ctx)
+	}
+	return r.Reader.Query(ctx, project, statement, params, limits)
 }

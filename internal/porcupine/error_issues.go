@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -161,9 +162,7 @@ func (s *Service) getErrorIssue(ctx context.Context, input *ErrorIssueInput) (*E
 	if len(issues) == 0 {
 		return nil, apierr.New(404, "error issue not found")
 	}
-	if err := s.observeErrorIssues(ctx, input.ID, issues); err != nil {
-		return nil, err
-	}
+	s.refreshErrorIssueRecurrence(ctx, input.ID, issues)
 	return issues[0].output(), nil
 }
 
@@ -206,9 +205,7 @@ func (s *Service) annotateErrorGroups(ctx context.Context, project string, group
 	if err != nil {
 		return err
 	}
-	if err := s.observeErrorIssues(ctx, project, issues); err != nil {
-		return err
-	}
+	s.refreshErrorIssueRecurrence(ctx, project, issues)
 	byFingerprint := make(map[string]ErrorIssue)
 	for _, issue := range issues {
 		for fingerprint := range issue.links {
@@ -233,6 +230,14 @@ type errorIssueEvidence struct {
 	IssueID    string `json:"issue_id"`
 	EventID    string `json:"event_id"`
 	OccurredAt string `json:"occurred_at"`
+}
+
+func (s *Service) refreshErrorIssueRecurrence(ctx context.Context, project string, issues []*errorIssueRecord) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := s.observeErrorIssues(ctx, project, issues); err != nil {
+		slog.DebugContext(ctx, "error issue recurrence refresh failed", "project_id", project, "error", err)
+	}
 }
 
 func (s *Service) observeErrorIssues(ctx context.Context, project string, issues []*errorIssueRecord) error {
@@ -365,9 +370,6 @@ func (s *Service) triageErrorGroup(ctx context.Context, input *ErrorGroupTriageI
 		if err != nil {
 			return nil, err
 		}
-	}
-	if err := s.observeErrorIssues(ctx, project, issues); err != nil {
-		return nil, err
 	}
 
 	tx, err := s.control.BeginTx(ctx, nil)
