@@ -257,6 +257,14 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "get-error-issue", Method: "GET", Path: "/api/v1/projects/{id}/error-issues/{issue_id}",
+		Summary: "Read tracked issue status and attached fingerprints across all occurrence windows",
+		Params: []parameter{
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+			{Name: "issue_id", In: "path", Type: "string", Description: "Stable error issue ID.", Required: true},
+		},
+	},
+	{
 		ID: "get-error-stack", Method: "GET", Path: "/api/v1/projects/{id}/errors/{event_id}/stack",
 		Summary: "Read a delivered exception and resolve its stack frames against uploaded private source maps",
 		Params: []parameter{
@@ -441,6 +449,7 @@ var operations = []operation{
 			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
 			{Name: "from", In: "query", Type: "string", Description: "Inclusive RFC3339 occurrence time. Supply with to. Defaults to seven days before to.", Required: false},
 			{Name: "limit", In: "query", Type: "integer", Description: "(server default: 20)", Required: false},
+			{Name: "muted", In: "query", Type: "string", Description: "Exclude muted issues or show only muted issues. Omit to include all fingerprints.", Required: false},
 			{Name: "offset", In: "query", Type: "integer", Description: "(server default: 0)", Required: false},
 			{Name: "q", In: "query", Type: "string", Description: "Case-insensitive literal substring of an exception type or message in the group.", Required: false},
 			{Name: "sort", In: "query", Type: "string", Description: "Sort by latest occurrence or descending count. (server default: recent)", Required: false},
@@ -753,6 +762,20 @@ var operations = []operation{
 		},
 	},
 	{
+		ID: "triage-error-group", Method: "POST", Path: "/api/v1/projects/{id}/error-groups/{fingerprint}/triage",
+		Summary: "Update team error triage or attach and detach a build fingerprint using the expected issue revision",
+		Params: []parameter{
+			{Name: "fingerprint", In: "path", Type: "string", Description: "Lowercase hexadecimal exception fingerprint.", Required: true},
+			{Name: "id", In: "path", Type: "string", Description: "Project identifier", Required: true},
+		},
+		ContentType: "application/json", BodyRequired: true,
+		BodyFields: []string{
+			"action (string, required) [acknowledge mute unmute resolve reopen link unlink]",
+			"expected_revision (integer, required) Revision of the current issue, or zero for an untracked fingerprint. For link, use the target issue revision.",
+			"issue_id (string) Target stable issue ID, required for link.",
+		},
+	},
+	{
 		ID: "unlink-human-identity", Method: "DELETE", Path: "/api/v1/humans/{id}/identities/{identity_id}",
 		Summary: "Unlink one upstream identity and revoke this human's interactive connections; deployment operator only",
 		Params: []parameter{
@@ -798,6 +821,7 @@ var operations = []operation{
 			"hot_query_max_rows (integer, required) Maximum rows returned by an interactive SQL query.",
 			"hot_query_timeout_ms (integer, required) Execution deadline in milliseconds, further bounded by the deployment ceiling.",
 			"ingestion_monthly_events (integer, required) New canonical events accepted per UTC calendar month, including imports and identity controls. Null is unlimited; zero allows only retries of previously accepted events.",
+			"ingestion_monthly_exceptions (integer) Monthly allowance for new $exception rows within the shared event allowance. Omit or supply null for no additional limit.",
 		},
 	},
 	{
