@@ -11,7 +11,7 @@ List the project's event names with `porcupine_schema` in MCP or `get-event-cata
 The event list can reuse a project summary. When the response includes `refresh`,
 `updated_at` is the last successful refresh or check of that summary.
 New names, counts, and last-received times can lag SQL by about an hour during
-normal operation. Portal users can select **Refresh catalog** to check for recent
+normal operation. In Porcupine Cloud, select **Refresh** to check for recent
 changes sooner. A project with no changes needs only a metadata check.
 
 To request a refresh from the CLI, run
@@ -83,7 +83,7 @@ A successful empty profile means no matching delivered event was found. An unava
 
 ## Document an event or property
 
-A project editor with `management:write` can document the meaning of an event or one of its top-level properties. Set text for a property with the CLI:
+A project editor with `management:write` can document an event or one of its top-level properties. Use event names and property keys that do not start with `$`. Set text for a property with the CLI:
 
 ```sh
 porcupine set-catalog-description --id "$PROJECT_ID" \
@@ -101,8 +101,8 @@ Project readers can see the text, principal ID, and UTC time of the last edit or
 In Porcupine Cloud, open the project's **Event catalog** and select **Copy documentation prompt** on a page with custom events.
 
 1. List events with `get-event-catalog` in the CLI or `porcupine_schema` in MCP. Follow `next_offset` with `get-event-catalog` to read subsequent event pages.
-2. For each custom event, request its keys by exact `event` with `property_kind=custom`. Follow `next_property_cursor` with the same filters. Key discovery uses a bounded sample, so this review covers the returned keys.
-3. Inspect `documentation_status`. `missing` means the entry has no text. `stale` means the text was edited or confirmed more than six calendar months ago, measured in UTC. `current` includes text exactly six months old. Event names and keys starting with `$` are excluded from this review.
+2. For each event whose name does not start with `$`, request its keys by exact `event` with `property_kind=custom`. This filter returns keys that do not start with `$`. Follow `next_property_cursor` with the same filters. Key discovery uses a bounded sample, so this review covers the returned keys.
+3. Inspect `documentation_status`. `missing` means the entry has no text. `stale` means the text was edited or confirmed more than six calendar months ago, measured in UTC. `current` includes text exactly six months old. The response omits `documentation_status` when the event name or property key starts with `$`.
 4. Check the application code that emits the event or sets the property. Use observed data to corroborate the code. Write missing descriptions or correct stale descriptions with `set-catalog-description`.
 
 If stale text is still correct, pass `confirm_reviewed: true` and the existing text to `set-catalog-description`. The write renews the date and records the reviewing principal. A matching current description returns success with its original date. If the text changed or disappeared after you read it, the write returns `409`. Read the latest description before trying again.
