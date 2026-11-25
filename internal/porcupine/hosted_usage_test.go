@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/olup/porcupine/internal/acceptance"
+	"github.com/olup/porcupine/internal/errtrack"
 	eventapi "github.com/olup/porcupine/internal/event"
 	"github.com/olup/porcupine/internal/query"
 	"github.com/olup/porcupine/internal/usage"
@@ -109,7 +110,7 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	tenant := created["tenant"].(map[string]any)["id"].(string)
 	budget := func(events int) {
 		t.Helper()
-		body := `{"ingestion_monthly_events":` + strconv.Itoa(events) + `,"ingestion_monthly_exceptions":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":1000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`
+		body := `{"ingestion_monthly_events":` + strconv.Itoa(events) + `,"ingestion_monthly_exceptions":1,"hot_query_max_concurrent":1,"hot_query_timeout_ms":5000,"hot_query_max_rows":100,"hot_query_max_result_bytes":65536}`
 		sharedJourneyHTTP(t, b.host.URL, http.MethodPut, "/api/v1/tenants/"+tenant+"/budgets", adminToken, []byte(body), nil, http.StatusOK)
 	}
 	budget(3)
@@ -117,8 +118,11 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 	sibling, _ := sharedJourneyProject(t, b.host.URL, tenant, "Same tenant")
 	neighbor, _ := sharedJourneyProject(t, a.host.URL, defaultTenantID, "Other tenant")
 	at := a.service.clock()
+	exception := errtrack.Normalize(map[string]any{"$exception_list": []any{
+		map[string]any{"type": "Error", "value": "Hosted exception"},
+	}})
 	event := eventapi.Event{ProjectID: project, UUID: eventapi.NewID(), Event: "$exception", DistinctID: "actor",
-		Properties: json.RawMessage(`{}`), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
+		Properties: json.RawMessage(mustErrorGroupJSON(t, exception)), Context: json.RawMessage(`{}`), Timestamp: usage.Stamp(at), ReceivedAt: usage.Stamp(at)}
 	batch := acceptance.FlushBatch{ID: eventapi.NewID(), ProjectID: project,
 		Events: []acceptance.BufferedEvent{{Input: acceptance.Input{Event: event}, AdmittedAt: at}}}
 	for _, node := range []*sharedJourneyNode{a, b} {
@@ -126,6 +130,18 @@ func TestSharedHostedTenantUsageIsTheEnforcedCounter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	projectPath := "/api/v1/projects/" + project
+	triagePath := projectPath + "/error-groups/" + exception.Fingerprint + "/triage"
+	triaged := sharedJourneyHTTP(t, a.host.URL, http.MethodPost, triagePath, adminToken,
+		[]byte(`{"action":"mute","expected_revision":0}`), nil, http.StatusOK)
+	issue := triaged["issue"].(map[string]any)
+	otherRead := sharedJourneyHTTP(t, b.host.URL, http.MethodGet, projectPath+"/error-issues/"+issue["id"].(string),
+		adminToken, nil, nil, http.StatusOK)
+	if issue["muted"] != true || otherRead["issue"].(map[string]any)["muted"] != true {
+		t.Fatalf("hosted triage was not shared: write=%v read=%v", triaged, otherRead)
+	}
+	sharedJourneyHTTP(t, b.host.URL, http.MethodPost, triagePath, adminToken,
+		[]byte(`{"action":"unmute","expected_revision":0}`), nil, http.StatusConflict)
 	hostedCleanupWrite(t, a.service, project, "second acceptance")
 	hostedCleanupWrite(t, b.service, sibling, "same tenant")
 	hostedCleanupWrite(t, a.service, neighbor, "other tenant")
