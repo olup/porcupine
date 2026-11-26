@@ -155,7 +155,21 @@ func openHostedProfile(c Config, buffer acceptance.BufferConfig) (_ *Service, er
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	h.stopBuffer = cancel
-	h.buffer, err = acceptance.NewBuffer(lifetime, buffer, h.flusher.FlushLive, h.flusher.lockLiveAdmission, (hostedCookielessKeys{control}).CookielessKey)
+	keys := (hostedCookielessKeys{control}).CookielessKey
+	if c.AcceptanceMode == AcceptanceModeDurable {
+		db, unlock, openErr := openHostedJournal(ctx, c.DBPath, lakeConfig.SharedSourceID)
+		if openErr != nil {
+			return nil, openErr
+		}
+		h.flusher.liveDurability = acceptance.Durable
+		h.buffer, err = acceptance.NewJournalBuffer(ctx, lifetime, buffer, h.flusher.FlushLive, h.flusher.lockLiveAdmission, keys, db, unlock)
+		if err != nil {
+			_ = db.Close()
+			unlock()
+		}
+	} else {
+		h.buffer, err = acceptance.NewBuffer(lifetime, buffer, h.flusher.FlushLive, h.flusher.lockLiveAdmission, keys)
+	}
 	if err != nil {
 		return nil, err
 	}

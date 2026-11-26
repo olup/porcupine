@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"strings"
@@ -116,6 +117,7 @@ type Buffer struct {
 	mu                             sync.Mutex
 	config                         BufferConfig
 	writer                         FlushFunc
+	journal                        *journal
 	keys                           DailyKeyFunc
 	lockAdmission                  func(context.Context, string) (func(), error)
 	projects                       map[string]*bufferedProject
@@ -142,6 +144,16 @@ const bufferedEventOverhead int64 = 1024
 const bufferedProjectOverhead int64 = 512
 
 func NewBuffer(ctx context.Context, c BufferConfig, writer FlushFunc, lockAdmission func(context.Context, string) (func(), error), keys DailyKeyFunc) (*Buffer, error) {
+	return newBuffer(ctx, c, writer, lockAdmission, keys, nil, ctx)
+}
+
+// NewJournalBuffer takes ownership of db on success. The caller initializes
+// the journal, passes the release for its exclusive writer lock, and closes db on failure.
+func NewJournalBuffer(startup, ctx context.Context, c BufferConfig, writer FlushFunc, lockAdmission func(context.Context, string) (func(), error), keys DailyKeyFunc, db *sql.DB, unlock func()) (*Buffer, error) {
+	return newBuffer(ctx, c, writer, lockAdmission, keys, &journal{db: db, unlock: unlock}, startup)
+}
+
+func newBuffer(ctx context.Context, c BufferConfig, writer FlushFunc, lockAdmission func(context.Context, string) (func(), error), keys DailyKeyFunc, journal *journal, startup context.Context) (*Buffer, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -152,14 +164,33 @@ func NewBuffer(ctx context.Context, c BufferConfig, writer FlushFunc, lockAdmiss
 		return nil, err
 	}
 	b := &Buffer{
-		config: c, writer: writer, lockAdmission: lockAdmission, keys: keys, ctx: ctx,
+		config: c, writer: writer, journal: journal, lockAdmission: lockAdmission, keys: keys, ctx: ctx,
 		projects: make(map[string]*bufferedProject), notify: make(chan struct{}, 1),
 		completed: make(chan flushCompletion, c.MaxFlushes), done: make(chan struct{}),
+	}
+	if journal != nil {
+		if err := journal.load(startup, b); err != nil {
+			return nil, err
+		}
 	}
 	go b.run()
 	return b, nil
 }
-func (*Buffer) Durability() Durability { return Buffered }
+func (b *Buffer) Durability() Durability {
+	if b.journal != nil {
+		return Durable
+	}
+	return Buffered
+}
+
+// CheckJournal distinguishes a worker with no local journal from a failed probe.
+func (b *Buffer) CheckJournal(ctx context.Context) (configured bool, err error) {
+	if b.journal == nil {
+		return false, nil
+	}
+	return true, b.journal.db.PingContext(ctx)
+}
+
 func (b *Buffer) wake() {
 	select {
 	case b.notify <- struct{}{}:
@@ -262,6 +293,11 @@ func (b *Buffer) Accept(ctx context.Context, batch Batch, peer Peer, withReceipt
 			receipts[i] = BufferedReceipt{MessageID: input.Event.MessageID, UUID: input.Event.UUID}
 		}
 	}
+	if b.journal != nil {
+		if err := b.journal.append(ctx, batch.ProjectID, owned); err != nil {
+			return nil, &Failure{Message: "worker ingestion journal unavailable", Retry: true}
+		}
+	}
 	if p == nil {
 		p = &bufferedProject{}
 		b.projects[strings.Clone(batch.ProjectID)] = p
@@ -274,7 +310,7 @@ func (b *Buffer) Accept(ctx context.Context, batch Batch, peer Peer, withReceipt
 	b.bytes += size + overhead
 	b.events += len(inputs)
 	b.wake()
-	return BufferedResult{Received: len(inputs), Receipts: receipts}, nil
+	return BufferedResult{Received: len(inputs), Receipts: receipts, Journaled: b.journal != nil}, nil
 }
 func bufferedInputBytes(input Input) int64 {
 	e := input.Event
@@ -354,7 +390,16 @@ func (b *Buffer) Drain(ctx context.Context) error {
 	}
 }
 func (b *Buffer) run() {
-	defer func() { b.mu.Lock(); b.stopped = true; b.mu.Unlock(); close(b.done) }()
+	defer func() {
+		if b.journal != nil {
+			_ = b.journal.db.Close()
+			b.journal.unlock()
+		}
+		b.mu.Lock()
+		b.stopped = true
+		b.mu.Unlock()
+		close(b.done)
+	}()
 	// Leave room for new requests while a batch commits, including when a request crosses the trigger.
 	flushEvents := max(1, b.config.ProjectMaxEvents/3)
 	for {
@@ -374,10 +419,22 @@ func (b *Buffer) run() {
 			if p.running {
 				continue
 			}
+			if now.Before(p.retryAt) {
+				wait = min(wait, p.retryAt.Sub(now))
+				continue
+			}
 			if len(p.ready) == 0 && len(p.pending) > 0 {
 				due := p.oldest.Add(b.config.FlushInterval)
 				if b.draining || p.pendingBytes >= b.config.FlushBytes || len(p.pending) >= flushEvents || !now.Before(due) {
-					p.ready = []*FlushBatch{{ID: newLiveBatchID(), ProjectID: project, Events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}}
+					batch := &FlushBatch{ID: newLiveBatchID(), ProjectID: project, Events: p.pending, oldest: p.oldest, bytes: p.pendingBytes}
+					if b.journal != nil {
+						if err := b.journal.seal(b.ctx, batch); err != nil {
+							b.retryJournal(p, "seal")
+							wait = min(wait, p.retryDelay)
+							continue
+						}
+					}
+					p.ready = []*FlushBatch{batch}
 					p.pending = nil
 					p.pendingBytes = 0
 					p.oldest = time.Time{}
@@ -387,10 +444,6 @@ func (b *Buffer) run() {
 				}
 			}
 			if len(p.ready) == 0 {
-				continue
-			}
-			if now.Before(p.retryAt) {
-				wait = min(wait, p.retryAt.Sub(now))
 				continue
 			}
 			if b.running >= b.config.MaxFlushes {
@@ -442,6 +495,12 @@ func (b *Buffer) complete(result flushCompletion) {
 		}
 	}
 	if errors.Is(result.err, ErrProjectFenced) {
+		if b.journal != nil {
+			if err := b.journal.remove(p.ready[0], true); err != nil {
+				b.retryJournal(p, "fence")
+				return
+			}
+		}
 		events := len(p.pending)
 		b.bytes -= p.pendingBytes + bufferedProjectOverhead + int64(len(result.project))
 		for _, batch := range p.ready {
@@ -460,10 +519,28 @@ func (b *Buffer) complete(result flushCompletion) {
 	}
 	if projectCode == "" && (requestCode != "" || errors.Is(result.err, ErrBatchTooLarge)) {
 		if left, right, ok := splitBufferedLiveBatch(*p.ready[0]); ok {
+			if b.journal != nil {
+				if err := b.journal.split(b.ctx, result.id, left, right); err != nil {
+					b.retryJournal(p, "split")
+					return
+				}
+			}
+			clear(p.ready[0].Events[len(left.Events):])
 			observe("split")
 			p.ready[0] = right
 			p.ready = append([]*FlushBatch{left}, p.ready...)
 			p.retryAt = time.Time{}
+			return
+		}
+	}
+	if b.journal != nil && requestCode != "" {
+		// An acknowledged request that cannot be projected needs operator
+		// attention. Keep its payload and isolate its project.
+		projectCode, requestCode = requestCode, ""
+	}
+	if b.journal != nil && result.err == nil {
+		if err := b.journal.remove(p.ready[0], false); err != nil {
+			b.retryJournal(p, "acknowledge")
 			return
 		}
 	}
@@ -495,9 +572,7 @@ func (b *Buffer) complete(result flushCompletion) {
 				m.Add("porcupine_flush_retries_total", 1, observability.Label{Name: "reason", Value: b.config.FlushRetryReason(result.err)})
 			}
 		}
-		p.retryDelay += min(p.retryDelay, b.config.RetryMax-p.retryDelay)
-		p.retryDelay = max(b.config.RetryMin, p.retryDelay)
-		p.retryAt = b.config.Clock().Add(p.retryDelay)
+		b.retry(p)
 		return
 	}
 	b.bytes -= p.ready[0].bytes
@@ -509,6 +584,19 @@ func (b *Buffer) complete(result flushCompletion) {
 		delete(b.projects, result.project)
 		b.bytes -= bufferedProjectOverhead + int64(len(result.project))
 	}
+}
+
+func (b *Buffer) retryJournal(p *bufferedProject, operation string) {
+	if p.retryDelay == 0 {
+		slog.Error("worker ingestion journal unavailable", "operation", operation)
+	}
+	b.retry(p)
+}
+
+func (b *Buffer) retry(p *bufferedProject) {
+	p.retryDelay += min(p.retryDelay, b.config.RetryMax-p.retryDelay)
+	p.retryDelay = max(b.config.RetryMin, p.retryDelay)
+	p.retryAt = b.config.Clock().Add(p.retryDelay)
 }
 
 func (b *Buffer) countDiscarded(events int, reason string) {
@@ -541,7 +629,6 @@ func splitBufferedLiveBatch(batch FlushBatch) (left, right *FlushBatch, ok bool)
 	first.Events = batch.Events[:cut:cut]
 	// The right child must not keep references to payloads released with the left.
 	second.Events = append([]BufferedEvent(nil), batch.Events[cut:]...)
-	clear(batch.Events[cut:])
 	second.oldest = second.Events[0].AdmittedAt
 	first.bytes = 0
 	for _, event := range first.Events {

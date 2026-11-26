@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://olup.github.io/porcupine/schemas/native-response-v1.schema.json",
   "title": "Porcupine native live acknowledgment v1",
-  "description": "The same native route returns one of two server-selected acknowledgment contracts. Buffered received counts validated memory-admitted input rows, including retries and duplicates. It does not report committed unique events. An absent event_id or duplicate field is unknown, never zero or false.",
+  "description": "The same native route returns a server-selected acknowledgment contract. The received field counts validated input rows, including retries and duplicates, admitted in memory (buffered) or committed to a worker SQLite journal (durable). It does not report committed unique events. An absent event_id or duplicate field is unknown, never zero or false.",
   "oneOf": [
     {
       "type": "object",
@@ -78,7 +78,7 @@
           "const": 1
         },
         "durability": {
-          "const": "buffered"
+          "enum": ["buffered", "durable"]
         },
         "received": {
           "type": "integer",

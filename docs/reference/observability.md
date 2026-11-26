@@ -112,8 +112,9 @@ instance capacity was still available for the event. It has no project label.
 
 Admission counters begin after validation. A durable batch can succeed with
 only duplicates. The identity-ignored event count is a subset of accepted
-durable events. Hosted event throughput distinguishes memory admissions
-(`buffered`) from events in a successful native commit (`native_committed`).
+durable events in standalone. Hosted throughput counts memory admissions
+(`buffered`), SQLite admissions (`journaled`), and events in a successful native
+commit (`native_committed`).
 The native count includes only commits observed by the worker. Replays
 do not increment it. Commits whose response was lost can be missing from
 this operational count.

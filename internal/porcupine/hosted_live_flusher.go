@@ -18,6 +18,7 @@ import (
 const hostedPolicyRefreshInterval = 10 * time.Second
 
 type hostedLiveFlusher struct {
+	liveDurability     acceptance.Durability
 	native             *lakeapi.DuckLakeStore
 	coordinator        *lakeapi.PostgresProjectCoordinator
 	publisher          *hostedEffectPublisher
@@ -248,7 +249,11 @@ func (f *hostedLiveFlusher) commitLiveBatch(ctx context.Context, session *lakeap
 				refused += count
 			}
 			if f.metrics != nil {
-				f.metrics.observeIngestionEvents(acceptance.Buffered, "native_committed", uint64(v.Evidence.AcceptedLive))
+				durability := f.liveDurability
+				if durability == "" {
+					durability = acceptance.Buffered
+				}
+				f.metrics.observeIngestionEvents(durability, "native_committed", uint64(v.Evidence.AcceptedLive))
 				if refused > 0 {
 					f.metrics.Add("porcupine_webhook_refused_references_total", refused, observability.Label{Name: "reason", Value: stager.refusedReason})
 				}

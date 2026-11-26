@@ -113,7 +113,7 @@ For native and Segment messages, replay identity is the tuple of authenticated p
 
 A source-bound PostHog writer joins the same scheme using its event UUID as the producer message ID. Unbound PostHog ingestion retains the legacy UUID namespace and reserved source `posthog`. It does not automatically deduplicate with unbound native or Segment messages.
 
-The first accepted message wins. A retry with changed properties does not edit the event. Corrections use [event management operations](../events.md). Native receipts return `message_id`, a decimal-string `event_id`, an opaque `uuid` used by management routes, and `duplicate`. Clients preserve these values exactly and do not decode the UUID's internal format.
+The first accepted message wins. A retry with changed properties does not edit the event. Corrections use [event management operations](../events.md). Standalone native receipts return `message_id`, a decimal-string `event_id`, an opaque `uuid` used by management routes, and `duplicate`. Clients preserve these values exactly and do not decode the UUID's internal format.
 
 A missing message ID means a new event on every submission, even for identical payloads. A converter preparing a historical file must assign missing IDs once and persist them in that file. Hashing only the payload can collapse legitimate repeated events.
 
@@ -121,15 +121,15 @@ A missing message ID means a new event on every submission, even for identical p
 
 In standalone, `durability: "durable"` confirms that the SQLite acceptance transaction committed. Readers check analytical delivery separately.
 
-The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes the buffered contract for the [hosted profile](shared-deployment.md#configuration). It uses the same route and HTTP 200 with the following response.
+The [native response schema](https://olup.github.io/porcupine/schemas/native-response-v1.schema.json) also describes live admission for the [hosted profile](shared-deployment.md#configuration). It uses the same route and HTTP 200 with the following response.
 
 ```json
 {"status":1,"durability":"buffered","received":1,"receipts":[{"message_id":"msg-001","uuid":"opaque-server-uuid"}]}
 ```
 
-`received` counts validated input rows admitted to bounded worker memory, including retries and duplicates. It does not count unique committed events. Buffered receipts contain only `message_id` and `uuid`, in input order. The response omits `accepted`, `duplicates`, `identity_ignored`, `event_id`, and `duplicate` because their committed outcomes are unknown. Pending events can be lost on worker failure. A flush timer does not bound their age or loss window during a storage outage.
+`received` counts validated input rows, including retries and duplicates. Hosted receipts contain only `message_id` and `uuid`, in input order. The response omits `accepted`, `duplicates`, `identity_ignored`, `event_id`, and `duplicate` because their committed outcomes are unknown. Hosted durable mode returns the same fields with `"durability":"durable"` after the worker SQLite transaction commits. Buffered mode acknowledges memory admission and can lose pending events on worker failure. A flush timer does not bound pending age during an outage.
 
-`get-event-input-contract` returns this instance's `live_acknowledgment` and the `live_response_schema`. Its `live_schema` matches the instance's public `GET /ingest/v1/schema`, including `x-porcupine-acknowledgment`. The published producer schema describes both acknowledgment contracts. Producers cannot select a durability mode or add `durability` to an input message. Historical uploads keep their separate durable checkpoint contract.
+`get-event-input-contract` returns this instance's `live_acknowledgment` and the `live_response_schema`. Its `live_schema` matches the instance's public `GET /ingest/v1/schema`, including `x-porcupine-acknowledgment`. The published producer schema describes the supported acknowledgment contracts. Producers cannot select a durability mode or add `durability` to an input message. Historical uploads keep their separate durable checkpoint contract.
 
 ## Server-managed representation
 

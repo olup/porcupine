@@ -144,7 +144,7 @@ func TestDuckLakeS3SharedPostgresHostedProfileProcesses(t *testing.T) {
 	}
 }
 
-func startHostedProfileBinary(t *testing.T, binary, dsn, scratch string, fixture duckLakeS3Fixture) *sharedJourneyProcess {
+func startHostedProfileBinary(t *testing.T, binary, dsn, scratch string, fixture duckLakeS3Fixture, configure ...func(map[string]any)) *sharedJourneyProcess {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -169,6 +169,9 @@ func startHostedProfileBinary(t *testing.T, binary, dsn, scratch string, fixture
 				"secret_access_key": fixture.storage.SecretAccessKey, "path_style": true, "ca_cert_file": fixture.storage.CACertFile,
 			},
 		},
+	}
+	for _, apply := range configure {
+		apply(config)
 	}
 	raw, err := json.Marshal(config)
 	if err != nil {

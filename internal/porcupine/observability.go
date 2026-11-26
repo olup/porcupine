@@ -312,7 +312,11 @@ func (s *Service) observeAcceptance(ctx context.Context, result acceptance.Resul
 		m.observeIngestionEvents(acceptance.Durable, "duplicate", uint64(result.Duplicates))
 		m.observeIngestionEvents(acceptance.Durable, "identity_ignored", uint64(result.IdentityIgnored))
 	case acceptance.BufferedResult:
-		m.observeIngestionEvents(acceptance.Buffered, "buffered", uint64(result.Received))
+		if result.Journaled {
+			m.observeIngestionEvents(acceptance.Durable, "journaled", uint64(result.Received))
+		} else {
+			m.observeIngestionEvents(acceptance.Buffered, "buffered", uint64(result.Received))
+		}
 	}
 }
 

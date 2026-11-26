@@ -1,5 +1,5 @@
 // Package acceptance owns validated live input, acknowledgment types, hosted
-// memory admission, and standalone receipt policy.
+// admission, and standalone receipt policy.
 package acceptance
 
 import (
@@ -47,8 +47,9 @@ type BufferedReceipt struct {
 	UUID      string `json:"uuid"`
 }
 type BufferedResult struct {
-	Received int
-	Receipts []BufferedReceipt
+	Received  int
+	Receipts  []BufferedReceipt
+	Journaled bool
 }
 
 func (BufferedResult) acknowledgment() {}

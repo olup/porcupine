@@ -138,6 +138,33 @@ func TestHostedConfigurationRefusesUnsafeInputs(t *testing.T) {
 	}
 }
 
+func TestHostedDurableJournalConfiguration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		path string
+		ok   bool
+	}{
+		{"", false}, {":memory:", false}, {"/var/lib/porcupine/live.sqlite", true},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
+			raw := strings.Replace(hostedConfigurationJSON, `"mode":"buffered"`, `"mode":"durable"`, 1)
+			raw = strings.TrimSuffix(raw, "}") + `,"storage":{"journal":"` + tc.path + `"}}`
+			settings, err := readSettings(strings.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, config, err := settings.serviceConfig()
+			if err != nil || config.DBPath != tc.path {
+				t.Fatal("journal path did not reach service configuration", config.DBPath, err)
+			}
+			if err := porcupine.ValidateConfig(config); (err == nil) != tc.ok {
+				t.Fatalf("unexpected validation for %q: %v", tc.path, err)
+			}
+		})
+	}
+}
+
 func TestHostedInitRequiresExplicitInfrastructure(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "porcupine.json")

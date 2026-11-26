@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.0
+
+- Hosted workers can acknowledge live ingestion after committing to a dedicated persistent SQLite journal. Each worker replays pending batches after restart and keeps the published DuckLake result idempotent. [Hosted durable admission](https://github.com/olup/porcupine/blob/v0.25.0/docs/reference/shared-deployment.md#durable-admission)
+
+The shared PostgreSQL and standalone SQLite schemas are unchanged. Workers create a local journal when operators enable hosted durable admission. [Upgrade from v0.24.0](https://github.com/olup/porcupine/blob/v0.25.0/docs/hosting.md#upgrade-from-v0240)
+
 ## 0.24.0
 
 - Teams can acknowledge, mute, resolve, and reopen project error issues through HTTP, CLI, or MCP. Link up to 32 fingerprints to share triage state across builds. A delivered exception that occurs and arrives after resolution marks the issue as seen again on a subsequent read. (#207) [Triage an issue](https://github.com/olup/porcupine/blob/v0.24.0/docs/error-tracking.md#triage-an-issue)
