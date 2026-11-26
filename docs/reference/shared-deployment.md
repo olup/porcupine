@@ -1,6 +1,6 @@
 # Hosted runtime
 
-The hosted profile runs replaceable Porcupine workers behind an ingress. PostgreSQL holds shared control state and DuckLake metadata. S3 holds analytical files and immutable job inputs and outputs. Live ingestion acknowledges admission to bounded worker memory. A worker crash or an incomplete shutdown can lose acknowledged events that have yet to commit. [Storage by profile](../storage.md#deployment-profiles)
+The hosted profile runs replaceable Porcupine workers behind an ingress. PostgreSQL holds shared control state and DuckLake metadata. S3 holds analytical files and immutable job inputs and outputs. Live ingestion can acknowledge a commit to a worker SQLite journal or admission to bounded worker memory. [Storage by profile](../storage.md#deployment-profiles)
 
 ## Configuration
 
@@ -23,9 +23,9 @@ The hosted profile runs replaceable Porcupine workers behind an ingress. Postgre
    }
    ```
 
-   Set the PostgreSQL URL through `shared.control_database_url_file` or `shared.control_database_url`. If you also set `ducklake.postgres_url` or its file variant, it must resolve to the same URL. Use the same deployment configuration and pipeline encryption key on all workers. Set `storage.ducklake` if you need a specific disposable scratch directory. The hosted profile rejects local journal and control paths, receipt retention, and native backup settings.
+   Set the PostgreSQL URL through `shared.control_database_url_file` or `shared.control_database_url`. If you also set `ducklake.postgres_url` or its file variant, it must resolve to the same URL. Use the same deployment configuration and pipeline encryption key on all workers. Set `storage.ducklake` if you need a specific disposable scratch directory. The hosted profile rejects local control paths, standalone receipt retention, and native backup settings.
 
-   `acceptance.mode: "buffered"` explicitly accepts the hosted acknowledgment policy. The `profile` selects the runtime.
+   The generated configuration starts with `acceptance.mode: "buffered"`. To keep acknowledged requests through worker restarts, enable [durable admission](#durable-admission).
 
 3. Configure the listener, public HTTPS ingress, and authentication. Apply gateway rate limits using verified tenant or credential identity. [Server settings](configuration.md) · [Access setup](../access.md)
 4. Run `porcupine config check --config porcupine.json`, then start each worker with `porcupine --config porcupine.json`. Exercise [PostgreSQL and S3 recovery](#recovery-and-retention) and [verify readiness and delivery](instance-status.md#verify-delivery-before-routing-traffic) before routing traffic.
@@ -45,17 +45,25 @@ The buffer limits cover pending and in-flight work, including overhead. Size pro
 
 If a worker loses its PostgreSQL lease, `/readyz` returns 503 and the worker pauses write admission. The worker retains pending batches in memory and retries after acquiring a fresh lease. If recovery quarantines one project, all workers reject new ingestion for that project with `project_ingestion_quarantined` and `Retry-After: 1`. A successful recovery or flush clears the quarantine. [Instance status and quarantine reasons](instance-status.md#interpret-the-response)
 
+### Durable admission
+
+Set `acceptance.mode` to `"durable"` and set `storage.journal` to a SQLite path on a persistent local volume. Mount the whole parent directory, so the database and its WAL survive together. Give each worker exclusive access to its own journal and use a stable mapping from worker to volume across restarts. Standalone already writes to a local SQLite journal by default.
+
+The worker responds after SQLite commits the complete request. It resumes pending work when the journal reopens and preserves the batch ID across retries. It removes delivered rows after DuckLake commits and the control store confirms publication. Retain the journal across restart and upgrade, and drain it before removing a worker volume or switching its admission mode. A permanently lost volume loses its pending rows. A volume on one node remains tied to that node unless the storage system can move it.
+
+Scope the journal directory to the server user and protect the disk as event data. A deletion fence stops further delivery and removes that project's pending rows when the worker resumes the project. An offline volume can retain payloads until recovery or operator disposal. A point-in-time restore of shared state does not restore worker journals.
+
 ### Tune the hosted flush timer
 
 In the hosted profile, set `acceptance.flush_interval` or `PORCUPINE_ACCEPTANCE_FLUSH_INTERVAL` to a duration from `1s` through `30s`. For example, use `"acceptance": {"mode": "buffered", "flush_interval": "10s"}`. Omit the setting to keep the 2-second timer. A batch becomes eligible to flush when the oldest pending event reaches that age, the pending batch reaches 5 MiB, or it reaches one-third of the project event capacity (3,333 events by default). The count trigger gives the worker room to accept more events while the first batch commits. Requests stay atomic and traffic bursts can still fill the buffer.
 
-A longer timer can combine more events into each flush and reduce S3 requests. It also keeps accepted events in memory longer, delaying query visibility and increasing the time during which a worker crash can lose them. Busy flush slots, provider latency, and retries can extend that time beyond the timer.
+A longer timer can combine more events into each flush and reduce S3 requests. It also delays query visibility. In buffered mode it increases the time during which a worker crash can lose accepted events. Busy flush slots, provider latency, and retries can extend that time beyond the timer.
 
 In one hosted test, each case sent 24 HTTP events to one project at one event per second. With a 10-second timer, successful S3 PUTs fell from 55 to 15 without an event webhook and from 94 to 45 with a webhook. The 95th-percentile time from acknowledgment to successful flush rose from 2.147 to 10.148 seconds without a webhook and from 2.172 to 10.172 seconds with one. The test timed flush completion. Query visibility and webhook delivery were outside the measurement. [Measurement run](https://github.com/olup/porcupine/actions/runs/44723693790)
 
 ## Drain a worker
 
-Remove the worker from the ingress before planned shutdown. Allow ten seconds for HTTP shutdown, 30 seconds for the buffer drain, and time for cleanup. The worker waits up to five more seconds for canceled analytics and maintenance after draining. In-flight flushes and other jobs can extend shutdown. Inspect the worker's shutdown result. If the drain fails, use stable producer IDs to retry interrupted writes and verify which acknowledged events reached DuckLake.
+Remove the worker from the ingress before planned shutdown. Allow ten seconds for HTTP shutdown, 30 seconds for the buffer drain, and time for cleanup. The worker waits up to five more seconds for canceled analytics and maintenance after draining. In-flight flushes and other jobs can extend shutdown. Inspect the worker's shutdown result. If the drain fails in durable mode, restart with the same journal. In buffered mode, use stable producer IDs to retry interrupted writes and verify which acknowledged events reached DuckLake.
 
 For a fleet-wide upgrade, pause producers, wait for expected events to become queryable, then drain every worker. [Upgrade procedure](../hosting.md#upgrade)
 

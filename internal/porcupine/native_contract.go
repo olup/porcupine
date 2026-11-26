@@ -87,6 +87,9 @@ func (s *Service) nativeAcknowledgment() NativeAcknowledgment {
 	if s.acceptance.Durability() == acceptance.Buffered {
 		return NativeAcknowledgment{Durability: "buffered", Meaning: "Validated and admitted to bounded worker memory; not durable. Pending events can be lost on worker failure. Flush timing does not bound loss age during outages.", ReceiptFields: []string{"message_id", "uuid"}, ReceivedMeaning: "Validated input rows admitted to memory, including retries and duplicates; not a committed unique event count."}
 	}
+	if s.hosted != nil {
+		return NativeAcknowledgment{Durability: "durable", Meaning: "Validated input committed to the worker's SQLite journal. Analytical delivery is asynchronous. The journal can be recovered as long as its volume survives.", ReceiptFields: []string{"message_id", "uuid"}, ReceivedMeaning: "Input rows committed to the worker journal, including retries and duplicates. Unique counts and event IDs are determined at analytical delivery."}
+	}
 	return NativeAcknowledgment{Durability: "durable", Meaning: "SQLite journal committed. Stable retries return original event IDs; analytical delivery is asynchronous.", ReceiptFields: []string{"message_id", "event_id", "uuid", "duplicate"}}
 }
 func (s *Service) nativeInputSchema() (map[string]any, error) {

@@ -16,8 +16,8 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 | --- | --- |
 | Top level | `profile`, `listen`, `bootstrap_token`, `allowed_origins`, `trusted_proxies`, `geoip_database` |
 | `metrics` | `enabled`, `listen`: private Prometheus listener. Requires a checkout with [operator monitoring](observability.md). |
-| `acceptance` | `mode` confirms the acknowledgment policy. Standalone defaults to `"durable"`. Hosted requires explicit `"buffered"` and can set [`flush_interval`](shared-deployment.md#tune-the-hosted-flush-timer). |
-| `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted accepts a private disposable `ducklake` path. |
+| `acceptance` | `mode` confirms the acknowledgment policy. Standalone defaults to `"durable"`. Hosted requires explicit `"durable"` or `"buffered"` and can set [`flush_interval`](shared-deployment.md#tune-the-hosted-flush-timer). |
+| `storage` | `journal`, `control`, `ducklake`: standalone paths. Hosted durable admission requires a private persistent `journal` path per worker. Hosted also accepts a disposable `ducklake` path. |
 | `queue` | `max_events`, `max_bytes`, and `receipt_retention`. Use `"0"` to keep local receipts (the default) or a duration such as `"720h"` for optional pruning. Standalone also supports `project_max_events` and `project_max_bytes`. [Queue limits](reliability.md#acceptance-and-queue-limits) |
 | `query` | `max_concurrent`, `timeout_ms`, `max_rows`, `max_result_bytes`: deployment ceilings |
 | `usage` | `retention_days` (365), `max_snapshots` (16), `max_snapshot_bytes` (134217728): [numerical history and report capacity](usage.md) |
@@ -33,7 +33,7 @@ The generated file groups settings by purpose. Keep existing generated secrets w
 
 `PORCUPINE_PROFILE` and `PORCUPINE_ACCEPTANCE_MODE` override `profile` and
 `acceptance.mode`. Buffered acknowledgment requires both `profile: "hosted"`
-and `acceptance.mode: "buffered"`. See the [hosted configuration](shared-deployment.md#configuration)
+and an explicit `acceptance.mode`. See the [hosted configuration](shared-deployment.md#configuration)
 for PostgreSQL, object storage, and recovery-floor settings.
 
 In standalone the generated control path is the journal path plus `.control`. See [storage by profile](../storage.md#deployment-profiles).

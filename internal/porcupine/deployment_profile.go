@@ -3,6 +3,7 @@ package porcupine
 import (
 	"errors"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -24,14 +25,23 @@ func validateDeploymentProfile(c Config) error {
 		}
 		return validateAcceptanceMode(c.AcceptanceMode)
 	case ProfileHosted:
-		if c.AcceptanceMode != AcceptanceModeBuffered {
-			return errors.New("hosted profile requires acceptance.mode buffered")
+		switch c.AcceptanceMode {
+		case AcceptanceModeBuffered:
+			if c.DBPath != "" {
+				return errors.New("a hosted storage.journal requires acceptance.mode durable")
+			}
+		case AcceptanceModeDurable:
+			if strings.TrimSpace(c.DBPath) == "" || c.DBPath == ":memory:" {
+				return errors.New("hosted durable acceptance requires a persistent storage.journal path")
+			}
+		default:
+			return errors.New("hosted profile requires acceptance.mode buffered or durable")
 		}
 		if c.HostedFlushInterval != 0 && (c.HostedFlushInterval < time.Second || c.HostedFlushInterval > 30*time.Second) {
 			return errors.New("acceptance.flush_interval must be between 1s and 30s")
 		}
-		if c.DBPath != "" || c.ControlDBPath != "" || c.NativeBackup != nil || c.ReceiptRetention != 0 {
-			return errors.New("hosted profile cannot use journal paths, local control, native backups or receipt retention")
+		if c.ControlDBPath != "" || c.NativeBackup != nil || c.ReceiptRetention != 0 {
+			return errors.New("hosted profile cannot use local control, native backups or receipt retention")
 		}
 		if c.Shared == nil || c.DuckLake == nil || c.DuckLake.S3 == nil {
 			return errors.New("hosted profile requires PostgreSQL control and analytical S3 storage")

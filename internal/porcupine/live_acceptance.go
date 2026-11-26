@@ -40,7 +40,11 @@ func liveAcceptanceResponse(result acceptance.Result, receipts bool) (map[string
 		}
 		return response, nil
 	case acceptance.BufferedResult:
-		response := map[string]any{"status": 1, "durability": acceptance.Buffered, "received": result.Received}
+		durability := acceptance.Buffered
+		if result.Journaled {
+			durability = acceptance.Durable
+		}
+		response := map[string]any{"status": 1, "durability": durability, "received": result.Received}
 		if receipts {
 			response["receipts"] = result.Receipts
 		}

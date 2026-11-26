@@ -120,7 +120,17 @@ FROM hosted_recovery_pending WHERE quarantine_code IS NOT NULL`).Scan(&raw)
 			result.Status = "degraded"
 		}
 	}
-	if s.db == nil {
+	if s.hosted != nil {
+		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)
+		configured, err := s.hosted.buffer.CheckJournal(probe)
+		cancel()
+		if !configured {
+			result.Checks.SQLite = dependencyNotConfigured
+		} else if err != nil {
+			result.Checks.SQLite = dependencyUnavailable
+			result.Status = "degraded"
+		}
+	} else if s.db == nil {
 		result.Checks.SQLite = dependencyNotConfigured
 	} else {
 		probe, cancel := context.WithTimeout(ctx, instanceProbeTimeout)

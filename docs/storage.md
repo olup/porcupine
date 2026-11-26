@@ -9,9 +9,9 @@ Porcupine embeds DuckDB and DuckLake. Each project has its own DuckLake catalog 
 | Profile | Control and catalogs | Analytical files | Live acknowledgment |
 | --- | --- | --- | --- |
 | Standalone | Local SQLite control and journal, with local DuckLake catalogs | Local SSD by default, or a configured private S3 bucket and prefix | Durable after the SQLite journal commits |
-| Hosted | Shared PostgreSQL control and DuckLake catalogs, with disposable worker scratch space | Configured private S3 bucket and prefix | Best-effort admission to bounded worker memory |
+| Hosted | Shared PostgreSQL control and DuckLake catalogs, with disposable worker scratch space | Configured private S3 bucket and prefix | SQLite commit on a per-worker volume in durable mode, or bounded memory admission in buffered mode |
 
-A hosted worker crash or incomplete drain can lose acknowledged events before they commit. See the [live acknowledgment contract](reference/native-event-contract.md#acknowledgment-metadata) and [durable checkpoints for hosted imports and mutations](design/hosted-architecture.md#imports-and-mutations).
+A hosted worker crash can lose acknowledgments in buffered mode. Durable mode resumes pending events while its worker volume survives. See the [live acknowledgment contract](reference/native-event-contract.md#acknowledgment-metadata) and [durable checkpoints for hosted imports and mutations](design/hosted-architecture.md#imports-and-mutations).
 
 ## Local files or S3
 

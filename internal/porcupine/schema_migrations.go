@@ -80,6 +80,16 @@ CREATE INDEX mutation_audit_deletion_members ON mutation_audit(deletion_id,seq) 
 	return sqliteMetadataHas(ctx, tx, "journal_layout", "separate-control-v1")
 }}
 
+var hostedJournalSchema = schemaStore{name: "hosted ingestion journal", steps: []string{
+	// 1: ordered admission requests and durable flush IDs.
+	`CREATE TABLE worker_journal (
+singleton INTEGER PRIMARY KEY CHECK(singleton=1), source_id TEXT NOT NULL CHECK(source_id<>''));
+CREATE TABLE requests (
+seq INTEGER PRIMARY KEY, project_id TEXT NOT NULL, batch_id TEXT,
+admitted_at INTEGER NOT NULL, payload BLOB NOT NULL);
+CREATE INDEX requests_project_batch ON requests(project_id,batch_id,seq);`,
+}, adopt: func(context.Context, *sql.Tx) (bool, error) { return false, nil }}
+
 const tenantExceptionUsageSchema = `ALTER TABLE tenant_usage ADD COLUMN accepted_exceptions BIGINT NOT NULL DEFAULT 0 CHECK(accepted_exceptions>=0 AND accepted_exceptions<=accepted_events);`
 const tenantExceptionBudgetSchema = `ALTER TABLE tenants ADD COLUMN ingestion_monthly_exceptions BIGINT CHECK(ingestion_monthly_exceptions IS NULL OR ingestion_monthly_exceptions>=0);`
 const tenantExceptionControlSchema = tenantExceptionUsageSchema + tenantExceptionBudgetSchema + `
