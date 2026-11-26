@@ -1,6 +1,6 @@
 # Host Porcupine
 
-Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.24.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
+Start a new instance with the [quickstart](../README.md#quickstart) and install the CLI from the [current release](https://github.com/olup/porcupine/releases/tag/v0.25.0). If you already run Porcupine, check the [upgrade steps](#upgrade) first and match the CLI to your server.
 
 <a id="choose-a-storage-mode"></a>
 
@@ -63,6 +63,12 @@ Review [persistent storage and memory settings](reference/hosting-options.md#per
 ## Upgrade
 
 Follow the steps for your installed version.
+
+### Upgrade from v0.24.0
+
+Existing deployment settings work with v0.25.0. The standalone and shared control schemas are unchanged. Hosted durable admission creates a new SQLite journal on each worker when enabled.
+
+For a switch to durable admission, pause producers and verify all accepted events in SQL. Drain the existing workers, start v0.25.0 with a dedicated persistent journal per worker, and verify `durability: "durable"` and SQL visibility before resuming producers. For rollback, drain those journals before restarting with the previous configuration. [Hosted durable admission](reference/shared-deployment.md#durable-admission)
 
 ### Upgrade from v0.23.0
 
